@@ -1,9 +1,10 @@
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { Fff } from "@opencode-ai/core/filesystem/fff.bun"
 import { AppRuntime } from "@/effect/app-runtime"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { AbsolutePath } from "@opencode-ai/core/schema"
-import { InstanceStore } from "@/project/instance-store"
+import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
+import { Location } from "@opencode-ai/core/location"
 
 const dir = AbsolutePath.make(process.cwd())
 
@@ -15,10 +16,12 @@ const FILE_LIMIT = 100
 const GREP_LIMIT = 50
 const GLOB_LIMIT = 50
 
-const run = <A, R>(effect: Effect.Effect<A, unknown, R>) =>
-  AppRuntime.runPromise(
-    InstanceStore.Service.use((store) => store.provide({ directory: dir }, effect as never)),
-  ) as Promise<A>
+const locationFileSystem = LocationServiceMap.Service.get(Location.Ref.make({ directory: dir })).pipe(
+  Layer.provide(locationServiceMapLayer),
+)
+
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.Service>) =>
+  AppRuntime.runPromise(effect.pipe(Effect.provide(locationFileSystem)))
 
 // --- raw Fff picker ---
 const t0 = performance.now()

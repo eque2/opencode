@@ -1,36 +1,44 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { LLMError } from "../src/schema"
+import { LLMError, ToolCallID } from "../src/schema"
 import { ToolStream } from "../src/protocols/utils/tool-stream"
 import { it } from "./lib/effect"
 
 const ADAPTER = "test-route"
 
+// Lift an append result into Effect so a stream-grammar error fails the test.
+const appended = <K extends string | number>(result: ToolStream.AppendOutcome<K> | LLMError) =>
+  ToolStream.isError(result) ? Effect.fail(result) : Effect.succeed(result)
+
 describe("ToolStream", () => {
   it.effect("starts from OpenAI-style deltas and finalizes parsed input", () =>
     Effect.gen(function* () {
-      const first = ToolStream.appendOrStart(
-        ADAPTER,
-        ToolStream.empty<number>(),
-        0,
-        { id: "call_1", name: "lookup", text: '{"query"' },
-        "missing tool",
+      const first = yield* appended(
+        ToolStream.appendOrStart(
+          ADAPTER,
+          ToolStream.empty<number>(),
+          0,
+          { id: "call_1", name: "lookup", text: '{"query"' },
+          "missing tool",
+        ),
       )
-      if (ToolStream.isError(first)) return yield* first
-      const second = ToolStream.appendOrStart(ADAPTER, first.tools, 0, { text: ':"weather"}' }, "missing tool")
-      if (ToolStream.isError(second)) return yield* second
+      const second = yield* appended(
+        ToolStream.appendOrStart(ADAPTER, first.tools, 0, { text: ':"weather"}' }, "missing tool"),
+      )
       const finished = yield* ToolStream.finish(ADAPTER, second.tools, 0)
 
       expect(first.events).toEqual([
-        { type: "tool-input-start", id: "call_1", name: "lookup" },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup" },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
       ])
-      expect(second.events).toEqual([{ type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' }])
+      expect(second.events).toEqual([
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
+      ])
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: { query: "weather" } },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: { query: "weather" } },
         ],
       })
     }),
@@ -57,8 +65,8 @@ describe("ToolStream", () => {
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: { query: "final" } },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: { query: "final" } },
         ],
       })
     }),
@@ -82,12 +90,12 @@ describe("ToolStream", () => {
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: {} },
-          { type: "tool-input-end", id: "call_2", name: "web_search" },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: {} },
+          { type: "tool-input-end", id: ToolCallID.make("call_2"), name: "web_search" },
           {
             type: "tool-call",
-            id: "call_2",
+            id: ToolCallID.make("call_2"),
             name: "web_search",
             input: { query: "docs" },
             providerExecuted: true,

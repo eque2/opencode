@@ -5,6 +5,7 @@ import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { useMutation } from "@tanstack/solid-query"
+import { Option } from "effect"
 import fuzzysort from "fuzzysort"
 import { type Accessor, For, Show, createMemo } from "solid-js"
 import type { useServerManagementController } from "@/components/dialog-select-server"
@@ -28,7 +29,7 @@ export function AddServerMenu(props: { onAddServer: () => void }) {
   const dialog = useDialog()
   const language = useLanguage()
   const openAddWsl = () => {
-    dialog.push(() => <DialogAddWslServer />)
+    void dialog.push(() => <DialogAddWslServer />)
   }
   return (
     <Show
@@ -95,7 +96,7 @@ export function WslServerSettings(props: {
         {(item) => {
           const key = ServerConnection.Key.make(item.config.id)
           const check = () => wsl.data?.opencodeChecks[item.config.distro]
-          const opencodeAction = () => wslOpencodeAction(check())
+          const opencodeAction = () => wslOpencodeAction(Option.fromNullishOr(check()))
           const busy = () => wsl.data?.job?.kind === "install-opencode" && wsl.data.job.distro === item.config.distro
           return (
             <div class="settings-v2-servers-row">
@@ -117,7 +118,7 @@ export function WslServerSettings(props: {
                 <Show when={props.controller.canDefault() && props.controller.defaultKey() === key}>
                   <Tag>{language.t("dialog.server.status.default")}</Tag>
                 </Show>
-                <Show when={opencodeAction()}>
+                <Show when={Option.getOrUndefined(opencodeAction())}>
                   {(label) => (
                     <ButtonV2
                       size="small"
@@ -151,7 +152,7 @@ export function WslServerSettings(props: {
                           </MenuV2.Item>
                         </Show>
                         <Show when={props.controller.canDefault() && props.controller.defaultKey() === key}>
-                          <MenuV2.Item onSelect={() => props.controller.setDefault(null)}>
+                          <MenuV2.Item onSelect={() => props.controller.clearDefault()}>
                             {language.t("dialog.server.menu.defaultRemove")}
                           </MenuV2.Item>
                         </Show>

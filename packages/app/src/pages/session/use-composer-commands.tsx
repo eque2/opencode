@@ -1,3 +1,4 @@
+import { Effect, Option } from "effect"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLocal, type ModelSelection } from "@/context/local"
@@ -5,6 +6,12 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { getCursorPosition, setCursorPosition } from "@/components/prompt-input/editor-dom"
 import { useSessionLayout } from "./session-layout"
 import { createSessionOwnership } from "./session-ownership"
+
+// Runs a command program from a command handler. The handler does not wait
+// for it, so a failure is logged, as the unhandled rejection was before.
+const runDetached = <A, E>(program: Effect.Effect<A, E>) => {
+  Effect.runFork(program.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 const withCategory = (category: string) => {
   return (option: Omit<CommandOption, "category">): CommandOption => ({
@@ -24,12 +31,14 @@ export const useComposerCommands = (input: { model?: ModelSelection } = {}) => {
   const modelCommand = withCategory(language.t("command.category.model"))
   const agentCommand = withCategory(language.t("command.category.agent"))
 
-  const chooseModel = async () => {
+  const chooseModel = () => {
     const owner = sessionOwnership.capture()
     const editor = document.querySelector<HTMLElement>('[data-component="prompt-input"]')
     const selection = window.getSelection()
     const cursor =
-      editor && selection?.rangeCount && editor.contains(selection.anchorNode) ? getCursorPosition(editor) : null
+      editor && selection?.rangeCount && editor.contains(selection.anchorNode)
+        ? Option.some(getCursorPosition(editor))
+        : Option.none<number>()
     const restoreComposer = () => {
       // Kobalte restores focus during its teardown effect; defer past it so the
       // composer keeps focus and the caret returns to where the user left it.
@@ -37,13 +46,18 @@ export const useComposerCommands = (input: { model?: ModelSelection } = {}) => {
         const editor = document.querySelector<HTMLElement>('[data-component="prompt-input"]')
         if (!editor) return
         editor.focus()
-        if (cursor !== null) setCursorPosition(editor, cursor)
+        if (Option.isSome(cursor)) setCursorPosition(editor, cursor.value)
       })
     }
-    const { DialogSelectModel } = await import("@/components/dialog-select-model")
-    owner.run(() => {
-      void dialog.show(() => <DialogSelectModel model={model} />, restoreComposer)
-    })
+    runDetached(
+      Effect.promise(() => import("@/components/dialog-select-model")).pipe(
+        Effect.map(({ DialogSelectModel }) =>
+          owner.run(() => {
+            void dialog.show(() => <DialogSelectModel model={model} />, restoreComposer)
+          }),
+        ),
+      ),
+    )
   }
 
   command.register("composer", () => [

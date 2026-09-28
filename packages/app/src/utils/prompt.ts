@@ -1,4 +1,5 @@
-import type { AgentPart as MessageAgentPart, FilePart, Part, TextPart } from "@opencode-ai/sdk/v2"
+import type { Part, TextPart } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 import type { AgentPart, FileAttachmentPart, ImageAttachmentPart, Prompt } from "@/context/prompt"
 import { createLegacyBlobReference } from "@/utils/draft-store"
 
@@ -39,15 +40,16 @@ function selectionFromFileUrl(url: string): Extract<Inline, { type: "file" }>["s
   }
 }
 
-function textPartValue(parts: Part[]) {
+/** The longest text part that the user wrote, if there is one. */
+function textPartValue(parts: Part[]): Option.Option<TextPart> {
   const candidates = parts
     .filter((part): part is TextPart => part.type === "text")
     .filter((part) => !part.synthetic && !part.ignored)
-  return candidates.reduce((best: TextPart | undefined, part) => {
-    if (!best) return part
-    if (part.text.length > best.text.length) return part
+  return candidates.reduce((best: Option.Option<TextPart>, part) => {
+    if (Option.isNone(best)) return Option.some(part)
+    if (part.text.length > best.value.text.length) return Option.some(part)
     return best
-  }, undefined)
+  }, Option.none())
 }
 
 /**
@@ -55,8 +57,7 @@ function textPartValue(parts: Part[]) {
  * This is used by undo to restore the original user prompt.
  */
 export function extractPromptFromParts(parts: Part[], opts?: { directory?: string; attachmentName?: string }): Prompt {
-  const textPart = textPartValue(parts)
-  const text = textPart?.text ?? ""
+  const text = Option.match(textPartValue(parts), { onNone: () => "", onSome: (part) => part.text })
   const directory = opts?.directory
   const attachmentName = opts?.attachmentName ?? "attachment"
 
@@ -76,11 +77,24 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
   }
 
   const inline: Inline[] = []
-  const images: ImageAttachmentPart[] = []
+  // A file part with no inline source text and a data URL is a pasted image, which goes after the text.
+  const images = parts.flatMap((part): ImageAttachmentPart[] =>
+    part.type === "file" && !part.source?.text && part.url.startsWith("data:")
+      ? [
+          {
+            type: "image",
+            id: part.id,
+            filename: part.filename ?? attachmentName,
+            mime: part.mime,
+            blob: createLegacyBlobReference(part.url),
+          },
+        ]
+      : [],
+  )
 
   for (const part of parts) {
     if (part.type === "file") {
-      const filePart = part as FilePart
+      const filePart = part
       const sourceText = filePart.source?.text
       if (sourceText) {
         const value = sourceText.value
@@ -101,20 +115,10 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
         })
         continue
       }
-
-      if (filePart.url.startsWith("data:")) {
-        images.push({
-          type: "image",
-          id: filePart.id,
-          filename: filePart.filename ?? attachmentName,
-          mime: filePart.mime,
-          blob: createLegacyBlobReference(filePart.url),
-        })
-      }
     }
 
     if (part.type === "agent") {
-      const agentPart = part as MessageAgentPart
+      const agentPart = part
       const source = agentPart.source
       if (!source) continue
       inline.push({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer } from "effect"
+import { Cause, Context, Effect, Exit, Layer } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 
 class Value extends Context.Service<Value, { readonly value: string }>()("test/LayerNodeValue") {}
@@ -13,7 +13,12 @@ class App extends Context.Service<App, { readonly run: Effect.Effect<string[]> }
 const tags = LayerNode.tags({ app: [] })
 const make = tags.make("app")
 const build = <A, E>(root: LayerNode.Node<A, E, any>, replacements?: readonly LayerNode.Replacement[]) =>
-  LayerNode.compile(root, replacements) as Layer.Layer<A, E>
+  LayerNode.compile(root, replacements)
+// Graph errors surface when the compiled layer is built, as a GraphError defect.
+const buildDefect = <A, E>(layer: Layer.Layer<A, E>) =>
+  Effect.runPromiseExit(Effect.scoped(Layer.build(layer))).then((exit) =>
+    Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined,
+  )
 const valueLayer = Layer.succeed(Value, Value.of({ value: "production" }))
 const greetingLayer = Layer.effect(
   Greeting,
@@ -67,8 +72,10 @@ describe("layer node", () => {
     const unbound = LayerNode.unbound(Value, tags.values.app)
     const greeting = make({ service: Greeting, layer: greetingLayer, deps: [unbound] })
     const tree = LayerNode.group([greeting])
-    expect(() => LayerNode.compile(tree)).toThrow("Unbound layer node: test/LayerNodeValue")
-    const layer = LayerNode.compile(tree, [[unbound, value]]) as Layer.Layer<Greeting>
+    const defect = await buildDefect(LayerNode.compile(tree))
+    expect(defect).toBeInstanceOf(LayerNode.GraphError)
+    expect(defect).toHaveProperty("message", "Unbound layer node: test/LayerNodeValue")
+    const layer = LayerNode.compile(tree, [[unbound, value]])
     const program = Effect.map(Greeting, (item) => item.value).pipe(Effect.provide(layer))
     expect(await Effect.runPromise(program)).toBe("hello production")
   })
@@ -197,9 +204,7 @@ describe("layer node", () => {
     })
     expect(result.hoisted.dependencies).toEqual([database])
 
-    const layer = LayerNode.compile(result.node).pipe(
-      Layer.provide(LayerNode.compile(result.hoisted)),
-    ) as unknown as Layer.Layer<App>
+    const layer = LayerNode.compile(result.node).pipe(Layer.provide(LayerNode.compile(result.hoisted)))
     const program = Effect.gen(function* () {
       return yield* (yield* App).run
     }).pipe(Effect.provide(layer))
@@ -207,7 +212,7 @@ describe("layer node", () => {
     expect(await Effect.runPromise(program)).toEqual(["Alice"])
   })
 
-  test("rejects conflicting hoisted implementations", () => {
+  test("rejects conflicting hoisted implementations", async () => {
     const tags = LayerNode.tags({ location: ["global"], global: [] })
     const global = tags.make("global")
     const location = tags.make("location")
@@ -232,9 +237,11 @@ describe("layer node", () => {
       deps: [second],
     })
 
-    expect(() => LayerNode.hoist(LayerNode.group([left, right]), tags.values.global)).toThrow(
-      "Tag global has conflicting implementations for test/GraphDatabase",
-    )
+    const result = LayerNode.hoist(LayerNode.group([left, right]), tags.values.global)
+    const layer = LayerNode.compile(result.node).pipe(Layer.provide(LayerNode.compile(result.hoisted)))
+    const defect = await buildDefect(layer)
+    expect(defect).toBeInstanceOf(LayerNode.GraphError)
+    expect(defect).toHaveProperty("message", "Tag global has conflicting implementations for test/GraphDatabase")
   })
 
   test("treats dependency groups as transparent while hoisting", () => {

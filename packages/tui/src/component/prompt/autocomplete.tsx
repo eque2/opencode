@@ -1,5 +1,6 @@
-import type { BoxRenderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core"
+import { RGBA, type BoxRenderable, type TextareaRenderable, type ScrollBoxRenderable } from "@opentui/core"
 import { pathToFileURL } from "bun"
+import { Effect, Fiber, Option } from "effect"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { firstBy } from "remeda"
@@ -44,7 +45,12 @@ function extractLineRange(input: string) {
   }
 
   const startLine = Number(lineMatch[1])
-  const endLine = lineMatch[2] && startLine < Number(lineMatch[2]) ? Number(lineMatch[2]) : undefined
+  // An end line counts only when it comes after the start line.
+  const endLine = Option.fromNullishOr(lineMatch[2]).pipe(
+    Option.filter((value) => value !== ""),
+    Option.map((value) => Number(value)),
+    Option.filter((value) => startLine < value),
+  )
 
   return {
     lineRange: {
@@ -113,18 +119,18 @@ export function Autocomplete(props: {
   })
 
   createEffect(() => {
-    if (store.visible) {
-      let lastPos = { x: 0, y: 0, width: 0 }
-      const interval = setInterval(() => {
-        const anchor = props.anchor()
-        if (anchor.x !== lastPos.x || anchor.y !== lastPos.y || anchor.width !== lastPos.width) {
-          lastPos = { x: anchor.x, y: anchor.y, width: anchor.width }
-          setPositionTick((t) => t + 1)
-        }
-      }, 50)
-
-      onCleanup(() => clearInterval(interval))
-    }
+    if (!store.visible) return
+    let lastPos = { x: 0, y: 0, width: 0 }
+    const check = Effect.sync(() => {
+      const anchor = props.anchor()
+      if (anchor.x !== lastPos.x || anchor.y !== lastPos.y || anchor.width !== lastPos.width) {
+        lastPos = { x: anchor.x, y: anchor.y, width: anchor.width }
+        setPositionTick((t) => t + 1)
+      }
+    })
+    // Each check waits first, as the first setInterval tick did.
+    const poll = Effect.runFork(Effect.forever(Effect.delay(check, "50 millis")))
+    onCleanup(() => Effect.runFork(Fiber.interrupt(poll)))
   })
 
   const position = createMemo(() => {
@@ -143,8 +149,9 @@ export function Autocomplete(props: {
     }
   })
 
+  // undefined while hidden, so a reopened popup with the same empty text still changes the memo.
   const filter = createMemo(() => {
-    if (!store.visible) return
+    if (!store.visible) return undefined
     // Track props.value to make memo reactive to text changes
     props.value // <- there surely is a better way to do this, like making .input() reactive
 
@@ -189,13 +196,19 @@ export function Autocomplete(props: {
     const extmarkStart = store.index
     const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
 
-    const styleId = part.type === "file" ? props.fileStyleId : part.type === "agent" ? props.agentStyleId : undefined
+    // A text part has no style, so its extmark gets no styleId key.
+    const style =
+      part.type === "file"
+        ? { styleId: props.fileStyleId }
+        : part.type === "agent"
+          ? { styleId: props.agentStyleId }
+          : {}
 
     const extmarkId = input.extmarks.create({
       start: extmarkStart,
       end: extmarkEnd,
       virtual: true,
-      styleId,
+      ...style,
       typeId: props.promptPartTypeId(),
     })
 
@@ -242,18 +255,18 @@ export function Autocomplete(props: {
   function createFilePart(
     item: FileSystemEntry,
     filePath: string,
-    lineRange?: { startLine: number; endLine?: number },
+    lineRange?: { startLine: number; endLine: Option.Option<number> },
   ) {
     const urlObj = pathToFileURL(filePath)
     const filename =
       lineRange && item.type !== "directory"
-        ? `${item.path}#${lineRange.startLine}${lineRange.endLine ? `-${lineRange.endLine}` : ""}`
+        ? `${item.path}#${lineRange.startLine}${Option.match(lineRange.endLine, { onNone: () => "", onSome: (end) => `-${end}` })}`
         : item.path
 
     if (lineRange && item.type !== "directory") {
       urlObj.searchParams.set("start", String(lineRange.startLine))
-      if (lineRange.endLine !== undefined) {
-        urlObj.searchParams.set("end", String(lineRange.endLine))
+      if (Option.isSome(lineRange.endLine)) {
+        urlObj.searchParams.set("end", String(lineRange.endLine.value))
       }
     }
 
@@ -280,7 +293,7 @@ export function Autocomplete(props: {
   const references = createMemo(() => data.location.reference.list() ?? [])
 
   const referenceMatch = createMemo(() => {
-    if (!store.visible || store.visible === "/") return
+    if (!store.visible || store.visible === "/") return undefined
     const { baseQuery } = extractLineRange(search())
     const slash = baseQuery.indexOf("/")
     const alias = slash === -1 ? baseQuery : baseQuery.slice(0, slash)
@@ -303,7 +316,7 @@ export function Autocomplete(props: {
     const item = normalizeMentionPath(input.filePath)
     const lineRange = {
       startLine: input.lineStart,
-      endLine: input.lineEnd > input.lineStart ? input.lineEnd : undefined,
+      endLine: input.lineEnd > input.lineStart ? Option.some(input.lineEnd) : Option.none(),
     }
     const { filename, part } = createFilePart({ path: item, type: "file" }, input.filePath, lineRange)
     const index = store.visible === "@" ? store.index : props.input().cursorOffset
@@ -315,34 +328,32 @@ export function Autocomplete(props: {
 
   const [files] = createResource(
     () => ({ query: search(), location: location() }),
-    async (input) => {
-      if (!store.visible || store.visible === "/") return []
-      if (referenceMatch()) return []
-      const { lineRange, baseQuery } = extractLineRange(input.query ?? "")
+    (input) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          if (!store.visible || store.visible === "/") return []
+          if (referenceMatch()) return []
+          const { lineRange, baseQuery } = extractLineRange(input.query ?? "")
 
-      // Get files from SDK
-      const result = await sdk.client.v2.fs.find({
-        query: baseQuery,
-        limit: "20",
-        location: {
-          directory: input.location?.directory,
-          workspace: input.location?.workspaceID ?? project.workspace.current(),
-        },
-      })
+          // Get files from SDK. A rejected request still puts the resource in its error state, as the old await did.
+          const result = yield* Effect.promise(() =>
+            sdk.client.v2.fs.find({
+              query: baseQuery,
+              limit: "20",
+              location: {
+                directory: input.location?.directory,
+                workspace: input.location?.workspaceID ?? project.workspace.current(),
+              },
+            }),
+          )
 
-      const options: AutocompleteOption[] = []
-
-      // Add file options. Trust the order returned by fff (frecency, fuzzy
-      // score, filename bonus, etc. are already factored in).
-      if (!result.error && result.data) {
-        const width = props.anchor().width - 4
-        options.push(
-          ...result.data.data.map((item): AutocompleteOption => {
-            const { filename, part } = createFilePart(
-              item,
-              path.join(result.data.location.directory, item.path),
-              lineRange,
-            )
+          // Add file options. Trust the order returned by fff (frecency, fuzzy
+          // score, filename bonus, etc. are already factored in).
+          if (result.error || !result.data) return []
+          const found = result.data
+          const width = props.anchor().width - 4
+          return found.data.map((item): AutocompleteOption => {
+            const { filename, part } = createFilePart(item, path.join(found.location.directory, item.path), lineRange)
             return {
               display: Locale.truncateMiddle(filename, width),
               value: filename,
@@ -352,12 +363,9 @@ export function Autocomplete(props: {
                 insertPart(filename, part)
               },
             }
-          }),
-        )
-      }
-
-      return options
-    },
+          })
+        }),
+      ),
     {
       initialValue: [],
     },
@@ -366,11 +374,10 @@ export function Autocomplete(props: {
   const mcpResources = createMemo(() => {
     if (!store.visible || store.visible === "/") return []
 
-    const options: AutocompleteOption[] = []
     const width = props.anchor().width - 4
 
-    for (const res of Object.values(sync.data.mcp_resource)) {
-      options.push({
+    return Object.values(sync.data.mcp_resource).map(
+      (res): AutocompleteOption => ({
         display: Locale.truncateMiddle(res.name, width),
         // Match the name only; matching the URI caused unrelated fuzzy hits.
         value: res.name,
@@ -393,10 +400,8 @@ export function Autocomplete(props: {
             },
           })
         },
-      })
-    }
-
-    return options
+      }),
+    )
   })
 
   const agents = createMemo(() => {
@@ -445,25 +450,23 @@ export function Autocomplete(props: {
   )
 
   const commands = createMemo((): AutocompleteOption[] => {
-    const results: AutocompleteOption[] = [...slashes()]
-
-    for (const serverCommand of sync.data.command) {
-      if (serverCommand.source === "skill") continue
-      const label = serverCommand.source === "mcp" ? ":mcp" : ""
-      results.push({
-        display: "/" + serverCommand.name + label,
-        description: serverCommand.description,
-        onSelect: () => {
-          const newText = "/" + serverCommand.name + " "
-          const cursor = props.input().logicalCursor
-          props.input().deleteRange(0, 0, cursor.row, cursor.col)
-          props.input().insertText(newText)
-          props.input().cursorOffset = Bun.stringWidth(newText)
-        },
+    const serverCommands = sync.data.command
+      .filter((serverCommand) => serverCommand.source !== "skill")
+      .map((serverCommand): AutocompleteOption => {
+        const label = serverCommand.source === "mcp" ? ":mcp" : ""
+        return {
+          display: "/" + serverCommand.name + label,
+          description: serverCommand.description,
+          onSelect: () => {
+            const newText = "/" + serverCommand.name + " "
+            const cursor = props.input().logicalCursor
+            props.input().deleteRange(0, 0, cursor.row, cursor.col)
+            props.input().insertText(newText)
+            props.input().cursorOffset = Bun.stringWidth(newText)
+          },
+        }
       })
-    }
-
-    results.sort((a, b) => a.display.localeCompare(b.display))
+    const results = [...slashes(), ...serverCommands].toSorted((a, b) => a.display.localeCompare(b.display))
 
     const max = firstBy(results, [(x) => x.display.length, "desc"])?.display.length
     if (!max) return results
@@ -749,7 +752,7 @@ export function Autocomplete(props: {
             <box
               paddingLeft={1}
               paddingRight={1}
-              backgroundColor={index === store.selected ? theme.primary : undefined}
+              backgroundColor={index === store.selected ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               flexDirection="row"
               onMouseMove={() => {
                 setStore("input", "mouse")

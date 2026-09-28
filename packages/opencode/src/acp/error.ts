@@ -1,19 +1,26 @@
 import { RequestError } from "@agentclientprotocol/sdk"
 import { Schema } from "effect"
 
+// ACP clients send these ids on the wire. The brands name the domain of each
+// id. They do not claim that the id exists or that it is valid.
+export const RequestedSessionId = Schema.String.pipe(Schema.brand("ACPRequestedSessionId"))
+export const RequestedConfigId = Schema.String.pipe(Schema.brand("ACPRequestedConfigId"))
+export const RequestedModelId = Schema.String.pipe(Schema.brand("ACPRequestedModelId"))
+export const RequestedAuthMethodId = Schema.String.pipe(Schema.brand("ACPRequestedAuthMethodId"))
+
 export class SessionNotFoundError extends Schema.TaggedError<SessionNotFoundError>()("ACPSessionNotFoundError", {
-  sessionId: Schema.String,
+  sessionId: RequestedSessionId,
 }) {}
 
 export class InvalidConfigOptionError extends Schema.TaggedError<InvalidConfigOptionError>()(
   "ACPInvalidConfigOptionError",
   {
-    configId: Schema.String,
+    configId: RequestedConfigId,
   },
 ) {}
 
 export class InvalidModelError extends Schema.TaggedError<InvalidModelError>()("ACPInvalidModelError", {
-  modelId: Schema.String,
+  modelId: RequestedModelId,
   providerId: Schema.optional(Schema.String),
 }) {}
 
@@ -29,12 +36,9 @@ export class AuthRequiredError extends Schema.TaggedError<AuthRequiredError>()("
   providerId: Schema.optional(Schema.String),
 }) {}
 
-export class UnknownAuthMethodError extends Schema.TaggedError<UnknownAuthMethodError>()(
-  "ACPUnknownAuthMethodError",
-  {
-    methodId: Schema.String,
-  },
-) {}
+export class UnknownAuthMethodError extends Schema.TaggedError<UnknownAuthMethodError>()("ACPUnknownAuthMethodError", {
+  methodId: RequestedAuthMethodId,
+}) {}
 
 export class UnsupportedOperationError extends Schema.TaggedError<UnsupportedOperationError>()(
   "ACPUnsupportedOperationError",
@@ -81,15 +85,15 @@ export function toRequestError(error: Error) {
       return RequestError.invalidParams({ methodId: error.methodId }, `unknown auth method: ${error.methodId}`)
     case "ACPUnsupportedOperationError":
       return RequestError.methodNotFound(error.method)
-    case "ACPServiceFailureError":
-      return RequestError.internalError(
-        {
-          ...(error.service ? { service: error.service } : {}),
-          ...(error.errorName ? { errorName: error.errorName } : {}),
-        },
-        error.safeMessage,
-      )
   }
+  // The switch narrows the remaining case to ServiceFailureError.
+  return RequestError.internalError(
+    {
+      ...(error.service ? { service: error.service } : {}),
+      ...(error.errorName ? { errorName: error.errorName } : {}),
+    },
+    error.safeMessage,
+  )
 }
 
 export function fromUnknownDefect(_defect: unknown, safeMessage = "Internal service failure") {

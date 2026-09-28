@@ -5,10 +5,10 @@ export const worktree = "/tmp/opencode"
 export const directory = `${worktree}/packages/tui`
 
 export function json(data: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  })
+  // Caller headers win; the JSON content type is only a default.
+  const headers = new Headers(init?.headers)
+  if (!headers.has("content-type")) headers.set("content-type", "application/json")
+  return new Response(JSON.stringify(data), { ...init, headers })
 }
 
 export function eventSource(): EventSource {
@@ -28,7 +28,7 @@ export function createEventSource() {
         }
       },
     } satisfies EventSource,
-    emit(event: GlobalEvent) {
+    emit: (event: GlobalEvent) => {
       if (!fn) throw new Error("event source not ready")
       fn(event)
       if (!("properties" in event.payload)) return
@@ -63,7 +63,7 @@ export type FetchHandler = (url: URL) => Response | Promise<Response> | undefine
 
 export function createFetch(override?: FetchHandler, events?: ReturnType<typeof createEventSource>) {
   const session = [] as URL[]
-  const fetch = (async (input: RequestInfo | URL) => {
+  const handle = async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     if (url.pathname === "/session") session.push(url)
     const overridden = await override?.(url)
@@ -104,6 +104,8 @@ export function createFetch(override?: FetchHandler, events?: ReturnType<typeof 
     if (url.pathname === "/session") return json([])
     if (url.pathname === "/vcs") return json({ branch: "main" })
     throw new Error(`unexpected request: ${url.pathname}`)
-  }) as typeof globalThis.fetch
+  }
+  // Bun's fetch type also carries `preconnect`; the fake has nothing to warm up.
+  const fetch: typeof globalThis.fetch = Object.assign(handle, { preconnect: () => {} })
   return { fetch, session }
 }

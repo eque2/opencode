@@ -3,14 +3,16 @@ import { terminalWriter } from "./terminal-writer"
 
 describe("terminalWriter", () => {
   test("buffers and flushes once per schedule", () => {
-    const calls: string[] = []
-    const scheduled: VoidFunction[] = []
+    let calls: string[] = []
+    let scheduled: VoidFunction[] = []
     const writer = terminalWriter(
       (data, done) => {
-        calls.push(data)
+        calls = [...calls, data]
         done?.()
       },
-      (flush) => scheduled.push(flush),
+      (flush) => {
+        scheduled = [...scheduled, flush]
+      },
     )
 
     writer.push("a")
@@ -25,10 +27,10 @@ describe("terminalWriter", () => {
   })
 
   test("flush is a no-op when empty", () => {
-    const calls: string[] = []
+    let calls: string[] = []
     const writer = terminalWriter(
       (data, done) => {
-        calls.push(data)
+        calls = [...calls, data]
         done?.()
       },
       (flush) => flush(),
@@ -38,11 +40,11 @@ describe("terminalWriter", () => {
   })
 
   test("flush waits for pending write completion", () => {
-    const calls: string[] = []
+    let calls: string[] = []
     let done: VoidFunction | undefined
     const writer = terminalWriter(
       (data, finish) => {
-        calls.push(data)
+        calls = [...calls, data]
         done = finish
       },
       (flush) => flush(),

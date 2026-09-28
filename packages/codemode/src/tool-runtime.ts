@@ -1,4 +1,18 @@
-import { Cause, Effect, Schema } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Chunk,
+  Clock,
+  Data,
+  DateTime,
+  Effect,
+  HashSet,
+  Option,
+  Predicate,
+  Ref,
+  Result,
+  Schema,
+} from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -7,8 +21,9 @@ import {
   inputProperties,
   inputTypeScript,
   outputTypeScript,
+  quoteJsonString,
 } from "./tool-schema.js"
-import { isDefinition as isToolDefinition, type Definition } from "./tool.js"
+import { isDefinition as isToolDefinition, make as makeTool, type Definition } from "./tool.js"
 import {
   SandboxDate,
   SandboxMap,
@@ -33,10 +48,7 @@ type ServicesOf<Tools, Depth extends ReadonlyArray<unknown>> = Depth["length"] e
   ? never
   : Tools extends (...args: Array<unknown>) => Effect.Effect<unknown, unknown, infer R>
     ? R
-    : Tools extends {
-          readonly _tag: "CodeModeTool"
-          readonly run: (input: unknown) => Effect.Effect<unknown, unknown, infer R>
-        }
+    : Tools extends Definition<infer R>
       ? R
       : Tools extends object
         ? string extends keyof Tools
@@ -82,6 +94,13 @@ export type ToolDescription = {
 
 export type SafeObject = Record<string, unknown>
 
+/**
+ * A prototype-free record, so a key can never resolve through Object.prototype. The one factory
+ * for the package: copied data, program objects, and stdlib results all use it.
+ */
+// eslint-disable-next-line effect/no-null-use-option -- (a) Object.create(null) is the only platform API that builds a prototype-free object
+export const makeSafeObject = (): SafeObject => Object.create(null)
+
 const reservedNamespace = "$codemode"
 const defaultCatalogBudget = 2_000
 const defaultSearchLimit = 10
@@ -92,22 +111,22 @@ const SearchInput = Schema.Struct({
   namespace: Schema.optionalKey(Schema.String),
   limit: Schema.optionalKey(PositiveInt),
   offset: Schema.optionalKey(NonNegativeInt),
-})
+}).annotate({ identifier: "SearchInput" })
 const SearchItem = Schema.Struct({
   path: Schema.String,
   description: Schema.String,
   signature: Schema.String,
-})
+}).annotate({ identifier: "SearchItem" })
 const SearchOutput = Schema.Struct({
   items: Schema.Array(SearchItem),
   remaining: NonNegativeInt,
   next: Schema.NullOr(Schema.Struct({ offset: NonNegativeInt })),
-})
+}).annotate({ identifier: "SearchOutput" })
 const toolExpression = (path: string) =>
   "tools" +
   path
     .split(".")
-    .map((segment) => (identifierSegment.test(segment) ? `.${segment}` : `[${JSON.stringify(segment)}]`))
+    .map((segment) => (identifierSegment.test(segment) ? `.${segment}` : `[${quoteJsonString(segment)}]`))
     .join("")
 
 export class ToolReference {
@@ -121,21 +140,27 @@ export class ToolReference {
  */
 const MAX_VALUE_DEPTH = 32
 
-export class ToolRuntimeError extends Error {
-  constructor(
-    readonly kind:
-      | "UnknownTool"
-      | "InvalidToolInput"
-      | "InvalidToolOutput"
-      | "InvalidDataValue"
-      | "ToolCallLimitExceeded",
-    message: string,
-    readonly suggestions: ReadonlyArray<string> = [],
-  ) {
-    super(message)
-    this.name = "ToolRuntimeError"
+type ToolRuntimeErrorKind =
+  | "UnknownTool"
+  | "InvalidToolInput"
+  | "InvalidToolOutput"
+  | "InvalidDataValue"
+  | "ToolCallLimitExceeded"
+
+export class ToolRuntimeError extends Data.TaggedError("ToolRuntimeError")<{
+  readonly kind: ToolRuntimeErrorKind
+  readonly message: string
+  readonly suggestions: ReadonlyArray<string>
+}> {
+  constructor(kind: ToolRuntimeErrorKind, message: string, suggestions: ReadonlyArray<string> = []) {
+    super({ kind, message, suggestions })
   }
 }
+
+/** A host tool tree claims the namespace that CodeMode keeps for its own discovery tools. */
+export class ReservedNamespaceError extends Data.TaggedError("ReservedNamespaceError")<{
+  readonly message: string
+}> {}
 
 const isDefinition = <R>(value: HostTool<R> | Definition<R> | HostTools<R>): value is Definition<R> =>
   isToolDefinition<R>(value)
@@ -149,9 +174,9 @@ const runHost = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, Tool
     }),
   )
 
-const blockedMemberNames = new Set(["__proto__", "constructor", "prototype"])
+const blockedMemberNames = HashSet.make("__proto__", "constructor", "prototype")
 
-export const isBlockedMember = (name: string): boolean => blockedMemberNames.has(name)
+export const isBlockedMember = (name: string): boolean => HashSet.has(blockedMemberNames, name)
 
 /**
  * Validates and copies a value against the plain-data contract (depth, circularity, plain
@@ -168,22 +193,30 @@ export const isBlockedMember = (name: string): boolean => blockedMemberNames.has
  *
  * Both modes reject un-awaited promises with an await-hinting diagnostic.
  */
-export const copyIn = (value: unknown, label: string, preserveSandboxValues = false): unknown =>
-  copyBounded(value, label, 0, new Set(), preserveSandboxValues)
+export const copyIn = (
+  value: unknown,
+  label: string,
+  preserveSandboxValues = false,
+): Result.Result<unknown, ToolRuntimeError> => copyBounded(value, label, 0, new WeakSet(), preserveSandboxValues)
 
+const invalidData = (message: string): Result.Result<never, ToolRuntimeError> =>
+  Result.fail(new ToolRuntimeError("InvalidDataValue", message))
+
+// The walk is synchronous and stops at the first failure: it runs on every binary expression
+// result, so it must not pay for an Effect step per node.
 const copyBounded = (
   value: unknown,
   label: string,
   depth: number,
-  seen: Set<object>,
+  /** Identity guard over the objects on the current path; entries leave again on the way out. */
+  seen: WeakSet<object>,
   preserveSandboxValues: boolean,
-): unknown => {
+): Result.Result<unknown, ToolRuntimeError> => {
   if (depth > MAX_VALUE_DEPTH) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`)
+    return invalidData(`${label} exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`)
   }
   if (
-    value === null ||
-    value === undefined ||
+    Predicate.isNullish(value) ||
     typeof value === "string" ||
     typeof value === "boolean" ||
     // NaN/Infinity are allowed to exist as in-sandbox intermediates (matching real JS and a real
@@ -192,18 +225,17 @@ const copyBounded = (
     // JSON.stringify already does at any tool boundary.
     typeof value === "number"
   ) {
-    return value
+    return Result.succeed(value)
   }
 
   if (typeof value !== "object") {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} must contain data only.`)
+    return invalidData(`${label} must contain data only.`)
   }
 
   // An un-awaited promise never crosses a data checkpoint as `{}`; the diagnostic tells the
   // model exactly how to fix the program instead.
   if (value instanceof SandboxPromise) {
-    throw new ToolRuntimeError(
-      "InvalidDataValue",
+    return invalidData(
       `${label} contains an un-awaited Promise; await tool calls (e.g. \`const result = await tools.ns.tool(...)\`) before using their results.`,
     )
   }
@@ -220,39 +252,50 @@ const copyBounded = (
       value instanceof SandboxURL ||
       value instanceof SandboxURLSearchParams
     ) {
-      return value
+      return Result.succeed(value)
     }
     // Host instances cannot normally reach an intra-sandbox checkpoint (tool results cross
     // the boundary first), but wrap them defensively rather than degrading to JSON forms.
-    if (value instanceof Date) return new SandboxDate(value.getTime())
-    if (value instanceof RegExp) return new SandboxRegExp(value.source, value.flags)
+    if (value instanceof Date) return Result.succeed(new SandboxDate(value.getTime()))
+    if (value instanceof RegExp) return Result.succeed(new SandboxRegExp(value.source, value.flags))
     if (value instanceof Map) {
       const wrapped = new SandboxMap()
       for (const [key, item] of value.entries()) {
-        wrapped.map.set(copyBounded(key, label, depth + 1, seen, true), copyBounded(item, label, depth + 1, seen, true))
+        const copiedKey = copyBounded(key, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedKey)) return copiedKey
+        const copiedItem = copyBounded(item, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedItem)) return copiedItem
+        wrapped.map.set(copiedKey.success, copiedItem.success)
       }
-      return wrapped
+      return Result.succeed(wrapped)
     }
     if (value instanceof Set) {
       const wrapped = new SandboxSet()
-      for (const item of value.values()) wrapped.set.add(copyBounded(item, label, depth + 1, seen, true))
-      return wrapped
+      for (const item of value.values()) {
+        const copiedItem = copyBounded(item, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedItem)) return copiedItem
+        wrapped.set.add(copiedItem.success)
+      }
+      return Result.succeed(wrapped)
     }
-    if (value instanceof URL) return new SandboxURL(new URL(value.href))
-    if (value instanceof URLSearchParams) return new SandboxURLSearchParams(new URLSearchParams(value))
+    if (value instanceof URL) return Result.succeed(new SandboxURL(new URL(value.href)))
+    if (value instanceof URLSearchParams) {
+      return Result.succeed(new SandboxURLSearchParams(new URLSearchParams(value)))
+    }
   }
 
   // Sandbox value types (and their host counterparts, which a host tool may legitimately
   // return) serialize exactly as JSON.stringify would at the data boundary: Date/URL use
-  // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}.
+  // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}. An invalid
+  // date has no ISO form: DateTime.make yields None and the JSON value is null, as in toJSON().
   if (value instanceof SandboxDate) {
-    return Number.isFinite(value.time) ? new Date(value.time).toISOString() : null
+    return Result.succeed(Option.getOrNull(Option.map(DateTime.make(value.time), DateTime.formatIso)))
   }
   if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value.toISOString() : null
+    return Result.succeed(Option.getOrNull(Option.map(DateTime.make(value), DateTime.formatIso)))
   }
-  if (value instanceof SandboxURL) return value.url.href
-  if (value instanceof URL) return value.href
+  if (value instanceof SandboxURL) return Result.succeed(value.url.href)
+  if (value instanceof URL) return Result.succeed(value.href)
   if (
     value instanceof SandboxRegExp ||
     value instanceof SandboxMap ||
@@ -263,50 +306,62 @@ const copyBounded = (
     value instanceof Set ||
     value instanceof URLSearchParams
   ) {
-    return Object.create(null) as SafeObject
+    return Result.succeed(makeSafeObject())
   }
 
   if (seen.has(value)) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} contains a circular value.`)
+    return invalidData(`${label} contains a circular value.`)
   }
 
   seen.add(value)
 
   if (Array.isArray(value)) {
-    const copied = value.map((item) => copyBounded(item, label, depth + 1, seen, preserveSandboxValues))
+    // Array.prototype.map keeps holes as holes. After the first failure the rest is not walked.
+    let failure = Option.none<ToolRuntimeError>()
+    const copied = value.map((item) => {
+      if (Option.isSome(failure)) return item
+      const next = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+      if (Result.isSuccess(next)) return next.success
+      failure = Option.some(next.failure)
+      return item
+    })
+    if (Option.isSome(failure)) return Result.fail(failure.value)
     seen.delete(value)
-    return copied
+    return Result.succeed(copied)
   }
 
   const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} must contain plain objects only.`)
+  if (prototype !== Object.prototype && Predicate.isNotNull(prototype)) {
+    return invalidData(`${label} must contain plain objects only.`)
   }
 
-  const copied: SafeObject = Object.create(null) as SafeObject
+  const copied = makeSafeObject()
   for (const [key, item] of Object.entries(value)) {
     if (isBlockedMember(key)) {
-      throw new ToolRuntimeError("InvalidDataValue", `${label} contains blocked property '${key}'.`)
+      return invalidData(`${label} contains blocked property '${key}'.`)
     }
-    copied[key] = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+    const copiedItem = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+    if (Result.isFailure(copiedItem)) return copiedItem
+    copied[key] = copiedItem.success
   }
   seen.delete(value)
-  return copied
+  return Result.succeed(copied)
 }
 
 export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
-  if (value === undefined && undefinedAsNull) return null
-  // Normalize non-finite numbers to null as the value crosses out of the sandbox (final return
-  // and tool-call arguments both funnel through here), matching JSON semantics - NaN/Infinity
-  // have no JSON representation, so JSON.stringify would produce null anyway.
-  if (typeof value === "number" && !Number.isFinite(value)) {
+  // Normalize undefined (when undefinedAsNull is set) and non-finite numbers to null as the value
+  // crosses out of the sandbox (final return and tool-call arguments both funnel through here),
+  // matching JSON semantics - NaN/Infinity have no JSON representation, so JSON.stringify would
+  // produce null anyway.
+  if ((value === undefined && undefinedAsNull) || (typeof value === "number" && !Number.isFinite(value))) {
+    // eslint-disable-next-line effect/no-null-use-option -- (b) the value is JSON null in the serialized program output, which Option cannot represent
     return null
   }
   if (Array.isArray(value)) {
     return value.map((item) => copyOut(item, undefinedAsNull))
   }
 
-  if (value !== null && typeof value === "object" && !(value instanceof ToolReference)) {
+  if (Predicate.isObjectOrArray(value) && !(value instanceof ToolReference)) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyOut(item, undefinedAsNull)]))
   }
 
@@ -316,15 +371,13 @@ export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
 const definitions = <R>(
   tools: HostTools<R>,
   path: ReadonlyArray<string> = [],
-): Array<{ path: string; definition: Definition<R> }> => {
-  const entries: Array<{ path: string; definition: Definition<R> }> = []
-  for (const [name, value] of Object.entries(tools)) {
+): Array<{ path: string; definition: Definition<R> }> =>
+  Object.entries(tools).flatMap(([name, value]) => {
     const next = [...path, name]
-    if (isDefinition(value)) entries.push({ path: next.join("."), definition: value })
-    else if (typeof value !== "function") entries.push(...definitions(value, next))
-  }
-  return entries
-}
+    if (isDefinition(value)) return [{ path: next.join("."), definition: value }]
+    if (typeof value !== "function") return definitions(value, next)
+    return []
+  })
 
 const describeDefinition = <R>(path: string, definition: Definition<R>): ToolDescription => ({
   path,
@@ -376,44 +429,42 @@ const tokenize = (query: string): Array<string> =>
  * needed only on the query side; scoring weights are unchanged - each field check
  * passes when ANY form matches.
  */
-const termForms = (term: string): Array<string> => {
-  const forms = [term]
-  if (term.endsWith("es") && term.length > 3) forms.push(term.slice(0, -2))
-  if (term.endsWith("s") && term.length > 2) forms.push(term.slice(0, -1))
-  return forms
-}
+const termForms = (term: string): Array<string> => [
+  term,
+  ...(term.endsWith("es") && term.length > 3 ? [term.slice(0, -2)] : []),
+  ...(term.endsWith("s") && term.length > 2 ? [term.slice(0, -1)] : []),
+]
 
-const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => ({
-  _tag: "CodeModeTool",
-  description: "Search available Code Mode tools",
-  input: SearchInput,
-  output: SearchOutput,
-  run: (input) =>
-    Effect.sync(() => {
-      const request = input as typeof SearchInput.Type
-      const query = request.query ?? ""
-      const offset = request.offset ?? 0
-      const scoped =
-        request.namespace === undefined
-          ? searchIndex
-          : searchIndex.filter((entry) => entry.namespace === request.namespace)
-      // A query that names one tool path exactly (canonical path or rendered JavaScript
-      // expression) is a lookup, not a search: return that tool alone.
-      const trimmed = query.trim()
-      const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
-      const exact =
-        pathQuery === ""
-          ? undefined
-          : scoped.find(
-              (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
-            )
-      const terms = tokenize(query).map(termForms)
-      // Additive field-weighted scoring, summed across terms: exact path or path segment
-      // (20) > path substring (8) > description substring (4) > any searchable text,
-      // including input parameter names and descriptions (2).
-      const ranked =
-        exact !== undefined
-          ? [exact]
+const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition =>
+  makeTool({
+    description: "Search available Code Mode tools",
+    input: SearchInput,
+    output: SearchOutput,
+    run: (request) =>
+      Effect.sync(() => {
+        const query = request.query ?? ""
+        const offset = request.offset ?? 0
+        const scoped =
+          request.namespace === undefined
+            ? searchIndex
+            : searchIndex.filter((entry) => entry.namespace === request.namespace)
+        // A query that names one tool path exactly (canonical path or rendered JavaScript
+        // expression) is a lookup, not a search: return that tool alone.
+        const trimmed = query.trim()
+        const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
+        const exact =
+          pathQuery === ""
+            ? Option.none()
+            : Arr.findFirst(
+                scoped,
+                (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
+              )
+        const terms = tokenize(query).map(termForms)
+        // Additive field-weighted scoring, summed across terms: exact path or path segment
+        // (20) > path substring (8) > description substring (4) > any searchable text,
+        // including input parameter names and descriptions (2).
+        const ranked = Option.isSome(exact)
+          ? [exact.value]
           : scoped
               .map((entry) => {
                 const path = entry.description.path.toLowerCase()
@@ -435,31 +486,29 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => 
                   right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
               )
               .map(({ entry }) => entry)
-      const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
-        ...description,
-        path: toolExpression(description.path),
-      }))
-      const remaining = Math.max(0, ranked.length - offset - items.length)
-      return {
-        items,
-        remaining,
-        next: remaining > 0 ? { offset: offset + items.length } : null,
-      }
-    }),
-})
+        const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
+          ...description,
+          path: toolExpression(description.path),
+        }))
+        const remaining = Math.max(0, ranked.length - offset - items.length)
+        const next = remaining > 0 ? Option.some({ offset: offset + items.length }) : Option.none()
+        // The search result is the model-visible JSON boundary: no next page is `next: null`.
+        return { items, remaining, next: Option.getOrNull(next) }
+      }),
+  })
 
 const searchDescription = describeDefinition(`${reservedNamespace}.search`, makeSearchTool([]))
 
 const catalogLine = (tool: ToolDescription) => {
   // Keep the tool description concise; the full schema documentation remains in the signature.
-  const line = tool.description.split("\n", 1)[0]!.trim()
+  const line = tool.description.split("\n", 1)[0].trim()
   const description = line.length > 120 ? line.slice(0, 119) + "..." : line
   return description === "" ? `  - ${tool.signature}` : `  - ${tool.signature} // ${description}`
 }
 
 const toSearchEntry = <R>(path: string, definition: Definition<R>, description: ToolDescription): SearchEntry => ({
   description,
-  namespace: path.split(".", 1)[0]!,
+  namespace: path.split(".", 1)[0],
   searchText: [
     path,
     definition.description,
@@ -477,7 +526,10 @@ export const searchIndex = <R>(tools: HostTools<R>): ReadonlyArray<SearchEntry> 
 
 export const assertValidTools = <R>(tools: HostTools<R>): void => {
   if (Object.hasOwn(tools, reservedNamespace)) {
-    throw new Error(`Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`)
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) CodeMode.make and CodeMode.execute are synchronous public APIs that opencode code-mode.ts calls; codemode.test.ts pins the synchronous throw
+    throw new ReservedNamespaceError({
+      message: `Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`,
+    })
   }
 }
 
@@ -494,19 +546,20 @@ export const assertValidTools = <R>(tools: HostTools<R>): void => {
  */
 export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBudget): DiscoveryPlan => {
   if (!Number.isSafeInteger(catalogBudget) || catalogBudget < 0) {
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-error-constructor -- (c) CodeMode.make is a synchronous public API; codemode.test.ts pins a synchronous toThrow(RangeError)
     throw new RangeError("discovery.catalogBudget must be a non-negative safe integer")
   }
   const visible = visibleDefinitions(tools)
   const described = visible.map(({ description }) => description)
 
-  const namespaces = new Map<string, Array<ToolDescription>>()
-  for (const tool of described) {
+  const namespaceOf = (tool: ToolDescription) => {
     const [namespace = tool.path] = tool.path.split(".")
-    const group = namespaces.get(namespace) ?? []
-    group.push(tool)
-    namespaces.set(namespace, group)
+    return namespace
   }
-  const ordered = [...namespaces].sort(([left], [right]) => left.localeCompare(right))
+  // Namespaces in first-seen order, then sorted; each group keeps the declaration order.
+  const ordered = Arr.dedupe(described.map(namespaceOf))
+    .sort((left, right) => left.localeCompare(right))
+    .map((namespace) => ({ namespace, group: described.filter((tool) => namespaceOf(tool) === namespace) }))
 
   // Select which signatures fit the budget before emitting, so the list can state
   // exactly how comprehensive it is. Round-robin fairness: in each round (namespaces
@@ -514,33 +567,35 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   // next-cheapest line against the shared budget; a namespace whose next line does not
   // fit is done - the others keep going - so every namespace gets some representation
   // before any namespace gets everything.
-  const selections = ordered.map(([namespace, group]) => ({
-    namespace,
-    picked: new Set<ToolDescription>(),
-    queue: [...group].sort(
-      (left, right) =>
-        estimateTokens(catalogLine(left)) - estimateTokens(catalogLine(right)) || left.path.localeCompare(right.path),
-    ),
-  }))
+  const selections = ordered.map(({ namespace, group }) => {
+    // Picked descriptions keep their identity: `includes` below matches the exact entries.
+    const picked: ReadonlyArray<ToolDescription> = []
+    return {
+      namespace,
+      group,
+      picked,
+      queue: [...group].sort(
+        (left, right) =>
+          estimateTokens(catalogLine(left)) - estimateTokens(catalogLine(right)) || left.path.localeCompare(right.path),
+      ),
+    }
+  })
   let used = 0
   let active = selections.filter((selection) => selection.queue.length > 0)
   while (active.length > 0) {
     const stillActive: typeof active = []
     for (const selection of active) {
-      const tool = selection.queue[0]!
+      const tool = selection.queue[0]
       const cost = estimateTokens(catalogLine(tool))
       if (used + cost > catalogBudget) continue
       selection.queue.shift()
-      selection.picked.add(tool)
+      selection.picked = Arr.append(selection.picked, tool)
       used += cost
       if (selection.queue.length > 0) stillActive.push(selection)
     }
     active = stillActive
   }
-  const shown = new Map<string, ReadonlySet<ToolDescription>>(
-    selections.map(({ namespace, picked }) => [namespace, picked]),
-  )
-  const totalShown = selections.reduce((total, { picked }) => total + picked.size, 0)
+  const totalShown = selections.reduce((total, { picked }) => total + picked.length, 0)
   const complete = totalShown === described.length
 
   const empty = described.length === 0
@@ -620,19 +675,18 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
         : `## Available tools (PARTIAL - ${totalShown} of ${described.length} shown; find the rest with tools.$codemode.search)`,
       "",
     )
-    for (const [namespace, group] of ordered) {
-      const picked = shown.get(namespace)!
+    for (const { namespace, group, picked } of selections) {
       const count = `${group.length} tool${group.length === 1 ? "" : "s"}`
       // Annotate only when a namespace is not fully shown, so a comprehensive
       // namespace reads cleanly and a truncated one is unambiguous.
       const label =
-        picked.size === group.length
+        picked.length === group.length
           ? count
-          : picked.size === 0
+          : picked.length === 0
             ? `${count}, none shown`
-            : `${count}, ${picked.size} shown`
+            : `${count}, ${picked.length} shown`
       toolSection.push(`- ${namespace} (${label})`)
-      for (const tool of group) if (picked.has(tool)) toolSection.push(catalogLine(tool))
+      for (const tool of group) if (picked.includes(tool)) toolSection.push(catalogLine(tool))
     }
     if (!complete) {
       toolSection.push("", "Search returns complete callable signatures:", `- ${searchDescription.signature}`)
@@ -654,7 +708,10 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
  * function in JS). An unknown path is an `UnknownTool` error pointing at the working
  * discovery idioms, mirroring how calling an unknown tool fails.
  */
-const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): ReadonlyArray<string> => {
+const namespaceKeys = <R>(
+  tools: HostTools<R>,
+  path: ReadonlyArray<string>,
+): Effect.Effect<ReadonlyArray<string>, ToolRuntimeError> => {
   let value: HostTool<R> | Definition<R> | HostTools<R> = tools
   for (const segment of path) {
     if (
@@ -663,46 +720,53 @@ const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): Rea
       isDefinition(value) ||
       !Object.hasOwn(value, segment)
     ) {
-      throw new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
-        "Object.keys(tools) lists the available namespaces; tools.$codemode.search({ query }) finds described tools.",
-      ])
+      return Effect.fail(
+        new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
+          "Object.keys(tools) lists the available namespaces; tools.$codemode.search({ query }) finds described tools.",
+        ]),
+      )
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
   }
-  if (typeof value === "function" || isDefinition(value)) return []
-  return Object.keys(value)
+  if (typeof value === "function" || isDefinition(value)) return Effect.succeed([])
+  return Effect.succeed(Object.keys(value))
 }
 
-const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<R> | Definition<R> => {
-  let value: HostTool<R> | Definition<R> | HostTools<R> = tools
+const resolve = <R>(
+  tools: HostTools<R>,
+  path: ReadonlyArray<string>,
+): Effect.Effect<HostTool<R> | Definition<R>, ToolRuntimeError> =>
+  Effect.gen(function* () {
+    let value: HostTool<R> | Definition<R> | HostTools<R> = tools
 
-  for (const segment of path) {
-    if (
-      isBlockedMember(segment) ||
-      typeof value === "function" ||
-      isDefinition(value) ||
-      !Object.hasOwn(value, segment)
-    ) {
-      throw new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
-        "Use tools.$codemode.search({ query }) to find available described tools.",
-      ])
+    for (const segment of path) {
+      if (
+        isBlockedMember(segment) ||
+        typeof value === "function" ||
+        isDefinition(value) ||
+        !Object.hasOwn(value, segment)
+      ) {
+        return yield* new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
+          "Use tools.$codemode.search({ query }) to find available described tools.",
+        ])
+      }
+      value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
     }
-    value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
-  }
 
-  if (typeof value !== "function" && !isDefinition(value)) {
-    throw new ToolRuntimeError("UnknownTool", `Tool '${path.join(".")}' is not callable.`)
-  }
+    if (typeof value !== "function" && !isDefinition(value)) {
+      return yield* new ToolRuntimeError("UnknownTool", `Tool '${path.join(".")}' is not callable.`)
+    }
 
-  return value
-}
+    return value
+  })
 
 export type ToolRuntime<R = never> = {
   readonly root: ToolReference
-  readonly calls: Array<ToolCall>
+  /** A snapshot of the admitted tool calls, in admission order. */
+  readonly calls: Effect.Effect<ReadonlyArray<ToolCall>>
   readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
-  readonly keys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
+  readonly keys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>
 }
 
 export const make = <R>(
@@ -712,7 +776,7 @@ export const make = <R>(
   searchIndex: ReadonlyArray<SearchEntry>,
   hooks?: ToolCallHooks<R>,
 ): ToolRuntime<R> => {
-  const calls: Array<ToolCall> = []
+  const callLog = Ref.makeUnsafe(Chunk.empty<ToolCall>())
   const callableTools = {
     ...tools,
     [reservedNamespace]: { search: makeSearchTool(searchIndex) },
@@ -723,54 +787,78 @@ export const make = <R>(
   const observeEnd = <A, E>(effect: Effect.Effect<A, E, R>, call: ToolCallStarted): Effect.Effect<A, E, R> => {
     const onEnd = hooks?.onToolCallEnd
     if (onEnd === undefined) return effect
-    const startedAt = Date.now()
-    return effect.pipe(
-      Effect.tap(() => onEnd({ ...call, durationMs: Date.now() - startedAt, outcome: "success" })),
-      Effect.tapError((error) => {
-        const message =
-          error instanceof ToolError || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
-        return onEnd({
-          ...call,
-          durationMs: Date.now() - startedAt,
-          outcome: "failure",
-          message,
-        })
-      }),
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis
+      const elapsed = Effect.map(Clock.currentTimeMillis, (now) => now - startedAt)
+      return yield* effect.pipe(
+        Effect.tap(() => Effect.flatMap(elapsed, (durationMs) => onEnd({ ...call, durationMs, outcome: "success" }))),
+        Effect.tapError((error) => {
+          const message =
+            error instanceof ToolError || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
+          return Effect.flatMap(elapsed, (durationMs) =>
+            onEnd({
+              ...call,
+              durationMs,
+              outcome: "failure",
+              message,
+            }),
+          )
+        }),
+      )
+    })
+  }
+
+  // Any failure to copy a tool result is an invalid output. A hostile host value can also throw
+  // while the walk reads it (a Proxy trap, a getter), so the walk runs inside Result.try.
+  const decodeOutput = (value: unknown, name: string): Effect.Effect<unknown, ToolRuntimeError> => {
+    const invalidOutput = () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`)
+    return Effect.fromResult(
+      Result.flatMap(
+        Result.try({ try: () => copyIn(value, `Result from tool '${name}'`), catch: invalidOutput }),
+        (copied) => Result.mapError(copied, invalidOutput),
+      ),
     )
   }
 
-  const decodeOutput = (value: unknown, name: string) =>
-    Effect.try({
-      try: () => copyIn(value, `Result from tool '${name}'`),
-      catch: () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`),
-    })
-
-  const recordCall = (call: ToolCall): void => {
-    if (maxToolCalls !== undefined && calls.length >= maxToolCalls) {
-      throw new ToolRuntimeError("ToolCallLimitExceeded", `Execution exceeded its tool-call limit of ${maxToolCalls}.`)
-    }
-    calls.push(call)
-  }
+  // One Ref.modify checks the limit and appends the call, so concurrent calls cannot both pass
+  // the check. The result is the call's index in the log.
+  const recordCall = (call: ToolCall): Effect.Effect<number, ToolRuntimeError> =>
+    Effect.flatten(
+      Ref.modify(callLog, (calls): readonly [Effect.Effect<number, ToolRuntimeError>, Chunk.Chunk<ToolCall>] =>
+        maxToolCalls !== undefined && Chunk.size(calls) >= maxToolCalls
+          ? [
+              Effect.fail(
+                new ToolRuntimeError(
+                  "ToolCallLimitExceeded",
+                  `Execution exceeded its tool-call limit of ${maxToolCalls}.`,
+                ),
+              ),
+              calls,
+            ]
+          : [Effect.succeed(Chunk.size(calls)), Chunk.append(calls, call)],
+      ),
+    )
 
   return {
     root: new ToolReference([]),
-    calls,
+    calls: Effect.map(Ref.get(callLog), Chunk.toReadonlyArray),
     keys: (path) => namespaceKeys(callableTools, path),
     invoke: (path, args) =>
       Effect.gen(function* () {
         const name = path.join(".")
-        const externalArgs = args.map((arg) => copyOut(copyIn(arg, `Arguments for tool '${name}'`)))
+        const externalArgs = yield* Effect.fromResult(
+          Result.all(
+            args.map((arg) => Result.map(copyIn(arg, `Arguments for tool '${name}'`), (copied) => copyOut(copied))),
+          ),
+        )
         const call = { name }
         const recordAndObserve = (input: unknown) =>
-          Effect.sync(() => {
-            recordCall(call)
-            return calls.length - 1
-          }).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
-        const tool = resolve(callableTools, path)
+          recordCall(call).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
+        const tool = yield* resolve(callableTools, path)
         let describedInput: unknown
         if (isDefinition(tool)) {
           if (externalArgs.length !== 1)
-            throw new ToolRuntimeError("InvalidToolInput", `Tool '${name}' expects exactly one input object.`)
+            return yield* new ToolRuntimeError("InvalidToolInput", `Tool '${name}' expects exactly one input object.`)
           describedInput = yield* Effect.try({
             try: () => decodeToolInput(tool, externalArgs[0]),
             catch: (cause) =>

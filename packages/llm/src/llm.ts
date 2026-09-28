@@ -1,5 +1,5 @@
 import { Effect, JsonSchema, Schema } from "effect"
-import { LLMClient } from "./route/client"
+import { LLMClient, type Service as LLMClientService } from "./route/client"
 import {
   GenerationOptions,
   HttpOptions,
@@ -11,9 +11,9 @@ import {
   Message,
   type ModelInput as SchemaModelInput,
   SystemPart,
+  type SystemPartInput,
   ToolChoice,
   ToolDefinition,
-  type ContentPart,
   ToolResultPart,
 } from "./schema"
 import { make as makeTool, toDefinitions, type ToolSchema } from "./tool"
@@ -32,8 +32,8 @@ export type RequestInput = Omit<
   ConstructorParameters<typeof LLMRequest>[0],
   "system" | "messages" | "tools" | "toolChoice" | "generation" | "http" | "providerOptions"
 > & {
-  readonly system?: string | SystemPart | ReadonlyArray<SystemPart>
-  readonly prompt?: string | ContentPart | ReadonlyArray<ContentPart>
+  readonly system?: string | SystemPartInput | ReadonlyArray<SystemPartInput>
+  readonly prompt?: Message.ContentInput
   readonly messages?: ReadonlyArray<Message | MessageInput>
   readonly tools?: ReadonlyArray<ToolDefinition.Input>
   readonly toolChoice?: ToolChoiceInput
@@ -67,10 +67,10 @@ export const request = (input: RequestInput) => {
     system: SystemPart.content(requestSystem),
     messages: [...(messages?.map(Message.make) ?? []), ...(prompt === undefined ? [] : [Message.user(prompt)])],
     tools: tools?.map(ToolDefinition.make) ?? [],
-    toolChoice: requestToolChoice ? ToolChoice.make(requestToolChoice) : undefined,
-    generation: requestGeneration === undefined ? undefined : GenerationOptions.make(requestGeneration),
+    ...(requestToolChoice ? { toolChoice: ToolChoice.make(requestToolChoice) } : {}),
+    ...(requestGeneration === undefined ? {} : { generation: GenerationOptions.make(requestGeneration) }),
     providerOptions: requestProviderOptions,
-    http: requestHttp === undefined ? undefined : HttpOptions.make(requestHttp),
+    ...(requestHttp === undefined ? {} : { http: HttpOptions.make(requestHttp) }),
   })
 }
 
@@ -157,10 +157,10 @@ const runGenerateObject = Effect.fn("LLM.generateObject")(function* (
  */
 export function generateObject<S extends ToolSchema<any>>(
   options: GenerateObjectOptions<S>,
-): Effect.Effect<GenerateObjectResponse<Schema.Schema.Type<S>>, LLMError>
+): Effect.Effect<GenerateObjectResponse<Schema.Schema.Type<S>>, LLMError, LLMClientService>
 export function generateObject(
   options: GenerateObjectDynamicOptions,
-): Effect.Effect<GenerateObjectResponse<unknown>, LLMError>
+): Effect.Effect<GenerateObjectResponse<unknown>, LLMError, LLMClientService>
 export function generateObject(options: GenerateObjectOptions<ToolSchema<any>> | GenerateObjectDynamicOptions) {
   if ("schema" in options) {
     const { schema, ...rest } = options
@@ -169,7 +169,8 @@ export function generateObject(options: GenerateObjectOptions<ToolSchema<any>> |
       makeTool({
         description: GENERATE_OBJECT_TOOL_DESCRIPTION,
         parameters: schema,
-        success: Schema.Unknown as ToolSchema<unknown>,
+        // The forced tool is never executed; its handler returns nothing.
+        success: Schema.Void,
         execute: () => Effect.void,
       }),
     )

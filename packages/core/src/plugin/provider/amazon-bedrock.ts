@@ -1,7 +1,8 @@
-import { Effect } from "effect"
+import { Config, Effect, Option, Redacted, String as Str } from "effect"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
+import { readEnvSnapshot } from "./env-snapshot"
 
 type MantleSDK = {
   languageModel: (modelID: string) => LanguageModelV3
@@ -9,16 +10,19 @@ type MantleSDK = {
   responses: (modelID: string) => LanguageModelV3
 }
 
+const regionEnv = Config.String("AWS_REGION").pipe(Config.withDefault("us-east-1"))
+const profileEnv = Config.option(Config.String("AWS_PROFILE"))
+const bearerTokenEnv = Config.option(Config.Redacted("AWS_BEARER_TOKEN_BEDROCK"))
+
 // Bedrock cross-region inference profiles require regional prefixes only for
 // specific model/region combinations. Keep the mapping narrow and avoid
 // double-prefixing model IDs that models.dev already marks as global/us/eu/etc.
-function resolveModelID(modelID: string, region: string | undefined) {
+function resolveModelID(modelID: string, resolvedRegion: string) {
   if (modelID.startsWith("arn:")) return modelID
 
   const crossRegionPrefixes = ["global.", "us.", "eu.", "jp.", "apac.", "au."]
   if (crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))) return modelID
 
-  const resolvedRegion = region ?? "us-east-1"
   const regionPrefix = resolvedRegion.split("-")[0]
   if (regionPrefix === "us") {
     const requiresPrefix = [
@@ -90,23 +94,34 @@ export const AmazonBedrockPlugin = define({
       Effect.fn(function* (evt) {
         if (!["@ai-sdk/amazon-bedrock", "@ai-sdk/amazon-bedrock/mantle"].includes(evt.package)) return
         const options = { ...evt.options }
-        const profile = typeof options.profile === "string" ? options.profile : process.env.AWS_PROFILE
-        const region = typeof options.region === "string" ? options.region : (process.env.AWS_REGION ?? "us-east-1")
-        const bearerToken =
-          process.env.AWS_BEARER_TOKEN_BEDROCK ??
-          (typeof options.bearerToken === "string" ? options.bearerToken : undefined)
-        if (bearerToken && !process.env.AWS_BEARER_TOKEN_BEDROCK) process.env.AWS_BEARER_TOKEN_BEDROCK = bearerToken
-        const containerCreds = Boolean(
-          process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+        const region = typeof options.region === "string" ? options.region : yield* readEnvSnapshot(regionEnv)
+        const envToken = Option.map(yield* readEnvSnapshot(bearerTokenEnv), Redacted.value)
+        const optionToken = typeof options.bearerToken === "string" ? Option.some(options.bearerToken) : Option.none()
+        // The env token wins even when empty; an empty token means no bearer auth.
+        const bearerToken = envToken.pipe(
+          Option.orElse(() => optionToken),
+          Option.filter(Str.isNonEmpty),
         )
+        if (Option.isNone(envToken) && Option.isSome(bearerToken)) {
+          // eslint-disable-next-line effect/no-process-env-use-config -- (a) env write, not a read: AWS clients read AWS_BEARER_TOKEN_BEDROCK from process.env, and Effect Config cannot write env
+          process.env.AWS_BEARER_TOKEN_BEDROCK = bearerToken.value
+        }
 
         options.region = region
         if (typeof options.endpoint === "string") options.baseURL = options.endpoint
-        if (!bearerToken && options.credentialProvider === undefined) {
+        // Pass the token as the SDK apiKey setting, so SDK auth does not depend on process.env.
+        if (Option.isSome(bearerToken)) options.apiKey ??= bearerToken.value
+        if (Option.isNone(bearerToken) && options.credentialProvider === undefined) {
           // Do not gate SDK creation on explicit AWS env vars. The default chain
           // also handles ~/.aws/credentials, SSO, process creds, and instance roles.
           const { fromNodeProviderChain } = yield* Effect.promise(() => import("@aws-sdk/credential-providers"))
-          options.credentialProvider = fromNodeProviderChain(profile ? { profile } : {})
+          const profile = Option.filter(
+            typeof options.profile === "string" ? Option.some(options.profile) : yield* readEnvSnapshot(profileEnv),
+            Str.isNonEmpty,
+          )
+          options.credentialProvider = fromNodeProviderChain(
+            Option.match(profile, { onNone: () => ({}), onSome: (profile) => ({ profile }) }),
+          )
         }
 
         if (evt.package === "@ai-sdk/amazon-bedrock/mantle") {
@@ -126,7 +141,7 @@ export const AmazonBedrockPlugin = define({
           evt.language = selectMantleModel(evt.sdk, evt.model.api.id)
           return
         }
-        const region = typeof evt.options.region === "string" ? evt.options.region : process.env.AWS_REGION
+        const region = typeof evt.options.region === "string" ? evt.options.region : yield* readEnvSnapshot(regionEnv)
         evt.language = evt.sdk.languageModel(resolveModelID(evt.model.api.id, region))
       }),
     )

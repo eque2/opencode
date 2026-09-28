@@ -1,5 +1,12 @@
 const MAX_BREAKS = 200
 
+/** A `<br>` element, which counts as one character of prompt text. */
+const isBreak = (node: Node) => node instanceof Element && node.tagName === "BR"
+
+/** A file or agent pill, which the caret moves over as one unit. */
+const isPill = (node: Node) =>
+  node instanceof HTMLElement && (node.dataset.type === "file" || node.dataset.type === "agent")
+
 export function createTextFragment(content: string): DocumentFragment {
   const fragment = document.createDocumentFragment()
   let breaks = 0
@@ -28,13 +35,13 @@ export function createTextFragment(content: string): DocumentFragment {
 }
 
 export function getNodeLength(node: Node): number {
-  if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === "BR") return 1
+  if (isBreak(node)) return 1
   return (node.textContent ?? "").replace(/\u200B/g, "").length
 }
 
 export function getTextLength(node: Node): number {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? "").replace(/\u200B/g, "").length
-  if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === "BR") return 1
+  if (isBreak(node)) return 1
   let length = 0
   for (const child of Array.from(node.childNodes)) {
     length += getTextLength(child)
@@ -59,10 +66,8 @@ export function setCursorPosition(parent: HTMLElement, position: number) {
   while (node) {
     const length = getNodeLength(node)
     const isText = node.nodeType === Node.TEXT_NODE
-    const isPill =
-      node.nodeType === Node.ELEMENT_NODE &&
-      ((node as HTMLElement).dataset.type === "file" || (node as HTMLElement).dataset.type === "agent")
-    const isBreak = node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === "BR"
+    const pill = isPill(node)
+    const lineBreak = isBreak(node)
 
     if (isText && remaining <= length) {
       const range = document.createRange()
@@ -74,16 +79,16 @@ export function setCursorPosition(parent: HTMLElement, position: number) {
       return
     }
 
-    if ((isPill || isBreak) && remaining <= length) {
+    if ((pill || lineBreak) && remaining <= length) {
       const range = document.createRange()
       const selection = window.getSelection()
       if (remaining === 0) {
         range.setStartBefore(node)
       }
-      if (remaining > 0 && isPill) {
+      if (remaining > 0 && pill) {
         range.setStartAfter(node)
       }
-      if (remaining > 0 && isBreak) {
+      if (remaining > 0 && lineBreak) {
         const next = node.nextSibling
         if (next && next.nodeType === Node.TEXT_NODE) {
           range.setStart(next, 0)
@@ -124,10 +129,8 @@ export function setRangeEdge(parent: HTMLElement, range: Range, edge: "start" | 
   for (const node of nodes) {
     const length = getNodeLength(node)
     const isText = node.nodeType === Node.TEXT_NODE
-    const isPill =
-      node.nodeType === Node.ELEMENT_NODE &&
-      ((node as HTMLElement).dataset.type === "file" || (node as HTMLElement).dataset.type === "agent")
-    const isBreak = node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === "BR"
+    const pill = isPill(node)
+    const lineBreak = isBreak(node)
 
     if (isText && remaining <= length) {
       if (edge === "start") range.setStart(node, remaining)
@@ -135,7 +138,7 @@ export function setRangeEdge(parent: HTMLElement, range: Range, edge: "start" | 
       return
     }
 
-    if ((isPill || isBreak) && remaining <= length) {
+    if ((pill || lineBreak) && remaining <= length) {
       if (edge === "start" && remaining === 0) range.setStartBefore(node)
       if (edge === "start" && remaining > 0) range.setStartAfter(node)
       if (edge === "end" && remaining === 0) range.setEndBefore(node)

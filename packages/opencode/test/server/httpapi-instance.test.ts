@@ -1,8 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { describe, expect } from "bun:test"
-import { Config, Context, Effect, FileSystem, Layer, Path } from "effect"
+import { Config, Effect, FileSystem, Layer, Path } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
@@ -15,24 +14,16 @@ import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import { HEADER as FenceHeader } from "../../src/server/shared/fence"
 import { resetDatabase } from "../fixture/db"
 import { tmpdirScoped } from "../fixture/fixture"
+import { fixedWorkspaceIDLayer } from "../fixture/flag"
 import { testEffect } from "../lib/effect"
 
-// Flip the experimental workspaces flag so EventV2.run actually writes to
-// EventSequenceTable (the source of truth the fence middleware reads). Reset
-// the database around the test so per-instance state does not leak between
-// runs. resetDatabase() already calls disposeAllInstances(), so we don't
-// repeat it.
+// Reset the database around the test so per-instance state does not leak
+// between runs. resetDatabase() already calls disposeAllInstances(), so we
+// don't repeat it.
 const testStateLayer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
-    Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
     yield* Effect.promise(() => resetDatabase())
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = originalWorkspaces
-        await resetDatabase()
-      }),
-    )
+    yield* Effect.addFinalizer(() => Effect.promise(() => resetDatabase()))
   }),
 )
 
@@ -51,7 +42,12 @@ const httpApiServerLayer = servedRoutes.pipe(
 )
 
 const it = testEffect(Layer.mergeAll(testStateLayer, httpApiServerLayer))
-const handlerContext = Context.empty() as Context.Context<unknown>
+// The fence middleware reads OPENCODE_WORKSPACE_ID from the ConfigProvider on
+// each request, so these tests serve the routes with a fixed workspace id.
+const fixedWorkspaceIt = testEffect(
+  Layer.mergeAll(testStateLayer, httpApiServerLayer.pipe(Layer.provide(fixedWorkspaceIDLayer(WorkspaceV2.ID.ascending())))),
+)
+const handlerContext = HttpApiApp.context
 
 const directoryHeader = (dir: string) => HttpClientRequest.setHeader("x-opencode-directory", dir)
 
@@ -73,16 +69,8 @@ describe("instance HttpApi", () => {
     }),
   )
 
-  it.live("emits a sync fence header for fixed-workspace mutations", () =>
+  fixedWorkspaceIt.live("emits a sync fence header for fixed-workspace mutations", () =>
     Effect.gen(function* () {
-      const originalWorkspaceID = Flag.OPENCODE_WORKSPACE_ID
-      Flag.OPENCODE_WORKSPACE_ID = WorkspaceV2.ID.ascending()
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          Flag.OPENCODE_WORKSPACE_ID = originalWorkspaceID
-        }),
-      )
-
       const dir = yield* tmpdirScoped({ git: true })
       const response = yield* HttpClientRequest.post(SessionPaths.create).pipe(
         directoryHeader(dir),
@@ -95,16 +83,8 @@ describe("instance HttpApi", () => {
     }),
   )
 
-  it.live("does not emit sync fence headers for fixed-workspace reads or no-op mutations", () =>
+  fixedWorkspaceIt.live("does not emit sync fence headers for fixed-workspace reads or no-op mutations", () =>
     Effect.gen(function* () {
-      const originalWorkspaceID = Flag.OPENCODE_WORKSPACE_ID
-      Flag.OPENCODE_WORKSPACE_ID = WorkspaceV2.ID.ascending()
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          Flag.OPENCODE_WORKSPACE_ID = originalWorkspaceID
-        }),
-      )
-
       const dir = yield* tmpdirScoped({ git: true })
       const read = yield* HttpClientRequest.get(InstancePaths.path).pipe(directoryHeader(dir), HttpClient.execute)
       const log = yield* HttpClientRequest.post(ControlPaths.log).pipe(
@@ -123,7 +103,7 @@ describe("instance HttpApi", () => {
   it.live("rejects malformed permission and question request ids", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
-      const request = (path: string, init?: RequestInit) =>
+      const request = (path: string, init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }) =>
         Effect.promise(() =>
           HttpApiApp.webHandler().handler(
             new Request(`http://localhost${path}`, {
@@ -157,7 +137,7 @@ describe("instance HttpApi", () => {
   it.live("returns typed not found bodies for missing permission and question requests", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
-      const request = (path: string, init?: RequestInit) =>
+      const request = (path: string, init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }) =>
         Effect.promise(() =>
           HttpApiApp.webHandler().handler(
             new Request(`http://localhost${path}`, {

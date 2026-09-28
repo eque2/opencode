@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { createSignal } from "solid-js"
 import { Field as FieldV2 } from "./field-v2"
 import { SelectV2 } from "./select-v2"
@@ -66,7 +67,7 @@ export default {
 
 export const Playground = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -75,7 +76,7 @@ export const Playground = {
         appearance={args.appearance}
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -83,7 +84,7 @@ export const Playground = {
 
 export const Large = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -92,7 +93,7 @@ export const Large = {
         appearance="large"
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -100,7 +101,7 @@ export const Large = {
 
 export const Grouped = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<(typeof cities)[0]>()
     return (
       <SelectV2<(typeof cities)[0]>
         placeholder={args.placeholder}
@@ -109,7 +110,7 @@ export const Grouped = {
         appearance={args.appearance}
         options={cities}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
         value={(x) => x.city}
         label={(x) => x.city}
         groupBy={(x) => x.region}
@@ -120,7 +121,7 @@ export const Grouped = {
 
 export const Invalid = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -129,7 +130,7 @@ export const Invalid = {
         appearance={args.appearance}
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -152,7 +153,7 @@ export const Disabled = {
 export const Field = {
   parameters: { frameHeight: "500px" },
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <div style={{ width: "280px" }}>
         <FieldV2>
@@ -165,7 +166,7 @@ export const Field = {
             appearance={args.appearance}
             options={fruits}
             current={current()}
-            onSelect={(v) => setCurrent(v === null ? undefined : v)}
+            onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
           />
           <FieldV2.Suffix>After selection</FieldV2.Suffix>
         </FieldV2>

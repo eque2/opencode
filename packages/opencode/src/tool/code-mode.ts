@@ -1,6 +1,6 @@
 import * as Tool from "./tool"
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { Cause, Effect, Schema } from "effect"
+import { Array, Cause, Effect, Option, Predicate, Schema } from "effect"
 import { CodeMode, Tool as SandboxTool, toolError } from "@opencode-ai/codemode"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
@@ -19,6 +19,16 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+class McpToolError extends Schema.TaggedError<McpToolError>()("CodeMode.McpToolError", {
+  message: Schema.String,
+}) {}
+
+class ExecutionError extends Schema.TaggedError<ExecutionError>()("CodeMode.ExecutionError", {
+  message: Schema.String,
+}) {}
+
+const encodeResultText = Schema.encodeSync(Schema.fromJsonString(Schema.Json, { space: 2 }))
+
 type CallEntry = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
 
 type Metadata = {
@@ -36,38 +46,43 @@ type CatalogEntry = {
   tool: MCP.McpTool
 }
 
-function groupByServer(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): Map<string, CatalogEntry[]> {
+// The catalog entries in key order, grouped by server in the order each server first appears.
+function catalogEntries(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): CatalogEntry[] {
   const byLongest = [...servers].sort((a, b) => b.length - a.length)
-  const groups = new Map<string, CatalogEntry[]>()
-  for (const key of Object.keys(mcpTools).sort((a, b) => a.localeCompare(b))) {
-    const server =
-      byLongest.find((name) => key.startsWith(name + "_")) ?? (key.includes("_") ? key.slice(0, key.indexOf("_")) : key)
-    const local = server && key.startsWith(server + "_") ? key.slice(server.length + 1) : key
-    const entry: CatalogEntry = {
-      path: `${server}.${local}`,
-      key,
-      server,
-      local,
-      tool: mcpTools[key]!,
-    }
-    groups.set(server, [...(groups.get(server) ?? []), entry])
-  }
-  return groups
+  const entries = Object.keys(mcpTools)
+    .sort((a, b) => a.localeCompare(b))
+    .map((key): CatalogEntry => {
+      const server =
+        byLongest.find((name) => key.startsWith(name + "_")) ??
+        (key.includes("_") ? key.slice(0, key.indexOf("_")) : key)
+      const local = server && key.startsWith(server + "_") ? key.slice(server.length + 1) : key
+      return {
+        path: `${server}.${local}`,
+        key,
+        server,
+        local,
+        tool: mcpTools[key],
+      }
+    })
+  return Array.dedupe(entries.map((entry) => entry.server)).flatMap((server) =>
+    entries.filter((entry) => entry.server === server),
+  )
 }
 
 export function describeCatalog(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): string {
   return CodeMode.make({
     tools: toolTree(
-      [...groupByServer(mcpTools, servers).values()].flat(),
+      catalogEntries(mcpTools, servers),
       () => () => Effect.fail(toolError("Tool preview is not executable.")),
     ),
   }).instructions()
 }
 
+// The last path segment of a URI, or None when the path ends without one.
 const lastSegment = (uri: string) => {
-  const trimmed = uri.split(/[?#]/, 1)[0]!.replace(/\/+$/, "")
+  const trimmed = uri.split(/[?#]/, 1)[0].replace(/\/+$/, "")
   const segment = trimmed.slice(trimmed.lastIndexOf("/") + 1)
-  return segment.length > 0 ? segment : undefined
+  return segment.length > 0 ? Option.some(segment) : Option.none<string>()
 }
 
 const dataUrl = (mime: string, base64: string) => `data:${mime};base64,${base64}`
@@ -96,7 +111,13 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
           break
         }
         const mime = block.resource.mimeType ?? "application/octet-stream"
-        push({ type: "file", mime, url: dataUrl(mime, block.resource.blob), filename: lastSegment(block.resource.uri) })
+        const filename = lastSegment(block.resource.uri)
+        push({
+          type: "file",
+          mime,
+          url: dataUrl(mime, block.resource.blob),
+          ...(Option.isSome(filename) ? { filename: filename.value } : {}),
+        })
         break
       }
       case "resource_link":
@@ -106,13 +127,24 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
     }
   }
 
-  if (result.structuredContent !== undefined && result.structuredContent !== null) return result.structuredContent
-  if (text.length > 0) return text.join("\n")
-  if (files > 0) {
-    const noun = files === images ? "image" : "file"
-    return `[${files} ${noun}${files === 1 ? "" : "s"} attached to the result]`
-  }
-  return null
+  const noun = files === images ? "image" : "file"
+  // The program reads JSON null for a result that carries no content.
+  return Option.getOrNull(
+    Option.fromNullishOr<unknown>(result.structuredContent).pipe(
+      Option.orElse(() => (text.length > 0 ? Option.some(text.join("\n")) : Option.none())),
+      Option.orElse(() =>
+        files > 0 ? Option.some(`[${files} ${noun}${files === 1 ? "" : "s"} attached to the result]`) : Option.none(),
+      ),
+    ),
+  )
+}
+
+// The input shown in the tool call list: a non-empty object as is, any other value boxed, and
+// nothing for a missing input or an empty object.
+function displayInput(input: unknown): Option.Option<Record<string, unknown>> {
+  if (Predicate.isNullish(input)) return Option.none()
+  if (Predicate.isObject(input)) return Object.keys(input).length > 0 ? Option.some(input) : Option.none()
+  return Option.some({ input })
 }
 
 type Run = (input: unknown) => Effect.Effect<unknown, unknown>
@@ -146,8 +178,8 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
   const result: CallToolResult = yield* Effect.gen(function* () {
     yield* input.ctx.ask({ permission: input.entry.key, metadata: {}, patterns: ["*"], always: ["*"] })
     // Deliberately mirrors McpCatalog.convertTool's transport call so the MCP service stays free of tool-loop concerns.
-    return yield* Effect.promise(async () => {
-      const raw = await input.entry.tool.client.callTool(
+    const raw = yield* Effect.promise(() =>
+      input.entry.tool.client.callTool(
         { name: input.entry.tool.def.name, arguments: input.args },
         CallToolResultSchema,
         {
@@ -157,16 +189,18 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
           // The MCP SDK only sends a progress token when this hook is present, enabling timeout resets.
           onprogress: () => {},
         },
-      )
-      if (raw.isError)
-        throw new Error(
+      ),
+    )
+    if (raw.isError) {
+      return yield* new McpToolError({
+        message:
           raw.content
             .flatMap((item) => (item.type === "text" ? [item.text] : []))
             .filter((text) => text.trim())
             .join("\n\n") || "MCP tool returned an error",
-        )
-      return raw
-    })
+      })
+    }
+    return raw
   }).pipe(
     Effect.withSpan("Tool.execute", {
       attributes: {
@@ -209,10 +243,10 @@ export const CodeModeTool = Tool.define(
         const ruleset = Permission.merge(agent.permission, session.permission ?? [])
         const mcpTools = Permission.visibleTools(yield* mcp.tools(), ruleset)
         const servers = Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)
-        const catalog = [...groupByServer(mcpTools, servers).values()].flat()
+        const catalog = catalogEntries(mcpTools, servers)
 
         const calls: CallEntry[] = []
-        const attachments: Attachment[] = []
+        let attachments: Attachment[] = []
         const publish = () =>
           ctx.metadata({ title: CODE_MODE_TOOL, metadata: { toolCalls: calls.map((c) => ({ ...c })) } })
 
@@ -220,14 +254,19 @@ export const CodeModeTool = Tool.define(
         const callTool = (entry: CatalogEntry) => (input: unknown) =>
           Effect.gen(function* () {
             childCalls += 1
+            // JSON Schema tool inputs reach `run` unvalidated, and MCP arguments must be an object.
+            const args = Predicate.isNullish(input) ? {} : input
+            if (!Predicate.isObject(args)) return yield* toolError(`${entry.path} expects an object argument.`)
             const result = yield* invokeChildTool({
               plugin,
               entry,
-              args: (input ?? {}) as Record<string, unknown>,
+              args,
               callID: `${ctx.callID ?? entry.key}/${childCalls}`,
               ctx,
             })
-            return projectMcpResult(result, (attachment: Attachment) => void attachments.push(attachment))
+            return projectMcpResult(result, (attachment: Attachment) => {
+              attachments = [...attachments, attachment]
+            })
           }).pipe(
             Effect.catchCause((cause) => {
               if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
@@ -240,15 +279,8 @@ export const CodeModeTool = Tool.define(
           tools: toolTree(catalog, callTool),
           onToolCallStart: ({ index, name, input }) =>
             Effect.suspend(() => {
-              const shown = (() => {
-                if (input === null || input === undefined) return
-                if (typeof input === "object" && !Array.isArray(input)) {
-                  const value = input as Record<string, unknown>
-                  return Object.keys(value).length > 0 ? value : undefined
-                }
-                return { input }
-              })()
-              calls[index] = { tool: name, status: "running", ...(shown ? { input: shown } : {}) }
+              const shown = displayInput(input)
+              calls[index] = { tool: name, status: "running", ...(Option.isSome(shown) ? { input: shown.value } : {}) }
               return publish()
             }),
           onToolCallEnd: ({ index, outcome }) =>
@@ -287,15 +319,11 @@ export const CodeModeTool = Tool.define(
             } satisfies Tool.ExecuteResult<Metadata>
           }
           const hints = (result.error.suggestions ?? []).filter((hint) => !result.error.message.includes(hint))
-          return yield* Effect.fail(new Error(withLogs([result.error.message, ...hints].join("\n"))))
+          return yield* new ExecutionError({ message: withLogs([result.error.message, ...hints].join("\n")) })
         }
 
-        // The interpreter validates returned values as plain JSON, so stringify cannot throw;
-        // it yields undefined only for a program that returns undefined.
-        const output =
-          typeof result.value === "string"
-            ? result.value
-            : (JSON.stringify(result.value, null, 2) ?? String(result.value))
+        // The interpreter returns plain JSON data, so the encoding cannot fail.
+        const output = typeof result.value === "string" ? result.value : encodeResultText(result.value)
 
         return {
           title: CODE_MODE_TOOL,

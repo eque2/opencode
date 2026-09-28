@@ -21,6 +21,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { MCP } from "@/mcp"
 import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 
 const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".opencode")])),
@@ -29,18 +30,20 @@ const configLayer = TestConfig.layer({
 // Fake Plugin.Service that returns a single plugin whose `tool` map contains
 // one definition with `args: undefined`. Used to exercise the plugin entry
 // point of `fromPlugin` for the #27451 / #27630 regression.
+const passthrough: Plugin.Interface["trigger"] = (_name, _input, output) => Effect.succeed(output)
+
 const brokenPluginLayer = Layer.succeed(
   Plugin.Service,
   Plugin.Service.of({
     init: () => Effect.void,
-    trigger: ((_name: unknown, _input: unknown, output: unknown) =>
-      Effect.succeed(output)) as Plugin.Interface["trigger"],
+    trigger: passthrough,
     list: () =>
       Effect.succeed([
         {
           tool: {
             broken_plugin_tool: {
               description: "plugin tool with missing args",
+              // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the @opencode-ai/plugin ToolDefinition type requires args, but compiled third-party JS plugins can omit it; this double forges that runtime value for the #27451 regression
               args: undefined as unknown as Record<string, never>,
               execute: async () => "ok",
             },
@@ -72,10 +75,10 @@ const withCodeMode = testEffect(
                 description: "current weather",
                 inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
               } as MCPToolDef,
-              client: {} as MCP.McpTool["client"],
+              client: new Client({ name: "registry-test", version: "1.0.0" }),
             },
           }),
-        clients: () => Effect.succeed({ weather: {} as any }),
+        clients: () => Effect.succeed({ weather: new Client({ name: "registry-test", version: "1.0.0" }) }),
       }),
     ],
   ]),

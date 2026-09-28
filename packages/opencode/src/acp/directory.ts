@@ -1,13 +1,12 @@
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
 import { InstanceRef } from "@/effect/instance-ref"
-import { InstanceBootstrap } from "@/project/bootstrap"
 import { InstanceStore } from "@/project/instance-store"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Provider } from "@/provider/provider"
-import { Context, Effect, Layer, SynchronizedRef } from "effect"
+import { Context, Effect, HashMap, Layer, Option, SynchronizedRef } from "effect"
 import type * as ACPError from "./error"
 
 export type ModelOption = {
@@ -135,7 +134,7 @@ export const loaderLayer = Layer.effect(
             commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
             ...(defaultModel._tag === "Some" ? { defaultModel: defaultModel.value } : {}),
           })
-        }).pipe(Effect.provideService(InstanceRef, ctx))
+        }).pipe(Effect.provideService(InstanceRef, Option.some(ctx)))
       }),
     })
   }),
@@ -145,26 +144,20 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const loader = yield* Loader
-    const snapshots = yield* SynchronizedRef.make(new Map<string, Effect.Effect<Snapshot, ACPError.Error>>())
+    const snapshots = yield* SynchronizedRef.make(HashMap.empty<string, Effect.Effect<Snapshot, ACPError.Error>>())
 
     const cached = Effect.fnUntraced(function* (directory: string) {
       return yield* SynchronizedRef.modifyEffect(
         snapshots,
         Effect.fnUntraced(function* (items) {
-          const current = items.get(directory)
-          if (current) return [current, items] as const
+          const current = HashMap.get(items, directory)
+          if (Option.isSome(current)) return [current.value, items] as const
           const next = yield* Effect.cached(
-            loader.load(directory).pipe(
-              Effect.tapError(() =>
-                SynchronizedRef.update(snapshots, (state) => {
-                  const next = new Map(state)
-                  next.delete(directory)
-                  return next
-                }),
-              ),
-            ),
+            loader
+              .load(directory)
+              .pipe(Effect.tapError(() => SynchronizedRef.update(snapshots, HashMap.remove(directory)))),
           )
-          return [next, new Map(items).set(directory, next)] as const
+          return [next, HashMap.set(items, directory, next)] as const
         }),
       )
     })
@@ -178,17 +171,11 @@ const layer = Layer.effect(
         snapshots,
         Effect.fnUntraced(function* (items) {
           const next = yield* Effect.cached(
-            loader.load(directory).pipe(
-              Effect.tapError(() =>
-                SynchronizedRef.update(snapshots, (state) => {
-                  const next = new Map(state)
-                  next.delete(directory)
-                  return next
-                }),
-              ),
-            ),
+            loader
+              .load(directory)
+              .pipe(Effect.tapError(() => SynchronizedRef.update(snapshots, HashMap.remove(directory)))),
           )
-          return [next, new Map(items).set(directory, next)] as const
+          return [next, HashMap.set(items, directory, next)] as const
         }),
       ).pipe(Effect.flatten)
     })

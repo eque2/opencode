@@ -1,6 +1,6 @@
-import { Schema } from "effect"
+import { Option, Schema, SchemaParser } from "effect"
 import { ToolContent, ToolFileContent, ToolTextContent } from "@opencode-ai/schema/llm"
-import { JsonSchema, MessageRole, ProviderMetadata } from "./ids"
+import { JsonSchema, MessageRole, ProviderMetadata, ToolCallID } from "./ids"
 import { CacheHint, CachePolicy, GenerationOptions, HttpOptions, ModelSchema, ProviderOptions } from "./options"
 import { isRecord } from "../utils/record"
 
@@ -8,15 +8,17 @@ const systemPartSchema = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }).annotate({ identifier: "LLM.SystemPart" })
 export type SystemPart = Schema.Schema.Type<typeof systemPartSchema>
+/** Construction input of a system part; JSON-valued fields accept their make-side input type. */
+export type SystemPartInput = Schema.Struct.MakeIn<typeof systemPartSchema.fields>
 
 const makeSystemPart = (text: string): SystemPart => ({ type: "text", text })
 
 export const SystemPart = Object.assign(systemPartSchema, {
   make: makeSystemPart,
-  content: (input?: string | SystemPart | ReadonlyArray<SystemPart>) => {
+  content: (input?: string | SystemPartInput | ReadonlyArray<SystemPartInput>) => {
     if (input === undefined) return []
     return typeof input === "string" ? [makeSystemPart(input)] : Array.isArray(input) ? [...input] : [input]
   },
@@ -26,7 +28,7 @@ export const TextPart = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Content.Text" })
 export type TextPart = Schema.Schema.Type<typeof TextPart>
@@ -36,46 +38,75 @@ export const MediaPart = Schema.Struct({
   mediaType: Schema.String,
   data: Schema.Union([Schema.String, Schema.Uint8Array]),
   filename: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }).annotate({ identifier: "LLM.Content.Media" })
 export type MediaPart = Schema.Schema.Type<typeof MediaPart>
 
 export { ToolContent, ToolFileContent, ToolTextContent }
 
-const isToolResultValue = (value: unknown): value is ToolResultValue =>
+const toolResultValueSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("json"),
+    value: Schema.Json,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    value: Schema.Json,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("error"),
+    // Tool errors may carry a thrown value (for example an Error), not only JSON.
+    value: Schema.Defect(),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("content"),
+    value: Schema.Array(ToolContent),
+  }),
+]).annotate({ identifier: "LLM.ToolResult" })
+export type ToolResultValue = Schema.Schema.Type<typeof toolResultValueSchema>
+const validateToolResultValue = Schema.decodeUnknownSync(Schema.toType(toolResultValueSchema))
+
+/** A value already shaped as a tool result: a known `type` tag and a `value` key. */
+const isToolResultShape = (
+  value: unknown,
+): value is { readonly type: ToolResultValue["type"]; readonly value: unknown } =>
   isRecord(value) &&
   (value.type === "text" || value.type === "json" || value.type === "error" || value.type === "content") &&
   "value" in value
 
-export const ToolResultValue = Object.assign(
-  Schema.Union([
-    Schema.Struct({
-      type: Schema.Literal("json"),
-      value: Schema.Unknown,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("text"),
-      value: Schema.Unknown,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("error"),
-      value: Schema.Unknown,
-    }),
-    Schema.Struct({
-      type: Schema.Literal("content"),
-      value: Schema.Array(ToolContent),
-    }),
-  ]).annotate({ identifier: "LLM.ToolResult" }),
-  {
-    is: isToolResultValue,
-    make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue => {
-      if (isToolResultValue(value)) return value
-      if (type === "content") return { type, value: Array.isArray(value) ? value : [] }
-      return { type, value }
-    },
-  },
-)
-export type ToolResultValue = Schema.Schema.Type<typeof ToolResultValue>
+const isJson = Schema.is(Schema.Json)
+const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
+
+/**
+ * The JSON that a provider receives for `value`. A JSON value stays as it is. Any other value goes through JSON
+ * encoding, as the protocols encode it: undefined-valued keys drop out and Dates become ISO strings. A value with
+ * no JSON form (undefined, a bigint, a cycle) stays unchanged, so the result validation rejects it.
+ */
+const toWireJson = (value: unknown): unknown =>
+  isJson(value) ? value : Option.getOrElse(Option.flatMap(encodeJsonText(value), decodeJsonText), () => value)
+
+/** Validate a result shape; its json and text payloads first become the JSON that a provider receives. */
+const toToolResultValue = (shape: {
+  readonly type: ToolResultValue["type"]
+  readonly value: unknown
+}): ToolResultValue =>
+  validateToolResultValue(
+    shape.type === "json" || shape.type === "text" ? { type: shape.type, value: toWireJson(shape.value) } : shape,
+  )
+
+export const ToolResultValue = Object.assign(toolResultValueSchema, {
+  is: Schema.is(toolResultValueSchema),
+  /** Wrap a raw value as a tool result of `type`, or keep a value already shaped as one; validated as JSON here. */
+  make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue =>
+    toToolResultValue(
+      isToolResultShape(value)
+        ? value
+        : type === "content"
+          ? { type, value: Array.isArray(value) ? value : [] }
+          : { type, value },
+    ),
+})
 
 export interface ToolOutput {
   readonly structured: unknown
@@ -84,6 +115,7 @@ export interface ToolOutput {
 
 export const ToolOutput = Object.assign(
   Schema.Struct({
+    // eslint-disable-next-line effect/no-schema-any-unknown -- (b) structured holds each tool's own encoded output (Date, bigint, instances, undefined keys); toResultValue validates it as wire JSON when projected
     structured: Schema.Unknown,
     content: Schema.Array(ToolContent),
   }).annotate({ identifier: "LLM.ToolOutput" }),
@@ -97,12 +129,12 @@ export const ToolOutput = Object.assign(
           return { structured: {}, content: [{ type: "text", text: toolResultText(result.value) }] }
         case "content":
           return { structured: {}, content: result.value }
-        case "error":
-          return undefined
       }
+      return undefined
     },
+    /** Project an output to the model; with no content the structured value becomes the JSON result. */
     toResultValue: (output: ToolOutput): ToolResultValue => {
-      if (output.content.length === 0) return { type: "json", value: output.structured }
+      if (output.content.length === 0) return toToolResultValue({ type: "json", value: output.structured })
       if (output.content.length === 1 && output.content[0]?.type === "text")
         return { type: "text", value: output.content[0].text }
       return { type: "content", value: output.content }
@@ -110,51 +142,54 @@ export const ToolOutput = Object.assign(
   },
 )
 
-const toolResultText = (value: unknown) => {
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value) ?? String(value)
-  } catch {
-    return String(value)
-  }
-}
+/** Text for a `text` tool result: strings pass through, JSON-encodable values encode, anything else stringifies. */
+const toolResultText = (value: unknown) =>
+  typeof value === "string" ? value : Option.getOrElse(encodeJsonText(value), () => String(value))
 
-export const ToolCallPart = Object.assign(
-  Schema.Struct({
-    type: Schema.Literal("tool-call"),
-    id: Schema.String,
-    name: Schema.String,
-    input: Schema.Unknown,
-    providerExecuted: Schema.optional(Schema.Boolean),
-    metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-    providerMetadata: Schema.optional(ProviderMetadata),
-  }).annotate({ identifier: "LLM.Content.ToolCall" }),
-  {
-    make: (input: Omit<ToolCallPart, "type">): ToolCallPart => ({ type: "tool-call", ...input }),
-  },
-)
-export type ToolCallPart = Schema.Schema.Type<typeof ToolCallPart>
+const toolCallPartSchema = Schema.Struct({
+  type: Schema.Literal("tool-call"),
+  id: ToolCallID,
+  name: Schema.String,
+  input: Schema.Json,
+  providerExecuted: Schema.optional(Schema.Boolean),
+  metadata: Schema.optional(Schema.JsonObject),
+  providerMetadata: Schema.optional(ProviderMetadata),
+}).annotate({ identifier: "LLM.Content.ToolCall" })
+export type ToolCallPart = Schema.Schema.Type<typeof toolCallPartSchema>
+const makeToolCallPart = SchemaParser.make(toolCallPartSchema)
+
+export const ToolCallPart = Object.assign(toolCallPartSchema, {
+  /**
+   * Build a tool-call part from a plain string id. The input becomes the JSON that a provider receives, and the
+   * JSON fields are validated here.
+   */
+  make: (
+    input: Omit<Schema.Struct.MakeIn<typeof toolCallPartSchema.fields>, "type" | "id"> & { readonly id: string },
+  ): ToolCallPart =>
+    makeToolCallPart({ type: "tool-call", ...input, id: ToolCallID.make(input.id), input: toWireJson(input.input) }),
+})
 
 export const ToolResultPart = Object.assign(
   Schema.Struct({
     type: Schema.Literal("tool-result"),
-    id: Schema.String,
+    id: ToolCallID,
     name: Schema.String,
     result: ToolResultValue,
     providerExecuted: Schema.optional(Schema.Boolean),
     cache: Schema.optional(CacheHint),
-    metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    metadata: Schema.optional(Schema.JsonObject),
     providerMetadata: Schema.optional(ProviderMetadata),
   }).annotate({ identifier: "LLM.Content.ToolResult" }),
   {
     make: (
-      input: Omit<ToolResultPart, "type" | "result"> & {
+      input: Omit<ToolResultPart, "type" | "id" | "result"> & {
+        readonly id: string
         readonly result: unknown
         readonly resultType?: ToolResultValue["type"]
       },
     ): ToolResultPart => ({
       type: "tool-result",
-      id: input.id,
+      id: ToolCallID.make(input.id),
       name: input.name,
       result: ToolResultValue.make(input.result, input.resultType),
       providerExecuted: input.providerExecuted,
@@ -170,7 +205,7 @@ export const ReasoningPart = Schema.Struct({
   type: Schema.Literal("reasoning"),
   text: Schema.String,
   encrypted: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Content.Reasoning" })
 export type ReasoningPart = Schema.Schema.Type<typeof ReasoningPart>
@@ -184,14 +219,17 @@ export class Message extends Schema.Class<Message>("LLM.Message")({
   id: Schema.optional(Schema.String),
   role: MessageRole,
   content: Schema.Array(ContentPart),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
+  native: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace Message {
-  export type ContentInput = string | ContentPart | ReadonlyArray<ContentPart>
+  /** Constructor input of the `Message` class; JSON-valued fields accept their make-side input type. */
+  type MakeInput = ConstructorParameters<typeof Message>[0]
+  export type ContentPartInput = MakeInput["content"][number]
+  export type ContentInput = string | ContentPartInput | ReadonlyArray<ContentPartInput>
   export type SystemContentInput = string | TextPart | ReadonlyArray<TextPart>
-  export type Input = Omit<ConstructorParameters<typeof Message>[0], "content"> & {
+  export type Input = Omit<MakeInput, "content"> & {
     readonly content: ContentInput
   }
 
@@ -227,8 +265,8 @@ export class ToolDefinition extends Schema.Class<ToolDefinition>("LLM.ToolDefini
   inputSchema: JsonSchema,
   outputSchema: Schema.optional(JsonSchema),
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
+  native: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace ToolDefinition {
@@ -280,7 +318,7 @@ export class LLMRequest extends Schema.Class<LLMRequest>("LLM.Request")({
   http: Schema.optional(HttpOptions),
   responseFormat: Schema.optional(ResponseFormat),
   cache: Schema.optional(CachePolicy),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace LLMRequest {

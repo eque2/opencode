@@ -1,11 +1,11 @@
-import { Context } from "effect"
+import { Context, Option } from "effect"
 
 const opencodeOrigin = /^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/
 
 export type CorsOptions = { readonly cors?: ReadonlyArray<string> }
 
 export const CorsConfig = Context.Reference<CorsOptions | undefined>("@opencode/ServerCorsConfig", {
-  defaultValue: () => undefined,
+  defaultValue: () => ({}),
 })
 
 export function isAllowedCorsOrigin(input: string | undefined, opts?: CorsOptions) {
@@ -25,10 +25,8 @@ export function isAllowedRequestOrigin(input: string | undefined, host: string |
   return isAllowedCorsOrigin(input, opts)
 }
 
+const parseUrl = Option.liftThrowable((value: string) => new URL(value))
+
 function sameHost(origin: string, host: string) {
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
+  return parseUrl(origin).pipe(Option.exists((url) => url.host === host))
 }

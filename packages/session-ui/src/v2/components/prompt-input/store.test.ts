@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { createStore } from "solid-js/store"
 import type { PromptInputV2PersistedState } from "./types"
 import { createPromptInputV2Store } from "./store"
@@ -17,7 +18,7 @@ function createPromptStore() {
         },
       ],
       cursor: 3,
-      model: { providerID: "anthropic", modelID: "claude-sonnet", variant: null },
+      model: { providerID: "anthropic", modelID: "claude-sonnet" },
       context: { items: [] },
     }),
   )
@@ -86,7 +87,7 @@ describe("prompt input v2 store", () => {
     prompt.addContext(context)
     prompt.addMention({ type: "file", path: "src/app.ts", content: "@src/app.ts", start: 0, end: 0 })
     prompt.removeAttachment("attachment-1")
-    prompt.setVariant("thinking")
+    prompt.setVariant(Option.some("thinking"))
 
     expect(prompt.state.context.items).toEqual([context])
     expect(prompt.state.prompt).toEqual([
@@ -98,7 +99,7 @@ describe("prompt input v2 store", () => {
 
     prompt.removeContext(context.key)
     prompt.setPrompt([{ type: "text", content: "old", start: 0, end: 3 }], 3)
-    prompt.setModel(undefined)
+    prompt.setModel(Option.none())
 
     expect(prompt.state.context.items).toEqual([])
     expect(prompt.state.prompt).toEqual([{ type: "text", content: "old", start: 0, end: 3 }])

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "bun:test"
+import { Chunk, Effect } from "effect"
 import { createRoot } from "solid-js"
 import { createShellOptions, createSoundPreviewController } from "./general-controller-behavior"
 
@@ -22,32 +23,40 @@ describe("settings v2 controllers", () => {
     ])
   })
 
-  test("debounces previews and stops owned audio on disposal", async () => {
-    vi.useFakeTimers()
-    try {
-      const played: string[] = []
-      const stopped: string[] = []
-      const owned = createRoot((dispose) => ({
-        dispose,
-        preview: createSoundPreviewController(async (id) => {
-          played.push(id ?? "")
-          return () => stopped.push(id ?? "")
-        }),
-      }))
+  test("debounces previews and stops owned audio on disposal", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        vi.useFakeTimers()
+        let played = Chunk.empty<string>()
+        let stopped = Chunk.empty<string>()
+        // The promise of the last preview that started. Its reactions run in registration order,
+        // so the controller stores the stop function before the test reads it.
+        let started: Promise<unknown> = Effect.runPromise(Effect.void)
+        const owned = createRoot((dispose) => ({
+          dispose,
+          preview: createSoundPreviewController((id) => {
+            played = Chunk.append(played, id ?? "")
+            const preview = Effect.runPromise(
+              Effect.succeed(() => {
+                stopped = Chunk.append(stopped, id ?? "")
+              }),
+            )
+            started = preview
+            return preview
+          }),
+        }))
 
-      owned.preview.play("first")
-      vi.advanceTimersByTime(99)
-      expect(played).toEqual([])
+        owned.preview.play("first")
+        vi.advanceTimersByTime(99)
+        expect(Chunk.toReadonlyArray(played)).toEqual([])
 
-      owned.preview.play("second")
-      vi.advanceTimersByTime(100)
-      await Promise.resolve()
-      expect(played).toEqual(["second"])
+        owned.preview.play("second")
+        vi.advanceTimersByTime(100)
+        yield* Effect.promise(() => started)
+        expect(Chunk.toReadonlyArray(played)).toEqual(["second"])
 
-      owned.dispose()
-      expect(stopped).toEqual(["second"])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
+        owned.dispose()
+        expect(Chunk.toReadonlyArray(stopped)).toEqual(["second"])
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers()))),
+    ))
 })

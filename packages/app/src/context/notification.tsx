@@ -17,6 +17,19 @@ import { ServerConnection, useServer } from "./server"
 import { type DraftTab, useTabs } from "./tabs"
 import { requireServerKey } from "@/utils/session-route"
 import type { ServerScope } from "@/utils/server-scope"
+import { Array as Arr, Data, DateTime, Effect, HashSet, MutableHashMap, Option } from "effect"
+
+/** Raised when the notification context has no server for a key. The message names the key. */
+class NotificationServerNotFoundError extends Data.TaggedError("App.NotificationServerNotFoundError")<{
+  readonly message: string
+}> {}
+
+/** A session sync for a notification that failed; the notification then has no session details. */
+class NotificationLookupError extends Data.TaggedError("App.NotificationLookupError")<{ readonly cause: unknown }> {}
+
+// Notification work runs detached from the event handler; a defect goes to the Effect logger.
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 
 type NotificationBase = {
   directory?: string
@@ -56,7 +69,7 @@ const MAX_NOTIFICATIONS = 500
 const NOTIFICATION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 
 function pruneNotifications(list: Notification[]) {
-  const cutoff = Date.now() - NOTIFICATION_TTL_MS
+  const cutoff = DateTime.toEpochMillis(DateTime.nowUnsafe()) - NOTIFICATION_TTL_MS
   const pruned = list.filter((n) => n.time >= cutoff)
   if (pruned.length <= MAX_NOTIFICATIONS) return pruned
   return pruned.slice(pruned.length - MAX_NOTIFICATIONS)
@@ -122,8 +135,8 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
     const platform = usePlatform()
     const settings = useSettings()
     const language = useLanguage()
-    const owner = getOwner()
-    const states = new Map<ServerScope, { dispose: () => void; state: NotificationState }>()
+    const owner = Option.fromNullishOr(getOwner())
+    const states = MutableHashMap.empty<ServerScope, { dispose: () => void; state: NotificationState }>()
 
     const activeServer = createMemo(() => {
       if (params.serverKey) return requireServerKey(params.serverKey)
@@ -137,11 +150,14 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
     const activeSession = createMemo(() => params.id)
 
     const ensure = (key: ServerConnection.Key) => {
-      const conn = global.servers.list().find((item) => ServerConnection.key(item) === key)
-      if (!conn) throw new Error(`Notification server not found: ${key}`)
+      // ensureServerState is a sync API, so a missing server is thrown.
+      const conn = Option.getOrThrowWith(
+        Option.fromNullishOr(global.servers.list().find((item) => ServerConnection.key(item) === key)),
+        () => new NotificationServerNotFoundError({ message: `Notification server not found: ${key}` }),
+      )
       const ctx = global.ensureServerCtx(conn)
-      const existing = states.get(ctx.sdk.scope)
-      if (existing) return existing.state
+      const existing = MutableHashMap.get(states, ctx.sdk.scope)
+      if (Option.isSome(existing)) return existing.value.state
       const root = createRoot(
         (dispose) => ({
           dispose,
@@ -157,9 +173,10 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
             navigate,
           }),
         }),
-        owner ?? undefined,
+        // Solid reads a null owner as "no owner" but a missing one as "the current owner", so null stays out.
+        Option.getOrUndefined(owner),
       )
-      states.set(ctx.sdk.scope, root)
+      MutableHashMap.set(states, ctx.sdk.scope, root)
       return root.state
     }
 
@@ -168,22 +185,27 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
     })
 
     createEffect(() => {
-      const scopes = new Set(global.servers.list().map((conn) => server.scope(ServerConnection.key(conn))))
-      states.forEach((value, scope) => {
-        if (scopes.has(scope)) return
+      const scopes = HashSet.fromIterable(global.servers.list().map((conn) => server.scope(ServerConnection.key(conn))))
+      // Collect first, so the map is not changed while it is iterated.
+      const stale = Array.from(states).filter(([scope]) => !HashSet.has(scopes, scope))
+      stale.forEach(([scope, value]) => {
         value.dispose()
-        states.delete(scope)
+        MutableHashMap.remove(states, scope)
       })
     })
 
-    onCleanup(() => states.forEach((value) => value.dispose()))
+    onCleanup(() => {
+      for (const value of MutableHashMap.values(states)) value.dispose()
+    })
 
     const selected = () => {
       const list = global.servers.list()
       const key = activeServer()
       if (list.some((conn) => ServerConnection.key(conn) === key)) return ensure(key)
-      const conn = list.find((conn) => ServerConnection.key(conn) === server.key) ?? list[0]
-      if (!conn) throw new Error("Notification server not found")
+      const conn = Option.getOrThrowWith(
+        Option.fromNullishOr(list.find((conn) => ServerConnection.key(conn) === server.key) ?? list[0]),
+        () => new NotificationServerNotFoundError({ message: "Notification server not found" }),
+      )
       return ensure(ServerConnection.key(conn))
     }
 
@@ -304,26 +326,31 @@ function createServerNotificationState(input: {
 
   const append = (notification: Notification) => {
     const list = pruneNotifications([...store.list, notification])
-    const keep = new Set(list)
-    const removed = store.list.filter((n) => !keep.has(n))
+    // Notifications compare by reference here; a structural HashSet would merge equal-looking entries.
+    const removed = store.list.filter((n) => !list.includes(n))
 
     batch(() => {
-      if (keep.has(notification)) appendToIndex(notification)
+      if (list.includes(notification)) appendToIndex(notification)
       removed.forEach((n) => removeFromIndex(n))
       setStore("list", list)
     })
   }
 
-  const lookup = async (directory: string, sessionID?: string) => {
-    if (!sessionID) return undefined
-    const sync = serverSync().ensureDirSyncContext(directory)
-    const session = sync.session.get(sessionID)
-    if (session) return session
-    return sync.session
-      .sync(sessionID)
-      .then(() => sync.session.get(sessionID))
-      .catch(() => undefined)
-  }
+  // The session for a notification, synced from the server when it is not loaded. A failed sync gives none.
+  const lookup = (directory: string, sessionID?: string) =>
+    Effect.gen(function* () {
+      if (!sessionID) return Option.none()
+      const sync = serverSync().ensureDirSyncContext(directory)
+      const session = Option.fromNullishOr(sync.session.get(sessionID))
+      if (Option.isSome(session)) return session
+      return yield* Effect.tryPromise({
+        try: () => sync.session.sync(sessionID),
+        catch: (cause) => new NotificationLookupError({ cause }),
+      }).pipe(
+        Effect.map(() => Option.fromNullishOr(sync.session.get(sessionID))),
+        Effect.orElseSucceed(() => Option.none()),
+      )
+    })
 
   const viewedInCurrentSession = (directory: string, sessionID?: string) => {
     if (!input.active()) return false
@@ -337,30 +364,34 @@ function createServerNotificationState(input: {
 
   const handleSessionIdle = (directory: string, event: { properties: { sessionID?: string } }, time: number) => {
     const sessionID = event.properties.sessionID
-    void lookup(directory, sessionID).then((session) => {
-      if (meta.disposed) return
-      if (!session) return
-      if (session.parentID) return
+    runDetached(
+      Effect.gen(function* () {
+        const found = yield* lookup(directory, sessionID)
+        if (meta.disposed) return
+        if (Option.isNone(found)) return
+        const session = found.value
+        if (session.parentID) return
 
-      if (settings.sounds.agentEnabled()) {
-        void playSoundById(settings.sounds.agent())
-      }
+        if (settings.sounds.agentEnabled()) {
+          void playSoundById(settings.sounds.agent())
+        }
 
-      append({
-        directory,
-        time,
-        viewed: viewedInCurrentSession(directory, sessionID),
-        type: "turn-complete",
-        session: sessionID,
-      })
+        append({
+          directory,
+          time,
+          viewed: viewedInCurrentSession(directory, sessionID),
+          type: "turn-complete",
+          session: sessionID,
+        })
 
-      const href = `/${base64Encode(directory)}/session/${sessionID}`
-      if (settings.notifications.agent()) {
-        void platform.notify(language.t("notification.session.responseReady.title"), session.title ?? sessionID, () =>
-          input.navigate(href),
-        )
-      }
-    })
+        const href = `/${base64Encode(directory)}/session/${sessionID}`
+        if (settings.notifications.agent()) {
+          void platform.notify(language.t("notification.session.responseReady.title"), session.title ?? sessionID, () =>
+            input.navigate(href),
+          )
+        }
+      }),
+    )
   }
 
   const handleSessionError = (
@@ -369,31 +400,37 @@ function createServerNotificationState(input: {
     time: number,
   ) => {
     const sessionID = event.properties.sessionID
-    void lookup(directory, sessionID).then((session) => {
-      if (meta.disposed) return
-      if (session?.parentID) return
+    runDetached(
+      Effect.gen(function* () {
+        const found = yield* lookup(directory, sessionID)
+        if (meta.disposed) return
+        if (Option.exists(found, (session) => Boolean(session.parentID))) return
 
-      if (settings.sounds.errorsEnabled()) {
-        void playSoundById(settings.sounds.errors())
-      }
+        if (settings.sounds.errorsEnabled()) {
+          void playSoundById(settings.sounds.errors())
+        }
 
-      const error = "error" in event.properties ? event.properties.error : undefined
-      append({
-        directory,
-        time,
-        viewed: viewedInCurrentSession(directory, sessionID),
-        type: "error",
-        session: sessionID ?? "global",
-        error,
-      })
-      const description =
-        session?.title ??
-        (typeof error === "string" ? error : language.t("notification.session.error.fallbackDescription"))
-      const href = sessionID ? `/${base64Encode(directory)}/session/${sessionID}` : `/${base64Encode(directory)}`
-      if (settings.notifications.errors()) {
-        void platform.notify(language.t("notification.session.error.title"), description, () => input.navigate(href))
-      }
-    })
+        const error = event.properties.error
+        append({
+          directory,
+          time,
+          viewed: viewedInCurrentSession(directory, sessionID),
+          type: "error",
+          session: sessionID ?? "global",
+          error,
+        })
+        const description = found.pipe(
+          Option.flatMap((session) => Option.fromNullishOr(session.title)),
+          Option.getOrElse(() =>
+            typeof error === "string" ? error : language.t("notification.session.error.fallbackDescription"),
+          ),
+        )
+        const href = sessionID ? `/${base64Encode(directory)}/session/${sessionID}` : `/${base64Encode(directory)}`
+        if (settings.notifications.errors()) {
+          void platform.notify(language.t("notification.session.error.title"), description, () => input.navigate(href))
+        }
+      }),
+    )
   }
 
   const unsub = serverSDK().event.listen((e) => {
@@ -401,7 +438,7 @@ function createServerNotificationState(input: {
     if (event.type !== "session.idle" && event.type !== "session.error") return
 
     const directory = e.name
-    const time = Date.now()
+    const time = DateTime.toEpochMillis(DateTime.nowUnsafe())
     if (event.type === "session.idle") {
       handleSessionIdle(directory, event, time)
       return
@@ -432,9 +469,9 @@ function createServerNotificationState(input: {
         const unseen = index.session.unseen[session] ?? empty
         if (!unseen.length) return
 
-        const projects = [
-          ...new Set(unseen.flatMap((notification) => (notification.directory ? [notification.directory] : []))),
-        ]
+        const projects = Arr.dedupe(
+          unseen.flatMap((notification) => (notification.directory ? [notification.directory] : [])),
+        )
         batch(() => {
           setStore("list", (n) => n.session === session && !n.viewed, "viewed", true)
           updateUnseen("session", session, [])
@@ -464,9 +501,9 @@ function createServerNotificationState(input: {
         const unseen = index.project.unseen[directory] ?? empty
         if (!unseen.length) return
 
-        const sessions = [
-          ...new Set(unseen.flatMap((notification) => (notification.session ? [notification.session] : []))),
-        ]
+        const sessions = Arr.dedupe(
+          unseen.flatMap((notification) => (notification.session ? [notification.session] : [])),
+        )
         batch(() => {
           setStore("list", (n) => n.directory === directory && !n.viewed, "viewed", true)
           updateUnseen("project", directory, [])

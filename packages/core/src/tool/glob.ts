@@ -65,8 +65,8 @@ const layer = Layer.effectDiscard(
                 save: ["*"],
                 metadata: {
                   root: input.path ?? ".",
-                  path: input.path,
-                  limit: input.limit,
+                  ...(input.path === undefined ? {} : { path: input.path }),
+                  ...(input.limit === undefined ? {} : { limit: input.limit }),
                 },
                 sessionID: context.sessionID,
                 agent: context.agent,
@@ -83,8 +83,8 @@ const layer = Layer.effectDiscard(
                   Effect.map((result) =>
                     result.map((entry) =>
                       FileSystem.Entry.make({
-                        ...entry,
                         path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, entry.path))),
+                        type: entry.type,
                       }),
                     ),
                   ),

@@ -1,7 +1,16 @@
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Effect } from "effect"
 import { useSettingsCommand } from "@/components/settings-dialog"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
+
+/**
+ * Runs a command action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 export function useNewSessionCommands(input: {
   restoreFocus: () => void
@@ -20,10 +29,15 @@ export function useNewSessionCommands(input: {
       id: "command.palette",
       title: language.t("command.palette"),
       hidden: true,
-      onSelect: async () => {
-        const { DialogSelectFile } = await import("@/components/dialog-select-file")
-        void dialog.show(() => <DialogSelectFile />)
-      },
+      onSelect: () =>
+        runDetached(
+          Effect.map(
+            Effect.promise(() => import("@/components/dialog-select-file")),
+            ({ DialogSelectFile }) => {
+              void dialog.show(() => <DialogSelectFile />)
+            },
+          ),
+        ),
     },
     {
       id: "input.focus",

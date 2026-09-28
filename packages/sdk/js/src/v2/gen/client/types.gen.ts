@@ -139,7 +139,8 @@ type MethodFn = <
 
 type SseFn = <
   TData = unknown,
-  TError = unknown,
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- (a) positional type parameter required by the @hey-api/openapi-ts generated sdk.gen.ts calls sse.get<Responses, Errors, ThrowOnError> and the public Client['sse'] signature; the SseFn patch in build.ts removed its only use
+  _TError = unknown,
   ThrowOnError extends boolean = false,
   TResponseStyle extends ResponseStyle = "fields",
 >(

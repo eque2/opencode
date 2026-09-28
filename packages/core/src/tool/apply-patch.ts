@@ -3,7 +3,7 @@ export * as ApplyPatchTool from "./apply-patch"
 import { ToolFailure } from "@opencode-ai/llm"
 import { FileDiff } from "@opencode-ai/schema/file-diff"
 import { createTwoFilesPatch, diffLines } from "diff"
-import { Effect, Layer, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Schema } from "effect"
 import { makeLocationNode } from "../effect/app-node"
 import { FileMutation } from "../file-mutation"
 import { FSUtil } from "../fs-util"
@@ -26,12 +26,12 @@ export const Applied = Schema.Struct({
   type: Schema.Literals(["add", "update", "delete"]),
   resource: Schema.String,
   target: Schema.String,
-})
+}).annotate({ identifier: "ApplyPatchTool.Applied" })
 
 export const Output = Schema.Struct({
   applied: Schema.Array(Applied),
   files: Schema.Array(FileDiff.Info),
-})
+}).annotate({ identifier: "ApplyPatchTool.Output" })
 export type Output = typeof Output.Type
 
 export const toModelOutput = (output: Output) =>
@@ -89,23 +89,23 @@ const layer = Layer.effectDiscard(
                   callID: context.toolCallID,
                 }
                 if (!input.patchText.trim()) return yield* new ToolFailure({ message: "patchText is required" })
-                const hunks = yield* Effect.try({
-                  try: () => Patch.parse(input.patchText),
-                  catch: (cause) => new ToolFailure({ message: `apply_patch verification failed: ${String(cause)}` }),
-                })
+                const hunks = yield* Effect.fromResult(Patch.parse(input.patchText)).pipe(
+                  Effect.mapError(
+                    (error) => new ToolFailure({ message: `apply_patch verification failed: ${error.message}` }),
+                  ),
+                )
                 if (hunks.length === 0) return yield* new ToolFailure({ message: "patch rejected: empty patch" })
                 const move = hunks.find((hunk) => hunk.type === "update" && hunk.movePath !== undefined)
                 if (move) return yield* new ToolFailure({ message: "apply_patch moves are not supported yet" })
 
-                const targets: Array<{ readonly hunk: Patch.Hunk; readonly target: LocationMutation.Target }> = []
-                for (const hunk of hunks)
-                  targets.push({ hunk, target: yield* mutation.resolve({ path: hunk.path, kind: "file" }) })
-                const externalDirectories = new Map<string, LocationMutation.ExternalDirectoryAuthorization>()
-                for (const { target } of targets) {
-                  const external = target.externalDirectory
-                  if (external) externalDirectories.set(external.resource, external)
-                }
-                for (const external of externalDirectories.values()) {
+                const targets = yield* Effect.forEach(hunks, (hunk) =>
+                  mutation.resolve({ path: hunk.path, kind: "file" }).pipe(Effect.map((target) => ({ hunk, target }))),
+                )
+                const externalDirectories = Arr.dedupeWith(
+                  targets.flatMap(({ target }) => (target.externalDirectory ? [target.externalDirectory] : [])),
+                  (left, right) => left.resource === right.resource,
+                )
+                for (const external of externalDirectories) {
                   yield* permission.assert({
                     ...LocationMutation.externalDirectoryPermission(external),
                     sessionID: context.sessionID,
@@ -115,45 +115,40 @@ const layer = Layer.effectDiscard(
                 }
                 yield* permission.assert({
                   action: "edit",
-                  resources: [...new Set(targets.map(({ target }) => target.resource))],
+                  resources: Arr.dedupe(targets.map(({ target }) => target.resource)),
                   save: ["*"],
                   sessionID: context.sessionID,
                   agent: context.agent,
                   source,
                 })
 
-                const prepared: Prepared[] = []
-                for (const { hunk, target } of targets) {
-                  yield* Effect.gen(function* () {
+                const prepared: ReadonlyArray<Prepared> = yield* Effect.forEach(targets, ({ hunk, target }) =>
+                  Effect.gen(function* () {
                     if (hunk.type === "add") {
-                      prepared.push({
+                      return {
                         ...hunk,
                         target,
                         before: "",
                         after:
                           hunk.contents.endsWith("\n") || hunk.contents === "" ? hunk.contents : `${hunk.contents}\n`,
-                      })
-                      return
+                      }
                     }
-                    if ((yield* fs.stat(target.canonical)).type !== "File") yield* fail(hunk.path)
+                    if ((yield* fs.stat(target.canonical)).type !== "File") return yield* fail(hunk.path)
                     const source = yield* fs.readFile(target.canonical)
                     const original = new TextDecoder("utf-8", { ignoreBOM: true }).decode(source)
                     const before = original.replace(/^\uFEFF/, "")
-                    if (hunk.type === "delete") {
-                      prepared.push({ ...hunk, target, before, after: "" })
-                      return
-                    }
-                    const update = Patch.derive(hunk.path, hunk.chunks, original)
-                    prepared.push({
+                    if (hunk.type === "delete") return { ...hunk, target, before, after: "" }
+                    const update = yield* Effect.fromResult(Patch.derive(hunk.path, hunk.chunks, original))
+                    return {
                       ...hunk,
                       target,
                       source,
                       content: Patch.joinBom(update.content, update.bom),
                       before,
                       after: update.content,
-                    })
-                  }).pipe(Effect.mapError(() => fail(hunk.path)))
-                }
+                    }
+                  }).pipe(Effect.mapError(() => fail(hunk.path))),
+                )
 
                 const patchFiles = prepared.map(patchFile)
                 yield* Effect.forEach(

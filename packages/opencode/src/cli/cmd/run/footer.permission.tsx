@@ -14,6 +14,7 @@
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
+import { Effect } from "effect"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import {
   createPermissionBodyState,
@@ -33,6 +34,7 @@ import { footerWidthPolicy } from "./footer.width"
 import { toolFiletype } from "./tool"
 import { transparent, type RunBlockTheme, type RunFooterTheme } from "./theme"
 import type { PermissionReply, RunDiffStyle } from "./types"
+import type { FooterCallbackError } from "./footer.effect"
 
 function buttons(
   list: PermissionOption[],
@@ -134,7 +136,7 @@ export function RunPermissionBody(props: {
   theme: RunFooterTheme
   block: RunBlockTheme
   diffStyle?: RunDiffStyle
-  onReply: (input: PermissionReply) => void | Promise<void>
+  onReply: (input: PermissionReply) => Effect.Effect<void, FooterCallbackError>
 }) {
   const dims = useTerminalDimensions()
   const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
@@ -168,20 +170,24 @@ export function RunPermissionBody(props: {
     setState((prev) => permissionShift(prev, dir))
   }
 
-  const submit = async (next: PermissionReply) => {
+  const submit = (next: PermissionReply) => {
     setState((prev) => ({
       ...prev,
       submitting: true,
     }))
 
-    try {
-      await props.onReply(next)
-    } catch {
-      setState((prev) => ({
-        ...prev,
-        submitting: false,
-      }))
-    }
+    Effect.runFork(
+      props.onReply(next).pipe(
+        Effect.catch(() =>
+          Effect.sync(() =>
+            setState((prev) => ({
+              ...prev,
+              submitting: false,
+            })),
+          ),
+        ),
+      ),
+    )
   }
 
   const run = (option: PermissionOption) => {
@@ -195,7 +201,7 @@ export function RunPermissionBody(props: {
       return
     }
 
-    void submit(next.reply)
+    submit(next.reply)
   }
 
   const reject = () => {
@@ -204,7 +210,7 @@ export function RunPermissionBody(props: {
       return
     }
 
-    void submit(next)
+    submit(next)
   }
 
   const cancelReject = () => {
@@ -306,7 +312,7 @@ export function RunPermissionBody(props: {
               alignItems={narrow() ? "flex-start" : "center"}
               gap={1}
             >
-              <box width={narrow() ? "100%" : undefined} flexGrow={1} flexShrink={1}>
+              <box {...(narrow() ? { width: "100%" } : {})} flexGrow={1} flexShrink={1}>
                 <RejectField
                   theme={props.theme}
                   text={state().message}

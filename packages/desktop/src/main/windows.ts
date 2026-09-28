@@ -1,10 +1,11 @@
 import windowState from "electron-window-state"
 import { resolveThemeVariant } from "@opencode-ai/ui/theme/resolve"
-import type { DesktopTheme } from "@opencode-ai/ui/theme/types"
+import { parseDesktopTheme } from "@opencode-ai/ui/theme/validate"
 import oc2ThemeJson from "../../../ui/src/theme/themes/oc-2.json"
 import { randomUUID } from "node:crypto"
-import { rmSync } from "node:fs"
 import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol, shell } from "electron"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Config, Data, Effect, FileSystem, Option } from "effect"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
@@ -23,8 +24,8 @@ const rendererProtocol = "oc"
 const rendererHost = "renderer"
 const clipboardWritePermission = "clipboard-sanitized-write"
 const notificationPermission = "notifications"
-const rendererPermissions = new Set([clipboardWritePermission, notificationPermission])
-const oc2Theme = oc2ThemeJson as DesktopTheme
+const rendererPermissions: ReadonlyArray<string> = [clipboardWritePermission, notificationPermission]
+const oc2Theme = parseDesktopTheme(oc2ThemeJson)
 const oc2Background = {
   light: resolveThemeVariant(oc2Theme.light, false)["background-base"],
   dark: resolveThemeVariant(oc2Theme.dark, true)["background-base"],
@@ -56,14 +57,31 @@ const windowIDs = new WeakMap<BrowserWindow, string>()
 const registry = createWindowRegistry<BrowserWindow>({
   read: () => getStore().get(WINDOW_IDS_KEY),
   write: (ids) => getStore().set(WINDOW_IDS_KEY, ids),
+  // The registry calls cleanup from a synchronous window event, so the files go in the background.
+  // A failure is logged; the synchronous rmSync used to throw it out of the event handler.
   cleanup: (id) => {
-    rmSync(join(app.getPath("userData"), windowStateFile(id)), { force: true })
-    removeStoreFile(windowDataFile(id))
+    Effect.runFork(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        yield* fs.remove(join(app.getPath("userData"), windowStateFile(id)), { force: true })
+        yield* removeStoreFile(windowDataFile(id))
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => writeLog("window", "failed to remove window files", { id, error }, "warn")),
+        ),
+        Effect.provide(NodeFileSystem.layer),
+      ),
+    )
   },
 })
 const titlebarHeight = 40
 const maxZoomLevel = 10
 const minZoomLevel = 0.2
+
+class WindowTaskError extends Data.TaggedError("WindowTaskError")<{ readonly cause: unknown }> {}
+
+const attempt = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new WindowTaskError({ cause }) })
 
 export function setRelaunchHandler(handler: () => void) {
   relaunchHandler = handler
@@ -146,12 +164,12 @@ export function getWindowID(win: BrowserWindow) {
   return windowIDs.get(win)
 }
 
+// Returns null when no window is available, as main/index.ts and the IPC handlers expect.
 export function getLastFocusedWindow() {
-  const focused = BrowserWindow.getFocusedWindow()
-  if (focused) return focused
-  const win = registry.lastFocused()
-  if (!win || win.isDestroyed()) return null
-  return win
+  return Option.fromNullishOr(BrowserWindow.getFocusedWindow()).pipe(
+    Option.orElse(() => Option.filter(registry.lastFocused(), (win) => !win.isDestroyed())),
+    Option.getOrNull,
+  )
 }
 
 export function restoreMainWindows() {
@@ -291,50 +309,72 @@ function windowDataFile(id: string) {
 export function registerRendererProtocol() {
   if (protocol.isProtocolHandled(rendererProtocol)) return
 
-  protocol.handle(rendererProtocol, async (request) => {
-    const url = new URL(request.url)
-    if (url.host !== rendererHost) {
-      writeLog("protocol", "rejected host", { url: request.url }, "warn")
-      return new Response("Not found", { status: 404 })
-    }
+  protocol.handle(rendererProtocol, (request) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const url = new URL(request.url)
+        if (url.host !== rendererHost) {
+          writeLog("protocol", "rejected host", { url: request.url }, "warn")
+          return new Response("Not found", { status: 404 })
+        }
 
-    const file = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`)
-    const rel = relative(rendererRoot, file)
-    if (rel.startsWith("..") || isAbsolute(rel)) {
-      writeLog("protocol", "rejected path", { url: request.url, file }, "warn")
-      return new Response("Not found", { status: 404 })
-    }
+        const file = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`)
+        const rel = relative(rendererRoot, file)
+        if (rel.startsWith("..") || isAbsolute(rel)) {
+          writeLog("protocol", "rejected path", { url: request.url, file }, "warn")
+          return new Response("Not found", { status: 404 })
+        }
 
-    try {
-      const range = request.headers.get("range")
-      const response = await net.fetch(pathToFileURL(file).toString(), {
-        headers: range ? { range } : undefined,
-      })
-      if (response.status >= 400) {
-        writeLog(
-          "protocol",
-          "fetch failed",
-          {
-            url: request.url,
-            file,
-            status: response.status,
-            statusText: response.statusText,
-          },
-          "error",
+        const range = request.headers.get("range")
+        return yield* attempt(() =>
+          net.fetch(pathToFileURL(file).toString(), range ? { headers: { range } } : {}),
+        ).pipe(
+          Effect.flatMap((response) =>
+            Effect.try({
+              try: () => {
+                if (response.status >= 400) {
+                  writeLog(
+                    "protocol",
+                    "fetch failed",
+                    {
+                      url: request.url,
+                      file,
+                      status: response.status,
+                      statusText: response.statusText,
+                    },
+                    "error",
+                  )
+                }
+                return addDocumentPolicy(response, file)
+              },
+              catch: (cause) => new WindowTaskError({ cause }),
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              writeLog("protocol", "fetch error", { url: request.url, file, error: error.cause }, "error")
+              return new Response("Not found", { status: 404 })
+            }),
+          ),
         )
-      }
-      return addDocumentPolicy(response, file)
-    } catch (error) {
-      writeLog("protocol", "fetch error", { url: request.url, file, error }, "error")
-      return new Response("Not found", { status: 404 })
-    }
-  })
+      }),
+    ),
+  )
 }
 
+// electron-vite sets ELECTRON_RENDERER_URL in development. Electron callbacks read it
+// synchronously, so main/index.ts loads it once with loadRendererDevUrl before any window.
+let rendererDevUrl = Option.none<string>()
+
+/** Reads ELECTRON_RENDERER_URL once; an empty value counts as absent. */
+export const loadRendererDevUrl = Effect.gen(function* () {
+  const devUrl = yield* Config.option(Config.String("ELECTRON_RENDERER_URL"))
+  rendererDevUrl = Option.filter(devUrl, (value) => value.length > 0)
+})
+
 function loadWindow(win: BrowserWindow, html: string) {
-  const devUrl = process.env.ELECTRON_RENDERER_URL
-  if (devUrl) {
-    const url = new URL(html, devUrl)
+  if (Option.isSome(rendererDevUrl)) {
+    const url = new URL(html, rendererDevUrl.value)
     void win.loadURL(url.toString())
     return
   }
@@ -347,56 +387,73 @@ function wireWindowRecovery(win: BrowserWindow, name: string) {
   const sampler = createUnresponsiveSampler(win, name)
 
   type RecoveryAction = "relaunch" | "export-logs" | "keep-waiting" | "quit"
-  const handle = async (action: RecoveryAction | undefined, wait: boolean) => {
-    if (action === "export-logs") {
-      const sampling = sampler.stopAndFlush()
-      await exportDebugLogs().catch((error) => writeLog("main", "failed to export debug logs", { error }, "error"))
-      if (wait && sampling) sampler.start()
-      return true
-    }
-    if (action === "relaunch") {
-      sampler.stopAndFlush()
-      relaunchHandler()
-      return false
-    }
-    if (action === "quit") {
-      sampler.stopAndFlush()
-      app.quit()
-    }
-    return false
-  }
-
-  const show = async (message: string, detail: string, wait: boolean) => {
-    if (showing || win.isDestroyed()) return
-    showing = true
-    try {
-      while (!win.isDestroyed()) {
-        const actions: { id: RecoveryAction; label: string }[] = wait
-          ? [
-              { id: "relaunch", label: nativeT("desktop.recovery.action.relaunch") },
-              { id: "export-logs", label: nativeT("desktop.recovery.action.exportLogs") },
-              { id: "keep-waiting", label: nativeT("desktop.recovery.action.keepWaiting") },
-            ]
-          : [
-              { id: "relaunch", label: nativeT("desktop.recovery.action.relaunch") },
-              { id: "export-logs", label: nativeT("desktop.recovery.action.exportLogs") },
-              { id: "quit", label: nativeT("desktop.recovery.action.quit") },
-            ]
-        const result = await dialog.showMessageBox(win, {
-          type: "warning",
-          buttons: actions.map((action) => action.label),
-          defaultId: 0,
-          cancelId: 2,
-          message,
-          detail,
-        })
-        if (await handle(actions[result.response]?.id, wait)) continue
-        return
+  const handle = (action: RecoveryAction | undefined, wait: boolean) =>
+    Effect.gen(function* () {
+      if (action === "export-logs") {
+        const sampling = sampler.stopAndFlush()
+        yield* attempt(() => exportDebugLogs()).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => writeLog("main", "failed to export debug logs", { error: error.cause }, "error")),
+          ),
+        )
+        if (wait && sampling) sampler.start()
+        return true
       }
-    } finally {
-      showing = false
-    }
-  }
+      if (action === "relaunch") {
+        sampler.stopAndFlush()
+        relaunchHandler()
+        return false
+      }
+      if (action === "quit") {
+        sampler.stopAndFlush()
+        app.quit()
+      }
+      return false
+    })
+
+  const show = (message: string, detail: string, wait: boolean) =>
+    Effect.suspend(() => {
+      if (showing || win.isDestroyed()) return Effect.void
+      showing = true
+      return Effect.gen(function* () {
+        while (!win.isDestroyed()) {
+          const actions: { id: RecoveryAction; label: string }[] = wait
+            ? [
+                { id: "relaunch", label: nativeT("desktop.recovery.action.relaunch") },
+                { id: "export-logs", label: nativeT("desktop.recovery.action.exportLogs") },
+                { id: "keep-waiting", label: nativeT("desktop.recovery.action.keepWaiting") },
+              ]
+            : [
+                { id: "relaunch", label: nativeT("desktop.recovery.action.relaunch") },
+                { id: "export-logs", label: nativeT("desktop.recovery.action.exportLogs") },
+                { id: "quit", label: nativeT("desktop.recovery.action.quit") },
+              ]
+          const result = yield* attempt(() =>
+            dialog.showMessageBox(win, {
+              type: "warning",
+              buttons: actions.map((action) => action.label),
+              defaultId: 0,
+              cancelId: 2,
+              message,
+              detail,
+            }),
+          )
+          if (yield* handle(actions[result.response]?.id, wait)) continue
+          return
+        }
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() =>
+            writeLog("window", "recovery dialog failed", { window: name, error: error.cause }, "error"),
+          ),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            showing = false
+          }),
+        ),
+      )
+    })
 
   const failed = (
     event: string,
@@ -421,15 +478,17 @@ function wireWindowRecovery(win: BrowserWindow, name: string) {
     )
 
     if (!isMainFrame || errorCode === -3) return
-    void show(
-      nativeT("desktop.recovery.loadFailed"),
-      nativeT("desktop.recovery.loadFailed.detail", {
-        window: name,
-        url: validatedURL,
-        code: errorCode,
-        description: errorDescription,
-      }),
-      false,
+    Effect.runFork(
+      show(
+        nativeT("desktop.recovery.loadFailed"),
+        nativeT("desktop.recovery.loadFailed.detail", {
+          window: name,
+          url: validatedURL,
+          code: errorCode,
+          description: errorDescription,
+        }),
+        false,
+      ),
     )
   }
 
@@ -442,20 +501,24 @@ function wireWindowRecovery(win: BrowserWindow, name: string) {
   win.webContents.on("render-process-gone", (_event, details) => {
     sampler.stopAndFlush()
     writeLog("window", "renderer process gone", { window: name, currentURL: safeWindowURL(win), details }, "error")
-    void show(
-      nativeT("desktop.recovery.terminated"),
-      nativeT("desktop.recovery.terminated.detail", {
-        window: name,
-        reason: details.reason,
-        code: details.exitCode ?? nativeT("desktop.recovery.unknown"),
-      }),
-      false,
+    Effect.runFork(
+      show(
+        nativeT("desktop.recovery.terminated"),
+        nativeT("desktop.recovery.terminated.detail", {
+          window: name,
+          reason: details.reason,
+          code: details.exitCode ?? nativeT("desktop.recovery.unknown"),
+        }),
+        false,
+      ),
     )
   })
   win.on("unresponsive", () => {
     writeLog("window", "renderer unresponsive", { window: name, currentURL: safeWindowURL(win) }, "error")
     sampler.start()
-    void show(nativeT("desktop.recovery.unresponsive"), nativeT("desktop.recovery.unresponsive.detail"), true)
+    Effect.runFork(
+      show(nativeT("desktop.recovery.unresponsive"), nativeT("desktop.recovery.unresponsive.detail"), true),
+    )
   })
   win.on("responsive", () => {
     writeLog("window", "renderer responsive", { window: name, currentURL: safeWindowURL(win) }, "error")
@@ -483,13 +546,13 @@ function allowRendererPermissions(win: BrowserWindow) {
 
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     callback(
-      rendererPermissions.has(permission) &&
+      rendererPermissions.includes(permission) &&
         isTrustedRendererUrl(details.requestingUrl) &&
         webContents.id === webContentsId,
     )
   })
   win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    if (!rendererPermissions.has(permission)) return false
+    if (!rendererPermissions.includes(permission)) return false
     if (webContents && webContents.id !== webContentsId) return false
     return isTrustedRendererUrl(details.requestingUrl) || isTrustedRendererUrl(requestingOrigin)
   })
@@ -510,9 +573,8 @@ function isRendererUrl(value?: string, html = false) {
   const url = new URL(value)
   if (html && !url.pathname.endsWith(".html")) return false
   if (url.protocol === `${rendererProtocol}:` && url.host === rendererHost) return true
-  const devUrl = process.env.ELECTRON_RENDERER_URL
-  if (!devUrl || !URL.canParse(devUrl)) return false
-  return url.origin === new URL(devUrl).origin
+  if (Option.isNone(rendererDevUrl) || !URL.canParse(rendererDevUrl.value)) return false
+  return url.origin === new URL(rendererDevUrl.value).origin
 }
 
 function wireZoom(win: BrowserWindow) {

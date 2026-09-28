@@ -1,5 +1,7 @@
 import type { OpenCodeEventEncoded } from "@opencode-ai/protocol/groups/event"
 
+import type * as ProtocolErrors from "@opencode-ai/protocol/errors"
+
 export type JsonValue =
   | null
   | boolean
@@ -8,98 +10,63 @@ export type JsonValue =
   | ReadonlyArray<JsonValue>
   | { readonly [key: string]: JsonValue }
 
-export type UnauthorizedError = { readonly _tag: "UnauthorizedError"; readonly message: string }
+// eslint-disable-next-line effect/no-null-use-option -- (b) JSON null: typeof null is object, so this guard over unknown wire JSON must exclude null before property access
+const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null
+
+export type UnauthorizedError = typeof ProtocolErrors.UnauthorizedError.Encoded
 export const isUnauthorizedError = (value: unknown): value is UnauthorizedError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "UnauthorizedError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnauthorizedError"
 
-export type InvalidRequestError = {
-  readonly _tag: "InvalidRequestError"
-  readonly message: string
-  readonly kind?: string | undefined
-  readonly field?: string | undefined
-}
+export type InvalidRequestError = typeof ProtocolErrors.InvalidRequestError.Encoded
 export const isInvalidRequestError = (value: unknown): value is InvalidRequestError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "InvalidRequestError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidRequestError"
 
-export type InvalidCursorError = { readonly _tag: "InvalidCursorError"; readonly message: string }
+export type InvalidCursorError = typeof ProtocolErrors.InvalidCursorError.Encoded
 export const isInvalidCursorError = (value: unknown): value is InvalidCursorError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "InvalidCursorError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidCursorError"
 
-export type SessionNotFoundError = {
-  readonly _tag: "SessionNotFoundError"
-  readonly sessionID: string
-  readonly message: string
-}
+export type SessionNotFoundError = typeof ProtocolErrors.SessionNotFoundError.Encoded
 export const isSessionNotFoundError = (value: unknown): value is SessionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "SessionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "SessionNotFoundError"
 
-export type ConflictError = {
-  readonly _tag: "ConflictError"
-  readonly message: string
-  readonly resource?: string | undefined
-}
+export type ConflictError = typeof ProtocolErrors.ConflictError.Encoded
 export const isConflictError = (value: unknown): value is ConflictError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ConflictError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ConflictError"
 
-export type ServiceUnavailableError = {
-  readonly _tag: "ServiceUnavailableError"
-  readonly message: string
-  readonly service?: string | undefined
-}
+export type ServiceUnavailableError = typeof ProtocolErrors.ServiceUnavailableError.Encoded
 export const isServiceUnavailableError = (value: unknown): value is ServiceUnavailableError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ServiceUnavailableError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ServiceUnavailableError"
 
-export type MessageNotFoundError = {
-  readonly _tag: "MessageNotFoundError"
-  readonly sessionID: string
-  readonly messageID: string
-  readonly message: string
-}
+export type MessageNotFoundError = typeof ProtocolErrors.MessageNotFoundError.Encoded
 export const isMessageNotFoundError = (value: unknown): value is MessageNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "MessageNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "MessageNotFoundError"
 
-export type UnknownError = {
-  readonly _tag: "UnknownError"
-  readonly message: string
-  readonly ref?: string | undefined
-}
+export type UnknownError = typeof ProtocolErrors.UnknownError.Encoded
 export const isUnknownError = (value: unknown): value is UnknownError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "UnknownError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnknownError"
 
-export type ProviderNotFoundError = {
-  readonly _tag: "ProviderNotFoundError"
-  readonly providerID: string
-  readonly message: string
-}
+export type ProviderNotFoundError = typeof ProtocolErrors.ProviderNotFoundError.Encoded
 export const isProviderNotFoundError = (value: unknown): value is ProviderNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
 
-export type PermissionNotFoundError = {
-  readonly _tag: "PermissionNotFoundError"
-  readonly requestID: string
-  readonly message: string
-}
+export type PermissionNotFoundError = typeof ProtocolErrors.PermissionNotFoundError.Encoded
 export const isPermissionNotFoundError = (value: unknown): value is PermissionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
 
-export type PtyNotFoundError = { readonly _tag: "PtyNotFoundError"; readonly ptyID: string; readonly message: string }
+export type PtyNotFoundError = typeof ProtocolErrors.PtyNotFoundError.Encoded
 export const isPtyNotFoundError = (value: unknown): value is PtyNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PtyNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "PtyNotFoundError"
 
-export type QuestionNotFoundError = {
-  readonly _tag: "QuestionNotFoundError"
-  readonly requestID: string
-  readonly message: string
-}
+export type QuestionNotFoundError = typeof ProtocolErrors.QuestionNotFoundError.Encoded
 export const isQuestionNotFoundError = (value: unknown): value is QuestionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
 
 export type ProjectCopyError = {
   readonly name: "ProjectCopyError"
   readonly data: { readonly message: string; readonly forceRequired?: boolean | undefined }
 }
 export const isProjectCopyError = (value: unknown): value is ProjectCopyError =>
-  typeof value === "object" && value !== null && "name" in value && value["name"] === "ProjectCopyError"
+  isNonNullObject(value) && "name" in value && value["name"] === "ProjectCopyError"
 
 export type HealthGetOutput = { readonly healthy: true }
 
@@ -138,7 +105,7 @@ export type AgentsListOutput = {
     readonly description?: string
     readonly mode: "subagent" | "primary" | "all"
     readonly hidden: boolean
-    readonly color?: string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+    readonly color?: string
     readonly steps?: number
     readonly permissions: ReadonlyArray<{
       readonly action: string
@@ -1144,7 +1111,7 @@ export type SessionsEventsInput = {
 export type SessionsEventsOutput =
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.agent.switched"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1157,7 +1124,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.model.switched"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1170,7 +1137,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.moved"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1183,7 +1150,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.prompted"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1210,7 +1177,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.prompt.admitted"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1237,7 +1204,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.context.updated"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1250,7 +1217,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.synthetic"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1263,7 +1230,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.shell.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1277,7 +1244,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.shell.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1290,7 +1257,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.step.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1305,7 +1272,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.step.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1327,7 +1294,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.step.failed"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1340,7 +1307,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.text.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1353,7 +1320,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.text.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1367,7 +1334,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.input.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1381,7 +1348,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.input.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1395,7 +1362,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.called"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1405,16 +1372,16 @@ export type SessionsEventsOutput =
         readonly assistantMessageID: string
         readonly callID: string
         readonly tool: string
-        readonly input: { readonly [x: string]: unknown }
+        readonly input: { readonly [x: string]: JsonValue }
         readonly provider: {
           readonly executed: boolean
-          readonly metadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+          readonly metadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
         }
       }
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.progress"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1423,7 +1390,7 @@ export type SessionsEventsOutput =
         readonly sessionID: string
         readonly assistantMessageID: string
         readonly callID: string
-        readonly structured: { readonly [x: string]: unknown }
+        readonly structured: { readonly [x: string]: JsonValue }
         readonly content: ReadonlyArray<
           | { readonly type: "text"; readonly text: string }
           | { readonly type: "file"; readonly uri: string; readonly mime: string; readonly name?: string }
@@ -1432,7 +1399,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.success"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1441,22 +1408,22 @@ export type SessionsEventsOutput =
         readonly sessionID: string
         readonly assistantMessageID: string
         readonly callID: string
-        readonly structured: { readonly [x: string]: unknown }
+        readonly structured: { readonly [x: string]: JsonValue }
         readonly content: ReadonlyArray<
           | { readonly type: "text"; readonly text: string }
           | { readonly type: "file"; readonly uri: string; readonly mime: string; readonly name?: string }
         >
         readonly outputPaths?: ReadonlyArray<string>
-        readonly result?: unknown
+        readonly result?: JsonValue
         readonly provider: {
           readonly executed: boolean
-          readonly metadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+          readonly metadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
         }
       }
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.tool.failed"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1466,16 +1433,16 @@ export type SessionsEventsOutput =
         readonly assistantMessageID: string
         readonly callID: string
         readonly error: { readonly type: "unknown"; readonly message: string }
-        readonly result?: unknown
+        readonly result?: JsonValue
         readonly provider: {
           readonly executed: boolean
-          readonly metadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+          readonly metadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
         }
       }
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.reasoning.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1484,12 +1451,12 @@ export type SessionsEventsOutput =
         readonly sessionID: string
         readonly assistantMessageID: string
         readonly reasoningID: string
-        readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+        readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
       }
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.reasoning.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1499,12 +1466,12 @@ export type SessionsEventsOutput =
         readonly assistantMessageID: string
         readonly reasoningID: string
         readonly text: string
-        readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+        readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
       }
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.retried"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1524,7 +1491,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.compaction.started"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1537,7 +1504,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.compaction.ended"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1552,7 +1519,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.revert.staged"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1576,7 +1543,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.revert.cleared"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -1584,7 +1551,7 @@ export type SessionsEventsOutput =
     }
   | {
       readonly id: string
-      readonly metadata?: { readonly [x: string]: unknown }
+      readonly metadata?: { readonly [x: string]: JsonValue }
       readonly type: "session.next.revert.committed"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }

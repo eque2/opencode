@@ -1,3 +1,6 @@
+import { Data, Effect, type MutableHashMap, Option, Predicate } from "effect"
+import type { PromiseMethodName } from "../stdlib/promise.js"
+import type { UrlPropertyName } from "../stdlib/url.js"
 import type { SafeObject } from "../tool-runtime.js"
 import type { SandboxURL } from "../values.js"
 
@@ -22,9 +25,11 @@ export type ProgramNode = AstNode & {
   body: Array<AstNode>
 }
 
+// A named binding. A parameter slot seeded before its default runs (initialized: false, the
+// JS temporal dead zone) has no value yet.
 export type Binding = {
   mutable: boolean
-  value: unknown
+  value?: unknown
   initialized?: boolean
 }
 
@@ -35,16 +40,24 @@ export type StatementResult =
   | { kind: "break" }
   | { kind: "continue" }
 
-export type MemberReference = {
-  target: SafeObject | Array<unknown> | SandboxURL
-  key: string | number
-}
+// The URL property names derive from the stdlib/url.ts tables, so the lists cannot drift.
+export type { UrlPropertyName, WritableUrlPropertyName } from "../stdlib/url.js"
+
+// A resolved data field: an array slot or property, a data object property, or a URL component.
+export type MemberReference =
+  | { readonly kind: "array"; readonly target: Array<unknown>; readonly key: string | number }
+  | { readonly kind: "object"; readonly target: SafeObject; readonly key: string | number }
+  | { readonly kind: "url"; readonly target: SandboxURL; readonly key: UrlPropertyName }
+
+// One lexical scope, keyed by binding name. It is mutable in place: closures capture scope
+// objects by reference, so a later declaration or assignment must be visible to every capture.
+export type Scope = MutableHashMap.MutableHashMap<string, Binding>
 
 export class CodeModeFunction {
   constructor(
     readonly parameters: ReadonlyArray<AstNode>,
     readonly body: AstNode,
-    readonly capturedScopes: ReadonlyArray<Map<string, Binding>>,
+    readonly capturedScopes: ReadonlyArray<Scope>,
   ) {}
 }
 
@@ -59,9 +72,14 @@ export class ComputedValue {
   constructor(readonly value: unknown) {}
 }
 
-export class PromiseNamespace {}
+// The sandbox `Promise` global: an opaque tagged value (never plain data), so data checkpoints
+// reject it exactly like the other runtime references.
+export class PromiseNamespace extends Data.TaggedClass("PromiseNamespace") {}
 
-export type PromiseMethodName = "all" | "allSettled" | "race" | "resolve" | "reject"
+export const promiseNamespace: PromiseNamespace = new PromiseNamespace()
+
+// The Promise static names derive from the stdlib/promise.ts table.
+export type { PromiseMethodName } from "../stdlib/promise.js"
 
 export class PromiseMethodReference {
   constructor(readonly name: PromiseMethodName) {}
@@ -124,19 +142,33 @@ export const OptionalShortCircuit: unique symbol = Symbol("codemode.optional-sho
 export const supportedSyntaxMessage =
   "Supported orchestration syntax: tools.* calls (they return promises - resolve them with await), data literals, destructuring, optional chaining, template literals, conditionals, switch, loops (incl. for...of and for...in over object/array/tools keys), arrow functions, spread, try/catch, array methods (map/filter/find/findIndex/some/every/reduce/flatMap/forEach/sort/slice/concat/indexOf/lastIndexOf/at/flat/reverse/includes/join), string methods (incl. match/matchAll/replace/split with regular expressions), Date/RegExp/Map/Set/URL/URLSearchParams, URI encoding helpers, Object/Math/JSON helpers, captured console.log/warn/error/dir/table, and Promise.all/allSettled/race/resolve/reject over arrays mixing promises and plain values for parallel tool calls (promise chaining with .then/.catch is not supported - use await with try/catch)."
 
-export class InterpreterRuntimeError extends Error {
+export class InterpreterRuntimeError extends Data.TaggedError("InterpreterRuntimeError")<{
+  readonly message: string
   readonly node?: AstNode
+  readonly kind: DiagnosticKind
+  readonly suggestions?: ReadonlyArray<string>
+}> {
+  // The program-visible error type (Error, TypeError, ...) a catch block observes; see `as`.
   errorName: string = "Error"
 
+  // Positional form kept for the stdlib call sites: `new InterpreterRuntimeError(message, node)`.
   constructor(
     message: string,
     node?: AstNode,
-    readonly kind: DiagnosticKind = "ExecutionFailure",
-    readonly suggestions?: ReadonlyArray<string>,
+    kind: DiagnosticKind = "ExecutionFailure",
+    suggestions?: ReadonlyArray<string>,
   ) {
-    super(message)
-    this.name = "InterpreterRuntimeError"
-    if (node) this.node = node
+    super({ message, kind, ...(node ? { node } : {}), ...(suggestions ? { suggestions } : {}) })
+  }
+
+  // Named-field form, so a caller without an AST node does not pass a placeholder for it.
+  static make(fields: {
+    readonly message: string
+    readonly node?: AstNode
+    readonly kind?: DiagnosticKind
+    readonly suggestions?: ReadonlyArray<string>
+  }): InterpreterRuntimeError {
+    return new InterpreterRuntimeError(fields.message, fields.node, fields.kind, fields.suggestions)
   }
 
   as(errorName: string): this {
@@ -153,41 +185,47 @@ export const unsupportedSyntax = (kind: string, node: AstNode): InterpreterRunti
     [supportedSyntaxMessage],
   )
 
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
+export const isRecord = (value: unknown): value is Record<string, unknown> => Predicate.isObjectOrArray(value)
 
-export const asNode = (value: unknown, context: string): AstNode => {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    throw new InterpreterRuntimeError(`Invalid AST node while reading ${context}.`)
-  }
-  return value as AstNode
-}
+export const isAstNode = (value: unknown): value is AstNode => isRecord(value) && typeof value.type === "string"
 
-export const getArray = (node: AstNode, key: string): Array<unknown> => {
+export const asNode = (value: unknown, context: string): Effect.Effect<AstNode, InterpreterRuntimeError> =>
+  isAstNode(value)
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Invalid AST node while reading ${context}.`))
+
+export const getArray = (node: AstNode, key: string): Effect.Effect<Array<unknown>, InterpreterRuntimeError> => {
   const value = node[key]
-  if (!Array.isArray(value)) throw new InterpreterRuntimeError(`Expected '${key}' to be an array.`, node)
-  return value
+  return Array.isArray(value)
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be an array.`, node))
 }
 
-export const getString = (node: AstNode, key: string): string => {
+export const getString = (node: AstNode, key: string): Effect.Effect<string, InterpreterRuntimeError> => {
   const value = node[key]
-  if (typeof value !== "string") throw new InterpreterRuntimeError(`Expected '${key}' to be a string.`, node)
-  return value
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be a string.`, node))
 }
 
-export const getBoolean = (node: AstNode, key: string): boolean => {
+export const getBoolean = (node: AstNode, key: string): Effect.Effect<boolean, InterpreterRuntimeError> => {
   const value = node[key]
-  if (typeof value !== "boolean") throw new InterpreterRuntimeError(`Expected '${key}' to be a boolean.`, node)
-  return value
+  return typeof value === "boolean"
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be a boolean.`, node))
 }
 
-export const getOptionalNode = (node: AstNode, key: string): AstNode | undefined => {
+// An absent child (a missing key, or null as acorn writes it) is Option.none.
+export const getOptionalNode = (
+  node: AstNode,
+  key: string,
+): Effect.Effect<Option.Option<AstNode>, InterpreterRuntimeError> => {
   const value = node[key]
-  if (value === undefined || value === null) return undefined
-  return asNode(value, key)
+  return Predicate.isNullish(value) ? Effect.succeedNone : Effect.asSome(asNode(value, key))
 }
 
-export const getNode = (node: AstNode, key: string): AstNode => asNode(node[key], key)
+export const getNode = (node: AstNode, key: string): Effect.Effect<AstNode, InterpreterRuntimeError> =>
+  asNode(node[key], key)
 
 export const sourceLocation = (node: AstNode): { readonly line: number; readonly column: number } => ({
   line: Math.max(1, (node.loc?.start.line ?? 2) - 1),

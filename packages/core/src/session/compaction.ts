@@ -1,7 +1,7 @@
 export * as SessionCompaction from "./compaction"
 
 import { LLM, LLMError, LLMEvent, Message, type LLMRequest, type Model } from "@opencode-ai/llm"
-import { DateTime, Effect, Stream } from "effect"
+import { DateTime, Effect, Option, Schema, Stream } from "effect"
 import type { Config } from "../config"
 import type { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -80,7 +80,11 @@ type Input = {
   readonly request: LLMRequest
 }
 
-const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
+// The estimate counts the characters of the request parts as JSON text, so the encoder asserts no shape.
+const encodeRequestText = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+
+const estimate = (value: unknown) => Token.estimate(encodeRequestText(value))
 
 const truncate = (value: string) =>
   value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
@@ -102,7 +106,7 @@ const serialize = (message: SessionMessage.Message) => {
       .flatMap((part) => {
         if (part.type === "text") return [`[Assistant]: ${part.text}`]
         if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
-        const input = typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input)
+        const input = typeof part.state.input === "string" ? part.state.input : encodeJsonText(part.state.input)
         if (part.state.status === "completed")
           return [
             `[Assistant tool call]: ${part.name}(${input})`,
@@ -137,12 +141,12 @@ const settings = (documents: readonly Config.Entry[]) => {
 const select = (
   entries: readonly Entry[],
   tokens: number,
-): { readonly head: string; readonly recent: string } | undefined => {
+): Option.Option<{ readonly head: string; readonly recent: string }> => {
   const conversation = entries
     .filter((entry) => entry.message.type !== "compaction")
     .map((entry) => serialize(entry.message))
     .filter(Boolean)
-  if (conversation.length === 0) return
+  if (conversation.length === 0) return Option.none()
   let total = 0
   let split = conversation.length
   for (let index = conversation.length - 1; index >= 0; index--) {
@@ -151,10 +155,10 @@ const select = (
     total = next
     split = index
   }
-  return {
+  return Option.some({
     head: conversation.slice(0, split).join("\n\n"),
     recent: conversation.slice(split).join("\n\n"),
-  }
+  })
 }
 
 export const buildPrompt = (input: { readonly previousSummary?: string; readonly context: readonly string[] }) => {
@@ -179,11 +183,13 @@ export const make = (dependencies: Dependencies) => {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    const selected = select(input.entries, config.tokens)
+    const selection = select(input.entries, config.tokens)
     const previousSummary = input.entries.find((entry) => entry.message.type === "compaction")?.message
-    if (!selected || (selected.head.length === 0 && previousSummary?.type !== "compaction")) return false
+    if (Option.isNone(selection) || (selection.value.head.length === 0 && previousSummary?.type !== "compaction"))
+      return false
+    const selected = selection.value
     const summaryPrompt = buildPrompt({
-      previousSummary: previousSummary?.type === "compaction" ? previousSummary.summary : undefined,
+      ...(previousSummary?.type === "compaction" ? { previousSummary: previousSummary.summary } : {}),
       context: [previousSummary?.type === "compaction" ? previousSummary.recent : "", selected.head].filter(Boolean),
     })
     const summaryOutput = Math.min(output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)
@@ -196,8 +202,7 @@ export const make = (dependencies: Dependencies) => {
       reason: "auto",
     })
 
-    const chunks: string[] = []
-    let failed = false
+    // Fold the summary text and whether the provider reported an error; an LLM failure gives None.
     const summarized = yield* dependencies.llm
       .stream(
         LLM.request({
@@ -209,16 +214,18 @@ export const make = (dependencies: Dependencies) => {
         }),
       )
       .pipe(
-        Stream.runForEach((event) => {
-          if (LLMEvent.is.providerError(event)) failed = true
-          if (LLMEvent.is.textDelta(event)) chunks.push(event.text)
-          return Effect.void
-        }),
-        Effect.as(true),
-        Effect.catchTag("LLM.Error", () => Effect.succeed(false)),
+        Stream.runFold(
+          () => ({ failed: false, text: "" }),
+          (state, event) => ({
+            failed: state.failed || LLMEvent.is.providerError(event),
+            text: LLMEvent.is.textDelta(event) ? state.text + event.text : state.text,
+          }),
+        ),
+        Effect.map(Option.some),
+        Effect.catchTag("LLM.Error", () => Effect.succeedNone),
       )
-    const summary = chunks.join("")
-    if (!summarized || failed || !summary.trim()) return false
+    if (Option.isNone(summarized) || summarized.value.failed || !summarized.value.text.trim()) return false
+    const summary = summarized.value.text
     yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
       sessionID: input.sessionID,
       messageID,

@@ -2,10 +2,12 @@ import { Config, ConfigProvider, Context, Effect, Layer, Option } from "effect"
 import { ConfigService } from "@/effect/config-service"
 
 const bool = (name: string) => Config.Boolean(name).pipe(Config.withDefault(false))
+// The service shape publishes `number | undefined`, so the Option ends at this boundary.
 const positiveInteger = (name: string) =>
   Config.Number(name).pipe(
-    Config.map((value) => (Number.isInteger(value) && value > 0 ? value : undefined)),
-    Config.orElse(() => Config.succeed(undefined)),
+    Config.map(Option.liftPredicate((value: number) => Number.isInteger(value) && value > 0)),
+    Config.orElse(() => Config.succeed(Option.none<number>())),
+    Config.map(Option.getOrUndefined),
   )
 const experimental = bool("OPENCODE_EXPERIMENTAL")
 const enabledByExperimental = (name: string) =>

@@ -20,7 +20,8 @@ export function footerWidthPolicy(width: number) {
       showActivityMeta: compact,
       showCommandHint: width >= FOOTER_WIDTH_BREAKPOINTS.commandHint,
       showContextHints: compact,
-      contextHintLimit: !compact ? 0 : spacious ? undefined : model ? 2 : 1,
+      // A spacious footer shows every hint, so it sets no limit.
+      ...(spacious ? {} : { contextHintLimit: !compact ? 0 : model ? 2 : 1 }),
       showModel: model,
     },
   }

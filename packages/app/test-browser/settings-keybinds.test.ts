@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createRoot } from "solid-js"
+import { HashMap, Option } from "effect"
 import { createKeybindSettingsController } from "../src/components/settings-keybinds"
 
 function setup(overrides: Record<string, string> = {}) {
@@ -68,7 +69,7 @@ describe("keybind settings controller", () => {
 
     expect(state.controller.catalog.title("session.alpha")).toBe("Alpha")
     expect(state.controller.catalog.keybind("session.beta")).toBe("Alt+K")
-    expect(state.controller.catalog.filtered("alt k").get("Session")).toEqual(["session.beta"])
+    expect(HashMap.get(state.controller.catalog.filtered("alt k"), "Session")).toEqual(Option.some(["session.beta"]))
     expect(state.controller.settings.hasOverrides()).toBe(true)
 
     state.dispose()

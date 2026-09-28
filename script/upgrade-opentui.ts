@@ -52,9 +52,12 @@ const setVersion = (cur: string, kind: "dep" | "peer") => {
   return ver
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
 const editDeps = (obj: unknown, kind: "dep" | "peer") => {
-  if (!obj || typeof obj !== "object") return false
-  const map = obj as Record<string, unknown>
+  if (!isRecord(obj)) return false
+  const map = obj
   return keys
     .map((key) => {
       const cur = map[key]
@@ -68,8 +71,8 @@ const editDeps = (obj: unknown, kind: "dep" | "peer") => {
 }
 
 const editCatalog = (obj: unknown) => {
-  if (!obj || typeof obj !== "object") return false
-  const map = obj as Record<string, unknown>
+  if (!isRecord(obj)) return false
+  const map = obj
   return keys
     .map((key) => {
       const cur = map[key]
@@ -81,8 +84,8 @@ const editCatalog = (obj: unknown) => {
 }
 
 const editOverrides = (obj: unknown) => {
-  if (!obj || typeof obj !== "object") return false
-  const map = obj as Record<string, unknown>
+  if (!isRecord(obj)) return false
+  const map = obj
   return keys
     .map((key) => {
       const cur = map[key]
@@ -162,7 +165,7 @@ async function fixKnownLockfileIssues() {
 
   const removed = txt
     .split("\n")
-    .map((line) => line.match(/^    "(opentui-spinner\/@opentui\/[^\"]+)": /)?.[1])
+    .map((line) => line.match(/^    "(opentui-spinner\/@opentui\/[^"]+)": /)?.[1])
     .filter((item): item is string => item !== undefined)
 
   if (removed.length === 0) return []

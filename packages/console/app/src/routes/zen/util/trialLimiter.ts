@@ -4,8 +4,8 @@ import { UsageInfo } from "./provider/provider"
 import { Subscription } from "@opencode-ai/console-core/subscription.js"
 
 export function createTrialLimiter(trialProviders: string[] | undefined, ip: string) {
-  if (!trialProviders) return
-  if (!ip) return
+  if (!trialProviders) return undefined
+  if (!ip) return undefined
 
   const limit = Subscription.getFreeLimits().promoTokens
 

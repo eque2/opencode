@@ -1,16 +1,14 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Effect, Exit, Layer } from "effect"
+import { Cause, Effect, Exit, Layer, Option } from "effect"
 import type * as Scope from "effect/Scope"
 import os from "os"
 import path from "path"
 import { Config } from "@/config/config"
 import { Shell } from "@opencode-ai/core/shell"
 import { ShellTool } from "../../src/tool/shell"
-import { Filesystem } from "@/util/filesystem"
 import { provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
-import type { Permission } from "../../src/permission"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
 import { SessionID, MessageID } from "../../src/session/schema"
@@ -87,15 +85,14 @@ const quote = (text: string) => `"${text}"`
 const squote = (text: string) => `'${text}'`
 const projectRoot = path.join(__dirname, "../..")
 const bin = quote(process.execPath.replaceAll("\\", "/"))
-const bash = (() => {
-  const shell = Shell.acceptable()
-  if (Shell.name(shell) === "bash") return shell
-  return Shell.gitbash()
-})()
+const acceptableShell = await Effect.runPromise(Shell.acceptable())
+const bash =
+  Shell.name(acceptableShell) === "bash"
+    ? acceptableShell
+    : Option.getOrUndefined(await Effect.runPromise(Shell.gitbash()))
 const shells = (() => {
   if (process.platform !== "win32") {
-    const shell = Shell.acceptable()
-    return [{ label: Shell.name(shell), shell }]
+    return [{ label: Shell.name(acceptableShell), shell: acceptableShell }]
   }
 
   const list = [bash, Bun.which("pwsh"), Bun.which("powershell"), process.env.COMSPEC || Bun.which("cmd.exe")]
@@ -110,28 +107,26 @@ const PS = new Set(["pwsh", "powershell"])
 const ps = shells.filter((item) => PS.has(item.label))
 const cmdShell = shells.find((item) => item.label === "cmd")
 
-const sh = () => Shell.name(Shell.acceptable())
-const evalarg = (text: string) => (sh() === "cmd" ? quote(text) : squote(text))
-
-const fill = (mode: "lines" | "bytes", n: number) => {
+const fill = Effect.fn("ShellToolTest.fill")(function* (mode: "lines" | "bytes", n: number) {
+  const sh = Shell.name(yield* Shell.acceptable())
   const code =
     mode === "lines"
       ? "console.log(Array.from({length:Number(Bun.argv[1])},(_,i)=>i+1).join(String.fromCharCode(10)))"
       : "process.stdout.write(String.fromCharCode(97).repeat(Number(Bun.argv[1])))"
-  const text = `${bin} -e ${evalarg(code)} ${n}`
-  if (PS.has(sh())) return `& ${text}`
+  const text = `${bin} -e ${sh === "cmd" ? quote(code) : squote(code)} ${n}`
+  if (PS.has(sh)) return `& ${text}`
   return text
-}
+})
 const glob = (p: string) =>
-  process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
+  process.platform === "win32" ? FSUtil.use.normalizePathPattern(p) : Effect.succeed(p.replaceAll("\\", "/"))
 
-const forms = (dir: string) => {
+const forms = Effect.fnUntraced(function* (dir: string) {
   if (process.platform !== "win32") return [dir]
-  const full = Filesystem.normalizePath(dir)
+  const full = yield* FSUtil.use.normalizePath(dir)
   const slash = full.replaceAll("\\", "/")
   const root = slash.replace(/^[A-Za-z]:/, "")
   return Array.from(new Set([full, slash, root, root.toLowerCase()]))
-}
+})
 
 const withShell = <A, E, R>(item: { label: string; shell: string }, self: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -201,7 +196,7 @@ describe("tool.shell", () => {
         tmp,
         Effect.gen(function* () {
           const bash = yield* initBash()
-          const fallback = Shell.name(Shell.acceptable("fish"))
+          const fallback = Shell.name(yield* Shell.acceptable("fish"))
           expect(fallback).not.toBe("fish")
           expect(bash.description).toContain(fallback)
 
@@ -325,7 +320,7 @@ describe("tool.shell permissions", () => {
         const err = new Error("stop after permission")
         const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
         const file = process.platform === "win32" ? `${process.env.WINDIR!.replaceAll("\\", "/")}/*` : "/etc/*"
-        const want = process.platform === "win32" ? glob(path.join(process.env.WINDIR!, "*")) : "/etc/*"
+        const want = process.platform === "win32" ? yield* glob(path.join(process.env.WINDIR!, "*")) : "/etc/*"
         expect(
           yield* fail(
             {
@@ -363,7 +358,7 @@ describe("tool.shell permissions", () => {
                 const extDirReq = requests.find((r) => r.permission === "external_directory")
                 const bashReq = requests.find((r) => r.permission === "bash")
                 expect(extDirReq).toBeDefined()
-                expect(extDirReq!.patterns).toContain(glob(path.join(outerTmp, "*")))
+                expect(extDirReq!.patterns).toContain(yield* glob(path.join(outerTmp, "*")))
                 expect(bashReq).toBeDefined()
                 expect(bashReq!.patterns).toContain(`cat "${file}"`)
               }),
@@ -392,7 +387,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               expect(extDirReq).toBeDefined()
-              expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+              expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
             }),
           ),
         ),
@@ -417,7 +412,7 @@ describe("tool.shell permissions", () => {
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               const bashReq = requests.find((r) => r.permission === "bash")
               expect(extDirReq).toBeDefined()
-              expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+              expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
               expect(bashReq).toBeDefined()
               expect(bashReq!.patterns).toContain(`Get-Content ${file}`)
             }),
@@ -447,7 +442,7 @@ describe("tool.shell permissions", () => {
                 ).toMatchObject({ message: err.message })
                 expect(requests[0]?.permission).toBe("external_directory")
                 if (requests[0]?.permission !== "external_directory") return
-                expect(requests[0].patterns).toContain(glob(path.join(path.dirname(tmp), "*")))
+                expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(tmp), "*")))
               }),
             )
           }),
@@ -474,7 +469,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
-              expect(requests[0].patterns).toContain(glob(path.join(os.homedir(), ".ssh", "*")))
+              expect(requests[0].patterns).toContain(yield* glob(path.join(os.homedir(), ".ssh", "*")))
             }),
           ),
         ),
@@ -502,7 +497,7 @@ describe("tool.shell permissions", () => {
                 ).toMatchObject({ message: err.message })
                 expect(requests[0]?.permission).toBe("external_directory")
                 if (requests[0]?.permission !== "external_directory") return
-                expect(requests[0].patterns).toContain(glob(path.join(path.dirname(tmp), "*")))
+                expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(tmp), "*")))
               }),
             )
           }),
@@ -529,7 +524,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
-              expect(requests[0].patterns).toContain(glob(path.join(path.dirname(item.shell), "*")))
+              expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(item.shell), "*")))
             }),
           ),
         ),
@@ -564,7 +559,7 @@ describe("tool.shell permissions", () => {
                   ).toMatchObject({ message: err.message })
                   const extDirReq = requests.find((r) => r.permission === "external_directory")
                   expect(extDirReq).toBeDefined()
-                  expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+                  expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
                 }),
               ),
             ({ key, prev }) =>
@@ -594,7 +589,7 @@ describe("tool.shell permissions", () => {
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               expect(extDirReq).toBeDefined()
               expect(extDirReq!.patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -622,7 +617,7 @@ describe("tool.shell permissions", () => {
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
               expect(requests[0].patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -650,7 +645,7 @@ describe("tool.shell permissions", () => {
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
               expect(requests[0].patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -676,7 +671,7 @@ describe("tool.shell permissions", () => {
               const bashReq = requests.find((r) => r.permission === "bash")
               expect(extDirReq).toBeDefined()
               expect(extDirReq!.patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
               expect(bashReq).toBeUndefined()
             }),
@@ -726,7 +721,7 @@ describe("tool.shell permissions", () => {
             )
             const extDirReq = requests.find((r) => r.permission === "external_directory")
             expect(extDirReq).toBeDefined()
-            expect(extDirReq!.patterns).toContain(Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")))
+            expect(extDirReq!.patterns).toContain(yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")))
           }),
         ),
       ),
@@ -775,7 +770,7 @@ describe("tool.shell permissions", () => {
           ).toMatchObject({ message: err.message })
           const extDirReq = requests.find((r) => r.permission === "external_directory")
           expect(extDirReq).toBeDefined()
-          expect(extDirReq!.patterns).toContain(glob(path.join(os.tmpdir(), "*")))
+          expect(extDirReq!.patterns).toContain(yield* glob(path.join(os.tmpdir(), "*")))
         }),
       )
     }),
@@ -790,9 +785,9 @@ describe("tool.shell permissions", () => {
         yield* runIn(
           tmp,
           Effect.gen(function* () {
-            const want = Filesystem.normalizePathPattern(path.join(outerTmp, "*"))
+            const want = yield* FSUtil.use.normalizePathPattern(path.join(outerTmp, "*"))
 
-            for (const dir of forms(outerTmp)) {
+            for (const dir of yield* forms(outerTmp)) {
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
               expect(
                 yield* fail(
@@ -825,7 +820,7 @@ describe("tool.shell permissions", () => {
             Effect.gen(function* () {
               const err = new Error("stop after permission")
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
-              const want = glob(path.join(os.tmpdir(), "*"))
+              const want = yield* glob(path.join(os.tmpdir(), "*"))
               expect(
                 yield* fail(
                   {
@@ -853,7 +848,7 @@ describe("tool.shell permissions", () => {
             Effect.gen(function* () {
               const err = new Error("stop after permission")
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
-              const want = glob(path.join(os.tmpdir(), "*"))
+              const want = yield* glob(path.join(os.tmpdir(), "*"))
               expect(
                 yield* fail(
                   {
@@ -894,7 +889,7 @@ describe("tool.shell permissions", () => {
             ),
           ).toMatchObject({ message: err.message })
           const extDirReq = requests.find((r) => r.permission === "external_directory")
-          const expected = glob(path.join(outerTmp, "*"))
+          const expected = yield* glob(path.join(outerTmp, "*"))
           expect(extDirReq).toBeDefined()
           expect(extDirReq!.patterns).toContain(expected)
           expect(extDirReq!.always).toContain(expected)
@@ -1024,8 +1019,8 @@ describe("tool.shell abort", () => {
               abort: controller.signal,
               metadata: (input) =>
                 Effect.sync(() => {
-                  const output = (input.metadata as { output?: string })?.output
-                  if (output && output.includes("before") && !controller.signal.aborted) {
+                  const output = input.metadata?.output
+                  if (typeof output === "string" && output.includes("before") && !controller.signal.aborted) {
                     collected.push(output)
                     controller.abort()
                   }
@@ -1118,8 +1113,8 @@ describe("tool.shell abort", () => {
             ...ctx,
             metadata: (input) =>
               Effect.sync(() => {
-                const output = (input.metadata as { output?: string })?.output
-                if (output) updates.push(output)
+                const output = input.metadata?.output
+                if (typeof output === "string" && output) updates.push(output)
               }),
           },
         )
@@ -1138,7 +1133,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const lineCount = Truncate.MAX_LINES + 500
         const result = yield* run({
-          command: fill("lines", lineCount),
+          command: yield* fill("lines", lineCount),
         })
         mustTruncate(result)
         expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
@@ -1153,7 +1148,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const byteCount = Truncate.MAX_BYTES + 10000
         const result = yield* run({
-          command: fill("bytes", byteCount),
+          command: yield* fill("bytes", byteCount),
         })
         mustTruncate(result)
         expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
@@ -1167,7 +1162,7 @@ describe("tool.shell truncation", () => {
       projectRoot,
       Effect.gen(function* () {
         const result = yield* run({
-          command: fill("lines", 1),
+          command: yield* fill("lines", 1),
         })
         expect((result.metadata as { truncated?: boolean }).truncated).toBe(false)
         expect(result.output).toContain("1")
@@ -1181,7 +1176,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const lineCount = Truncate.MAX_LINES + 100
         const result = yield* run({
-          command: fill("lines", lineCount),
+          command: yield* fill("lines", lineCount),
         })
         mustTruncate(result)
 

@@ -1,10 +1,11 @@
 import path from "path"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
-import { appendText, readText, writeText } from "../util/persistence"
-import type { PromptInfo } from "./history"
+import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
+import { PromptParts, type PromptInfo } from "./history"
 
 export type StashEntry = {
   input: string
@@ -12,20 +13,33 @@ export type StashEntry = {
   timestamp: number
 }
 
+const PromptStashEntry = Schema.Struct({
+  input: Schema.String,
+  parts: PromptParts,
+  timestamp: Schema.Number,
+}).annotate({ identifier: "TuiPromptStash.Entry" })
+
+const PromptStashLine = Schema.fromJsonString(PromptStashEntry)
+const decodePromptStashLine = Schema.decodeUnknownOption(PromptStashLine)
+// StashEntry parts type text part metadata as unknown, so each entry is checked as it is encoded.
+// An entry that is not JSON-encodable has no line.
+const encodePromptStashLine = Schema.encodeUnknownOption(PromptStashLine)
+
+function formatPromptStash(entries: readonly StashEntry[]) {
+  return entries
+    .flatMap((entry) => Option.toArray(encodePromptStashLine(entry)))
+    .map((line) => `${line}\n`)
+    .join("")
+}
+
 export const MAX_STASH_ENTRIES = 50
 
-export function parsePromptStash(text: string) {
+// A line that is not JSON, or not a StashEntry, is skipped.
+export function parsePromptStash(text: string): StashEntry[] {
   return text
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as StashEntry
-      } catch {
-        return undefined
-      }
-    })
-    .filter((line): line is StashEntry => line !== undefined)
+    .flatMap((line) => Option.toArray(decodePromptStashLine(line)))
     .slice(-MAX_STASH_ENTRIES)
 }
 
@@ -34,12 +48,21 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
   init: () => {
     const paths = useTuiPaths()
     const stashPath = path.join(paths.state, "prompt-stash.jsonl")
-    onMount(async () => {
-      const lines = parsePromptStash(await readText(stashPath).catch(() => ""))
-      setStore("entries", lines)
-      if (lines.length > 0)
-        writeText(stashPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+    onMount(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          const lines = parsePromptStash(yield* readText(stashPath).pipe(Effect.orElseSucceed(() => "")))
+          setStore("entries", lines)
+          if (lines.length > 0) yield* writeText(stashPath, formatPromptStash(lines)).pipe(Effect.ignore)
+        }).pipe(Effect.provide(fileSystemLayer)),
+      )
     })
+
+    function rewrite(entries: readonly StashEntry[]) {
+      Effect.runFork(
+        writeText(stashPath, formatPromptStash(entries)).pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
+      )
+    }
 
     const [store, setStore] = createStore({ entries: [] as StashEntry[] })
 
@@ -48,7 +71,7 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         return store.entries
       },
       push(entry: Omit<StashEntry, "timestamp">) {
-        const stash = structuredClone(unwrap({ ...entry, timestamp: Date.now() }))
+        const stash = structuredClone(unwrap({ ...entry, timestamp: DateTime.toEpochMillis(DateTime.nowUnsafe()) }))
         let trimmed = false
         setStore(
           produce((draft) => {
@@ -61,28 +84,26 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         )
 
         if (trimmed) {
-          writeText(stashPath, store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+          rewrite(store.entries)
           return
         }
-        appendText(stashPath, JSON.stringify(stash) + "\n").catch(() => {})
+        const append = Option.match(encodePromptStashLine(stash), {
+          onNone: () => Effect.logWarning("Prompt stash entry is not JSON-encodable; it is not saved"),
+          onSome: (line) => appendText(stashPath, `${line}\n`),
+        })
+        Effect.runFork(append.pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
       },
       pop() {
         if (store.entries.length === 0) return undefined
         const entry = store.entries[store.entries.length - 1]
         setStore(produce((draft) => void draft.entries.pop()))
-        writeText(
-          stashPath,
-          store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "",
-        ).catch(() => {})
+        rewrite(store.entries)
         return entry
       },
       remove(index: number) {
         if (index < 0 || index >= store.entries.length) return
         setStore(produce((draft) => void draft.entries.splice(index, 1)))
-        writeText(
-          stashPath,
-          store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "",
-        ).catch(() => {})
+        rewrite(store.entries)
       },
     }
   },

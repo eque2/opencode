@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { statSync } from "fs"
 import path from "path"
 import { pathToFileURL } from "url"
 import { describe, expect, test } from "bun:test"
@@ -62,8 +63,9 @@ describe("Npm.add", () => {
   // parent URL. Exercise the real Node branch instead of the Bun one the test runner uses.
   test("resolves an importable file URL under Node", async () => {
     await using tmp = await tmpdir()
-    const node = which("node")
-    if (!node) throw new Error("Node is required for the Npm Node runtime test")
+    const found = await Effect.runPromise(which("node"))
+    if (Option.isNone(found)) throw new Error("Node is required for the Npm Node runtime test")
+    const node = found.value
 
     const bundle = await Bun.build({
       entrypoints: [path.join(import.meta.dir, "../src/npm.ts")],
@@ -148,7 +150,7 @@ describe("Npm.install", () => {
 
     await Npm.install(tmp.path)
 
-    await expect(fs.stat(path.join(tmp.path, "node_modules", "prod-pkg"))).resolves.toBeDefined()
-    await expect(fs.stat(path.join(tmp.path, "node_modules", "dev-pkg"))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmp.path, "node_modules", "prod-pkg"))).toBeDefined()
+    expect(() => statSync(path.join(tmp.path, "node_modules", "dev-pkg"))).toThrow()
   })
 })

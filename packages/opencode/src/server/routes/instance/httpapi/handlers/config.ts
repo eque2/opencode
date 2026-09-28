@@ -1,4 +1,5 @@
 import { Config } from "@/config/config"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { Provider } from "@/provider/provider"
 import * as InstanceState from "@/effect/instance-state"
 import { Effect } from "effect"
@@ -15,7 +16,7 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
       return yield* configSvc.get()
     })
 
-    const update = Effect.fn("ConfigHttpApi.update")(function* (ctx) {
+    const update = Effect.fn("ConfigHttpApi.update")(function* (ctx: { payload: typeof ConfigV1.Info.Type }) {
       yield* configSvc.update(ctx.payload)
       yield* markInstanceForDisposal(yield* InstanceState.context)
       return ctx.payload

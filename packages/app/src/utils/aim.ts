@@ -1,3 +1,6 @@
+import { Effect, Option } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
+
 type Point = { x: number; y: number }
 
 export function createAim(props: {
@@ -10,13 +13,19 @@ export function createAim(props: {
   tolerance?: number
   edge?: number
 }) {
-  const state = {
-    locs: [] as Point[],
-    timer: undefined as number | undefined,
-    pending: undefined as string | undefined,
-    over: undefined as string | undefined,
-    last: undefined as Point | undefined,
+  const state: {
+    locs: Point[]
+    pending: Option.Option<string>
+    over: Option.Option<string>
+    last: Option.Option<Point>
+  } = {
+    locs: [],
+    pending: Option.none(),
+    over: Option.none(),
+    last: Option.none(),
   }
+  // The pending activation delay. The owner cleanup interrupts it.
+  const timer = createFiberSlot()
 
   const delay = props.delay ?? 250
   const max = props.max ?? 4
@@ -24,15 +33,14 @@ export function createAim(props: {
   const edge = props.edge ?? 18
 
   const cancel = () => {
-    if (state.timer !== undefined) clearTimeout(state.timer)
-    state.timer = undefined
-    state.pending = undefined
+    timer.interrupt()
+    state.pending = Option.none()
   }
 
   const reset = () => {
     cancel()
-    state.over = undefined
-    state.last = undefined
+    state.over = Option.none()
+    state.last = Option.none()
     state.locs.length = 0
   }
 
@@ -64,10 +72,10 @@ export function createAim(props: {
 
     const prev = state.locs[0] ?? loc
     if (prev.x < rect.left || prev.x > rect.right || prev.y < rect.top || prev.y > rect.bottom) return 0
-    if (state.last && loc.x === state.last.x && loc.y === state.last.y) return 0
+    if (Option.exists(state.last, (last) => loc.x === last.x && loc.y === last.y)) return 0
 
     if (rect.right - loc.x <= edge) {
-      state.last = loc
+      state.last = Option.some(loc)
       return delay
     }
 
@@ -81,11 +89,11 @@ export function createAim(props: {
     const prevIncreasing = slope(prev, lower)
 
     if (decreasing < prevDecreasing && increasing > prevIncreasing) {
-      state.last = loc
+      state.last = Option.some(loc)
       return delay
     }
 
-    state.last = undefined
+    state.last = Option.none()
     return 0
   }
 
@@ -110,28 +118,33 @@ export function createAim(props: {
     }
 
     cancel()
-    state.pending = id
-    state.timer = window.setTimeout(() => {
-      state.timer = undefined
-      if (state.pending !== id) return
-      state.pending = undefined
-      if (!props.enabled()) return
-      if (!props.active()) return
-      if (state.over !== id) return
-      props.onActivate(id)
-    }, ms)
+    state.pending = Option.some(id)
+    timer.run(
+      Effect.sleep(ms).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!Option.contains(state.pending, id)) return
+            state.pending = Option.none()
+            if (!props.enabled()) return
+            if (!props.active()) return
+            if (!Option.contains(state.over, id)) return
+            props.onActivate(id)
+          }),
+        ),
+      ),
+    )
   }
 
   const enter = (id: string, event: MouseEvent) => {
     if (!props.enabled()) return
-    state.over = id
+    state.over = Option.some(id)
     move(event)
     request(id)
   }
 
   const leave = (id: string) => {
-    if (state.over === id) state.over = undefined
-    if (state.pending === id) cancel()
+    if (Option.contains(state.over, id)) state.over = Option.none()
+    if (Option.contains(state.pending, id)) cancel()
   }
 
   return { move, enter, leave, activate, request, cancel, reset }

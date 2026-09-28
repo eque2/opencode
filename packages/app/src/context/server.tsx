@@ -1,18 +1,19 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
+import { absurd, Brand, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
 import { type Accessor, batch, createMemo } from "solid-js"
-import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
+import { createStore, produce, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { pathKey } from "@/utils/path-key"
 import { ServerScope } from "@/utils/server-scope"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
+type StoredRecord = { readonly [key: PropertyKey]: unknown }
 type ServerProjectState = {
   projects: Record<string, StoredProject[]>
   lastProject: Record<string, string>
   recentlyClosed: Record<string, string[]>
 }
-const HEALTH_POLL_INTERVAL_MS = 10_000
 // The store retains more history than is displayed. Consumers filter recently closed entries
 // against the live project list (dropping deleted projects) and then cap the visible count via
 // RECENTLY_CLOSED_DISPLAY_LIMIT. Retaining extra history ensures entries that are temporarily
@@ -22,7 +23,7 @@ export const RECENTLY_CLOSED_DISPLAY_LIMIT = 5
 
 export function normalizeServerUrl(input: string) {
   const trimmed = input.trim()
-  if (!trimmed) return
+  if (!trimmed) return undefined
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`
   return withProtocol.replace(/\/+$/, "")
 }
@@ -36,38 +37,38 @@ export function serverName(conn?: ServerConnection.Any, ignoreDisplayName = fals
 function isLocalHost(url: string) {
   const host = url.replace(/^https?:\/\//, "").split(":")[0]
   if (host === "localhost" || host === "127.0.0.1") return "local"
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return undefined
 }
 
 export function migrateCanonicalLocalServerState(value: unknown, canonicalLocalServer?: ServerConnection.Key) {
   if (!canonicalLocalServer || canonicalLocalServer === "local") return value
-  if (!isRecord(value)) return value
-  const projects = isRecord(value.projects) ? value.projects : undefined
-  const lastProject = isRecord(value.lastProject) ? value.lastProject : undefined
-  const previousProjects = projects?.[canonicalLocalServer]
-  const previousLastProject = lastProject?.[canonicalLocalServer]
+  if (!Predicate.isObject(value)) return value
+  // A missing or malformed bucket record reads as an empty record, which has no canonical bucket.
+  const projects: StoredRecord = Predicate.isObject(value.projects) ? value.projects : {}
+  const lastProject: StoredRecord = Predicate.isObject(value.lastProject) ? value.lastProject : {}
+  const previousProjects = projects[canonicalLocalServer]
+  const previousLastProject = lastProject[canonicalLocalServer]
   if (!Array.isArray(previousProjects) && typeof previousLastProject !== "string") return value
 
   const next = { ...value }
-  if (projects && Array.isArray(previousProjects)) {
+  if (Array.isArray(previousProjects)) {
     const local = Array.isArray(projects.local) ? projects.local : []
-    const worktrees = new Set(
-      local.flatMap((project) => (isRecord(project) && typeof project.worktree === "string" ? [project.worktree] : [])),
+    const worktrees = MutableHashSet.fromIterable(
+      local.flatMap((project) =>
+        Predicate.isObject(project) && typeof project.worktree === "string" ? [project.worktree] : [],
+      ),
     )
     const migrated = previousProjects.filter((project) => {
-      if (!isRecord(project) || typeof project.worktree !== "string") return true
-      if (worktrees.has(project.worktree)) return false
-      worktrees.add(project.worktree)
+      if (!Predicate.isObject(project) || typeof project.worktree !== "string") return true
+      if (MutableHashSet.has(worktrees, project.worktree)) return false
+      MutableHashSet.add(worktrees, project.worktree)
       return true
     })
     const nextProjects: Record<string, unknown> = { ...projects, local: [...local, ...migrated] }
     delete nextProjects[canonicalLocalServer]
     next.projects = nextProjects
   }
-  if (lastProject && typeof previousLastProject === "string") {
+  if (typeof previousLastProject === "string") {
     const nextLastProject = { ...lastProject }
     if (typeof nextLastProject.local !== "string") nextLastProject.local = previousLastProject
     delete nextLastProject[canonicalLocalServer]
@@ -81,15 +82,17 @@ export function createServerProjects<T extends ServerProjectState>(input: {
   store: Store<T>
   setStore: SetStoreFunction<T>
 }) {
-  const setStore = input.setStore as unknown as SetStoreFunction<ServerProjectState>
+  // T may carry more keys than ServerProjectState. Each write edits the
+  // ServerProjectState part of the draft in place, so it needs no path types from T.
+  const update = (edit: (draft: ServerProjectState) => void) => input.setStore(produce<T>((draft) => edit(draft)))
   const current = () => input.store.projects[input.scope()] ?? []
   const currentClosed = () => input.store.recentlyClosed?.[input.scope()] ?? []
   const remove = (directory: string) => {
-    setStore(
-      "projects",
-      input.scope(),
-      current().filter((project) => project.worktree !== directory),
-    )
+    const scope = input.scope()
+    const next = current().filter((project) => project.worktree !== directory)
+    update((draft) => {
+      draft.projects[scope] = next
+    })
   }
   return {
     list: current,
@@ -100,47 +103,66 @@ export function createServerProjects<T extends ServerProjectState>(input: {
       const key = pathKey(directory)
       const closed = currentClosed()
       if (closed.some((worktree) => pathKey(worktree) === key)) {
-        setStore(
-          "recentlyClosed",
-          scope,
-          closed.filter((worktree) => pathKey(worktree) !== key),
-        )
+        const next = closed.filter((worktree) => pathKey(worktree) !== key)
+        update((draft) => {
+          draft.recentlyClosed[scope] = next
+        })
       }
       if (current().some((project) => project.worktree === directory)) return
-      setStore("projects", scope, [{ worktree: directory, expanded: true }, ...current()])
+      const next = [{ worktree: directory, expanded: true }, ...current()]
+      update((draft) => {
+        draft.projects[scope] = next
+      })
     },
     // User-initiated close: removes the project and records it in recently closed.
     // Internal, non-user removals (e.g. sandbox/worktree normalization) should use remove().
     close(directory: string) {
       remove(directory)
+      const scope = input.scope()
       const key = pathKey(directory)
       const closed = [directory, ...currentClosed().filter((worktree) => pathKey(worktree) !== key)].slice(
         0,
         RECENTLY_CLOSED_HISTORY_LIMIT,
       )
-      setStore("recentlyClosed", input.scope(), closed)
+      update((draft) => {
+        draft.recentlyClosed[scope] = closed
+      })
     },
     expand(directory: string) {
+      const scope = input.scope()
       const index = current().findIndex((project) => project.worktree === directory)
-      if (index !== -1) setStore("projects", input.scope(), index, "expanded", true)
+      if (index !== -1)
+        update((draft) => {
+          draft.projects[scope][index].expanded = true
+        })
     },
     collapse(directory: string) {
+      const scope = input.scope()
       const index = current().findIndex((project) => project.worktree === directory)
-      if (index !== -1) setStore("projects", input.scope(), index, "expanded", false)
+      if (index !== -1)
+        update((draft) => {
+          draft.projects[scope][index].expanded = false
+        })
     },
     move(directory: string, toIndex: number) {
       const fromIndex = current().findIndex((project) => project.worktree === directory)
       if (fromIndex === -1 || fromIndex === toIndex) return
+      const scope = input.scope()
       const next = [...current()]
       const [item] = next.splice(fromIndex, 1)
       next.splice(toIndex, 0, item)
-      setStore("projects", input.scope(), next)
+      update((draft) => {
+        draft.projects[scope] = next
+      })
     },
     last() {
       return input.store.lastProject[input.scope()]
     },
     touch(directory: string) {
-      setStore("lastProject", input.scope(), directory)
+      const scope = input.scope()
+      update((draft) => {
+        draft.lastProject[scope] = directory
+      })
     },
   }
 }
@@ -149,7 +171,8 @@ export function resolveServerList(input: {
   props?: Array<ServerConnection.Any>
   stored: StoredServer[]
 }): Array<ServerConnection.Any> {
-  const deduped = new Map<ServerConnection.Key, ServerConnection.Any>(
+  // MutableHashMap keeps string keys in insertion order, so the list order does not change.
+  const deduped = MutableHashMap.fromIterable<ServerConnection.Key, ServerConnection.Any>(
     input.props?.map((v) => [ServerConnection.key(v), v]) ?? [],
   )
 
@@ -165,17 +188,17 @@ export function resolveServerList(input: {
           : { type: "http", http: value }
     const key = ServerConnection.key(conn)
 
-    const existing = deduped.get(key)
-    if (existing)
-      deduped.set(key, {
-        ...existing,
+    const existing = MutableHashMap.get(deduped, key)
+    if (Option.isSome(existing))
+      MutableHashMap.set(deduped, key, {
+        ...existing.value,
         ...conn,
-        http: { ...existing.http, ...conn.http },
+        http: { ...existing.value.http, ...conn.http },
       })
-    else deduped.set(key, conn)
+    else MutableHashMap.set(deduped, key, conn)
   }
 
-  return [...deduped.values()]
+  return Array.from(MutableHashMap.values(deduped))
 }
 
 export namespace ServerConnection {
@@ -232,10 +255,11 @@ export namespace ServerConnection {
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
     }
+    return absurd(conn)
   }
 
-  export type Key = string & { _brand: "Key" }
-  export const Key = { make: (v: string) => v as Key }
+  export type Key = string & Brand.Brand<"Key">
+  export const Key = { make: Brand.nominal<Key>() }
 
   export const builtin = (conn: Any) => conn.type === "sidecar" && conn.variant === "base"
   export const local = (conn?: Any) =>
@@ -289,12 +313,22 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
-      if (!url_) return
-      const conn: ServerConnection.Http = { ...input, authToken: undefined, http: { ...input.http, url: url_ } }
+      if (!url_) return undefined
+      const conn: ServerConnection.Http = { ...input, http: { ...input.http, url: url_ } }
+      delete conn.authToken
       return batch(() => {
         const existing = store.list.findIndex((x) => url(x) === url_)
         if (existing !== -1) {
           setStore("list", existing, conn)
+          // The store merges conn into the stored entry, which keeps keys that conn omits.
+          // The saved connection never keeps a startup auth token, so remove the key.
+          setStore(
+            "list",
+            existing,
+            produce((entry) => {
+              if (typeof entry !== "string" && "authToken" in entry) delete entry.authToken
+            }),
+          )
         } else {
           setStore("list", store.list.length, conn)
         }
@@ -319,12 +353,12 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const scope = (key = state.active) => ServerScope.fromServerKey(key, props.canonicalLocalServer)
     const projects = createServerProjects({ scope, store, setStore })
-    const projectStores = new Map<ServerConnection.Key, ReturnType<typeof createServerProjects>>()
+    const projectStores = MutableHashMap.empty<ServerConnection.Key, ReturnType<typeof createServerProjects>>()
     const projectsForServer = (key: ServerConnection.Key) => {
-      const existing = projectStores.get(key)
-      if (existing) return existing
+      const existing = MutableHashMap.get(projectStores, key)
+      if (Option.isSome(existing)) return existing.value
       const next = createServerProjects({ scope: () => scope(key), store, setStore })
-      projectStores.set(key, next)
+      MutableHashMap.set(projectStores, key, next)
       return next
     }
     const current: Accessor<ServerConnection.Any | undefined> = createMemo(

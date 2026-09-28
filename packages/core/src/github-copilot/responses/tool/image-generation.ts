@@ -1,29 +1,28 @@
 import { createProviderToolFactoryWithOutputSchema } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 
-export const imageGenerationArgsSchema = z
-  .object({
-    background: z.enum(["auto", "opaque", "transparent"]).optional(),
-    inputFidelity: z.enum(["low", "high"]).optional(),
-    inputImageMask: z
-      .object({
-        fileId: z.string().optional(),
-        imageUrl: z.string().optional(),
-      })
-      .optional(),
-    model: z.string().optional(),
-    moderation: z.enum(["auto"]).optional(),
-    outputCompression: z.number().int().min(0).max(100).optional(),
-    outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
-    partialImages: z.number().int().min(0).max(3).optional(),
-    quality: z.enum(["auto", "low", "medium", "high"]).optional(),
-    size: z.enum(["1024x1024", "1024x1536", "1536x1024", "auto"]).optional(),
-  })
-  .strict()
+// Unknown image generation options are an error: decode these args with onExcessProperty "error".
+export const imageGenerationArgsSchema = Schema.Struct({
+  background: Schema.optional(Schema.Literals(["auto", "opaque", "transparent"])),
+  inputFidelity: Schema.optional(Schema.Literals(["low", "high"])),
+  inputImageMask: Schema.optional(
+    Schema.Struct({
+      fileId: Schema.optional(Schema.String),
+      imageUrl: Schema.optional(Schema.String),
+    }),
+  ),
+  model: Schema.optional(Schema.String),
+  moderation: Schema.optional(Schema.Literals(["auto"])),
+  outputCompression: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+  outputFormat: Schema.optional(Schema.Literals(["png", "jpeg", "webp"])),
+  partialImages: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))),
+  quality: Schema.optional(Schema.Literals(["auto", "low", "medium", "high"])),
+  size: Schema.optional(Schema.Literals(["1024x1024", "1024x1536", "1536x1024", "auto"])),
+}).annotate({ identifier: "CopilotResponses.ImageGenerationArgs" })
 
-export const imageGenerationOutputSchema = z.object({
-  result: z.string(),
-})
+export const imageGenerationOutputSchema = Schema.Struct({
+  result: Schema.String,
+}).annotate({ identifier: "CopilotResponses.ImageGenerationOutput" })
 
 type ImageGenerationArgs = {
   /**
@@ -103,8 +102,8 @@ const imageGenerationToolFactory = createProviderToolFactoryWithOutputSchema<
   ImageGenerationArgs
 >({
   id: "openai.image_generation",
-  inputSchema: z.object({}),
-  outputSchema: imageGenerationOutputSchema,
+  inputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(Schema.Struct({}))),
+  outputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(imageGenerationOutputSchema)),
 })
 
 export const imageGeneration = (

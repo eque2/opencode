@@ -1,5 +1,5 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
-import { describe, expect, mock } from "bun:test"
+import { describe, expect, mock, spyOn } from "bun:test"
 import { Effect } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -7,7 +7,6 @@ import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
 import { GoogleVertexPlugin } from "@opencode-ai/core/plugin/provider/google-vertex"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
@@ -17,7 +16,6 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* GoogleVertexPlugin.effect(host)
 })
@@ -51,7 +49,7 @@ function withEnv<A, E, R>(vars: Record<string, string | undefined>, effect: () =
 function fakeSelectorSdk(calls: string[]) {
   const make = (method: string) => (id: string) => {
     calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: method, specificationVersion: "v3" }
   }
   return {
     responses: make("responses"),
@@ -155,7 +153,6 @@ describe("GoogleVertexPlugin", () => {
       () =>
         Effect.gen(function* () {
           vertexOptions.length = 0
-          const plugin = yield* PluginV2.Service
           const aisdk = yield* AISDK.Service
           const catalog = yield* Catalog.Service
           yield* catalog.transform((catalog) =>
@@ -291,7 +288,6 @@ describe("GoogleVertexPlugin", () => {
       () =>
         Effect.gen(function* () {
           vertexOptions.length = 0
-          const plugin = yield* PluginV2.Service
           const aisdk = yield* AISDK.Service
           yield* addPlugin()
           yield* aisdk.runSDK({
@@ -318,7 +314,6 @@ describe("GoogleVertexPlugin", () => {
     Effect.gen(function* () {
       googleAuthOptions.length = 0
       const fetchCalls: { input: Parameters<typeof fetch>[0]; init?: RequestInit }[] = []
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       yield* aisdk.hook.sdk((evt) =>
@@ -331,14 +326,15 @@ describe("GoogleVertexPlugin", () => {
           })
         }),
       )
-      const originalFetch = fetch
-      ;(globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = (async (
-        input: Parameters<typeof fetch>[0],
-        init?: RequestInit,
-      ) => {
-        fetchCalls.push({ input, init })
-        return new Response("ok")
-      }) as typeof fetch
+      // The stand-in also carries Bun's preconnect helper, so it is a full typeof fetch.
+      const standIn = Object.assign(
+        async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          fetchCalls.push({ input, init })
+          return new Response("ok")
+        },
+        { preconnect: fetch.preconnect },
+      )
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(standIn)
       yield* Effect.acquireUseRelease(
         Effect.void,
         () =>
@@ -354,10 +350,7 @@ describe("GoogleVertexPlugin", () => {
             package: "@ai-sdk/openai-compatible",
             options: { name: "google-vertex" },
           }),
-        () =>
-          Effect.sync(() => {
-            ;(globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch
-          }),
+        () => Effect.sync(() => fetchSpy.mockRestore()),
       )
       expect(fetchCalls).toHaveLength(1)
       expect(googleAuthOptions).toEqual([{ scopes: ["https://www.googleapis.com/auth/cloud-platform"] }])
@@ -369,7 +362,6 @@ describe("GoogleVertexPlugin", () => {
 
   it.effect("trims model IDs before selecting language models", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       const calls: string[] = []
       yield* addPlugin()

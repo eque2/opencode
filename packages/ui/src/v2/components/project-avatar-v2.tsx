@@ -1,15 +1,17 @@
+import { Option } from "effect"
 import { type ComponentProps, splitProps, Show } from "solid-js"
 import "./project-avatar-v2.css"
 
-const segmenter =
+const segmenter: Option.Option<Intl.Segmenter> =
   typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-    : undefined
+    ? // ECMA-402 defaults to the runtime default locale and to "grapheme" granularity.
+      Option.some(new Intl.Segmenter())
+    : Option.none()
 
 function first(value: string) {
   if (!value) return ""
-  if (!segmenter) return Array.from(value)[0] ?? ""
-  return segmenter.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
+  if (Option.isNone(segmenter)) return Array.from(value)[0] ?? ""
+  return segmenter.value.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
 }
 
 export const PROJECT_AVATAR_VARIANTS = [
@@ -42,18 +44,14 @@ export function ProjectAvatar(props: ProjectAvatarProps) {
     <div
       {...rest}
       data-component="project-avatar-v2"
-      data-unread={split.unread ? "" : undefined}
+      bool:data-unread={!!split.unread}
       classList={{
         ...split.classList,
         [split.class ?? ""]: !!split.class,
       }}
-      style={typeof split.style === "object" ? split.style : undefined}
+      {...(typeof split.style === "object" ? { style: split.style } : {})}
     >
-      <div
-        data-slot="project-avatar-surface"
-        data-variant={split.variant ?? "gray"}
-        data-has-image={split.src ? "" : undefined}
-      >
+      <div data-slot="project-avatar-surface" data-variant={split.variant ?? "gray"} bool:data-has-image={!!split.src}>
         <Show when={split.src} fallback={first(split.fallback)}>
           {(value) => <img src={value()} draggable={false} data-slot="project-avatar-image" />}
         </Show>

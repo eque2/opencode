@@ -3,13 +3,12 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Option } from "effect"
 import type * as PlatformError from "effect/PlatformError"
 import type * as Scope from "effect/Scope"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
-import type { Config } from "@/config/config"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { InstanceBootstrap } from "../../src/project/bootstrap-service"
@@ -30,7 +29,7 @@ export async function provideTestInstance<R>(input: {
 }) {
   const ctx = await InstanceRuntime.load({ directory: input.directory })
   try {
-    if (input.init) await Effect.runPromise(input.init.pipe(Effect.provideService(InstanceRef, ctx)))
+    if (input.init) await Effect.runPromise(input.init.pipe(Effect.provideService(InstanceRef, Option.some(ctx))))
     return await input.fn(ctx)
   } finally {
     await InstanceRuntime.disposeInstance(ctx)
@@ -81,7 +80,13 @@ type TmpDirOptions<T> = {
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
 }
-export async function tmpdir<T>(options?: TmpDirOptions<T>) {
+
+type TmpDir<T> = AsyncDisposable & { path: string; extra: T }
+
+// `extra` is what `init` resolved to, so a call without `init` has no extra value.
+export async function tmpdir<T>(options: TmpDirOptions<T> & { init: (dir: string) => Promise<T> }): Promise<TmpDir<T>>
+export async function tmpdir<T = undefined>(options?: TmpDirOptions<T> & { init?: undefined }): Promise<TmpDir<undefined>>
+export async function tmpdir<T>(options?: TmpDirOptions<T>): Promise<TmpDir<T | undefined>> {
   const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
@@ -113,7 +118,7 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       }
     },
     path: realpath,
-    extra: extra as T,
+    extra,
   }
   return result
 }
@@ -194,8 +199,8 @@ export class TestInstance extends Context.Service<TestInstance, { readonly direc
 
 export const requireInstance = Effect.gen(function* () {
   const instance = yield* InstanceRef
-  if (!instance) return yield* Effect.die(new Error("missing test instance"))
-  return instance
+  if (Option.isNone(instance)) return yield* Effect.die(new Error("missing test instance"))
+  return instance.value
 })
 
 export const withTmpdirInstance =
@@ -208,7 +213,7 @@ export const withTmpdirInstance =
     Effect.gen(function* () {
       const directory = yield* tmpdirScoped(options)
       return yield* self.pipe(Effect.provideService(TestInstance, { directory }), provideInstanceEffect(directory))
-    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
+    }).pipe(Effect.provide(testInstanceStoreLayer.pipe(Layer.provideMerge(AppNodeBuilder.build(CrossSpawnSpawner.node)))))
 
 export function provideTmpdirServer<A, E, R>(
   self: (input: { dir: string; llm: TestLLMServer["Service"] }) => Effect.Effect<A, E, R>,

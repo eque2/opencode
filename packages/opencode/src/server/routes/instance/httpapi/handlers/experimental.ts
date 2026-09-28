@@ -15,7 +15,7 @@ import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, ToolID, ToolListQuery, WorktreeApiError } from "../groups/experimental"
 
 function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
   return self.pipe(
@@ -98,7 +98,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
         agent: yield* agents.defaultInfo(),
       })
       return list.map((item) => ({
-        id: item.id,
+        id: ToolID.make(item.id),
         description: item.description,
         parameters: ToolJsonSchema.fromTool(item),
       }))
@@ -116,7 +116,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const worktreeCreate = Effect.fn("ExperimentalHttpApi.worktreeCreate")(function* (ctx: {
       payload: typeof Worktree.CreateInput.Type | void
     }) {
-      return yield* mapWorktreeError(worktreeSvc.create(ctx.payload ?? undefined))
+      return yield* mapWorktreeError(worktreeSvc.create(Option.getOrUndefined(Option.fromNullishOr(ctx.payload))))
     })
 
     const worktreeRemove = Effect.fn("ExperimentalHttpApi.worktreeRemove")(function* (input: {
@@ -137,9 +137,9 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
 
     const session = Effect.fn("ExperimentalHttpApi.session")(function* (ctx: { query: typeof SessionListQuery.Type }) {
       const limit = ctx.query.limit ?? 100
-      const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
+      const directory = ctx.query.directory ? Option.some(yield* InstanceState.directory) : Option.none<string>()
       const all = yield* sessions.listGlobal({
-        directory,
+        directory: Option.getOrUndefined(directory),
         roots: ctx.query.roots,
         start: ctx.query.start,
         cursor: ctx.query.cursor,
@@ -148,12 +148,12 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
         archived: ctx.query.archived,
       })
       const list = all.length > limit ? all.slice(0, limit) : all
-      return HttpServerResponse.jsonUnsafe(list, {
-        headers:
-          all.length > limit && list.length > 0
-            ? { "x-next-cursor": String(list[list.length - 1].time.updated) }
-            : undefined,
-      })
+      return HttpServerResponse.jsonUnsafe(
+        list,
+        all.length > limit && list.length > 0
+          ? { headers: { "x-next-cursor": String(list[list.length - 1].time.updated) } }
+          : {},
+      )
     })
 
     const sessionBackground = Effect.fn("ExperimentalHttpApi.sessionBackground")(function* (ctx: {

@@ -1,4 +1,5 @@
 import type { AssistantMessage, Message } from "@opencode-ai/sdk/v2/client"
+import { Array as Arr, Option } from "effect"
 
 type Provider = {
   id: string
@@ -22,25 +23,20 @@ type Context = {
   limit: number | undefined
   input: number
   total: number
-  usage: number | null
+  usage: Option.Option<number>
 }
 
 const tokenTotal = (msg: AssistantMessage) => {
   return msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
 }
 
-const lastAssistantWithTokens = (messages: Message[]) => {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]
-    if (msg.role !== "assistant") continue
-    if (tokenTotal(msg) <= 0) continue
-    return msg
-  }
-}
+const lastAssistantWithTokens = (messages: Message[]) =>
+  Arr.findLast(messages, (msg): msg is AssistantMessage => msg.role === "assistant" && tokenTotal(msg) > 0)
 
 const build = (messages: Message[] = [], providers: Provider[] = []): Context | undefined => {
-  const message = lastAssistantWithTokens(messages)
-  if (!message) return undefined
+  const found = lastAssistantWithTokens(messages)
+  if (Option.isNone(found)) return undefined
+  const message = found.value
 
   const provider = providers.find((item) => item.id === message.providerID)
   const model = provider?.models[message.modelID]
@@ -56,7 +52,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
     limit,
     input: message.tokens.input,
     total,
-    usage: limit ? Math.round((total / limit) * 100) : null,
+    usage: limit ? Option.some(Math.round((total / limit) * 100)) : Option.none(),
   }
 }
 

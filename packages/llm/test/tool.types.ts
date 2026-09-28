@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { LLM, LLMRequest, ToolRuntime, toDefinitions } from "../src"
+import { LLM, LLMRequest, ToolCallPart, ToolRuntime, toDefinitions } from "../src"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import { Auth } from "../src/route"
 import { Tool } from "../src/tool"
@@ -32,9 +32,12 @@ Tool.make({
   ],
 })
 
-LLM.stream(request)
-LLM.generate(LLMRequest.update(request, { tools: toDefinitions({ schemaOnly }) }))
-ToolRuntime.dispatch({ executable }, { type: "tool-call", id: "call_1", name: "executable", input: { city: "Paris" } })
+export const streamed = LLM.stream(request)
+export const generated = LLM.generate(LLMRequest.update(request, { tools: toDefinitions({ schemaOnly }) }))
+export const dispatched = ToolRuntime.dispatch(
+  { executable },
+  ToolCallPart.make({ id: "call_1", name: "executable", input: { city: "Paris" } }),
+)
 
 // @ts-expect-error High-level tool orchestration overloads are intentionally not supported.
-LLM.stream({ request, tools: { schemaOnly } })
+export const orchestrated = LLM.stream({ request, tools: { schemaOnly } })

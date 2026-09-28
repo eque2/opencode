@@ -1,5 +1,6 @@
-import type { Config, Redacted } from "effect"
+import { Option, type Config, type Redacted } from "effect"
 import * as OpenAICompatibleChat from "../protocols/openai-compatible-chat"
+import * as ProviderShared from "../protocols/shared"
 import { Auth } from "../route/auth"
 import { AuthOptions, type AtLeastOne, type ProviderAuthOption } from "../route/auth-options"
 import type { RouteDefaultsInput } from "../route/client"
@@ -33,11 +34,26 @@ type WorkersAIURL = AtLeastOne<{
 
 export type WorkersAIOptions = WorkersAIURL & RouteDefaultsInput & ProviderAuthOption<"optional">
 
-export const aiGatewayBaseURL = (input: GatewayURL) => {
-  if (input.baseURL) return input.baseURL
-  if (!input.accountId) throw new Error("CloudflareAIGateway.configure requires accountId unless baseURL is supplied")
-  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(input.accountId)}/${encodeURIComponent(input.gatewayId?.trim() || "default")}/compat`
-}
+const nonEmpty = (value: string | undefined) =>
+  Option.fromNullishOr(value).pipe(Option.filter((text) => text.length > 0))
+
+// `AtLeastOne` rejects a missing pair at compile time; an empty string still
+// type-checks, so the configure call fails with a typed `LLMError` for it.
+const accountBaseURL = (facade: string, input: WorkersAIURL, fromAccount: (accountId: string) => string): string =>
+  nonEmpty(input.baseURL).pipe(
+    Option.orElse(() => Option.map(nonEmpty(input.accountId), fromAccount)),
+    Option.getOrThrowWith(() =>
+      ProviderShared.invalidRequest(`${facade}.configure requires accountId unless baseURL is supplied`),
+    ),
+  )
+
+export const aiGatewayBaseURL = (input: GatewayURL) =>
+  accountBaseURL(
+    "CloudflareAIGateway",
+    input,
+    (accountId) =>
+      `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(input.gatewayId?.trim() || "default")}/compat`,
+  )
 
 const aiGatewayAuth = (input: AIGatewayOptions) => {
   if ("auth" in input && input.auth) return input.auth
@@ -50,11 +66,12 @@ const aiGatewayAuth = (input: AIGatewayOptions) => {
   return Auth.bearerHeader("cf-aig-authorization", input.gatewayApiKey).andThen(Auth.bearer(input.apiKey))
 }
 
-export const workersAIBaseURL = (input: WorkersAIURL) => {
-  if (input.baseURL) return input.baseURL
-  if (!input.accountId) throw new Error("CloudflareWorkersAI.configure requires accountId unless baseURL is supplied")
-  return `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(input.accountId)}/ai/v1`
-}
+export const workersAIBaseURL = (input: WorkersAIURL) =>
+  accountBaseURL(
+    "CloudflareWorkersAI",
+    input,
+    (accountId) => `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1`,
+  )
 
 const workersAIAuth = (input: WorkersAIOptions) => {
   return AuthOptions.bearer(input, workersAIAuthEnvVars)

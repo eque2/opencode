@@ -48,8 +48,8 @@ export function CommandPaletteDialog() {
   const options = createMemo(() =>
     entries().map((entry) => ({
       title: typeof entry.command.title === "string" ? entry.command.title : entry.command.name,
-      description: typeof entry.command.desc === "string" ? entry.command.desc : undefined,
-      category: typeof entry.command.category === "string" ? entry.command.category : undefined,
+      ...(typeof entry.command.desc === "string" ? { description: entry.command.desc } : {}),
+      ...(typeof entry.command.category === "string" ? { category: entry.command.category } : {}),
       footer: formatKeyBindings(entry.bindings, config),
       value: entry.command.name,
       suggested: isSuggestedPaletteCommand(entry),

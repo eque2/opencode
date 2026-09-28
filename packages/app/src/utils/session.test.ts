@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionApi, SessionInfo, SessionListInput } from "@opencode-ai/client/promise"
-import { listAllSessions, normalizeSessionInfo } from "./session"
+import { Chunk, Effect, HashMap, Option } from "effect"
+import { listAllSessions, normalizeSessionInfo, type RawSessionInfo } from "./session"
 
 describe("normalizeSessionInfo", () => {
   test("adapts a current session to the app session shape", () => {
@@ -25,7 +26,6 @@ describe("normalizeSessionInfo", () => {
       workspaceID: "workspace-1",
       directory: "/repo/worktree",
       path: "worktree",
-      parentID: undefined,
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       title: "New session",
@@ -47,47 +47,63 @@ describe("normalizeSessionInfo", () => {
 })
 
 describe("listAllSessions", () => {
-  test("loads every page in server order and retains the query", async () => {
-    const calls: SessionListInput[] = []
-    const pages = new Map<string | undefined, { data: SessionInfo[]; cursor: { next?: string } }>([
-      [undefined, { data: [sessionInfo("session-3"), sessionInfo("session-2")], cursor: { next: "next" } }],
-      ["next", { data: [sessionInfo("session-1", true)], cursor: {} }],
-    ])
-    const api = {
-      list: async (query = {}) => {
-        calls.push(query)
-        return pages.get(query.cursor) ?? { data: [], cursor: {} }
-      },
-    } satisfies Pick<SessionApi, "list">
+  test("loads every page in server order and retains the query", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = Chunk.empty<SessionListInput>()
+        const pages = HashMap.make(
+          [
+            Option.none<string>(),
+            { data: [sessionInfo("session-3"), sessionInfo("session-2")], cursor: { next: "next" } },
+          ],
+          [Option.some("next"), { data: [sessionInfo("session-1", true)], cursor: {} }],
+        )
+        const api = {
+          list: (query = {}) => {
+            calls = Chunk.append(calls, query)
+            return Effect.runPromise(
+              Effect.succeed(
+                Option.getOrElse(HashMap.get(pages, Option.fromNullishOr(query.cursor)), () => ({
+                  data: [],
+                  cursor: {},
+                })),
+              ),
+            )
+          },
+        } satisfies Pick<SessionApi, "list">
 
-    const result = await listAllSessions(api, { directory: "/repo", order: "desc" })
+        const result = yield* listAllSessions(api, { directory: "/repo", order: "desc" })
 
-    expect(result.map((session) => session.id)).toEqual(["session-3", "session-2", "session-1"])
-    expect(result[2]?.time.archived).toBe(2)
-    expect(calls).toEqual([
-      { directory: "/repo", order: "desc", limit: 100, cursor: undefined },
-      { directory: "/repo", order: "desc", limit: 100, cursor: "next" },
-    ])
-  })
+        expect(result.map((session) => session.id)).toEqual(["session-3", "session-2", "session-1"])
+        expect(result[2]?.time.archived).toBe(2)
+        expect(Chunk.toReadonlyArray(calls)).toEqual([
+          { directory: "/repo", order: "desc", limit: 100 },
+          { directory: "/repo", order: "desc", limit: 100, cursor: "next" },
+        ])
+      }),
+    ))
 
-  test("requests the terminal empty page when the server returns a next cursor", async () => {
-    const cursors: Array<string | undefined> = []
-    const api = {
-      list: async (query = {}) => {
-        cursors.push(query.cursor)
-        if (query.cursor) return { data: [], cursor: { next: "unused" } }
-        return { data: [sessionInfo("session-1")], cursor: { next: "terminal" } }
-      },
-    } satisfies Pick<SessionApi, "list">
+  test("requests the terminal empty page when the server returns a next cursor", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let cursors = Chunk.empty<Option.Option<string>>()
+        const api = {
+          list: (query = {}) => {
+            cursors = Chunk.append(cursors, Option.fromNullishOr(query.cursor))
+            if (query.cursor) return Effect.runPromise(Effect.succeed({ data: [], cursor: { next: "unused" } }))
+            return Effect.runPromise(Effect.succeed({ data: [sessionInfo("session-1")], cursor: { next: "terminal" } }))
+          },
+        } satisfies Pick<SessionApi, "list">
 
-    const result = await listAllSessions(api, { directory: "/repo", limit: 25 })
+        const result = yield* listAllSessions(api, { directory: "/repo", limit: 25 })
 
-    expect(result.map((session) => session.id)).toEqual(["session-1"])
-    expect(cursors).toEqual([undefined, "terminal"])
-  })
+        expect(result.map((session) => session.id)).toEqual(["session-1"])
+        expect(Chunk.toReadonlyArray(cursors)).toEqual([Option.none(), Option.some("terminal")])
+      }),
+    ))
 })
 
-function sessionInfo(id: string, archived = false) {
+function sessionInfo(id: string, archived = false): SessionInfo {
   return {
     id,
     projectID: "project-1",
@@ -95,20 +111,20 @@ function sessionInfo(id: string, archived = false) {
     model: { id: "model-1", providerID: "provider-1" },
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    time: { created: 1, updated: 1, archived: archived ? 2 : undefined },
+    time: { created: 1, updated: 1, ...(archived ? { archived: 2 } : {}) },
     title: id,
     location: { directory: "/repo" },
-  } as SessionInfo
+  }
 }
 
-function currentSession(id: string, parentID?: string) {
+function currentSession(id: string, parentID?: string): RawSessionInfo {
   return {
     id,
-    parentID,
+    ...(parentID ? { parentID } : {}),
     projectID: "project-1",
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 0, updated: 0 },
     location: { directory: "/repo" },
-  } as SessionInfo
+  }
 }

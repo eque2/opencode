@@ -2,27 +2,32 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EOL } from "os"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { basename } from "path"
-import { Cause, Effect } from "effect"
+import { Cause, Clock, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Agent } from "../../../agent/agent"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
-import type { MessageV2 } from "../../../session/message-v2"
 import { MessageID, PartID } from "../../../session/schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Permission } from "../../../permission"
-import { iife } from "../../../util/iife"
 import { fail } from "../../effect-cmd"
 import { InstanceRef } from "@/effect/instance-ref"
 import type { InstanceContext } from "@/project/instance-context"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
+const printJson = Effect.fn("Cli.debug.agent.printJson")(function* (value: unknown) {
+  process.stdout.write((yield* encodeJson(value).pipe(Effect.orDie)) + EOL)
+})
 
 export const debugAgent = Effect.fn("Cli.debug.agent")(function* (args: {
   name: string
   tool?: string
   params?: string
 }) {
-  const ctx = yield* InstanceRef
-  if (!ctx) return
-  return yield* run(args, ctx)
+  const instance = yield* InstanceRef
+  if (Option.isNone(instance)) return
+  yield* run(args, instance.value)
 })
 
 const run = Effect.fn("Cli.debug.agent.body")(function* (
@@ -46,22 +51,21 @@ const run = Effect.fn("Cli.debug.agent.body")(function* (
       process.stderr.write(`Tool ${toolID} not found for agent ${agentName}` + EOL)
       return yield* fail("", 1)
     }
-    if (resolvedTools[toolID] === false) {
+    // resolveTools gives every available tool an entry, so a found tool always has one.
+    if (!resolvedTools[toolID]) {
       process.stderr.write(`Tool ${toolID} is disabled for agent ${agentName}` + EOL)
       return yield* fail("", 1)
     }
-    const params = parseToolParams(args.params)
+    const params = yield* parseToolParams(args.params)
     const toolCtx = yield* createToolContext(agent, ctx)
     const result = yield* tool.execute(params, toolCtx)
-    process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)
-    return
+    return yield* printJson({ tool: toolID, input: params, result })
   }
 
-  const output = {
+  return yield* printJson({
     ...agent,
     tools: resolvedTools,
-  }
-  process.stdout.write(JSON.stringify(output, null, 2) + EOL)
+  })
 })
 
 const getAvailableTools = Effect.fn("Cli.debug.agent.getAvailableTools")(function* (agent: Agent.Info) {
@@ -73,7 +77,7 @@ const getAvailableTools = Effect.fn("Cli.debug.agent.getAvailableTools")(functio
       Effect.matchCauseEffect({
         onSuccess: Effect.succeed,
         onFailure: (cause) => {
-          const error = Cause.squash(cause) as Provider.DefaultModelError
+          const error = Cause.squash(cause)
           if (error instanceof Provider.ModelNotFoundError) {
             return fail(`Model not found: ${error.providerID}/${error.modelID}`)
           }
@@ -92,36 +96,31 @@ function resolveTools(agent: Agent.Info, availableTools: { id: string }[]) {
   )
   const resolved: Record<string, boolean> = {}
   for (const tool of availableTools) {
-    resolved[tool.id] = !disabled.has(tool.id)
+    resolved[tool.id] = !HashSet.has(disabled, tool.id)
   }
   return resolved
 }
 
-function parseToolParams(input?: string) {
+const parseToolParams = Effect.fn("Cli.debug.agent.parseToolParams")(function* (input?: string) {
   if (!input) return {}
   const trimmed = input.trim()
   if (trimmed.length === 0) return {}
 
-  const parsed = iife(() => {
-    try {
-      return JSON.parse(trimmed)
-    } catch (jsonError) {
-      try {
-        return new Function(`return (${trimmed})`)()
-      } catch (evalError) {
-        throw new Error(
-          `Failed to parse --params. Use JSON or a JS object literal. JSON error: ${jsonError}. Eval error: ${evalError}.`,
-          { cause: evalError },
-        )
-      }
-    }
-  })
+  const parsed: unknown = yield* decodeJson(trimmed).pipe(
+    Effect.catch((jsonError) =>
+      Effect.try({
+        // --params also accepts the object-literal form (unquoted keys, single quotes, trailing commas), which JSON5 covers without evaluating code.
+        try: (): unknown => Bun.JSON5.parse(trimmed),
+        catch: (json5Error) =>
+          `Failed to parse --params. Use JSON or JSON5. JSON error: ${jsonError.message}. JSON5 error: ${String(json5Error)}.`,
+      }),
+    ),
+    Effect.catch((message) => fail(message)),
+  )
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Tool params must be an object.")
-  }
-  return parsed as Record<string, unknown>
-}
+  if (!Predicate.isObject(parsed)) return yield* fail("Tool params must be an object.")
+  return parsed
+})
 
 const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(function* (
   agent: Agent.Info,
@@ -138,7 +137,7 @@ const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(functio
           Effect.matchCauseEffect({
             onSuccess: Effect.succeed,
             onFailure: (cause) => {
-              const error = Cause.squash(cause) as Provider.DefaultModelError
+              const error = Cause.squash(cause)
               if (error instanceof Provider.ModelNotFoundError) {
                 return fail(`Model not found: ${error.providerID}/${error.modelID}`)
               }
@@ -149,7 +148,7 @@ const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(functio
           }),
         )
       })
-  const now = Date.now()
+  const now = yield* Clock.currentTimeMillis
   const message: SessionV1.Assistant = {
     id: messageID,
     sessionID: session.id,
@@ -180,14 +179,11 @@ const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(functio
     messages: [],
     metadata: () => Effect.void,
     ask(req: Omit<PermissionV1.Request, "id" | "sessionID" | "tool">) {
-      return Effect.sync(() => {
-        for (const pattern of req.patterns) {
-          const rule = Permission.evaluate(req.permission, pattern, ruleset)
-          if (rule.action === "deny") {
-            throw new PermissionV1.DeniedError({ ruleset })
-          }
-        }
-      })
+      // Tool.Context.ask has no error channel, so a denial is a defect, as the old throw was.
+      const denied = req.patterns.some(
+        (pattern) => Permission.evaluate(req.permission, pattern, ruleset).action === "deny",
+      )
+      return denied ? Effect.die(new PermissionV1.DeniedError({ ruleset })) : Effect.void
     },
   }
 })

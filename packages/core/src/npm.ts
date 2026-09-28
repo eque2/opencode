@@ -4,8 +4,7 @@ import path from "path"
 import { createRequire } from "module"
 import { pathToFileURL } from "url"
 import npa from "npm-package-arg"
-import { Effect, Schema, Context, Layer, Option, FileSystem } from "effect"
-import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, Schema, Context, Layer, Option, FileSystem, HashSet } from "effect"
 import { FSUtil } from "./fs-util"
 import { Global } from "./global"
 import { EffectFlock } from "./util/effect-flock"
@@ -42,40 +41,59 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Npm") {}
 
-const illegal = process.platform === "win32" ? new Set(["<", ">", ":", '"', "|", "?", "*"]) : undefined
+// Characters that Windows does not allow in a file name.
+const illegal = HashSet.make("<", ">", ":", '"', "|", "?", "*")
 
 export function sanitize(pkg: string) {
-  if (!illegal) return pkg
-  return Array.from(pkg, (char) => (illegal.has(char) || char.charCodeAt(0) < 32 ? "_" : char)).join("")
+  if (process.platform !== "win32") return pkg
+  return Array.from(pkg, (char) => (HashSet.has(illegal, char) || char.charCodeAt(0) < 32 ? "_" : char)).join("")
 }
 
-const resolveEntryPoint = (name: string, dir: string): EntryPoint => {
-  let entrypoint: string | undefined
-  try {
-    // Node only honors the parent argument behind --experimental-import-meta-resolve, and
-    // import() of the bare package directory fails with ERR_UNSUPPORTED_DIR_IMPORT. require
-    // resolution picks the "require"/"default" export target, which import() loads fine.
-    entrypoint =
-      typeof Bun !== "undefined"
-        ? import.meta.resolve(name, dir)
-        : pathToFileURL(createRequire(path.join(dir, "package.json")).resolve(name)).href
-  } catch {
-    entrypoint = undefined
-  }
-  return {
-    directory: dir,
-    entrypoint,
-  }
-}
+// Node only honors the parent argument behind --experimental-import-meta-resolve, and
+// import() of the bare package directory fails with ERR_UNSUPPORTED_DIR_IMPORT. require
+// resolution picks the "require"/"default" export target, which import() loads fine.
+// Both resolvers throw when the package cannot be resolved, which gives None.
+const resolveEntrypoint = Option.liftThrowable((name: string, dir: string) =>
+  typeof Bun !== "undefined"
+    ? import.meta.resolve(name, dir)
+    : pathToFileURL(createRequire(path.join(dir, "package.json")).resolve(name)).href,
+)
 
-interface ArboristNode {
-  name: string
-  path: string
-}
+const resolveEntryPoint = (name: string, dir: string): EntryPoint => ({
+  directory: dir,
+  entrypoint: Option.getOrUndefined(resolveEntrypoint(name, dir)),
+})
 
-interface ArboristTree {
-  edgesOut: Map<string, { to?: ArboristNode }>
-}
+// npm-package-arg throws for a spec it cannot parse, which gives None.
+const parsePackageSpec = Option.liftThrowable(npa)
+
+// The dependency fields that package.json and the root package-lock.json entry share. Only the names matter.
+const DependencyFields = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+}).annotate({ identifier: "Npm.DependencyFields" })
+
+const PackageLock = Schema.Struct({
+  packages: Schema.optional(Schema.Struct({ "": Schema.optional(DependencyFields) })),
+}).annotate({ identifier: "Npm.PackageLock" })
+
+// The package.json `bin` field: one executable path, or a map from command name to path.
+const PackageBin = Schema.Struct({
+  bin: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+}).annotate({ identifier: "Npm.PackageBin" })
+
+const decodePackageBin = Schema.decodeUnknownOption(PackageBin)
+const decodeDependencyFields = Schema.decodeUnknownOption(DependencyFields)
+const decodePackageLock = Schema.decodeUnknownOption(PackageLock)
+
+const dependencyNames = (fields: typeof DependencyFields.Type) => [
+  ...Object.keys(fields.dependencies ?? {}),
+  ...Object.keys(fields.devDependencies ?? {}),
+  ...Object.keys(fields.peerDependencies ?? {}),
+  ...Object.keys(fields.optionalDependencies ?? {}),
+]
 
 const layer = Layer.effect(
   Service,
@@ -113,7 +131,7 @@ const layer = Layer.effect(
               add,
               dir: input.dir,
             }),
-        }) as Effect.Effect<ArboristTree, InstallFailedError>
+        })
       }).pipe(
         Effect.withSpan("Npm.reify", {
           attributes: input,
@@ -122,13 +140,10 @@ const layer = Layer.effect(
 
     const add = Effect.fn("Npm.add")(function* (pkg: string) {
       const dir = directory(pkg)
-      const name = (() => {
-        try {
-          return npa(pkg).name ?? pkg
-        } catch {
-          return pkg
-        }
-      })()
+      const name = parsePackageSpec(pkg).pipe(
+        Option.flatMapNullishOr((spec) => spec.name),
+        Option.getOrElse(() => pkg),
+      )
 
       if (yield* afs.existsSafe(path.join(dir, "node_modules", name))) {
         return resolveEntryPoint(name, path.join(dir, "node_modules", name))
@@ -165,33 +180,27 @@ const layer = Layer.effect(
         return
 
       yield* Effect.gen(function* () {
-        const pkg = yield* afs.readJson(path.join(dir, "package.json")).pipe(Effect.orElseSucceed(() => ({})))
-        const lock = yield* afs.readJson(path.join(dir, "package-lock.json")).pipe(Effect.orElseSucceed(() => ({})))
+        const pkg = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "package.json")).pipe(Effect.option),
+          decodeDependencyFields,
+        )
+        const lock = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "package-lock.json")).pipe(Effect.option),
+          decodePackageLock,
+        )
 
-        const pkgAny = pkg as any
-        const lockAny = lock as any
-        const declared = new Set([
-          ...Object.keys(pkgAny?.dependencies || {}),
-          ...Object.keys(pkgAny?.devDependencies || {}),
-          ...Object.keys(pkgAny?.peerDependencies || {}),
-          ...Object.keys(pkgAny?.optionalDependencies || {}),
-          ...(input?.add || []).map((pkg) => pkg.name),
-        ])
+        const declared = [
+          ...Option.match(pkg, { onNone: () => [], onSome: dependencyNames }),
+          ...(input?.add ?? []).map((item) => item.name),
+        ]
+        const locked = HashSet.fromIterable(
+          lock.pipe(
+            Option.flatMapNullishOr((file) => file.packages?.[""]),
+            Option.match({ onNone: () => [], onSome: dependencyNames }),
+          ),
+        )
 
-        const root = lockAny?.packages?.[""] || {}
-        const locked = new Set([
-          ...Object.keys(root?.dependencies || {}),
-          ...Object.keys(root?.devDependencies || {}),
-          ...Object.keys(root?.peerDependencies || {}),
-          ...Object.keys(root?.optionalDependencies || {}),
-        ])
-
-        for (const name of declared) {
-          if (!locked.has(name)) {
-            yield* reify({ dir, add })
-            return
-          }
-        }
+        if (declared.some((name) => !HashSet.has(locked, name))) yield* reify({ dir, add })
       }).pipe(Effect.withSpan("Npm.checkDirty"))
 
       return
@@ -210,18 +219,18 @@ const layer = Layer.effect(
         if (bin) return files.includes(bin) ? Option.some(bin) : Option.none<string>()
         if (files.length === 1) return Option.some(files[0])
 
-        const pkgJson = yield* afs.readJson(path.join(dir, "node_modules", pkg, "package.json")).pipe(Effect.option)
+        const pkgJson = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "node_modules", pkg, "package.json")).pipe(Effect.option),
+          decodePackageBin,
+        )
 
-        if (Option.isSome(pkgJson)) {
-          const parsed = pkgJson.value as { bin?: string | Record<string, string> }
-          if (parsed?.bin) {
-            const unscoped = pkg.startsWith("@") ? pkg.split("/")[1] : pkg
-            const parsedBin = parsed.bin
-            if (typeof parsedBin === "string") return Option.some(unscoped)
-            const keys = Object.keys(parsedBin)
-            if (keys.length === 1) return Option.some(keys[0])
-            return parsedBin[unscoped] ? Option.some(unscoped) : Option.some(keys[0])
-          }
+        if (Option.isSome(pkgJson) && pkgJson.value.bin) {
+          const unscoped = pkg.startsWith("@") ? pkg.split("/")[1] : pkg
+          const parsedBin = pkgJson.value.bin
+          if (typeof parsedBin === "string") return Option.some(unscoped)
+          const keys = Object.keys(parsedBin)
+          if (keys.length === 1) return Option.some(keys[0])
+          return parsedBin[unscoped] ? Option.some(unscoped) : Option.some(keys[0])
         }
 
         return Option.some(files[0])
@@ -264,14 +273,14 @@ export const node = makeGlobalNode({
 
 const { runPromise } = makeRuntime(Service, LayerNode.compile(node))
 
-export async function install(...args: Parameters<Interface["install"]>) {
+export function install(...args: Parameters<Interface["install"]>) {
   return runPromise((svc) => svc.install(...args))
 }
 
-export async function add(...args: Parameters<Interface["add"]>) {
+export function add(...args: Parameters<Interface["add"]>) {
   return runPromise((svc) => svc.add(...args))
 }
 
-export async function which(...args: Parameters<Interface["which"]>) {
+export function which(...args: Parameters<Interface["which"]>) {
   return runPromise((svc) => svc.which(...args))
 }

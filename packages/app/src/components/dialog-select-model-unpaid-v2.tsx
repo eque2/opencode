@@ -11,6 +11,7 @@ import { useProviders } from "@/hooks/use-providers"
 import { decode64 } from "@/utils/base64"
 import { useLanguage } from "@/context/language"
 import { ModelTooltip } from "./model-tooltip"
+import { Option } from "effect"
 
 type ModelState = ReturnType<typeof useLocal>["model"]
 const featuredProviders = ["opencode", "opencode-go", "openai", "anthropic", "google", "github-copilot"]
@@ -25,10 +26,7 @@ export const DialogSelectModelUnpaidV2: Component<{ model?: ModelState }> = (pro
   const providers = useProviders(directory)
   const language = useLanguage()
   const modelKey = (item: ReturnType<ModelState["list"]>[number]) => `${item.provider.id}:${item.id}`
-  const currentKey = createMemo(() => {
-    const c = model.current()
-    return c ? `${c.provider.id}:${c.id}` : undefined
-  })
+  const currentKey = createMemo(() => Option.map(Option.fromNullishOr(model.current()), modelKey))
   const isFree = (item: ReturnType<ModelState["list"]>[number]) =>
     item.provider.id === "opencode" && (!item.cost || item.cost.input === 0)
   const freeModels = createMemo(() => model.list().filter(isFree))
@@ -55,7 +53,8 @@ export const DialogSelectModelUnpaidV2: Component<{ model?: ModelState }> = (pro
       if (!listEl) return
       const buttons = Array.from(listEl.querySelectorAll<HTMLButtonElement>("button"))
       if (buttons.length === 0) return
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const active = document.activeElement
+      const index = active instanceof HTMLButtonElement ? buttons.indexOf(active) : -1
       const next =
         index < 0 ? (e.key === "ArrowDown" ? 0 : buttons.length - 1) : index + (e.key === "ArrowDown" ? 1 : -1)
       buttons[(next + buttons.length) % buttons.length]?.focus()
@@ -109,7 +108,7 @@ export const DialogSelectModelUnpaidV2: Component<{ model?: ModelState }> = (pro
                     <Show when={item.latest}>
                       <Tag class="shrink-0">{language.t("model.tag.latest")}</Tag>
                     </Show>
-                    <Show when={currentKey() === modelKey(item)}>
+                    <Show when={Option.contains(currentKey(), modelKey(item))}>
                       <Icon name="check" class="ml-auto size-4 shrink-0 text-v2-icon-icon-base" />
                     </Show>
                   </button>

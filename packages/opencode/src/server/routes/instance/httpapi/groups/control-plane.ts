@@ -4,7 +4,9 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "
 import { described } from "./metadata"
 
 const root = "/experimental/control-plane"
-export const MoveSessionPayload = Schema.Struct({ ...MoveSession.Input.fields })
+export const MoveSessionPayload = Schema.Struct({ ...MoveSession.Input.fields }).annotate({
+  description: "Request to move a session to another workspace",
+})
 
 export class ApiMoveSessionError extends Schema.Error<ApiMoveSessionError>("MoveSessionError")(
   {

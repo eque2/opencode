@@ -14,7 +14,7 @@ import { or } from "drizzle-orm"
 import { Effect, Scope } from "effect"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { HistoryPayload, ReplayPayload, SessionPayload } from "../groups/sync"
+import { AggregateID, HistoryPayload, ReplayPayload, SessionPayload } from "../groups/sync"
 
 export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handlers) =>
   Effect.gen(function* () {
@@ -70,18 +70,22 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handl
     })
 
     const history = Effect.fn("SyncHttpApi.history")(function* (ctx: { payload: typeof HistoryPayload.Type }) {
-      const exclude = Object.entries(ctx.payload)
+      // `or()` of no conditions is undefined, so an empty payload reads the whole history.
+      const excluded = or(
+        ...Object.entries(ctx.payload).map(([id, seq]) =>
+          and(eq(EventTable.aggregate_id, id), lte(EventTable.seq, seq)),
+        ),
+      )
       return yield* db
         .select()
         .from(EventTable)
-        .where(
-          exclude.length > 0
-            ? not(or(...exclude.map(([id, seq]) => and(eq(EventTable.aggregate_id, id), lte(EventTable.seq, seq))))!)
-            : undefined,
-        )
+        .where(excluded && not(excluded))
         .orderBy(asc(EventTable.seq))
         .all()
-        .pipe(Effect.orDie)
+        .pipe(
+          Effect.map((rows) => rows.map((row) => ({ ...row, aggregate_id: AggregateID.make(row.aggregate_id) }))),
+          Effect.orDie,
+        )
     })
 
     return handlers.handle("start", start).handle("replay", replay).handle("steal", steal).handle("history", history)

@@ -1,8 +1,11 @@
 import { Npm } from "@opencode-ai/core/npm"
+import { Effect, Option, Schema } from "effect"
 import type { InstanceContext } from "../project/instance-context"
-import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { which } from "@opencode-ai/core/util/which"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 
 export interface Context extends Pick<InstanceContext, "directory" | "worktree"> {
   experimentalOxfmt: boolean
@@ -12,27 +15,66 @@ export interface Info {
   name: string
   environment?: Record<string, string>
   extensions: string[]
-  enabled(context: Context): Promise<string[] | false>
+  /** Gives the command that formats a file, or None when the formatter is not available here. */
+  enabled: (context: Context) => Effect.Effect<Option.Option<string[]>>
 }
+
+// Manifests map each dependency name to a version range.
+const Dependencies = Schema.optional(Schema.Record(Schema.String, Schema.String))
+
+const PackageJson = Schema.Struct({
+  dependencies: Dependencies,
+  devDependencies: Dependencies,
+}).annotate({ identifier: "FormatterPackageJson" })
+
+const ComposerJson = Schema.Struct({
+  require: Dependencies,
+  "require-dev": Dependencies,
+}).annotate({ identifier: "FormatterComposerJson" })
+
+// Gives the command for a binary on PATH, or None when the binary is not installed.
+const onPath = (bin: string, ...args: string[]) =>
+  which(bin).pipe(Effect.map(Option.map((match) => [match, ...args])))
+
+// Info.enabled has no service requirements (Format calls it directly), so the file helpers provide
+// their own FSUtil. A read or JSON parse failure is a defect, as it was with the former Promise helpers.
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+const findUp = (target: string, context: Context) =>
+  FSUtil.use.findUp(target, context.directory, context.worktree).pipe(Effect.orDie, Effect.provide(fileSystemLayer))
+
+// A manifest whose dependency fields are not string maps is None: it names no dependencies.
+const readManifest = <T>(schema: Schema.Decoder<T>, file: string) =>
+  FSUtil.use.readJson(file).pipe(
+    Effect.orDie,
+    Effect.flatMap((json) => Effect.option(Schema.decodeUnknownEffect(schema)(json))),
+    Effect.provide(fileSystemLayer),
+  )
+
+const readText = (file: string) => FSUtil.use.readFileString(file).pipe(Effect.orDie, Effect.provide(fileSystemLayer))
+
+// Npm.which is a Promise API. It recovers every failure as a missing binary, so it does not reject.
+const npmBin = (pkg: string) => Effect.promise(() => Npm.which(pkg)).pipe(Effect.map(Option.fromNullishOr))
+
+// Info.enabled has no service requirements (Format calls it directly), so the probe provides its own
+// AppProcess. A command that cannot start counts as a failed one, with exit code 1 and no output.
+const probe = (cmd: string, args: ReadonlyArray<string>) =>
+  AppProcess.Service.use((appProcess) => appProcess.run(ChildProcess.make(cmd, args, { stdin: "ignore" }))).pipe(
+    Effect.map((result) => ({ code: result.exitCode, text: result.stdout.toString() })),
+    Effect.orElseSucceed(() => ({ code: 1, text: "" })),
+    Effect.provide(LayerNode.compile(AppProcess.node)),
+  )
 
 export const gofmt: Info = {
   name: "gofmt",
   extensions: [".go"],
-  async enabled() {
-    const match = which("gofmt")
-    if (!match) return false
-    return [match, "-w", "$FILE"]
-  },
+  enabled: () => onPath("gofmt", "-w", "$FILE"),
 }
 
 export const mix: Info = {
   name: "mix",
   extensions: [".ex", ".exs", ".eex", ".heex", ".leex", ".neex", ".sface"],
-  async enabled() {
-    const match = which("mix")
-    if (!match) return false
-    return [match, "format", "$FILE"]
-  },
+  enabled: () => onPath("mix", "format", "$FILE"),
 }
 
 export const prettier: Info = {
@@ -68,20 +110,17 @@ export const prettier: Info = {
     ".graphql",
     ".gql",
   ],
-  async enabled(context) {
-    const items = await Filesystem.findUp("package.json", context.directory, context.worktree)
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    const items = yield* findUp("package.json", context)
     for (const item of items) {
-      const json = await Filesystem.readJson<{
-        dependencies?: Record<string, string>
-        devDependencies?: Record<string, string>
-      }>(item)
-      if (json.dependencies?.prettier || json.devDependencies?.prettier) {
-        const bin = await Npm.which("prettier")
-        if (bin) return [bin, "--write", "$FILE"]
+      const json = yield* readManifest(PackageJson, item)
+      if (Option.exists(json, (pkg) => Boolean(pkg.dependencies?.prettier || pkg.devDependencies?.prettier))) {
+        const bin = yield* npmBin("prettier")
+        if (Option.isSome(bin)) return Option.some([bin.value, "--write", "$FILE"])
       }
     }
-    return false
-  },
+    return Option.none()
+  }),
 }
 
 export const oxfmt: Info = {
@@ -90,21 +129,18 @@ export const oxfmt: Info = {
     BUN_BE_BUN: "1",
   },
   extensions: [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"],
-  async enabled(context) {
-    if (!context.experimentalOxfmt) return false
-    const items = await Filesystem.findUp("package.json", context.directory, context.worktree)
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    if (!context.experimentalOxfmt) return Option.none()
+    const items = yield* findUp("package.json", context)
     for (const item of items) {
-      const json = await Filesystem.readJson<{
-        dependencies?: Record<string, string>
-        devDependencies?: Record<string, string>
-      }>(item)
-      if (json.dependencies?.oxfmt || json.devDependencies?.oxfmt) {
-        const bin = await Npm.which("oxfmt")
-        if (bin) return [bin, "$FILE"]
+      const json = yield* readManifest(PackageJson, item)
+      if (Option.exists(json, (pkg) => Boolean(pkg.dependencies?.oxfmt || pkg.devDependencies?.oxfmt))) {
+        const bin = yield* npmBin("oxfmt")
+        if (Option.isSome(bin)) return Option.some([bin.value, "$FILE"])
       }
     }
-    return false
-  },
+    return Option.none()
+  }),
 }
 
 export const biome: Info = {
@@ -140,265 +176,204 @@ export const biome: Info = {
     ".graphql",
     ".gql",
   ],
-  async enabled(context) {
+  enabled: Effect.fnUntraced(function* (context: Context) {
     const configs = ["biome.json", "biome.jsonc"]
     for (const config of configs) {
-      const found = await Filesystem.findUp(config, context.directory, context.worktree)
+      const found = yield* findUp(config, context)
       if (found.length > 0) {
-        const bin = await Npm.which("@biomejs/biome")
-        if (bin) return [bin, "format", "--write", "$FILE"]
+        const bin = yield* npmBin("@biomejs/biome")
+        if (Option.isSome(bin)) return Option.some([bin.value, "format", "--write", "$FILE"])
       }
     }
-    return false
-  },
+    return Option.none()
+  }),
 }
 
 export const zig: Info = {
   name: "zig",
   extensions: [".zig", ".zon"],
-  async enabled() {
-    const match = which("zig")
-    if (!match) return false
-    return [match, "fmt", "$FILE"]
-  },
+  enabled: () => onPath("zig", "fmt", "$FILE"),
 }
 
 export const clang: Info = {
   name: "clang-format",
   extensions: [".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++", ".ino", ".C", ".H"],
-  async enabled(context) {
-    const items = await Filesystem.findUp(".clang-format", context.directory, context.worktree)
-    if (items.length > 0) {
-      const match = which("clang-format")
-      if (match) return [match, "-i", "$FILE"]
-    }
-    return false
-  },
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    const items = yield* findUp(".clang-format", context)
+    if (items.length === 0) return Option.none()
+    return yield* onPath("clang-format", "-i", "$FILE")
+  }),
 }
 
 export const ktlint: Info = {
   name: "ktlint",
   extensions: [".kt", ".kts"],
-  async enabled() {
-    const match = which("ktlint")
-    if (!match) return false
-    return [match, "-F", "$FILE"]
-  },
+  enabled: () => onPath("ktlint", "-F", "$FILE"),
 }
 
 export const ruff: Info = {
   name: "ruff",
   extensions: [".py", ".pyi"],
-  async enabled(context) {
-    if (!which("ruff")) return false
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    if (Option.isNone(yield* which("ruff"))) return Option.none()
     const configs = ["pyproject.toml", "ruff.toml", ".ruff.toml"]
     for (const config of configs) {
-      const found = await Filesystem.findUp(config, context.directory, context.worktree)
+      const found = yield* findUp(config, context)
       if (found.length > 0) {
         if (config === "pyproject.toml") {
-          const content = await Filesystem.readText(found[0])
-          if (content.includes("[tool.ruff]")) return ["ruff", "format", "$FILE"]
+          const content = yield* readText(found[0])
+          if (content.includes("[tool.ruff]")) return Option.some(["ruff", "format", "$FILE"])
         } else {
-          return ["ruff", "format", "$FILE"]
+          return Option.some(["ruff", "format", "$FILE"])
         }
       }
     }
     const deps = ["requirements.txt", "pyproject.toml", "Pipfile"]
     for (const dep of deps) {
-      const found = await Filesystem.findUp(dep, context.directory, context.worktree)
+      const found = yield* findUp(dep, context)
       if (found.length > 0) {
-        const content = await Filesystem.readText(found[0])
-        if (content.includes("ruff")) return ["ruff", "format", "$FILE"]
+        const content = yield* readText(found[0])
+        if (content.includes("ruff")) return Option.some(["ruff", "format", "$FILE"])
       }
     }
-    return false
-  },
+    return Option.none()
+  }),
 }
 
 export const rlang: Info = {
   name: "air",
   extensions: [".R"],
-  async enabled() {
-    const air = which("air")
-    if (air == null) return false
+  enabled: Effect.fnUntraced(function* () {
+    const air = yield* which("air")
+    if (Option.isNone(air)) return Option.none()
 
-    const output = await Process.text([air, "--help"], { nothrow: true })
+    const output = yield* probe(air.value, ["--help"])
 
     // Check for "Air: An R language server and formatter"
     const firstLine = output.text.split("\n")[0]
     const hasR = firstLine.includes("R language")
     const hasFormatter = firstLine.includes("formatter")
-    if (output.code === 0 && hasR && hasFormatter) return [air, "format", "$FILE"]
-    return false
-  },
+    if (output.code === 0 && hasR && hasFormatter) return Option.some([air.value, "format", "$FILE"])
+    return Option.none()
+  }),
 }
 
 export const uvformat: Info = {
   name: "uv",
   extensions: [".py", ".pyi"],
-  async enabled(context) {
-    if (await ruff.enabled(context)) return false
-    const uv = which("uv")
-    if (uv == null) return false
-    const output = await Process.run([uv, "format", "--help"], { nothrow: true })
-    if (output.code === 0) return [uv, "format", "--", "$FILE"]
-    return false
-  },
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    if (Option.isSome(yield* ruff.enabled(context))) return Option.none()
+    const uv = yield* which("uv")
+    if (Option.isNone(uv)) return Option.none()
+    const output = yield* probe(uv.value, ["format", "--help"])
+    if (output.code === 0) return Option.some([uv.value, "format", "--", "$FILE"])
+    return Option.none()
+  }),
 }
 
 export const rubocop: Info = {
   name: "rubocop",
   extensions: [".rb", ".rake", ".gemspec", ".ru"],
-  async enabled() {
-    const match = which("rubocop")
-    if (!match) return false
-    return [match, "--autocorrect", "$FILE"]
-  },
+  enabled: () => onPath("rubocop", "--autocorrect", "$FILE"),
 }
 
 export const standardrb: Info = {
   name: "standardrb",
   extensions: [".rb", ".rake", ".gemspec", ".ru"],
-  async enabled() {
-    const match = which("standardrb")
-    if (!match) return false
-    return [match, "--fix", "$FILE"]
-  },
+  enabled: () => onPath("standardrb", "--fix", "$FILE"),
 }
 
 export const htmlbeautifier: Info = {
   name: "htmlbeautifier",
   extensions: [".erb", ".html.erb"],
-  async enabled() {
-    const match = which("htmlbeautifier")
-    if (!match) return false
-    return [match, "$FILE"]
-  },
+  enabled: () => onPath("htmlbeautifier", "$FILE"),
 }
 
 export const dart: Info = {
   name: "dart",
   extensions: [".dart"],
-  async enabled() {
-    const match = which("dart")
-    if (!match) return false
-    return [match, "format", "$FILE"]
-  },
+  enabled: () => onPath("dart", "format", "$FILE"),
 }
 
 export const ocamlformat: Info = {
   name: "ocamlformat",
   extensions: [".ml", ".mli"],
-  async enabled(context) {
-    if (!which("ocamlformat")) return false
-    const items = await Filesystem.findUp(".ocamlformat", context.directory, context.worktree)
-    if (items.length > 0) return ["ocamlformat", "-i", "$FILE"]
-    return false
-  },
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    if (Option.isNone(yield* which("ocamlformat"))) return Option.none()
+    const items = yield* findUp(".ocamlformat", context)
+    if (items.length > 0) return Option.some(["ocamlformat", "-i", "$FILE"])
+    return Option.none()
+  }),
 }
 
 export const terraform: Info = {
   name: "terraform",
   extensions: [".tf", ".tfvars"],
-  async enabled() {
-    const match = which("terraform")
-    if (!match) return false
-    return [match, "fmt", "$FILE"]
-  },
+  enabled: () => onPath("terraform", "fmt", "$FILE"),
 }
 
 export const latexindent: Info = {
   name: "latexindent",
   extensions: [".tex"],
-  async enabled() {
-    const match = which("latexindent")
-    if (!match) return false
-    return [match, "-w", "-s", "$FILE"]
-  },
+  enabled: () => onPath("latexindent", "-w", "-s", "$FILE"),
 }
 
 export const gleam: Info = {
   name: "gleam",
   extensions: [".gleam"],
-  async enabled() {
-    const match = which("gleam")
-    if (!match) return false
-    return [match, "format", "$FILE"]
-  },
+  enabled: () => onPath("gleam", "format", "$FILE"),
 }
 
 export const shfmt: Info = {
   name: "shfmt",
   extensions: [".sh", ".bash"],
-  async enabled() {
-    const match = which("shfmt")
-    if (!match) return false
-    return [match, "-w", "$FILE"]
-  },
+  enabled: () => onPath("shfmt", "-w", "$FILE"),
 }
 
 export const nixfmt: Info = {
   name: "nixfmt",
   extensions: [".nix"],
-  async enabled() {
-    const match = which("nixfmt")
-    if (!match) return false
-    return [match, "$FILE"]
-  },
+  enabled: () => onPath("nixfmt", "$FILE"),
 }
 
 export const rustfmt: Info = {
   name: "rustfmt",
   extensions: [".rs"],
-  async enabled() {
-    const match = which("rustfmt")
-    if (!match) return false
-    return [match, "$FILE"]
-  },
+  enabled: () => onPath("rustfmt", "$FILE"),
 }
 
 export const pint: Info = {
   name: "pint",
   extensions: [".php"],
-  async enabled(context) {
-    const items = await Filesystem.findUp("composer.json", context.directory, context.worktree)
+  enabled: Effect.fnUntraced(function* (context: Context) {
+    const items = yield* findUp("composer.json", context)
     for (const item of items) {
-      const json = await Filesystem.readJson<{
-        require?: Record<string, string>
-        "require-dev"?: Record<string, string>
-      }>(item)
-      if (json.require?.["laravel/pint"] || json["require-dev"]?.["laravel/pint"]) return ["./vendor/bin/pint", "$FILE"]
+      const json = yield* readManifest(ComposerJson, item)
+      if (
+        Option.exists(json, (composer) =>
+          Boolean(composer.require?.["laravel/pint"] || composer["require-dev"]?.["laravel/pint"]),
+        )
+      )
+        return Option.some(["./vendor/bin/pint", "$FILE"])
     }
-    return false
-  },
+    return Option.none()
+  }),
 }
 
 export const ormolu: Info = {
   name: "ormolu",
   extensions: [".hs"],
-  async enabled() {
-    const match = which("ormolu")
-    if (!match) return false
-    return [match, "-i", "$FILE"]
-  },
+  enabled: () => onPath("ormolu", "-i", "$FILE"),
 }
 
 export const cljfmt: Info = {
   name: "cljfmt",
   extensions: [".clj", ".cljs", ".cljc", ".edn"],
-  async enabled() {
-    const match = which("cljfmt")
-    if (!match) return false
-    return [match, "fix", "--quiet", "$FILE"]
-  },
+  enabled: () => onPath("cljfmt", "fix", "--quiet", "$FILE"),
 }
 
 export const dfmt: Info = {
   name: "dfmt",
   extensions: [".d"],
-  async enabled() {
-    const match = which("dfmt")
-    if (!match) return false
-    return [match, "-i", "$FILE"]
-  },
+  enabled: () => onPath("dfmt", "-i", "$FILE"),
 }

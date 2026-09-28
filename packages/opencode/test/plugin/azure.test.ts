@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Effect, Option } from "effect"
 import { chmod } from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -7,7 +8,9 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { Auth, Provider } from "@opencode-ai/sdk/v2"
 import { OAUTH_DUMMY_KEY } from "../../src/auth"
 import { AzureAuthPlugin, createAzureAuthHooks } from "../../src/plugin/azure"
-import { Process } from "../../src/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { which } from "@opencode-ai/core/util/which"
 
 const resourceName = process.env.AZURE_RESOURCE_NAME
@@ -59,14 +62,19 @@ function customFetch(options: Record<string, unknown>) {
 }
 
 function azureShell(scopes: string[]) {
-  return async (args: string[]) => {
-    const scope = args[args.indexOf("--scope") + 1]
-    scopes.push(scope)
-    return {
-      accessToken: `${scope}-token`,
-      expires_on: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
-    }
-  }
+  return (args: ReadonlyArray<string>) =>
+    Effect.sync(() => {
+      const scope = args[args.indexOf("--scope") + 1]
+      scopes.push(scope)
+      return {
+        accessToken: `${scope}-token`,
+        expires_on: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
+      }
+    })
+}
+
+function hooksFor(...args: Parameters<typeof createAzureAuthHooks>) {
+  return Effect.runPromise(createAzureAuthHooks(...args))
 }
 
 async function azureCli(dir: string) {
@@ -106,8 +114,10 @@ async function azureCli(dir: string) {
 describe("plugin.azure", () => {
   test("initializes and runs Azure CLI under Node without Bun or a plugin shell", async () => {
     await using tmp = await tmpdir()
-    const node = which("node")
-    if (!node) throw new Error("Node is required for the Azure runtime compatibility test")
+    const node = Option.getOrThrowWith(
+      await Effect.runPromise(which("node")),
+      () => new Error("Node is required for the Azure runtime compatibility test"),
+    )
     const bundle = await Bun.build({
       entrypoints: [path.join(import.meta.dir, "../../src/plugin/azure.ts")],
       target: "node",
@@ -118,12 +128,7 @@ describe("plugin.azure", () => {
     await Bun.write(entry, bundle.outputs[0])
     const cli = await azureCli(tmp.path)
     for (const installed of [false, true]) {
-      const result = await Process.run(
-        [
-          node,
-          "--input-type=module",
-          "-e",
-          `
+      const script = `
         import assert from "node:assert/strict"
         import { AzureAuthPlugin } from ${JSON.stringify(pathToFileURL(entry).href)}
         assert.equal(typeof Bun, "undefined")
@@ -139,15 +144,20 @@ describe("plugin.azure", () => {
           assert.equal(auth.type, "success")
           assert.equal(auth.accountId, "test-resource")
         }
-      `,
-        ],
-        {
-          env: { PATH: installed ? cli.bin : tmp.path, XDG_DATA_HOME: tmp.path },
-          nothrow: true,
-        },
+      `
+      const result = await Effect.runPromise(
+        AppProcess.Service.use((appProcess) =>
+          appProcess.run(
+            ChildProcess.make(node, ["--input-type=module", "-e", script], {
+              env: { PATH: installed ? cli.bin : tmp.path, XDG_DATA_HOME: tmp.path },
+              extendEnv: true,
+              stdin: "ignore",
+            }),
+          ),
+        ).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
       )
       expect(result.stderr.toString()).toBe("")
-      expect(result.code).toBe(0)
+      expect(result.exitCode).toBe(0)
     }
     expect(await cli.calls()).toEqual([
       ["account", "get-access-token", "--scope", "https://cognitiveservices.azure.com/.default", "--output", "json"],
@@ -166,9 +176,9 @@ describe("plugin.azure", () => {
     expect(oauthMethod(hooks).prompts?.[0].type).toBe("text")
   })
 
-  test("keeps the existing API-key method and adds Entra ID", () => {
+  test("keeps the existing API-key method and adds Entra ID", async () => {
     delete process.env.AZURE_RESOURCE_NAME
-    const hooks = createAzureAuthHooks(azureShell([]), fetch, true)
+    const hooks = await hooksFor(azureShell([]), fetch, true)
 
     expect(hooks.auth?.provider).toBe("azure")
     expect(hooks.auth?.methods.map((method) => [method.type, method.label])).toEqual([
@@ -190,15 +200,15 @@ describe("plugin.azure", () => {
     expect(hooks.auth?.methods[1].prompts).toEqual(hooks.auth?.methods[0].prompts)
   })
 
-  test("hides Azure CLI authentication when the Azure CLI is not installed", () => {
-    const hooks = createAzureAuthHooks(azureShell([]), fetch, false)
+  test("hides Azure CLI authentication when the Azure CLI is not installed", async () => {
+    const hooks = await hooksFor(azureShell([]), fetch, false)
 
     expect(hooks.auth?.methods.map((method) => method.type)).toEqual(["api"])
   })
 
   test("checks Azure CLI and stores the resource name", async () => {
     const scopes: string[] = []
-    const hooks = createAzureAuthHooks(azureShell(scopes), fetch, true)
+    const hooks = await hooksFor(azureShell(scopes), fetch, true)
     const authorization = await oauthMethod(hooks).authorize({ resourceName: "test-resource" })
     if (authorization.method !== "auto") throw new Error("Unexpected Azure authorization method")
 
@@ -212,11 +222,12 @@ describe("plugin.azure", () => {
   })
 
   test("supports Azure CLI versions that only provide expiresOn", async () => {
-    const hooks = createAzureAuthHooks(
-      async () => ({
-        accessToken: "legacy-token",
-        expiresOn: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      }),
+    const hooks = await hooksFor(
+      () =>
+        Effect.succeed({
+          accessToken: "legacy-token",
+          expiresOn: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        }),
       fetch,
       true,
     )
@@ -227,16 +238,21 @@ describe("plugin.azure", () => {
   })
 
   test("rejects Azure CLI tokens without a usable expiration", async () => {
-    const hooks = createAzureAuthHooks(async () => ({ accessToken: "invalid-token" }), fetch, true)
+    const hooks = await hooksFor(() => Effect.succeed({ accessToken: "invalid-token" }), fetch, true)
     const authorization = await oauthMethod(hooks).authorize({ resourceName: "test-resource" })
     if (authorization.method !== "auto") throw new Error("Unexpected Azure authorization method")
 
-    await expect(authorization.callback()).rejects.toThrow("Azure CLI returned an invalid token expiration")
+    const failure: unknown = await authorization.callback().then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toMatchObject({ message: "Azure CLI returned an invalid token expiration" })
   })
 
   test("does not change API-key loading", async () => {
     const scopes: string[] = []
-    const hooks = createAzureAuthHooks(azureShell(scopes), fetch, true)
+    const hooks = await hooksFor(azureShell(scopes), fetch, true)
 
     expect(await loader(hooks)(async () => ({ type: "api", key: "test-key" }), provider)).toEqual({})
     expect(scopes).toEqual([])
@@ -245,7 +261,7 @@ describe("plugin.azure", () => {
   test("uses Azure CLI bearer tokens for Azure inference endpoints", async () => {
     const scopes: string[] = []
     const requests: Headers[] = []
-    const hooks = createAzureAuthHooks(
+    const hooks = await hooksFor(
       azureShell(scopes),
       async (_input, init) => {
         requests.push(new Headers(init?.headers))

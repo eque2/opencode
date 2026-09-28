@@ -1,3 +1,4 @@
+import { HashMap, MutableHashMap, Option, Predicate } from "effect"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import { pathKey } from "@/utils/path-key"
@@ -34,16 +35,17 @@ export function hasProjectPermissions<T>(
 }
 
 export const childSessionOnPath = (sessions: Session[] | undefined, rootID: string, activeID?: string) => {
-  if (!activeID || activeID === rootID) return
-  const map = new Map((sessions ?? []).map((session) => [session.id, session]))
+  if (!activeID || activeID === rootID) return undefined
+  const byID = HashMap.fromIterable((sessions ?? []).map((session) => [session.id, session] as const))
   let id = activeID
 
   while (id) {
-    const session = map.get(id)
-    if (!session?.parentID) return
-    if (session.parentID === rootID) return session
-    id = session.parentID
+    const session = HashMap.get(byID, id)
+    if (Option.isNone(session) || !session.value.parentID) return undefined
+    if (session.value.parentID === rootID) return session.value
+    id = session.value.parentID
   }
+  return undefined
 }
 
 export const displayName = (project: { name?: string; worktree: string }) =>
@@ -54,7 +56,20 @@ export function toggleHomeProjectSelection(
   server: ServerConnection.Key,
   directory: string,
 ): HomeProjectSelection {
-  if (current?.server === server && current.directory === directory) return { server }
+  return toggleHomeProjectSelectionOption(Option.fromNullishOr(current), server, directory)
+}
+
+/**
+ * Selects the project, or clears the directory when the project is already selected.
+ * `current` is None when no project is selected.
+ */
+export function toggleHomeProjectSelectionOption(
+  current: Option.Option<HomeProjectSelection>,
+  server: ServerConnection.Key,
+  directory: string,
+): HomeProjectSelection {
+  if (Option.exists(current, (selection) => selection.server === server && selection.directory === directory))
+    return { server }
   return { server, directory }
 }
 
@@ -74,13 +89,18 @@ export function homeProjectNavigation(active: ServerConnection.Key, server: Serv
   return { server, href }
 }
 
-export function homeProjectDirectories(result: string | string[] | null) {
-  if (!result) return []
-  return Array.isArray(result) ? result : [result]
+export function homeProjectDirectories(result: Option.Option<string | string[]>): string[] {
+  if (Option.isNone(result)) return []
+  const picked = result.value
+  if (Array.isArray(picked)) return picked
+  return picked ? [picked] : []
 }
 
-export function homeSessionServerStatus(active: boolean, status: () => { working: boolean; tint?: string }) {
-  if (!active) return { working: false, tint: undefined }
+export function homeSessionServerStatus(
+  active: boolean,
+  status: () => { working: boolean; tint?: string },
+): { working: boolean; tint?: string } {
+  if (!active) return { working: false }
   return status()
 }
 
@@ -96,10 +116,14 @@ export function getProjectAvatarSource(id?: string, icon?: { color?: string; url
 export function projectForSession<T extends { id?: string; worktree: string; sandboxes?: string[] }>(
   session: Session,
   projects: T[],
-  byID: Map<string, T> = new Map(projects.flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
+  byID: ReadonlyMap<string, T> | HashMap.HashMap<string, T> = HashMap.fromIterable(
+    projects.flatMap((project) => (project.id ? [[project.id, project] as const] : [])),
+  ),
 ) {
-  const direct = byID.get(session.projectID)
-  if (direct) return direct
+  const direct = HashMap.isHashMap(byID)
+    ? HashMap.get(byID, session.projectID)
+    : Option.fromNullishOr(byID.get(session.projectID))
+  if (Option.isSome(direct)) return direct.value
   const directory = pathKey(session.directory)
   return projects.find(
     (project) =>
@@ -108,9 +132,10 @@ export function projectForSession<T extends { id?: string; worktree: string; san
 }
 
 export const errorMessage = (err: unknown, fallback: string) => {
-  if (err && typeof err === "object" && "data" in err) {
-    const data = (err as { data?: { message?: string } }).data
-    if (data?.message) return data.message
+  if (Predicate.isObjectOrArray(err) && "data" in err) {
+    const data = err.data
+    if (Predicate.isObjectOrArray(data) && "message" in data && Predicate.isString(data.message) && data.message)
+      return data.message
   }
   if (err instanceof Error) return err.message
   return fallback
@@ -118,25 +143,25 @@ export const errorMessage = (err: unknown, fallback: string) => {
 
 export const effectiveWorkspaceOrder = (local: string, dirs: string[], persisted?: string[]) => {
   const root = pathKey(local)
-  const live = new Map<string, string>()
+  const live = MutableHashMap.empty<string, string>()
 
   for (const dir of dirs) {
     const key = pathKey(dir)
     if (key === root) continue
-    if (!live.has(key)) live.set(key, dir)
+    if (!MutableHashMap.has(live, key)) MutableHashMap.set(live, key, dir)
   }
 
-  if (!persisted?.length) return [local, ...live.values()]
+  if (!persisted?.length) return [local, ...MutableHashMap.values(live)]
 
   const result = [local]
   for (const dir of persisted) {
     const key = pathKey(dir)
     if (key === root) continue
-    const match = live.get(key)
-    if (!match) continue
-    result.push(match)
-    live.delete(key)
+    const match = MutableHashMap.get(live, key)
+    if (Option.isNone(match) || !match.value) continue
+    result.push(match.value)
+    MutableHashMap.remove(live, key)
   }
 
-  return [...result, ...live.values()]
+  return [...result, ...MutableHashMap.values(live)]
 }

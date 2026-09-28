@@ -1,9 +1,9 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
 
-import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
+import { DateTime, Effect, Layer, Option, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
 import { ModelV2 } from "./model"
@@ -63,15 +63,15 @@ const ListInputBase = {
 const ListDirectoryInput = Schema.Struct({
   ...ListInputBase,
   directory: AbsolutePath,
-})
+}).annotate({ identifier: "SessionV2.ListDirectoryInput" })
 
 const ListProjectInput = Schema.Struct({
   ...ListInputBase,
   project: ProjectV2.ID,
   subpath: RelativePath.pipe(Schema.optional),
-})
+}).annotate({ identifier: "SessionV2.ListProjectInput" })
 
-const ListAllInput = Schema.Struct(ListInputBase)
+const ListAllInput = Schema.Struct(ListInputBase).annotate({ identifier: "SessionV2.ListAllInput" })
 
 export const ListInput = Schema.Union([ListDirectoryInput, ListProjectInput, ListAllInput])
 export type ListInput = typeof ListInput.Type
@@ -165,7 +165,7 @@ export interface Interface {
   }) => Effect.Effect<void, OperationUnavailableError>
   readonly compact: (input: CompactInput) => Effect.Effect<void, NotFoundError | OperationUnavailableError>
   readonly wait: (id: SessionSchema.ID) => Effect.Effect<void, NotFoundError | OperationUnavailableError>
-  readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
+  readonly active: Effect.Effect<ReadonlyArray<SessionSchema.ID>>
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   readonly revert: {
@@ -173,8 +173,8 @@ export interface Interface {
       sessionID: SessionSchema.ID
       messageID: SessionMessage.ID
       files?: boolean
-    }) => Effect.Effect<Revert.State, NotFoundError | MessageNotFoundError | Snapshot.Error>
-    readonly clear: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | Snapshot.Error>
+    }) => Effect.Effect<Revert.State, NotFoundError | MessageNotFoundError | Snapshot.SnapshotError>
+    readonly clear: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | Snapshot.SnapshotError>
     readonly commit: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   }
 }
@@ -216,27 +216,30 @@ const layer = Layer.effect(
           .onConflictDoNothing()
           .run()
           .pipe(Effect.orDie)
-        const now = Date.now()
+        const now = yield* DateTime.now
+        const created = DateTime.toEpochMillis(now)
         const info = SessionV1.SessionInfo.make({
           id: sessionID,
-          slug: Slug.create(),
+          slug: yield* Slug.make,
           version: InstallationVersion,
           projectID: project.id,
           directory: input.location.directory,
           path: path.relative(project.directory, input.location.directory).replaceAll("\\", "/"),
-          workspaceID: input.location.workspaceID ? WorkspaceV2.ID.make(input.location.workspaceID) : undefined,
-          title: `New session - ${new Date(now).toISOString()}`,
+          ...(input.location.workspaceID ? { workspaceID: WorkspaceV2.ID.make(input.location.workspaceID) } : {}),
+          title: `New session - ${DateTime.formatIso(now)}`,
           agent: input.agent,
-          model: input.model
+          ...(input.model
             ? {
-                id: ModelV2.ID.make(input.model.id),
-                providerID: input.model.providerID,
-                variant: input.model.variant,
+                model: {
+                  id: ModelV2.ID.make(input.model.id),
+                  providerID: input.model.providerID,
+                  variant: input.model.variant,
+                },
               }
-            : undefined,
+            : {}),
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now, updated: now },
+          time: { created, updated: created },
         })
         const projected = yield* events
           .publish(SessionV1.Event.Created, { sessionID, info }, { location: input.location })
@@ -270,28 +273,24 @@ const layer = Layer.effect(
         const requestedOrder = input.order ?? "desc"
         const order = direction === "previous" ? (requestedOrder === "asc" ? "desc" : "asc") : requestedOrder
         const sortColumn = SessionTable.time_created
-        const conditions: SQL[] = []
-        if ("directory" in input) conditions.push(eq(SessionTable.directory, input.directory))
-        if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
-        if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
-        if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
-        if (input.anchor) {
-          conditions.push(
-            order === "asc"
-              ? or(
-                  gt(sortColumn, input.anchor.time),
-                  and(eq(sortColumn, input.anchor.time), gt(SessionTable.id, input.anchor.id)),
-                )!
-              : or(
-                  lt(sortColumn, input.anchor.time),
-                  and(eq(sortColumn, input.anchor.time), lt(SessionTable.id, input.anchor.id)),
-                )!,
-          )
-        }
+        const anchor = input.anchor
+        const conditions = [
+          ...("directory" in input ? [eq(SessionTable.directory, input.directory)] : []),
+          ...(input.workspaceID ? [eq(SessionTable.workspace_id, input.workspaceID)] : []),
+          ...("project" in input ? [eq(SessionTable.project_id, input.project)] : []),
+          ...(input.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+          ...(anchor
+            ? [
+                order === "asc"
+                  ? or(gt(sortColumn, anchor.time), and(eq(sortColumn, anchor.time), gt(SessionTable.id, anchor.id)))
+                  : or(lt(sortColumn, anchor.time), and(eq(sortColumn, anchor.time), lt(SessionTable.id, anchor.id))),
+              ]
+            : []),
+        ]
         const query = db
           .select()
           .from(SessionTable)
-          .where(conditions.length > 0 ? and(...conditions) : undefined)
+          .where(and(...conditions))
           .orderBy(
             order === "asc" ? asc(sortColumn) : desc(sortColumn),
             order === "asc" ? asc(SessionTable.id) : desc(SessionTable.id),
@@ -307,24 +306,26 @@ const layer = Layer.effect(
         const requestedOrder = input.order ?? "desc"
         const order = direction === "previous" ? (requestedOrder === "asc" ? "desc" : "asc") : requestedOrder
         const anchor = input.cursor
-          ? yield* db
-              .select({ seq: SessionMessageTable.seq })
-              .from(SessionMessageTable)
-              .where(
-                and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.cursor.id)),
-              )
-              .get()
-              .pipe(Effect.orDie)
-          : undefined
-        if (input.cursor && !anchor) return []
-        const boundary = anchor
-          ? order === "asc"
-            ? gt(SessionMessageTable.seq, anchor.seq)
-            : lt(SessionMessageTable.seq, anchor.seq)
-          : undefined
-        const where = boundary
-          ? and(eq(SessionMessageTable.session_id, input.sessionID), boundary)
-          : eq(SessionMessageTable.session_id, input.sessionID)
+          ? Option.fromUndefinedOr(
+              yield* db
+                .select({ seq: SessionMessageTable.seq })
+                .from(SessionMessageTable)
+                .where(
+                  and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.cursor.id)),
+                )
+                .get()
+                .pipe(Effect.orDie),
+            )
+          : Option.none()
+        if (input.cursor && Option.isNone(anchor)) return []
+        const where = Option.match(anchor, {
+          onNone: () => eq(SessionMessageTable.session_id, input.sessionID),
+          onSome: (anchor) =>
+            and(
+              eq(SessionMessageTable.session_id, input.sessionID),
+              order === "asc" ? gt(SessionMessageTable.seq, anchor.seq) : lt(SessionMessageTable.seq, anchor.seq),
+            ),
+        })
         const query = db
           .select()
           .from(SessionMessageTable)
@@ -337,7 +338,13 @@ const layer = Layer.effect(
       }),
       message: Effect.fn("V2Session.message")(function* (input) {
         const stored = yield* store.message(input.messageID)
-        return stored?.sessionID === input.sessionID ? stored.message : undefined
+        // The public message lookup reports a message of another Session as absent (undefined).
+        return Option.getOrUndefined(
+          stored.pipe(
+            Option.filter((found) => found.sessionID === input.sessionID),
+            Option.map((found) => found.message),
+          ),
+        )
       }),
       context: Effect.fn("V2Session.context")(function* (sessionID) {
         yield* result.get(sessionID)

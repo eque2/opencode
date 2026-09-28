@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { ProviderHelper } from "./provider"
 
 /*
@@ -16,15 +17,22 @@ import { ProviderHelper } from "./provider"
 }
 */
 
-type Usage = {
-  promptTokenCount?: number
-  candidatesTokenCount?: number
-  totalTokenCount?: number
-  cachedContentTokenCount?: number
-  promptTokensDetails?: { modality: string; tokenCount: number }[]
-  cacheTokensDetails?: { modality: string; tokenCount: number }[]
-  thoughtsTokenCount?: number
-}
+// Nothing reads these details. The Gemini API encodes responses as proto3 JSON, which omits zero and default
+// values, so both fields stay optional: a details entry must never make the usage chunk fail to parse.
+const TokensDetails = z.object({ modality: z.string().optional(), tokenCount: z.number().optional() }).array()
+
+const Usage = z.looseObject({
+  promptTokenCount: z.number().optional(),
+  candidatesTokenCount: z.number().optional(),
+  totalTokenCount: z.number().optional(),
+  cachedContentTokenCount: z.number().optional(),
+  promptTokensDetails: TokensDetails.optional(),
+  cacheTokensDetails: TokensDetails.optional(),
+  thoughtsTokenCount: z.number().optional(),
+})
+type Usage = z.infer<typeof Usage>
+
+const StreamChunk = z.object({ usageMetadata: Usage.optional() })
 
 export const googleHelper: ProviderHelper = ({ providerModel }) => ({
   format: "google",
@@ -44,15 +52,16 @@ export const googleHelper: ProviderHelper = ({ providerModel }) => ({
       parse: (chunk: string) => {
         if (!chunk.startsWith("data: ")) return
 
-        let json
+        let json: unknown
         try {
-          json = JSON.parse(chunk.slice(6)) as { usageMetadata?: Usage }
+          json = JSON.parse(chunk.slice(6))
         } catch {
           return
         }
 
-        if (!json.usageMetadata) return
-        usage = json.usageMetadata
+        const parsed = StreamChunk.safeParse(json)
+        if (!parsed.success || !parsed.data.usageMetadata) return
+        usage = parsed.data.usageMetadata
       },
       retrieve: () => usage,
     }

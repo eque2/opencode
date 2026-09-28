@@ -25,7 +25,7 @@ export class DatabaseConfig extends Context.Service<DatabaseConfig, DatabaseSett
   "@opencode/stats/DatabaseConfig",
 ) {
   static readonly config = config
-  static readonly layer: Layer.Layer<DatabaseConfig, never, never> = Layer.effect(
+  static readonly layer: Layer.Layer<DatabaseConfig> = Layer.effect(
     DatabaseConfig,
     config.parse(ConfigProvider.fromEnv()).pipe(Effect.orDie),
   )
@@ -86,7 +86,7 @@ export const migrate = Effect.fn("Database.migrate")(function* () {
         message: `Failed to initialize database migrations: ${result.exitCode}`,
       }),
     )
-  yield* Effect.logInfo("database migrations complete").pipe(
+  return yield* Effect.logInfo("database migrations complete").pipe(
     Effect.annotateLogs({ migrationsDir: settings.migrationsDir }),
   )
 })

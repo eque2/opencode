@@ -1,11 +1,18 @@
 import { createSignal, type Setter } from "solid-js"
 import { createStore, unwrap } from "solid-js/store"
+import { Effect, Schema, Semaphore } from "effect"
 import { createSimpleContext } from "./helper"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { Global } from "@opencode-ai/core/global"
-import { readJson, writeJsonAtomic } from "../util/persistence"
+import { fileSystemLayer, readJson, writeJsonAtomic } from "../util/persistence"
 import { useTuiPaths } from "./runtime"
 import path from "path"
+
+// The KV file is one JSON object. Its values come from the TUI and from plugins.
+const KVState = Schema.Record(Schema.String, Schema.Json).annotate({ identifier: "TuiKV.State" })
+const decodeKVFile = Schema.fromJsonString(KVState)
+// Plugin values are untyped, so writes keep JSON.stringify semantics (an undefined key is dropped).
+const encodeKVFile = Schema.fromJsonString(Schema.Unknown)
 
 export const { use: useKV, provider: KVProvider } = createSimpleContext({
   name: "KV",
@@ -16,19 +23,28 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
     const lock = `tui-kv:${file}`
     const [ready, setReady] = createSignal(false)
     const [store, setStore] = createStore<Record<string, any>>()
-    // Queue same-process writes so rapid updates persist in order.
-    let write = Promise.resolve()
+    // One same-process write at a time. Each write takes its snapshot when it holds the permit,
+    // so the last write always persists the latest state, whatever order the waiters resume in.
+    const writes = Semaphore.makeUnsafe(1)
 
-    Flock.withLock(lock, () => readJson<Record<string, unknown>>(file))
-      .then((x) => {
-        setStore(x)
-      })
-      .catch((error) => {
-        console.error("Failed to read KV state", { error })
-      })
-      .finally(() => {
-        setReady(true)
-      })
+    const withLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.scoped(Flock.effect(lock).pipe(Effect.andThen(effect)))
+
+    Effect.runFork(
+      withLock(readJson(file, decodeKVFile)).pipe(
+        Effect.tap((value) => Effect.sync(() => setStore(value))),
+        Effect.catchCause((cause) => Effect.logError("Failed to read KV state", cause)),
+        Effect.ensuring(Effect.sync(() => setReady(true))),
+        Effect.provide(fileSystemLayer),
+      ),
+    )
+
+    const persist = Effect.sync(() => structuredClone(unwrap(store))).pipe(
+      Effect.flatMap((snapshot) => withLock(writeJsonAtomic(file, encodeKVFile, snapshot))),
+      writes.withPermits(1),
+      Effect.catchCause((cause) => Effect.logError("Failed to write KV state", cause)),
+      Effect.provide(fileSystemLayer),
+    )
 
     const result = {
       get ready() {
@@ -53,12 +69,7 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
       },
       set(key: string, value: any) {
         setStore(key, value)
-        const snapshot = structuredClone(unwrap(store))
-        write = write
-          .then(() => Flock.withLock(lock, () => writeJsonAtomic(file, snapshot)))
-          .catch((error) => {
-            console.error("Failed to write KV state", { error })
-          })
+        Effect.runFork(persist)
       },
     }
     return result

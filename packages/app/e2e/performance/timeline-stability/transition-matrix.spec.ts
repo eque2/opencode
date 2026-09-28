@@ -15,7 +15,6 @@ import {
   partDelta,
   partUpdated,
   setupTimeline,
-  shell,
   status,
   textPart,
   toolPart,

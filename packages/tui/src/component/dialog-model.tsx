@@ -1,6 +1,7 @@
+import { Option, Predicate } from "effect"
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
-import { map, pipe, flatMap, entries, filter, sortBy, take } from "remeda"
+import { map, pipe, entries, sortBy, take } from "remeda"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
 import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
@@ -41,7 +42,7 @@ export function DialogModel(props: { providerID?: string }) {
             description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
-            footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            ...(model.cost?.input === 0 && provider.id === "opencode" ? { footer: "Free" } : {}),
             onSelect: () => {
               onSelect(provider.id, model.id)
             },
@@ -58,33 +59,30 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
-    const providerOptions = pipe(
+    const providerOptions = sortBy(
       sync.data.provider,
-      sortBy(
-        (provider) => provider.id !== "opencode",
-        (provider) => provider.name,
-      ),
-      flatMap((provider) =>
-        pipe(
-          provider.models,
-          entries(),
-          filter(([_, info]) => info.status !== "deprecated"),
-          filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-          map(([model, info]) => ({
+      (provider) => provider.id !== "opencode",
+      (provider) => provider.name,
+    ).flatMap((provider) =>
+      sortModelOptions(
+        entries(provider.models)
+          .filter(([_, info]) => info.status !== "deprecated")
+          .filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true))
+          .map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
             releaseDate: info.release_date,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-              ? "(Favorite)"
-              : undefined,
-            category: connected() ? provider.name : undefined,
+            ...(favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+              ? { description: "(Favorite)" }
+              : {}),
+            ...(connected() ? { category: provider.name } : {}),
             disabled: provider.id === "opencode" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            ...(info.cost?.input === 0 && provider.id === "opencode" ? { footer: "Free" } : {}),
             onSelect() {
               onSelect(provider.id, model)
             },
-          })),
-          filter((option) => {
+          }))
+          .filter((option) => {
             if (!showSections) return true
             if (
               favorites.some(
@@ -100,8 +98,7 @@ export function DialogModel(props: { providerID?: string }) {
               return false
             return true
           }),
-          (options) => sortModelOptions(options, props.providerID !== undefined),
-        ),
+        props.providerID !== undefined,
       ),
     )
 
@@ -129,15 +126,12 @@ export function DialogModel(props: { providerID?: string }) {
     return [...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
   })
 
-  const provider = createMemo(() =>
-    props.providerID ? sync.data.provider.find((item) => item.id === props.providerID) : null,
+  const title = createMemo(() =>
+    Option.fromNullishOr(props.providerID).pipe(
+      Option.flatMapNullishOr((providerID) => sync.data.provider.find((item) => item.id === providerID)),
+      Option.match({ onNone: () => "Select model", onSome: (provider) => provider.name }),
+    ),
   )
-
-  const title = createMemo(() => {
-    const value = provider()
-    if (!value) return "Select model"
-    return value.name
-  })
 
   function onSelect(providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
@@ -170,7 +164,9 @@ export function DialogModel(props: { providerID?: string }) {
           title: "Favorite",
           hidden: !connected(),
           onTrigger: (option) => {
-            local.model.toggleFavorite(option.value as { providerID: string; modelID: string })
+            // Provider rows carry a string value; only model rows can be favorites.
+            if (Predicate.isString(option.value)) return
+            local.model.toggleFavorite(option.value)
           },
         },
       ]}

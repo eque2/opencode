@@ -1,35 +1,47 @@
 import Store from "electron-store"
 import electron from "electron"
-import { rmSync } from "node:fs"
 import { join } from "node:path"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, FileSystem, MutableHashMap, Option } from "effect"
 
 import { SETTINGS_STORE } from "./store-keys"
-import { deleteStoreFileIfEmpty } from "./store-cleanup"
+import { deleteEmptyStoreFile } from "./store-cleanup"
 
-const cache = new Map<string, Store>()
+const cache = MutableHashMap.empty<string, Store>()
 
 // We cannot instantiate the electron-store at module load time because
 // module import hoisting causes this to run before app.setPath("userData", ...)
 // in index.ts has executed, which would result in files being written to the default directory
 // (e.g. bad: %APPDATA%\@opencode-ai\desktop\opencode.settings vs good: %APPDATA%\ai.opencode.desktop.dev\opencode.settings).
 export function getStore(name = SETTINGS_STORE) {
-  const cached = cache.get(name)
-  if (cached) return cached
+  const cached = MutableHashMap.get(cache, name)
+  if (Option.isSome(cached)) return cached.value
   const next = new Store({
     name,
     cwd: electron.app.getPath("userData"),
     fileExtension: "",
     accessPropertiesByDotNotation: false,
   })
-  cache.set(name, next)
+  MutableHashMap.set(cache, name, next)
   return next
 }
 
-export async function removeStoreFileIfEmpty(name: string) {
-  if (await deleteStoreFileIfEmpty(electron.app.getPath("userData"), name)) cache.delete(name)
+export function removeStoreFileIfEmpty(name: string) {
+  return Effect.runPromise(
+    deleteEmptyStoreFile(electron.app.getPath("userData"), name).pipe(
+      Effect.tap((deleted) =>
+        Effect.sync(() => {
+          if (deleted) MutableHashMap.remove(cache, name)
+        }),
+      ),
+      Effect.asVoid,
+      Effect.provide(NodeFileSystem.layer),
+    ),
+  )
 }
 
-export function removeStoreFile(name: string) {
-  rmSync(join(electron.app.getPath("userData"), name), { force: true })
-  cache.delete(name)
-}
+export const removeStoreFile = Effect.fnUntraced(function* (name: string) {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.remove(join(electron.app.getPath("userData"), name), { force: true })
+  MutableHashMap.remove(cache, name)
+})

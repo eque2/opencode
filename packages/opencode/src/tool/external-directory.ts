@@ -22,14 +22,16 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   if (options?.bypass) return false
 
   const ins = yield* InstanceState.context
-  const full = process.platform === "win32" ? FSUtil.normalizePath(target) : target
+  const fsu = yield* FSUtil.Service
+  // normalizePath canonicalizes a Windows path and returns any other path unchanged.
+  const full = yield* fsu.normalizePath(target)
   if (containsPath(full, ins)) return false
 
   const kind = options?.kind ?? "file"
   const dir = kind === "directory" ? full : path.dirname(full)
   const glob =
     process.platform === "win32"
-      ? FSUtil.normalizePathPattern(path.join(dir, "*"))
+      ? yield* fsu.normalizePathPattern(path.join(dir, "*"))
       : path.join(dir, "*").replaceAll("\\", "/")
 
   yield* ctx.ask({
@@ -43,7 +45,3 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   })
   return true
 })
-
-export async function assertExternalDirectory(ctx: Tool.Context, target?: string, options?: Options) {
-  return Effect.runPromise(assertExternalDirectoryEffect(ctx, target, options))
-}

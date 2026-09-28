@@ -4,10 +4,10 @@ import { Endpoint } from "../route/endpoint"
 import { Framing } from "../route/framing"
 import { Protocol } from "../route/protocol"
 import { AuthOptions, type ProviderAuthOption } from "../route/auth-options"
-import { ProviderID, type ModelID, type ProviderOptions } from "../schema"
+import { ProviderID, type LLMRequest, type ModelID, type ProviderOptions } from "../schema"
 import * as OpenAICompatibleProfiles from "./openai-compatible-profile"
 import * as OpenAIChat from "../protocols/openai-chat"
-import { isRecord } from "../protocols/shared"
+import { isRecord, ProviderShared } from "../protocols/shared"
 
 export const profile = OpenAICompatibleProfiles.profiles.openrouter
 export const id = ProviderID.make(profile.provider)
@@ -30,41 +30,48 @@ export type ModelOptions = Omit<RouteDefaultsInput, "providerOptions"> &
     readonly providerOptions?: OpenRouterProviderOptionsInput
   }
 
-const OpenRouterBody = Schema.StructWithRest(Schema.Struct(OpenAIChat.bodyFields), [
-  Schema.Record(Schema.String, Schema.Any),
-])
+// The OpenAI Chat body plus the three payload options that `bodyOptions` adds.
+const OpenRouterBody = Schema.Struct({
+  ...OpenAIChat.bodyFields,
+  usage: Schema.optional(Schema.JsonObject),
+  reasoning: Schema.optional(Schema.JsonObject),
+  prompt_cache_key: Schema.optional(Schema.String),
+}).annotate({ identifier: "OpenRouter.Body" })
 export type OpenRouterBody = Schema.Schema.Type<typeof OpenRouterBody>
 
-export const protocol = Protocol.make({
-  id: "openrouter-chat",
-  body: {
-    schema: OpenRouterBody,
-    from: (request) =>
-      OpenAIChat.protocol.body.from(request).pipe(
-        Effect.map(
-          (body) =>
-            ({
-              ...body,
-              ...bodyOptions(request.providerOptions?.openrouter),
-            }) as OpenRouterBody,
-        ),
-      ),
-  },
-  stream: OpenAIChat.protocol.stream,
-})
+const isJsonObject = Schema.is(Schema.JsonObject)
 
-const bodyOptions = (input: unknown) => {
+// Route.make validates the body against OpenRouterBody, so a record option
+// that is not JSON fails as an invalid request here instead of at validation.
+const jsonOption = (name: string, value: Record<string, unknown>) =>
+  isJsonObject(value)
+    ? Effect.succeed(value)
+    : Effect.fail(ProviderShared.invalidRequest(`OpenRouter ${name} option must be a JSON object`))
+
+const bodyOptions = Effect.fn("OpenRouter.bodyOptions")(function* (input: unknown) {
   const openrouter = isRecord(input) ? input : {}
   return {
     ...(openrouter.usage === true
       ? { usage: { include: true } }
       : isRecord(openrouter.usage)
-        ? { usage: openrouter.usage }
+        ? { usage: yield* jsonOption("usage", openrouter.usage) }
         : {}),
-    ...(isRecord(openrouter.reasoning) ? { reasoning: openrouter.reasoning } : {}),
+    ...(isRecord(openrouter.reasoning) ? { reasoning: yield* jsonOption("reasoning", openrouter.reasoning) } : {}),
     ...(typeof openrouter.promptCacheKey === "string" ? { prompt_cache_key: openrouter.promptCacheKey } : {}),
   }
-}
+})
+
+export const protocol = Protocol.make({
+  id: "openrouter-chat",
+  body: {
+    schema: OpenRouterBody,
+    from: Effect.fn("OpenRouter.fromRequest")(function* (request: LLMRequest) {
+      const body = yield* OpenAIChat.protocol.body.from(request)
+      return { ...body, ...(yield* bodyOptions(request.providerOptions?.openrouter)) }
+    }),
+  },
+  stream: OpenAIChat.protocol.stream,
+})
 
 export const route = Route.make({
   id: ADAPTER,

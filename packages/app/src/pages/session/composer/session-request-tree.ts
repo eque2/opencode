@@ -1,3 +1,4 @@
+import { Chunk, MutableHashMap, MutableHashSet, Option } from "effect"
 import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
 
 function sessionTreeRequest<T>(
@@ -6,31 +7,35 @@ function sessionTreeRequest<T>(
   sessionID?: string,
   include: (item: T) => boolean = () => true,
 ) {
-  if (!sessionID) return
+  if (!sessionID) return undefined
 
-  const map = session.reduce((acc, item) => {
-    if (!item.parentID) return acc
-    const list = acc.get(item.parentID)
-    if (list) list.push(item.id)
-    if (!list) acc.set(item.parentID, [item.id])
-    return acc
-  }, new Map<string, string[]>())
-
-  const seen = new Set([sessionID])
-  const ids = [sessionID]
-  for (const id of ids) {
-    const list = map.get(id)
-    if (!list) continue
-    for (const child of list) {
-      if (seen.has(child)) continue
-      seen.add(child)
-      ids.push(child)
-    }
+  const map = MutableHashMap.empty<string, Chunk.Chunk<string>>()
+  const childrenOf = (id: string) => MutableHashMap.get(map, id).pipe(Option.getOrElse(() => Chunk.empty<string>()))
+  for (const item of session) {
+    if (!item.parentID) continue
+    MutableHashMap.set(map, item.parentID, Chunk.append(childrenOf(item.parentID), item.id))
   }
 
-  const id = ids.find((id) => request[id]?.some(include))
-  if (!id) return
-  return request[id]?.find(include)
+  // Breadth-first order, one level at a time: the nearest session with a request wins.
+  const seen = MutableHashSet.make(sessionID)
+  let ids: Chunk.Chunk<string> = Chunk.of(sessionID)
+  let level = ids
+  while (Chunk.isNonEmpty(level)) {
+    let next = Chunk.empty<string>()
+    for (const id of level) {
+      for (const child of childrenOf(id)) {
+        if (MutableHashSet.has(seen, child)) continue
+        MutableHashSet.add(seen, child)
+        next = Chunk.append(next, child)
+      }
+    }
+    ids = Chunk.appendAll(ids, next)
+    level = next
+  }
+
+  const id = Chunk.findFirst(ids, (id) => request[id]?.some(include) ?? false)
+  if (Option.isNone(id)) return undefined
+  return request[id.value]?.find(include)
 }
 
 export function sessionPermissionRequest(

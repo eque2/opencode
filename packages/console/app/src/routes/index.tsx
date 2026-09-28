@@ -30,8 +30,8 @@ export default function Home() {
   const i18n = useI18n()
   const language = useLanguage()
   const _githubData = createAsync(() => github())
-  const handleCopyClick = (event: Event) => {
-    const button = event.currentTarget as HTMLButtonElement
+  const handleCopyClick = (event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
+    const button = event.currentTarget
     const text = button.textContent
     if (text) {
       void navigator.clipboard.writeText(text)

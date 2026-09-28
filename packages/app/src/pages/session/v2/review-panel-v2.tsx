@@ -1,4 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
+import { Array as Arr, Data, Effect, HashMap, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -33,13 +34,15 @@ import { applyFileListKeyDown, SessionFileListV2 } from "@/pages/session/v2/sess
 
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 
+class ReviewFileReadError extends Data.TaggedError("ReviewPanelV2.FileReadError")<{ readonly cause: unknown }> {}
+
 export type ReviewPanelV2Props = {
   title?: JSX.Element
   empty?: JSX.Element
   diffs: () => ReviewDiff[]
   diffsReady: () => boolean
   diffVersion?: number
-  loadDiff?: (path: string, version?: number) => Promise<RenderDiff | undefined>
+  loadDiff?: (path: string, version?: number) => Effect.Effect<Option.Option<RenderDiff>>
   activeFile?: string
   onSelectFile: (path: string) => void
   diffStyle: SessionReviewDiffStyle
@@ -51,7 +54,7 @@ export type ReviewPanelV2Props = {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
 }
 
 export function ReviewPanelV2(props: ReviewPanelV2Props) {
@@ -67,7 +70,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
   const searching = createMemo(() => props.state.filter().trim().length > 0)
   const kinds = createMemo(() => reviewDiffKinds(diffs()))
   // Changes-only trees omit "M" — every row is already a change; A/D stay visible.
-  const treeKinds = createMemo(() => new Map([...kinds()].filter(([, kind]) => kind !== "mix")))
+  const treeKinds = createMemo(() => HashMap.filter(kinds(), (kind) => kind !== "mix"))
   const activeDiff = createMemo(() => {
     // A focused comment takes over the preview until the preview applies it and
     // clears the focus; the owner then persists the file as the active selection.
@@ -83,14 +86,22 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
   const detailSource = createMemo(() => {
     const diff = sourceActiveItem()
     const load = props.loadDiff
-    if (!diff || !load || !reviewDiffNeedsLoad(diff)) return
+    if (!diff || !load || !reviewDiffNeedsLoad(diff)) return undefined
     return { diff, load, version: props.diffVersion }
   })
-  const [loadedDiff] = createResource(detailSource, async ({ diff, load, version }) => {
-    const value = await load(diff.file, version)
-    if (value?.file !== diff.file) return
-    return { source: diff, version, value }
-  })
+  const [loadedDiff] = createResource(detailSource, ({ diff, load, version }) =>
+    Effect.runPromise(
+      load(diff.file, version).pipe(
+        Effect.map((loaded) =>
+          loaded.pipe(
+            Option.filter((value) => value.file === diff.file),
+            Option.map((value) => ({ source: diff, version, value })),
+            Option.getOrUndefined,
+          ),
+        ),
+      ),
+    ),
+  )
 
   const activeItem = createMemo(() => {
     const source = sourceActiveItem()
@@ -100,14 +111,21 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
     return source
   })
 
-  const readFile = async (path: string) =>
-    sdk()
-      .client.file.read({ path })
-      .then((x) => x.data)
-      .catch((error) => {
-        console.debug("[session-review-v2] failed to read file", { path, error })
-        return undefined
-      })
+  const readFile = (path: string) =>
+    Effect.runPromise(
+      Effect.tryPromise({
+        try: () => sdk().client.file.read({ path }),
+        catch: (cause) => new ReviewFileReadError({ cause }),
+      }).pipe(
+        Effect.map((x) => Option.fromNullishOr(x.data)),
+        Effect.catch((error) =>
+          Effect.logDebug("[session-review-v2] failed to read file", { path, error: error.cause }).pipe(
+            Effect.as(Option.none()),
+          ),
+        ),
+        Effect.map(Option.getOrUndefined),
+      ),
+    )
 
   return (
     <SessionReviewV2
@@ -182,12 +200,11 @@ function ReviewPanelV2Sidebar(props: {
   const language = useLanguage()
   const [explicitHighlight, setExplicitHighlight] = createSignal<string | undefined>()
   const highlightedPath = createMemo(() => {
-    if (!props.searching()) return undefined
+    if (!props.searching()) return Option.none<string>()
     const files = props.filteredFiles()
-    if (files.length === 0) return undefined
     const explicit = explicitHighlight()
-    if (explicit && files.includes(explicit)) return explicit
-    return files[0]
+    if (explicit && files.includes(explicit)) return Option.some(explicit)
+    return Arr.head(files)
   })
 
   const onFilterKeyDown = (event: KeyboardEvent & { currentTarget: HTMLInputElement }) => {

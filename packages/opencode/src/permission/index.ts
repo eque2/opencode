@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { InstanceState } from "@/effect/instance-state"
 import { Wildcard } from "@opencode-ai/core/util/wildcard"
-import { Deferred, Effect, Layer, Context } from "effect"
+import { Deferred, Effect, Exit, Layer, Context, HashSet, MutableHashMap } from "effect"
 import os from "os"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -21,7 +21,7 @@ interface PendingEntry {
 }
 
 interface State {
-  pending: Map<PermissionV1.ID, PendingEntry>
+  pending: MutableHashMap.MutableHashMap<PermissionV1.ID, PendingEntry>
   approved: PermissionV1.Rule[]
 }
 
@@ -47,16 +47,16 @@ const layer = Layer.effect(
       Effect.fn("Permission.state")(function* (ctx) {
         void ctx
         const state = {
-          pending: new Map<PermissionV1.ID, PendingEntry>(),
+          pending: MutableHashMap.empty<PermissionV1.ID, PendingEntry>(),
           approved: [],
         }
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            for (const item of state.pending.values()) {
+            for (const item of MutableHashMap.values(state.pending)) {
               yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
             }
-            state.pending.clear()
+            MutableHashMap.clear(state.pending)
           }),
         )
 
@@ -81,7 +81,7 @@ const layer = Layer.effect(
         needsAsk = true
       }
 
-      if (!needsAsk) return
+      if (!needsAsk) return yield* Effect.void
 
       const id = request.id ?? PermissionV1.ID.ascending()
       const info: PermissionV1.Request = {
@@ -96,52 +96,66 @@ const layer = Layer.effect(
       yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
 
       const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
-      pending.set(id, { info, deferred })
+      MutableHashMap.set(pending, id, { info, deferred })
       yield* events.publish(Event.Asked, info)
       return yield* Effect.ensuring(
         Deferred.await(deferred),
         Effect.sync(() => {
-          pending.delete(id)
+          MutableHashMap.remove(pending, id)
         }),
       )
     })
 
     const reply = Effect.fn("Permission.reply")(function* (input: PermissionV1.ReplyInput) {
       const { approved, pending } = yield* InstanceState.get(state)
-      const existing = pending.get(input.requestID)
-      if (!existing) return yield* new PermissionV1.NotFoundError({ requestID: input.requestID })
+      const existing = yield* Effect.fromOption(
+        MutableHashMap.get(pending, input.requestID),
+        () => new PermissionV1.NotFoundError({ requestID: input.requestID }),
+      )
 
-      pending.delete(input.requestID)
+      MutableHashMap.remove(pending, input.requestID)
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
         reply: input.reply,
       })
 
-      if (input.reply === "reject") {
-        yield* Deferred.fail(
-          existing.deferred,
-          input.message
-            ? new PermissionV1.CorrectedError({ feedback: input.message })
-            : new PermissionV1.RejectedError(),
-        )
+      if (input.reply === "reject") return yield* rejectSession(pending, existing, input.message)
 
-        for (const [id, item] of pending.entries()) {
-          if (item.info.sessionID !== existing.info.sessionID) continue
-          pending.delete(id)
-          yield* events.publish(Event.Replied, {
-            sessionID: item.info.sessionID,
-            requestID: item.info.id,
-            reply: "reject",
-          })
-          yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
-        }
-        return
+      yield* Deferred.done(existing.deferred, Exit.void)
+      if (input.reply === "once") return yield* Effect.void
+      return yield* approveAlways(pending, approved, existing)
+    })
+
+    // A rejection fails the replied request and rejects every other pending request of the same session.
+    const rejectSession = Effect.fnUntraced(function* (
+      pending: State["pending"],
+      existing: PendingEntry,
+      message: string | undefined,
+    ) {
+      yield* Deferred.fail(
+        existing.deferred,
+        message ? new PermissionV1.CorrectedError({ feedback: message }) : new PermissionV1.RejectedError(),
+      )
+
+      for (const [id, item] of pending) {
+        if (item.info.sessionID !== existing.info.sessionID) continue
+        MutableHashMap.remove(pending, id)
+        yield* events.publish(Event.Replied, {
+          sessionID: item.info.sessionID,
+          requestID: item.info.id,
+          reply: "reject",
+        })
+        yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
       }
+    })
 
-      yield* Deferred.succeed(existing.deferred, undefined)
-      if (input.reply === "once") return
-
+    // An "always" reply approves the request's patterns and resolves every pending request they now cover.
+    const approveAlways = Effect.fnUntraced(function* (
+      pending: State["pending"],
+      approved: State["approved"],
+      existing: PendingEntry,
+    ) {
       for (const pattern of existing.info.always) {
         approved.push({
           permission: existing.info.permission,
@@ -150,25 +164,25 @@ const layer = Layer.effect(
         })
       }
 
-      for (const [id, item] of pending.entries()) {
+      for (const [id, item] of pending) {
         if (item.info.sessionID !== existing.info.sessionID) continue
         const ok = item.info.patterns.every(
           (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
         )
         if (!ok) continue
-        pending.delete(id)
+        MutableHashMap.remove(pending, id)
         yield* events.publish(Event.Replied, {
           sessionID: item.info.sessionID,
           requestID: item.info.id,
           reply: "always",
         })
-        yield* Deferred.succeed(item.deferred, undefined)
+        yield* Deferred.done(item.deferred, Exit.void)
       }
     })
 
     const list = Effect.fn("Permission.list")(function* () {
       const pending = (yield* InstanceState.get(state)).pending
-      return Array.from(pending.values(), (item) => item.info)
+      return Array.from(MutableHashMap.values(pending), (item) => item.info)
     })
 
     return Service.of({ ask, reply, list })
@@ -201,10 +215,10 @@ export function merge(...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule[] 
   return rulesets.flat()
 }
 
-export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<string> {
+export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): HashSet.HashSet<string> {
   const edits = ["edit", "write", "apply_patch"]
   const reads = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]
-  return new Set(
+  return HashSet.fromIterable(
     tools.filter((tool) => {
       const permission = edits.includes(tool) ? "edit" : reads.includes(tool) ? "read" : tool
       const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
@@ -215,7 +229,7 @@ export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<st
 
 export function visibleTools<T>(tools: Record<string, T>, ruleset: PermissionV1.Ruleset): Record<string, T> {
   const hidden = disabled(Object.keys(tools), ruleset)
-  return Object.fromEntries(Object.entries(tools).filter(([name]) => !hidden.has(name)))
+  return Object.fromEntries(Object.entries(tools).filter(([name]) => !HashSet.has(hidden, name)))
 }
 
 export const node = LayerNode.make({ service: Service, layer: layer, deps: [EventV2Bridge.node] })

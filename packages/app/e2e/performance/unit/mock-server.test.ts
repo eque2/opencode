@@ -1,17 +1,16 @@
 import { expect, test } from "bun:test"
-import type { Page, Route } from "@playwright/test"
-import { mockOpenCodeServer } from "../../utils/mock-server"
+import { mockOpenCodeServer, type MockPage, type MockRoute } from "../../utils/mock-server"
 
 test("applies message latency after a list response gate is released", async () => {
   const events: string[] = []
   const gate = Promise.withResolvers<void>()
-  let handler: ((route: Route) => Promise<void>) | undefined
-  const page = {
-    route: (_url: string, callback: (route: Route) => Promise<void>) => {
+  let handler: ((route: MockRoute) => Promise<void>) | undefined
+  const page: MockPage = {
+    route: (_url, callback) => {
       handler = callback
       return Promise.resolve()
     },
-  } as unknown as Page
+  }
   await mockOpenCodeServer(page, {
     provider: {},
     directory: "C:/OpenCode",
@@ -30,12 +29,17 @@ test("applies message latency after a list response gate is released", async () 
   })
 
   const response = handler!({
-    request: () => ({ url: () => "http://127.0.0.1:4096/session/session/message" }),
+    request: () => ({
+      url: () => "http://127.0.0.1:4096/session/session/message",
+      method: () => "GET",
+      postDataJSON: () => undefined,
+    }),
     fulfill: () => {
       events.push("fulfill")
       return Promise.resolve()
     },
-  } as unknown as Route)
+    fallback: () => Promise.resolve(),
+  })
   expect(events).toEqual(["start", "before"])
 
   const released = performance.now()

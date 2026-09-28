@@ -95,26 +95,77 @@ type PullRequest = {
   }
 }
 
-type GraphqlResponse = {
-  data?: {
-    rateLimit: {
-      cost: number
-      remaining: number
-      resetAt: string
-    }
-    repository: {
-      pullRequests: {
-        pageInfo: {
-          hasNextPage: boolean
-          endCursor: string | null
-        }
-        nodes: PullRequest[]
+type GraphqlData = {
+  rateLimit: {
+    cost: number
+    remaining: number
+    resetAt: string
+  }
+  repository: {
+    pullRequests: {
+      pageInfo: {
+        hasNextPage: boolean
+        endCursor: string | null
       }
+      nodes: PullRequest[]
     }
   }
-  errors?: Array<{
-    message: string
-  }>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isReactionGroup(value: unknown) {
+  return (
+    isRecord(value) &&
+    typeof value.content === "string" &&
+    isRecord(value.users) &&
+    typeof value.users.totalCount === "number"
+  )
+}
+
+function isLabel(value: unknown) {
+  return isRecord(value) && typeof value.name === "string"
+}
+
+function isPullRequest(value: unknown): value is PullRequest {
+  return (
+    isRecord(value) &&
+    typeof value.number === "number" &&
+    typeof value.title === "string" &&
+    typeof value.url === "string" &&
+    typeof value.createdAt === "string" &&
+    Array.isArray(value.reactionGroups) &&
+    value.reactionGroups.every(isReactionGroup) &&
+    isRecord(value.labels) &&
+    Array.isArray(value.labels.nodes) &&
+    value.labels.nodes.every(isLabel)
+  )
+}
+
+function isGraphqlData(value: unknown): value is GraphqlData {
+  if (!isRecord(value) || !isRecord(value.rateLimit) || !isRecord(value.repository)) return false
+  const { rateLimit, repository } = value
+  if (
+    typeof rateLimit.cost !== "number" ||
+    typeof rateLimit.remaining !== "number" ||
+    typeof rateLimit.resetAt !== "string"
+  )
+    return false
+  const pullRequests = repository.pullRequests
+  if (!isRecord(pullRequests) || !isRecord(pullRequests.pageInfo)) return false
+  const { pageInfo, nodes } = pullRequests
+  return (
+    typeof pageInfo.hasNextPage === "boolean" &&
+    (pageInfo.endCursor === null || typeof pageInfo.endCursor === "string") &&
+    Array.isArray(nodes) &&
+    nodes.every(isPullRequest)
+  )
+}
+
+function graphqlErrorMessage(error: unknown) {
+  return isRecord(error) && typeof error.message === "string" ? error.message : JSON.stringify(error)
 }
 
 type CleanupCandidate = PullRequest & {
@@ -248,10 +299,13 @@ async function graphql(input: { query: string; variables: Record<string, string 
     method: "POST",
     body: JSON.stringify(input),
   })
-  const body = (await response.json()) as GraphqlResponse
-  if (body.errors?.length)
-    throw new Error(`GitHub GraphQL error: ${body.errors.map((error) => error.message).join(", ")}`)
+  const body: unknown = await response.json()
+  if (!isRecord(body)) throw new Error("GitHub GraphQL response was not a JSON object")
+  const errors = body.errors
+  if (Array.isArray(errors) && errors.length > 0)
+    throw new Error(`GitHub GraphQL error: ${errors.map(graphqlErrorMessage).join(", ")}`)
   if (!body.data) throw new Error("GitHub GraphQL response did not include data")
+  if (!isGraphqlData(body.data)) throw new Error("GitHub GraphQL response data had an unexpected shape")
   return body.data
 }
 
@@ -293,12 +347,11 @@ async function ensureCleanupLabel() {
 }
 
 async function githubRequest(path: string, init: RequestInit, attempt = 0): Promise<Response> {
+  const merged = new Headers(headers)
+  new Headers(init.headers).forEach((value, key) => merged.set(key, value))
   const response = await fetch(path.startsWith("https://") ? path : `https://api.github.com${path}`, {
     ...init,
-    headers: {
-      ...headers,
-      ...init.headers,
-    },
+    headers: merged,
   })
 
   if (response.ok) return response

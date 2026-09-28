@@ -9,12 +9,12 @@ export type AuthOverride = {
 }
 
 export type OptionalApiKeyAuth = {
-  readonly apiKey?: string | Redacted.Redacted<string> | Config.Config<string | Redacted.Redacted<string>>
+  readonly apiKey?: string | Redacted.Redacted | Config.Config<string | Redacted.Redacted>
   readonly auth?: never
 }
 
 export type RequiredApiKeyAuth = {
-  readonly apiKey: string | Redacted.Redacted<string> | Config.Config<string | Redacted.Redacted<string>>
+  readonly apiKey: string | Redacted.Redacted | Config.Config<string | Redacted.Redacted>
   readonly auth?: never
 }
 
@@ -47,10 +47,7 @@ export type AtLeastOne<T> = {
 export const bearer = (options: ProviderAuthOption<"optional">, envVar: string | ReadonlyArray<string>): Auth => {
   if ("auth" in options && options.auth) return options.auth
   return (Array.isArray(envVar) ? envVar : [envVar])
-    .reduce(
-      (auth, name) => auth.orElse(Auth.config(name)),
-      Auth.optional("apiKey" in options ? options.apiKey : undefined, "apiKey"),
-    )
+    .reduce((auth, name) => auth.orElse(Auth.config(name)), Auth.optional(options.apiKey, "apiKey"))
     .bearer()
 }
 

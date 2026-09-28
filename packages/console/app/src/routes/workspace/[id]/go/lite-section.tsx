@@ -19,7 +19,7 @@ import { queryBillingInfo } from "../../common"
 import styles from "./lite-section.module.css"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
-import { formError } from "~/lib/form-error"
+import { formError, errorMessage } from "~/lib/form-error"
 import { formatResetTime, liteResetTimeKeys } from "~/lib/format-reset-time"
 import { createReferralFromCookie } from "~/lib/referral-invite"
 import { getRequestEvent } from "solid-js/web"
@@ -28,6 +28,7 @@ import { checkCheckoutRateLimit } from "~/routes/zen/util/redis"
 
 import { IconAlipay, IconChevron, IconUpi } from "~/component/icon"
 import { buildLiteUsageBreakdown, getModelQuotaLimit, getUsagePercent } from "~/lib/lite-usage"
+import { formText } from "~/lib/form-data"
 
 type LiteUsageWindow = "rolling" | "weekly" | "monthly"
 
@@ -224,8 +225,8 @@ const createLiteCheckoutUrl = action(
         const data = await Billing.generateLiteCheckoutUrl({ successUrl, cancelUrl, method })
         await createReferralFromCookie()
         return { error: undefined, data }
-      }, workspaceID).catch((e) => ({
-        error: e.message as string,
+      }, workspaceID).catch((e: unknown) => ({
+        error: errorMessage(e),
         data: undefined,
       })),
       { revalidate: [queryBillingInfo.key, queryLiteSubscription.key] },
@@ -241,8 +242,8 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
       () =>
         Billing.generateSessionUrl({ returnUrl })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({
-            error: e.message as string,
+          .catch((e: unknown) => ({
+            error: errorMessage(e),
             data: undefined,
           })),
       workspaceID,
@@ -253,9 +254,9 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
 
 const setLiteUseBalance = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const useBalance = (form.get("useBalance") as string | null) === "true"
+  const useBalance = formText(form, "useBalance") === "true"
 
   return json(
     await withActor(async () => {
@@ -268,23 +269,23 @@ const setLiteUseBalance = action(async (form: FormData) => {
           .where(eq(BillingTable.workspaceID, workspaceID)),
       )
       return { error: undefined }
-    }, workspaceID).catch((e) => ({ error: e.message as string })),
+    }, workspaceID).catch((e: unknown) => ({ error: errorMessage(e) })),
     { revalidate: [queryBillingInfo.key, queryLiteSubscription.key] },
   )
 }, "setLiteUseBalance")
 
 const setGoProviderRouting = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const useChinaProviders = (form.get("useChinaProviders") as string | null) === "true"
+  const useChinaProviders = formText(form, "useChinaProviders") === "true"
 
   return json(
     await withActor(
       () =>
         Workspace.update({ region: useChinaProviders ? ["us", "eu", "sg"] : ["us", "eu", "sg", "cn"] })
           .then(() => ({ error: undefined }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: queryLiteSubscription.key },
@@ -293,16 +294,16 @@ const setGoProviderRouting = action(async (form: FormData) => {
 
 const setGoAllowTraining = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const allowTraining = (form.get("allowTraining") as string | null) === "true"
+  const allowTraining = formText(form, "allowTraining") === "true"
 
   return json(
     await withActor(
       () =>
         Workspace.update({ allow_training: allowTraining })
           .then(() => ({ error: undefined }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: queryLiteSubscription.key },

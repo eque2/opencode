@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 type Input = {
   prevScrollWidth: number
   scrollWidth: number
@@ -7,14 +9,14 @@ type Input = {
 }
 
 export const nextTabListScrollLeft = (input: Input) => {
-  if (input.scrollWidth <= input.prevScrollWidth) return
+  if (input.scrollWidth <= input.prevScrollWidth) return undefined
   if (!input.prevContextOpen && input.contextOpen) return 0
-  if (input.scrollWidth <= input.clientWidth) return
+  if (input.scrollWidth <= input.clientWidth) return undefined
   return input.scrollWidth - input.clientWidth
 }
 
 export const createFileTabListSync = (input: { el: HTMLDivElement; contextOpen: () => boolean }) => {
-  let frame: number | undefined
+  let frame = Option.none<number>()
   let prevScrollWidth = input.el.scrollWidth
   let prevContextOpen = input.contextOpen()
 
@@ -42,11 +44,13 @@ export const createFileTabListSync = (input: { el: HTMLDivElement; contextOpen: 
   }
 
   const schedule = () => {
-    if (frame !== undefined) cancelAnimationFrame(frame)
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-      update()
-    })
+    if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
+    frame = Option.some(
+      requestAnimationFrame(() => {
+        frame = Option.none()
+        update()
+      }),
+    )
   }
 
   const onWheel = (e: WheelEvent) => {
@@ -62,6 +66,6 @@ export const createFileTabListSync = (input: { el: HTMLDivElement; contextOpen: 
   return () => {
     input.el.removeEventListener("wheel", onWheel)
     observer.disconnect()
-    if (frame !== undefined) cancelAnimationFrame(frame)
+    if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
   }
 }

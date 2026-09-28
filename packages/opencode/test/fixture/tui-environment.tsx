@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import {
+  TuiFlagsProvider,
   TuiPathsProvider,
   TuiStartupProvider,
   TuiTerminalEnvironmentProvider,
@@ -25,7 +26,19 @@ export function TestTuiContexts(
       }}
     >
       <TuiTerminalEnvironmentProvider value={{ platform: "linux" }}>
-        <TuiStartupProvider value={{ skipInitialLoading: false }}>{props.children}</TuiStartupProvider>
+        <TuiStartupProvider value={{ skipInitialLoading: false }}>
+          <TuiFlagsProvider
+            value={{
+              OPENCODE_DISABLE_MOUSE: false,
+              OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT: process.platform === "win32",
+              OPENCODE_DISABLE_TERMINAL_TITLE: false,
+              OPENCODE_EXPERIMENTAL_WORKSPACES: false,
+              OPENCODE_SHOW_TTFD: false,
+            }}
+          >
+            {props.children}
+          </TuiFlagsProvider>
+        </TuiStartupProvider>
       </TuiTerminalEnvironmentProvider>
     </TuiPathsProvider>
   )

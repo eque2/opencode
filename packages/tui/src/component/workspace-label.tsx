@@ -1,3 +1,4 @@
+import { Show } from "solid-js"
 import { useTheme } from "../context/theme"
 
 export type WorkspaceStatus = "connected" | "connecting" | "disconnected" | "error"
@@ -12,7 +13,9 @@ export function WorkspaceLabel(props: { type: string; name: string; status?: Wor
 
   return (
     <>
-      {props.icon ? <span style={{ fg: color() }}>● </span> : undefined}
+      <Show when={props.icon}>
+        <span style={{ fg: color() }}>● </span>
+      </Show>
       <span style={{ fg: theme.text }}>{props.name}</span> <span style={{ fg: theme.textMuted }}>({props.type})</span>
     </>
   )

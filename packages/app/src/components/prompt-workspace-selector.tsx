@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { For, Show } from "solid-js"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
@@ -15,7 +16,7 @@ export function PromptWorkspaceSelector(props: {
   onDone: () => void
 }) {
   const language = useLanguage()
-  let pending: string | undefined
+  let pending = Option.none<string>()
   const selected = () => (props.value === props.projectRoot ? "main" : props.value)
   const icon = () => {
     if (selected() === "main") return "monitor"
@@ -23,13 +24,13 @@ export function PromptWorkspaceSelector(props: {
     return "workspace"
   }
   const select = (value: string) => {
-    pending = value
+    pending = Option.some(value)
   }
   const onOpenChange = (open: boolean) => {
     if (open) return
     const value = pending
-    pending = undefined
-    if (value) props.onChange(value)
+    pending = Option.none()
+    if (Option.isSome(value) && value.value) props.onChange(value.value)
     props.onDone()
   }
   const label = () => {

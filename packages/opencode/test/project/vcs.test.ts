@@ -3,7 +3,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { parsePatch } from "diff"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Schema } from "effect"
 import fs from "fs/promises"
 import path from "path"
 import {
@@ -52,13 +52,15 @@ const init = Effect.fn("VcsTest.init")(function* () {
   return vcs
 })
 
+const isBranchUpdated = Schema.is(Vcs.Event.BranchUpdated.data)
+
 const nextBranchUpdate = Effect.fn("VcsTest.nextBranchUpdate")(function* () {
   const events = yield* EventV2Bridge.Service
   const updated = yield* Deferred.make<string | undefined>()
 
   const off = yield* events.listen((event) => {
-    if (event.type === Vcs.Event.BranchUpdated.type)
-      Deferred.doneUnsafe(updated, Effect.succeed((event.data as typeof Vcs.Event.BranchUpdated.data.Type).branch))
+    if (event.type === Vcs.Event.BranchUpdated.type && isBranchUpdated(event.data))
+      Deferred.doneUnsafe(updated, Effect.succeed(event.data.branch))
     return Effect.void
   })
   yield* Effect.addFinalizer(() => off)

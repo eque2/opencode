@@ -1,4 +1,5 @@
-import { createMemo, type Setter } from "solid-js"
+import { Option } from "effect"
+import { createMemo } from "solid-js"
 import { useKV } from "./kv"
 
 export type ThinkingMode = "show" | "hide"
@@ -12,8 +13,8 @@ const MODES: readonly ThinkingMode[] = ["show", "hide"] as const
 export function reasoningSummary(text: string) {
   const content = text.trim()
   const match = content.match(/^\*\*([^*\n]+)\*\*(?:\r?\n\r?\n|$)/)
-  if (!match) return { title: null, body: content }
-  return { title: match[1].trim(), body: content.slice(match[0].length).trimEnd() }
+  if (!match) return { title: Option.none<string>(), body: content }
+  return { title: Option.some(match[1].trim()), body: content.slice(match[0].length).trimEnd() }
 }
 
 export function isThinkingMode(value: unknown): value is ThinkingMode {
@@ -35,14 +36,19 @@ export function useThinkingMode() {
   const legacy = kv.get("thinking_visibility")
   const [stored, setStored] = kv.signal<ThinkingMode>("thinking_mode", "hide")
 
+  const mode = createMemo<ThinkingMode>(() => {
+    const value = stored()
+    return isThinkingMode(value) ? value : "hide"
+  })
+
   // The kv signal exposes its setter typed as `Setter<T>` which carries Solid's
-  // overload set; passing an updater fn through a property access loses the
-  // bivariance trick the existing `setX((prev) => ...)` callsites rely on.
-  // Wrap it in a sane shape so consumers can just call `set(next)` or pass
-  // an updater.
+  // overload set, so an updater function does not type as its argument.
+  // Resolve an updater against the current mode here, and hand the kv setter
+  // a function that returns the next value, so consumers can call `set(next)`
+  // or pass an updater.
   const set = (next: ThinkingMode | ((prev: ThinkingMode) => ThinkingMode)) => {
-    if (typeof next === "function") setStored(next as Setter<ThinkingMode>)
-    else setStored(() => next)
+    const value = typeof next === "function" ? next(mode()) : next
+    setStored(() => value)
   }
 
   // Preserve previous experience for users who had explicitly toggled the
@@ -53,12 +59,9 @@ export function useThinkingMode() {
     else if (legacy === false) set("hide")
   }
 
-  if ((stored() as string) === "minimal") set("hide")
-
-  const mode = createMemo<ThinkingMode>(() => {
-    const value = stored()
-    return isThinkingMode(value) ? value : "hide"
-  })
+  // The kv store is untyped, so a value from an older version, such as "minimal", can still be stored.
+  const storedValue: unknown = stored()
+  if (storedValue === "minimal") set("hide")
 
   return {
     mode,

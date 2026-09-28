@@ -1,6 +1,7 @@
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import { HashMap, Predicate } from "effect"
 
-const emptyProviderCatalog: NormalizedProviderListResponse = { all: new Map(), connected: [], default: {} }
+const emptyProviderCatalog: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
 
 type DirectoryCatalog = {
   ready: boolean
@@ -30,7 +31,8 @@ export function resolveDefaultModel(
   current: NormalizedProviderListResponse["defaultModel"],
   legacy: string | undefined,
 ) {
-  if (current !== undefined) return current ?? undefined
+  if (Predicate.isNull(current)) return undefined
+  if (current !== undefined) return current
   if (!legacy) return undefined
   const [providerID, modelID] = legacy.split("/")
   return { providerID, modelID }

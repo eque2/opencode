@@ -1348,24 +1348,7 @@ export type GlobalEvent = {
         id: string
         type: "tui.command.execute"
         properties: {
-          command:
-            | "session.list"
-            | "session.new"
-            | "session.share"
-            | "session.interrupt"
-            | "session.compact"
-            | "session.page.up"
-            | "session.page.down"
-            | "session.line.up"
-            | "session.line.down"
-            | "session.half.page.up"
-            | "session.half.page.down"
-            | "session.first"
-            | "session.last"
-            | "prompt.clear"
-            | "prompt.submit"
-            | "agent.cycle"
-            | string
+          command: string
         }
       }
     | {
@@ -1620,7 +1603,7 @@ export type ProviderConfig = {
      * Timeout in milliseconds between streamed SSE chunks for this provider (default: 300000). If no chunk arrives within this window, the request is aborted. Set to false to disable timeout.
      */
     chunkTimeout?: number | false
-    [key: string]: unknown | string | boolean | number | false | number | false | number | false | undefined
+    [key: string]: unknown
   }
   models?: {
     [key: string]: {
@@ -1634,12 +1617,9 @@ export type ProviderConfig = {
       tool_call?: boolean
       interleaved?:
         | boolean
-        | "reasoning"
-        | "reasoning_content"
-        | "reasoning_text"
         | string
         | {
-            field: "reasoning" | "reasoning_content" | "reasoning_text" | string
+            field: string
           }
       cost?: {
         input: number
@@ -1680,7 +1660,7 @@ export type ProviderConfig = {
       variants?: {
         [key: string]: {
           disabled?: boolean
-          [key: string]: unknown | boolean | undefined
+          [key: string]: unknown
         }
       }
     }
@@ -2510,7 +2490,7 @@ export type Model = {
     interleaved:
       | boolean
       | {
-          field: "reasoning" | "reasoning_content" | "reasoning_text" | string
+          field: string
         }
   }
   cost: {
@@ -3510,24 +3490,7 @@ export type EventTuiPromptAppend = {
 export type EventTuiCommandExecute = {
   type: "tui.command.execute"
   properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
+    command: string
   }
 }
 
@@ -3557,7 +3520,7 @@ export type Workspace = {
   name: string
   branch?: string | null
   directory?: string | null
-  extra?: unknown | null
+  extra?: unknown
   projectID: string
   timeUsed: number | "Infinity" | "-Infinity" | "NaN"
 }
@@ -4626,35 +4589,11 @@ export type AgentConfig = {
   /**
    * Hex color code (e.g., #FF5733) or theme color (e.g., primary)
    */
-  color?: string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+  color?: string
   steps?: number
   maxSteps?: number
   permission?: PermissionConfig
-  [key: string]:
-    | unknown
-    | string
-    | number
-    | {
-        [key: string]: boolean
-      }
-    | boolean
-    | "subagent"
-    | "primary"
-    | "all"
-    | {
-        [key: string]: unknown
-      }
-    | string
-    | "primary"
-    | "secondary"
-    | "accent"
-    | "success"
-    | "warning"
-    | "error"
-    | "info"
-    | number
-    | PermissionConfig
-    | undefined
+  [key: string]: unknown
 }
 
 export type PolicyEffect = "allow" | "deny"
@@ -4849,7 +4788,7 @@ export type ProviderRequest = {
   }
 }
 
-export type AgentColor = string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+export type AgentColor = string
 
 export type PermissionV2Effect = "allow" | "deny" | "ask"
 
@@ -6861,24 +6800,7 @@ export type EventTuiCommandExecute2 = {
   id: string
   type: "tui.command.execute"
   properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
+    command: string
   }
 }
 
@@ -11646,7 +11568,7 @@ export type ExperimentalWorkspaceCreateData = {
     id?: string
     type: string
     branch?: string | null
-    extra?: unknown | null
+    extra?: unknown
   }
   path?: never
   query?: {

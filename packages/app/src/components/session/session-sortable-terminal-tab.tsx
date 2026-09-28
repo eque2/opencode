@@ -10,6 +10,7 @@ import { isDefaultTitle as isDefaultTerminalTitle } from "@/context/terminal-tit
 import { useTerminal, type LocalPTY } from "@/context/terminal"
 import { useLanguage } from "@/context/language"
 import { focusTerminalById } from "@/pages/session/helpers"
+import { Option } from "effect"
 
 export function SortableTerminalTab(props: { terminal: LocalPTY; onClose?: () => void }): JSX.Element {
   const terminal = useTerminal()
@@ -23,7 +24,7 @@ export function SortableTerminalTab(props: { terminal: LocalPTY; onClose?: () =>
     blurEnabled: false,
   })
   let input: HTMLInputElement | undefined
-  let blurFrame: number | undefined
+  let blurFrame = Option.none<number>()
   let editRequested = false
 
   const isDefaultTitle = () => {
@@ -100,16 +101,18 @@ export function SortableTerminalTab(props: { terminal: LocalPTY; onClose?: () =>
     if (!input) return
     input.focus()
     input.select()
-    if (blurFrame !== undefined) cancelAnimationFrame(blurFrame)
-    blurFrame = requestAnimationFrame(() => {
-      blurFrame = undefined
-      setStore("blurEnabled", true)
-    })
+    if (Option.isSome(blurFrame)) cancelAnimationFrame(blurFrame.value)
+    blurFrame = Option.some(
+      requestAnimationFrame(() => {
+        blurFrame = Option.none()
+        setStore("blurEnabled", true)
+      }),
+    )
   })
 
   onCleanup(() => {
-    if (blurFrame === undefined) return
-    cancelAnimationFrame(blurFrame)
+    if (Option.isNone(blurFrame)) return
+    cancelAnimationFrame(blurFrame.value)
   })
 
   return (

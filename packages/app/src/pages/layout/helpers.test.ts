@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Data, Effect, Option } from "effect"
 import {
   collectNewSessionDeepLinks,
   collectOpenProjectDeepLinks,
@@ -21,22 +22,24 @@ import {
   latestRootSession,
   sortedRootSessions,
   toggleHomeProjectSelection,
+  toggleHomeProjectSelectionOption,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
 import { ServerConnection } from "@/context/server"
 
 const serverKey = ServerConnection.Key.make
 
-const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
-  ({
-    title: "",
-    version: "v2",
-    parentID: undefined,
-    messageCount: 0,
-    permissions: { session: {}, share: {} },
-    time: { created: 0, updated: 0, archived: undefined },
-    ...input,
-  }) as Session
+/** An Error subclass without API error data, for the errorMessage fallback to Error.message. */
+class BrokenError extends Data.TaggedError("BrokenError")<{ readonly message: string }> {}
+
+const session = (input: Partial<Session> & Pick<Session, "id" | "directory">): Session => ({
+  slug: input.id,
+  projectID: "project",
+  title: "",
+  version: "v2",
+  time: { created: 0, updated: 0 },
+  ...input,
+})
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
@@ -53,16 +56,22 @@ describe("layout deep links", () => {
     expect(parseDeepLink("opencode://open-project/%E0%A4%A%")).toBeUndefined()
   })
 
-  test("parses links when URL.canParse is unavailable", () => {
-    const original = Object.getOwnPropertyDescriptor(URL, "canParse")
-    Object.defineProperty(URL, "canParse", { configurable: true, value: undefined })
-    try {
-      expect(parseDeepLink("opencode://open-project?directory=/tmp/demo")).toBe("/tmp/demo")
-    } finally {
-      if (original) Object.defineProperty(URL, "canParse", original)
-      if (!original) Reflect.deleteProperty(URL, "canParse")
-    }
-  })
+  test("parses links when URL.canParse is unavailable", () =>
+    Effect.runPromise(
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const original = Object.getOwnPropertyDescriptor(URL, "canParse")
+          // canParse is an own static of URL, so deleting it leaves URL.canParse unavailable.
+          Reflect.deleteProperty(URL, "canParse")
+          return original
+        }),
+        () => Effect.sync(() => expect(parseDeepLink("opencode://open-project?directory=/tmp/demo")).toBe("/tmp/demo")),
+        (original) =>
+          Effect.sync(() => {
+            if (original) Object.defineProperty(URL, "canParse", original)
+          }),
+      ),
+    ))
 
   test("ignores open-project deep links without directory", () => {
     expect(parseDeepLink("opencode://open-project")).toBeUndefined()
@@ -105,7 +114,7 @@ describe("layout deep links", () => {
       __OPENCODE__: {
         deepLinks: ["opencode://open-project?directory=/a"],
       },
-    } as unknown as Window & { __OPENCODE__?: { deepLinks?: string[] } }
+    }
 
     expect(drainPendingDeepLinks(target)).toEqual(["opencode://open-project?directory=/a"])
     expect(drainPendingDeepLinks(target)).toEqual([])
@@ -136,7 +145,7 @@ describe("layout workspace helpers", () => {
       [
         {
           path: { directory: "/root" },
-          session: [session({ id: "root", directory: "/root", time: { created: 1, updated: 1, archived: undefined } })],
+          session: [session({ id: "root", directory: "/root", time: { created: 1, updated: 1 } })],
         },
         {
           path: { directory: "/workspace" },
@@ -144,7 +153,7 @@ describe("layout workspace helpers", () => {
             session({
               id: "workspace",
               directory: "/workspace",
-              time: { created: 2, updated: 2, archived: undefined },
+              time: { created: 2, updated: 2 },
             }),
           ],
         },
@@ -160,8 +169,8 @@ describe("layout workspace helpers", () => {
       {
         path: { directory: "/workspace" },
         session: [
-          session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
-          session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 3, archived: undefined } }),
+          session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2 } }),
+          session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 3 } }),
         ],
       },
       3,
@@ -172,8 +181,8 @@ describe("layout workspace helpers", () => {
 
   test("uses id only to break equal session timestamps", () => {
     const sessions = [
-      session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
-      session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
+      session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2 } }),
+      session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 2 } }),
     ]
 
     expect(sessions.sort(compareSessionTime).map((item) => item.id)).toEqual(["ses_a", "ses_z"])
@@ -217,12 +226,12 @@ describe("layout workspace helpers", () => {
               id: "child",
               directory: "/workspace",
               parentID: "parent",
-              time: { created: 20, updated: 20, archived: undefined },
+              time: { created: 20, updated: 20 },
             }),
             session({
               id: "root",
               directory: "/workspace",
-              time: { created: 30, updated: 30, archived: undefined },
+              time: { created: 30, updated: 30 },
             }),
           ],
         },
@@ -254,7 +263,7 @@ describe("layout workspace helpers", () => {
 
   test("scopes home project selection by server", () => {
     expect(
-      toggleHomeProjectSelection(undefined, serverKey("https://debian.example"), "/home/luke/repos/amazon"),
+      toggleHomeProjectSelectionOption(Option.none(), serverKey("https://debian.example"), "/home/luke/repos/amazon"),
     ).toEqual({
       server: serverKey("https://debian.example"),
       directory: "/home/luke/repos/amazon",
@@ -316,9 +325,10 @@ describe("layout workspace helpers", () => {
   })
 
   test("preserves picker order when adding multiple projects", () => {
-    expect(homeProjectDirectories(["/first", "/second"])).toEqual(["/first", "/second"])
-    expect(homeProjectDirectories("/only")).toEqual(["/only"])
-    expect(homeProjectDirectories(null)).toEqual([])
+    expect(homeProjectDirectories(Option.some(["/first", "/second"]))).toEqual(["/first", "/second"])
+    expect(homeProjectDirectories(Option.some("/only"))).toEqual(["/only"])
+    expect(homeProjectDirectories(Option.some(""))).toEqual([])
+    expect(homeProjectDirectories(Option.none())).toEqual([])
   })
 
   test("hides status derived from an inactive server", () => {
@@ -329,7 +339,6 @@ describe("layout workspace helpers", () => {
     }
     expect(homeSessionServerStatus(false, status)).toEqual({
       working: false,
-      tint: undefined,
     })
     expect(reads).toBe(0)
     expect(homeSessionServerStatus(true, status)).toEqual({
@@ -341,7 +350,7 @@ describe("layout workspace helpers", () => {
 
   test("extracts api error message and fallback", () => {
     expect(errorMessage({ data: { message: "boom" } }, "fallback")).toBe("boom")
-    expect(errorMessage(new Error("broken"), "fallback")).toBe("broken")
+    expect(errorMessage(new BrokenError({ message: "broken" }), "fallback")).toBe("broken")
     expect(errorMessage("unknown", "fallback")).toBe("fallback")
   })
 })

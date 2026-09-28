@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, FileSystem, Schema, SchemaAST, SchemaGetter } from "effect"
+import { Effect, FileSystem, HashSet, Schema, SchemaAST, SchemaGetter } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi"
 import { format } from "prettier"
 import {
@@ -64,6 +64,37 @@ describe("HttpApiCodegen.generate", () => {
 
     expect(types).toContain('import type { EventWire } from "./event-wire"')
     expect(types).toContain("export type SessionEventsOutput = EventWire")
+  })
+
+  test("allows Promise errors to use an authoritative imported wire type", () => {
+    class Denied extends Schema.TaggedError<Denied>()("Denied", { message: Schema.String }, { httpApiStatus: 403 }) {}
+    class Gone extends Schema.TaggedError<Gone>()("Gone", { message: Schema.String }, { httpApiStatus: 410 }) {}
+    class Busy extends Schema.TaggedError<Busy>()("Busy", { message: Schema.String }, { httpApiStatus: 503 }) {}
+    const output = emitPromise(
+      compileContract(
+        api(HttpApiEndpoint.get("get", "/session", { success: Schema.String, error: [Denied, Gone, Busy] })),
+      ),
+      {
+        errorTypes: {
+          Denied: { name: "typeof Errors.Denied.Encoded", import: 'import type * as Errors from "./errors"' },
+          Gone: { name: "typeof Errors.Gone.Encoded", import: 'import type * as Errors from "./errors"' },
+          Unused: { name: "typeof Other.Unused.Encoded", import: 'import type * as Other from "./other"' },
+        },
+      },
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types?.split('import type * as Errors from "./errors"').length).toBe(2)
+    expect(types).not.toContain('import type * as Other from "./other"')
+    expect(types).toContain("export type Denied = typeof Errors.Denied.Encoded")
+    expect(types).toContain("export type Gone = typeof Errors.Gone.Encoded")
+    expect(types).toContain(
+      'export const isDenied = (value: unknown): value is Denied => isNonNullObject(value) && "_tag" in value && value["_tag"] === "Denied"',
+    )
+    expect(types).toContain('export type Busy = { readonly "_tag": "Busy"; readonly "message": string }')
+    expect(types).toContain(
+      'export const isBusy = (value: unknown): value is Busy => isNonNullObject(value) && "_tag" in value && value["_tag"] === "Busy"',
+    )
   })
 
   test("emits an Effect client against an imported authoritative API", () => {
@@ -157,7 +188,7 @@ describe("HttpApiCodegen.generate", () => {
         .add(HttpApiEndpoint.get("pty.get", "/pty", { success: Schema.String }))
         .add(HttpApiEndpoint.get("pty.connect", "/pty/connect", { success: Schema.Boolean })),
     )
-    const contract = compileContract(source, { omitEndpoints: new Set(["pty.connect"]) })
+    const contract = compileContract(source, { omitEndpoints: HashSet.make("pty.connect") })
 
     expect(contract.groups[0]?.endpoints.map((endpoint) => endpoint.endpoint.identifier)).toEqual(["pty.get"])
   })
@@ -325,6 +356,30 @@ describe("HttpApiCodegen.generate", () => {
     expect(types).toContain("export type JsonValue =")
     expect(types).toContain("{ readonly [key: string]: JsonValue }")
     expect(types).not.toContain("Schema.Json")
+  })
+
+  test("drops string literals that a string member absorbs in Promise wire types", () => {
+    const Color = Schema.Union([Schema.String, Schema.Literals(["primary", "secondary"])]).annotate({
+      identifier: "Color",
+    })
+    const output = emitPromise(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session", {
+            success: Schema.Struct({
+              color: Color,
+              tone: Schema.Union([Schema.String, Schema.Literal("dark"), Schema.Literal(1)]),
+              mode: Schema.Union([Schema.Number, Schema.Literals(["primary", "secondary"])]),
+            }),
+          }),
+        ),
+      ),
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types).toContain('readonly "color": (string)')
+    expect(types).toContain('readonly "tone": string | 1')
+    expect(types).toContain('readonly "mode": number | "primary" | "secondary"')
   })
 
   test("emits an optional Promise input when every field is optional", () => {

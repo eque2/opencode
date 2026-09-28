@@ -1,14 +1,26 @@
 export * as WebSearchTool from "./websearch"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Context, Duration, Effect, Layer, Schema } from "effect"
+import {
+  Array as Arr,
+  Config as EffectConfig,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
-import { truthy } from "../flag/flag"
+import { truthyConfig } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 import { PositiveInt } from "../schema"
 import { PermissionV2 } from "../permission"
+import { SessionSchema } from "../session/schema"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 import { collectBoundedResponseBody } from "./http-body"
@@ -23,6 +35,9 @@ export const MAX_NUM_RESULTS = 20
 export const MAX_CONTEXT_CHARACTERS = 50_000
 export const MAX_RESPONSE_BYTES = 256 * 1024
 
+/** The local calendar year when the module loads. */
+const currentYear = DateTime.getPart(DateTime.setZone(DateTime.nowUnsafe(), DateTime.zoneMakeLocal()), "year")
+
 /**
  * Provider-independent local web search retained in V2 core for launch parity.
  * This invokes the legacy Exa/Parallel product backends itself. It is distinct
@@ -35,7 +50,7 @@ This is a provider-independent local tool backed by Exa or Parallel. Provider-ho
 
 Optional controls support result count, live crawling ('fallback' or 'preferred'), search type ('auto', 'fast', or 'deep'), and maximum context characters.
 
-The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events.`
+The current year is ${currentYear}. Use this year when searching for recent information or current events.`
 
 export const Input = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
@@ -67,19 +82,46 @@ export interface Config {
   readonly parallelApiKey?: string
 }
 
+/** An MCP search call failed before it returned a usable body. */
+export class SearchError extends Schema.TaggedError<SearchError>()("WebSearchTool.SearchError", {
+  message: Schema.String,
+}) {}
+
 export class ConfigService extends Context.Service<ConfigService, Config>()("@opencode/v2/WebSearchConfig") {}
 
-/** Isolates the retained product environment contract from the generic tool implementation. */
-export const defaultConfigLayer = Layer.sync(ConfigService, () =>
-  ConfigService.of({
-    provider:
-      process.env.OPENCODE_WEBSEARCH_PROVIDER === "exa" || process.env.OPENCODE_WEBSEARCH_PROVIDER === "parallel"
-        ? process.env.OPENCODE_WEBSEARCH_PROVIDER
-        : undefined,
-    enableExa: truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_ENABLE_EXA") || truthy("OPENCODE_EXPERIMENTAL_EXA"),
-    enableParallel: truthy("OPENCODE_ENABLE_PARALLEL") || truthy("OPENCODE_EXPERIMENTAL_PARALLEL"),
-    exaApiKey: process.env.EXA_API_KEY,
-    parallelApiKey: process.env.PARALLEL_API_KEY,
+/** True when any of the variables is "true" or "1", in any case. */
+const anyTruthy = (keys: ReadonlyArray<string>) =>
+  EffectConfig.all(keys.map((key) => truthyConfig(key))).pipe(EffectConfig.map((flags) => flags.includes(true)))
+
+const environment = EffectConfig.all({
+  provider: EffectConfig.String("OPENCODE_WEBSEARCH_PROVIDER").pipe(EffectConfig.option),
+  enableExa: anyTruthy(["OPENCODE_EXPERIMENTAL", "OPENCODE_ENABLE_EXA", "OPENCODE_EXPERIMENTAL_EXA"]),
+  enableParallel: anyTruthy(["OPENCODE_ENABLE_PARALLEL", "OPENCODE_EXPERIMENTAL_PARALLEL"]),
+  exaApiKey: EffectConfig.String("EXA_API_KEY").pipe(EffectConfig.option),
+  parallelApiKey: EffectConfig.String("PARALLEL_API_KEY").pipe(EffectConfig.option),
+})
+
+/**
+ * Isolates the retained product environment contract from the generic tool implementation.
+ *
+ * The ambient ConfigProvider copies process.env once per process, so each layer build reads a
+ * fresh environment snapshot, as the former Layer.sync read of process.env did. Empty strings
+ * stay values. Optional configs cannot fail on a missing variable, so a ConfigError is a defect.
+ */
+export const defaultConfigLayer = Layer.effect(
+  ConfigService,
+  Effect.gen(function* () {
+    const env = yield* Effect.suspend(() =>
+      environment.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+    ).pipe(Effect.orDie)
+    const provider = env.provider.pipe(Option.filter(Schema.is(Provider)))
+    return ConfigService.of({
+      ...(Option.isSome(provider) ? { provider: provider.value } : {}),
+      enableExa: env.enableExa,
+      enableParallel: env.enableParallel,
+      ...(Option.isSome(env.exaApiKey) ? { exaApiKey: env.exaApiKey.value } : {}),
+      ...(Option.isSome(env.parallelApiKey) ? { parallelApiKey: env.parallelApiKey.value } : {}),
+    })
   }),
 )
 
@@ -100,26 +142,31 @@ const McpResult = Schema.Struct({
   result: Schema.Struct({
     content: Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.String })),
   }),
-})
+}).annotate({ identifier: "WebSearchTool.McpResult" })
 const decodeMcpResult = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
+/** Returns the first non-empty text item of a JSON-RPC payload, or none for a non-JSON frame. */
 const parsePayload = (payload: string) =>
   Effect.gen(function* () {
     const trimmed = payload.trim()
-    if (!trimmed.startsWith("{")) return undefined
-    return (yield* decodeMcpResult(trimmed)).result.content.find((item) => item.text)?.text
+    if (!trimmed.startsWith("{")) return Option.none<string>()
+    const content = (yield* decodeMcpResult(trimmed)).result.content
+    return Arr.findFirst(content, (item) => item.text !== "").pipe(Option.map((item) => item.text))
   })
 
+/** Returns the search text of a plain JSON-RPC or SSE body, or none when no payload holds text. */
 export const parseResponse = Effect.fn("WebSearchTool.parseResponse")(function* (body: string) {
   const trimmed = body.trim()
-  const direct = trimmed ? yield* parsePayload(trimmed) : undefined
-  if (direct) return direct
+  if (trimmed) {
+    const direct = yield* parsePayload(trimmed)
+    if (Option.isSome(direct)) return direct
+  }
   for (const line of body.split("\n")) {
     if (!line.startsWith("data: ")) continue
     const data = yield* parsePayload(line.substring(6))
-    if (data) return data
+    if (Option.isSome(data)) return data
   }
-  return undefined
+  return Option.none<string>()
 })
 
 const ExaArgs = Schema.Struct({
@@ -128,12 +175,12 @@ const ExaArgs = Schema.Struct({
   numResults: Schema.Number,
   livecrawl: Schema.String,
   contextMaxCharacters: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "WebSearchTool.ExaArgs" })
 const ParallelArgs = Schema.Struct({
   objective: Schema.String,
   search_queries: Schema.Array(Schema.String),
-  session_id: Schema.String,
-})
+  session_id: SessionSchema.ID,
+}).annotate({ identifier: "WebSearchTool.ParallelArgs" })
 const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
   Schema.Struct({
     jsonrpc: Schema.Literal("2.0"),
@@ -173,13 +220,13 @@ const callMcp = <F extends Schema.Struct.Fields>(
       const body = yield* collectBoundedResponseBody(
         response,
         MAX_RESPONSE_BYTES,
-        () => new Error(`${tool} response exceeded ${MAX_RESPONSE_BYTES} bytes`),
+        () => new SearchError({ message: `${tool} response exceeded ${MAX_RESPONSE_BYTES} bytes` }),
       )
       return yield* parseResponse(body.toString("utf8"))
     }).pipe(
       Effect.timeoutOrElse({
         duration: Duration.seconds(25),
-        orElse: () => Effect.fail(new Error(`${tool} request timed out`)),
+        orElse: () => Effect.fail(new SearchError({ message: `${tool} request timed out` })),
       }),
     )
   })
@@ -187,7 +234,7 @@ const callMcp = <F extends Schema.Struct.Fields>(
 const Output = Schema.Struct({
   provider: Provider,
   text: Schema.String,
-})
+}).annotate({ identifier: "WebSearchTool.Output" })
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -243,7 +290,7 @@ const layer = Layer.effectDiscard(
                     )
               return {
                 provider,
-                text: text ?? NO_RESULTS,
+                text: Option.getOrElse(text, () => NO_RESULTS),
               }
             }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to search the web for ${input.query}` })))
           },

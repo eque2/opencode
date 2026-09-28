@@ -27,12 +27,12 @@ const katexExtension: MarkedExtension = {
       level: "inline",
       start(src) {
         const index = src.indexOf("\\(")
-        if (index === -1) return
+        if (index === -1) return undefined
         return index
       },
       tokenizer(src) {
         const match = src.match(inlineMathRegex)
-        if (!match) return
+        if (!match) return undefined
         return {
           type: "inlineKatex",
           raw: match[0],
@@ -47,7 +47,7 @@ const katexExtension: MarkedExtension = {
       level: "block",
       tokenizer(src) {
         const match = src.match(blockMathRegex)
-        if (!match) return
+        if (!match) return undefined
         return {
           type: "blockKatex",
           raw: match[0],

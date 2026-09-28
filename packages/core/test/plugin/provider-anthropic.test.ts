@@ -14,7 +14,6 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* AnthropicPlugin.effect(host)
 })
@@ -60,7 +59,6 @@ describe("AnthropicPlugin", () => {
 
   it.effect("creates Anthropic SDKs with the model provider ID as the SDK name", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
@@ -77,7 +75,6 @@ describe("AnthropicPlugin", () => {
 
   it.effect("uses the Anthropic provider ID as the SDK name for the bundled Anthropic provider", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({

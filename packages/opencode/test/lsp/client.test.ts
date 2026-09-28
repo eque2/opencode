@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test"
+import { HashMap, Option } from "effect"
+import { spawn } from "child_process"
 import path from "path"
 import { pathToFileURL } from "url"
 import { tmpdir, withTestInstance } from "../fixture/fixture"
 import { LSPClient } from "@/lsp/client"
 import * as LSPServer from "@/lsp/server"
 
-function spawnFakeServer() {
-  const { spawn } = require("child_process")
+const diagnosticsAt = (client: LSPClient.Info, file: string) =>
+  Option.getOrElse(HashMap.get(client.diagnostics, file), () => [])
+
+function spawnFakeServer(): LSPServer.Handle {
   const serverPath = path.join(__dirname, "../fixture/lsp/fake-lsp-server.js")
   return {
     process: spawn(process.execPath, [serverPath], {
@@ -17,14 +21,14 @@ function spawnFakeServer() {
 
 describe("LSPClient interop", () => {
   test("handles workspace/workspaceFolders request", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
 
     const client = await withTestInstance({
       directory: process.cwd(),
       fn: (ctx) =>
         LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: process.cwd(),
           directory: process.cwd(),
           instance: ctx,
@@ -41,14 +45,14 @@ describe("LSPClient interop", () => {
   })
 
   test("handles client/registerCapability request", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
 
     const client = await withTestInstance({
       directory: process.cwd(),
       fn: (ctx) =>
         LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: process.cwd(),
           directory: process.cwd(),
           instance: ctx,
@@ -65,14 +69,14 @@ describe("LSPClient interop", () => {
   })
 
   test("handles client/unregisterCapability request", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
 
     const client = await withTestInstance({
       directory: process.cwd(),
       fn: (ctx) =>
         LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: process.cwd(),
           directory: process.cwd(),
           instance: ctx,
@@ -89,21 +93,26 @@ describe("LSPClient interop", () => {
   })
 
   test("initialize does not overclaim unsupported diagnostics capabilities", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
 
     const client = await withTestInstance({
       directory: process.cwd(),
       fn: (ctx) =>
         LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: process.cwd(),
           directory: process.cwd(),
           instance: ctx,
         }),
     })
 
-    const params = await client.connection.sendRequest<any>("test/get-initialize-params", {})
+    const params = await client.connection.sendRequest<{
+      capabilities: {
+        workspace: { diagnostics: { refreshSupport: boolean } }
+        textDocument: { publishDiagnostics: { versionSupport: boolean } }
+      }
+    }>("test/get-initialize-params", {})
     expect(params.capabilities.workspace.diagnostics.refreshSupport).toBe(false)
     expect(params.capabilities.textDocument.publishDiagnostics.versionSupport).toBe(false)
 
@@ -111,7 +120,7 @@ describe("LSPClient interop", () => {
   })
 
   test("workspace/configuration returns one result per requested item", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     const initialization = {
       alpha: {
         beta: 1,
@@ -125,7 +134,7 @@ describe("LSPClient interop", () => {
         LSPClient.create({
           serverID: "fake",
           server: {
-            ...(handle as unknown as LSPServer.Handle),
+            ...handle,
             initialization,
           },
           root: process.cwd(),
@@ -134,7 +143,7 @@ describe("LSPClient interop", () => {
         }),
     })
 
-    const response = await client.connection.sendRequest<any[]>("test/request-configuration", {
+    const response = await client.connection.sendRequest<unknown[]>("test/request-configuration", {
       items: [{ section: "alpha" }, { section: "alpha.beta" }, { section: "missing" }, {}],
     })
 
@@ -144,7 +153,7 @@ describe("LSPClient interop", () => {
   })
 
   test("sends ranged didChange for incremental sync servers", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.ts")
     await Bun.write(file, "first\n")
@@ -154,7 +163,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -188,7 +197,7 @@ describe("LSPClient interop", () => {
   })
 
   test("document mode falls back to push diagnostics", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.ts")
     await Bun.write(file, "const x = 1\n")
@@ -198,7 +207,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -222,7 +231,7 @@ describe("LSPClient interop", () => {
         })
         await wait
 
-        const diagnostics = client.diagnostics.get(file) ?? []
+        const diagnostics = diagnosticsAt(client, file)
         expect(diagnostics).toHaveLength(1)
         expect(diagnostics[0]?.message).toBe("push diagnostic")
 
@@ -235,7 +244,7 @@ describe("LSPClient interop", () => {
   })
 
   test("document mode accepts matching push diagnostics published before waiting", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.ts")
     await Bun.write(file, "const x = 1\n")
@@ -245,7 +254,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -267,11 +276,11 @@ describe("LSPClient interop", () => {
           ],
         })
 
-        for (let i = 0; i < 20 && (client.diagnostics.get(file)?.length ?? 0) === 0; i++) {
+        for (let i = 0; i < 20 && diagnosticsAt(client, file).length === 0; i++) {
           await new Promise((resolve) => setTimeout(resolve, 25))
         }
 
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("push diagnostic")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("push diagnostic")
 
         const started = Date.now()
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
@@ -283,7 +292,7 @@ describe("LSPClient interop", () => {
   })
 
   test("document mode waits for pull diagnostics", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.cs")
     await Bun.write(file, "class C {}\n")
@@ -293,7 +302,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -319,7 +328,7 @@ describe("LSPClient interop", () => {
         const version = await client.notify.open({ path: file })
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
 
-        const diagnostics = client.diagnostics.get(file) ?? []
+        const diagnostics = diagnosticsAt(client, file)
         expect(diagnostics).toHaveLength(1)
         expect(diagnostics[0]?.message).toBe("pull diagnostic")
 
@@ -332,7 +341,7 @@ describe("LSPClient interop", () => {
   })
 
   test("document mode does not wait for the slowest pull identifier after current-file diagnostics arrive", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.cs")
     await Bun.write(file, "class C {}\n")
@@ -342,7 +351,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -375,7 +384,7 @@ describe("LSPClient interop", () => {
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
 
         expect(Date.now() - started).toBeLessThan(1_000)
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("fast diagnostic")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("fast diagnostic")
         expect(await client.connection.sendRequest("test/get-diagnostic-request-count", {})).toBeGreaterThan(1)
 
         await client.shutdown()
@@ -384,7 +393,7 @@ describe("LSPClient interop", () => {
   })
 
   test("full mode includes workspace pull diagnostics", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.cs")
     const related = path.join(tmp.path, "other.cs")
@@ -396,7 +405,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,
@@ -442,8 +451,8 @@ describe("LSPClient interop", () => {
         const version = await client.notify.open({ path: file })
         await client.waitForDiagnostics({ path: file, version, mode: "full" })
 
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("current file")
-        expect(client.diagnostics.get(related)?.[0]?.message).toBe("workspace file")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("current file")
+        expect(diagnosticsAt(client, related)[0]?.message).toBe("workspace file")
 
         await client.shutdown()
       },
@@ -451,7 +460,7 @@ describe("LSPClient interop", () => {
   })
 
   test("full mode treats an empty workspace pull response as handled", async () => {
-    const handle = spawnFakeServer() as any
+    const handle = spawnFakeServer()
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "client.cs")
     await Bun.write(file, "class C {}\n")
@@ -461,7 +470,7 @@ describe("LSPClient interop", () => {
       fn: async (ctx) => {
         const client = await LSPClient.create({
           serverID: "fake",
-          server: handle as unknown as LSPServer.Handle,
+          server: handle,
           root: tmp.path,
           directory: tmp.path,
           instance: ctx,

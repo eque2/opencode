@@ -21,6 +21,7 @@ import {
   LLMError as LLMErrorClass,
   PreparedRequest,
   ProviderID,
+  RequestID,
   mergeGenerationOptions,
   mergeHttpOptions,
   mergeProviderOptions,
@@ -55,7 +56,6 @@ export interface Route<Body, Prepared = unknown> {
 // Route registries intentionally erase body generics after construction.
 // Normal call sites use `OpenAIChat.route`; callers only need body types
 // when preparing a request with a protocol-specific type assertion.
-// oxlint-disable-next-line typescript-eslint/no-explicit-any
 export type AnyRoute = Route<any, any>
 
 export type HttpOptionsInput = HttpOptions.Input
@@ -90,48 +90,55 @@ export interface RoutePatch<Body, Prepared> extends RouteDefaultsInput {
 
 type RouteMappedModelInput = RouteModelInput | RouteRoutedModelInput
 
-const makeRouteModel = (route: AnyRoute, mapped: RouteMappedModelInput) => {
-  const provider = route.provider ?? ("provider" in mapped ? mapped.provider : undefined)
-  if (!provider) throw new Error(`Route.model(${route.id}) requires a provider`)
-  if (!endpointBaseURL(route.endpoint))
-    throw new Error(`Route.model(${route.id}) requires an endpoint baseURL — configure it on the route first`)
-  return Model.make({
+// The route provider wins over the model input provider. An empty id counts as
+// absent, as the old truthiness check did.
+const routeProvider = (route: AnyRoute, mapped: RouteMappedModelInput) =>
+  Option.fromNullishOr(route.provider).pipe(
+    Option.orElse(() => ("provider" in mapped ? Option.some(mapped.provider) : Option.none())),
+    Option.filter((provider) => provider.length > 0),
+  )
+
+// A `Model` cannot exist without a provider, so `Route.model` stays a
+// synchronous constructor that fails with a typed `LLMError`. The endpoint
+// baseURL check runs in `compile`, where it fails the Effect instead.
+const makeRouteModel = (route: AnyRoute, mapped: RouteMappedModelInput) =>
+  Model.make({
     ...mapped,
-    provider,
+    provider: Option.getOrThrowWith(routeProvider(route, mapped), () =>
+      ProviderShared.invalidRequest(`Route.model(${route.id}) requires a provider`),
+    ),
     route,
   })
-}
 
-const mergeRouteDefaults = (base: RouteDefaults | undefined, patch: RouteDefaultsInput): RouteDefaults => {
+const mergeRouteDefaults = (patch: RouteDefaultsInput, base?: RouteDefaults): RouteDefaults => {
   const headers = mergeHeaders(base?.headers, patch.headers)
   return {
     ...base,
     ...patch,
-    headers,
+    headers: Option.getOrUndefined(headers),
     limits: patch.limits === undefined ? base?.limits : ModelLimits.make(patch.limits),
     generation: mergeGenerationOptions(generationOptions(base?.generation), generationOptions(patch.generation)),
     providerOptions: mergeProviderOptions(base?.providerOptions, patch.providerOptions),
     http: mergeHttpOptions(
       base?.http,
       httpOptions(patch.http),
-      headers === undefined ? undefined : new HttpOptions({ headers }),
+      Option.getOrUndefined(Option.map(headers, (merged) => new HttpOptions({ headers: merged }))),
     ),
   }
 }
-
-const endpointBaseURL = <Body>(endpoint: Endpoint<Body>) =>
-  typeof endpoint.baseURL === "string" ? endpoint.baseURL : undefined
 
 const mergeHeaders = (...items: ReadonlyArray<Record<string, string> | undefined>) => {
   const entries = items.flatMap((item) =>
     item === undefined ? [] : Object.entries(item).filter((entry): entry is [string, string] => entry[1] !== undefined),
   )
-  if (entries.length === 0) return undefined
-  return Object.fromEntries(entries)
+  return entries.length === 0 ? Option.none() : Option.some(Object.fromEntries(entries))
 }
 
 export const generationOptions = (input: GenerationOptions.Input | undefined) =>
-  input === undefined ? undefined : GenerationOptions.make(input)
+  Option.fromUndefinedOr(input).pipe(
+    Option.map((value) => GenerationOptions.make(value)),
+    Option.getOrUndefined,
+  )
 
 export const httpOptions = (input: HttpOptionsInput | undefined) => {
   if (input === undefined) return input
@@ -229,7 +236,7 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
   const protocol = input.protocol
   const encodeBody = Schema.encodeSync(Schema.fromJsonString(protocol.body.schema))
   const decodeEventEffect = Schema.decodeUnknownEffect(protocol.stream.event)
-  const decodeEvent = (route: string) => (frame: Frame) =>
+  const decodeEvent = (route: string) => (frame: unknown) =>
     decodeEventEffect(frame).pipe(
       Effect.mapError(() =>
         ProviderShared.eventError(
@@ -240,14 +247,18 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
       ),
     )
 
-  type BuiltRouteInput = Omit<MakeTransportInput<Body, Prepared, Frame, Event, State>, "defaults"> & {
+  // A built route reads transport frames as unknown: `decodeEvent` decodes
+  // them with the protocol event schema, so a patched transport of any frame
+  // type fits without a cast.
+  type BuiltRouteInput = Omit<MakeTransportInput<Body, Prepared, Frame, Event, State>, "defaults" | "transport"> & {
+    readonly transport: Transport<Body, Prepared, unknown>
     readonly defaults?: RouteDefaults
   }
 
   const build = (routeInput: BuiltRouteInput): Route<Body, Prepared> => {
     const route: Route<Body, Prepared> = {
       id: routeInput.id,
-      provider: routeInput.provider === undefined ? undefined : ProviderID.make(routeInput.provider),
+      ...(routeInput.provider === undefined ? {} : { provider: ProviderID.make(routeInput.provider) }),
       protocol: protocol.id,
       endpoint: routeInput.endpoint,
       auth: routeInput.auth ?? Auth.none,
@@ -262,8 +273,8 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
           provider: provider ?? routeInput.provider,
           auth: auth ?? routeInput.auth,
           endpoint: endpoint ? Endpoint.merge(routeInput.endpoint, endpoint) : routeInput.endpoint,
-          transport: (transport as Transport<Body, Prepared, Frame> | undefined) ?? routeInput.transport,
-          defaults: mergeRouteDefaults(route.defaults, defaults),
+          transport: transport ?? routeInput.transport,
+          defaults: mergeRouteDefaults(defaults, route.defaults),
         })
       },
       model: (input) => makeRouteModel(route, input),
@@ -285,11 +296,9 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
             protocol.stream.terminal ? Stream.takeUntil(protocol.stream.terminal) : (stream) => stream,
           )
         return events.pipe(
-          Stream.mapAccumEffect(
-            () => protocol.stream.initial(request),
-            protocol.stream.step,
-            protocol.stream.onHalt ? { onHalt: protocol.stream.onHalt } : undefined,
-          ),
+          Stream.mapAccumEffect(() => protocol.stream.initial(request), protocol.stream.step, {
+            onHalt: protocol.stream.onHalt,
+          }),
           Stream.catchCause((cause) => Stream.fail(streamError(route, `Failed to read ${route} stream`, cause))),
         )
       },
@@ -297,7 +306,7 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
     return route
   }
 
-  return build({ ...input, defaults: mergeRouteDefaults(undefined, input.defaults ?? {}) })
+  return build({ ...input, defaults: mergeRouteDefaults(input.defaults ?? {}) })
 }
 
 export function make<Body, Prepared, Frame, Event, State>(
@@ -344,6 +353,10 @@ export function make<Body, Prepared, Frame, Event, State>(
 const compile = Effect.fn("LLM.compile")(function* (request: LLMRequest) {
   const resolved = applyCachePolicy(resolveRequestOptions(request))
   const route = resolved.model.route
+  if (!route.endpoint.baseURL)
+    return yield* ProviderShared.invalidRequest(
+      `Route ${route.id} requires an endpoint baseURL — configure it on the route first`,
+    )
 
   const body = yield* route.body
     .from(resolved)
@@ -362,7 +375,7 @@ const prepareWith = Effect.fn("LLMClient.prepare")(function* (request: LLMReques
   const compiled = yield* compile(request)
 
   return new PreparedRequest({
-    id: compiled.request.id ?? "request",
+    id: RequestID.make(compiled.request.id ?? "request"),
     route: compiled.route.id,
     protocol: compiled.route.protocol,
     model: compiled.request.model,
@@ -390,21 +403,29 @@ const generateWith = (stream: Interface["stream"]) =>
     )
   })
 
-export const prepare = <Body = unknown>(request: LLMRequest) =>
-  prepareWith(request) as Effect.Effect<PreparedRequestOf<Body>, LLMError>
+/**
+ * The `Body` type argument is a type-level assertion about which route the
+ * request resolves to; the runtime body is the same. The overload carries the
+ * asserted type, and the implementation returns the `PreparedRequest` that
+ * `prepareWith` builds.
+ */
+export function prepare<Body = unknown>(request: LLMRequest): Effect.Effect<PreparedRequestOf<Body>, LLMError>
+export function prepare(request: LLMRequest): Effect.Effect<PreparedRequest, LLMError> {
+  return prepareWith(request)
+}
 
-export function stream(request: LLMRequest): Stream.Stream<LLMEvent, LLMError> {
+export function stream(request: LLMRequest): Stream.Stream<LLMEvent, LLMError, Service> {
   return Stream.unwrap(
     Effect.gen(function* () {
       return (yield* Service).stream(request)
     }),
-  ) as Stream.Stream<LLMEvent, LLMError>
+  )
 }
 
-export function generate(request: LLMRequest): Effect.Effect<LLMResponse, LLMError> {
+export function generate(request: LLMRequest): Effect.Effect<LLMResponse, LLMError, Service> {
   return Effect.gen(function* () {
     return yield* (yield* Service).generate(request)
-  }) as Effect.Effect<LLMResponse, LLMError>
+  })
 }
 
 export const streamRequest = (request: LLMRequest) =>
@@ -421,7 +442,7 @@ export const layer: Layer.Layer<Service, never, RequestExecutor.Service> = Layer
       http: yield* RequestExecutor.Service,
       webSocket: Option.getOrUndefined(yield* Effect.serviceOption(WebSocketExecutor.Service)),
     })
-    return Service.of({ prepare: prepareWith as Interface["prepare"], stream, generate: generateWith(stream) })
+    return Service.of({ prepare, stream, generate: generateWith(stream) })
   }),
 )
 

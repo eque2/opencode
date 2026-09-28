@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import type { ToolPart } from "@opencode-ai/sdk/v2"
-import { RGBA, SyntaxStyle } from "@opentui/core"
+import type { ToolPart, ToolState } from "@opencode-ai/sdk/v2"
+import { CodeRenderable, MarkdownRenderable, RGBA, SyntaxStyle } from "@opentui/core"
 import { MockTreeSitterClient, createTestRenderer, type TestRenderer } from "@opentui/core/testing"
+import { Option, Predicate } from "effect"
 import { RunScrollbackStream } from "@/cli/cmd/run/scrollback.surface"
 import { RUN_THEME_FALLBACK, type RunTheme } from "@/cli/cmd/run/theme"
 import type { StreamCommit } from "@/cli/cmd/run/types"
@@ -30,12 +31,29 @@ function claim(renderer: TestRenderer): ClaimedCommit[] {
     throw new Error("renderer missing external output queue")
   }
 
-  const commits = queue.claim()
-  if (!Array.isArray(commits)) {
+  const commits: unknown = queue.claim()
+  if (!Array.isArray(commits) || !commits.every(isClaimedCommit)) {
     throw new Error("renderer external output queue returned invalid commits")
   }
 
-  return commits as ClaimedCommit[]
+  return commits
+}
+
+function isClaimedCommit(value: unknown): value is ClaimedCommit {
+  if (!Predicate.hasProperty(value, "snapshot") || !Predicate.hasProperty(value, "trailingNewline")) {
+    return false
+  }
+
+  const snapshot = value.snapshot
+  return (
+    typeof value.trailingNewline === "boolean" &&
+    Predicate.hasProperty(snapshot, "height") &&
+    typeof snapshot.height === "number" &&
+    Predicate.hasProperty(snapshot, "getRealCharBytes") &&
+    typeof snapshot.getRealCharBytes === "function" &&
+    Predicate.hasProperty(snapshot, "destroy") &&
+    typeof snapshot.destroy === "function"
+  )
 }
 
 function renderCommit(commit: ClaimedCommit) {
@@ -167,9 +185,17 @@ test("theme swaps restyle active reasoning without resetting the stream", async 
   }
 })
 
+// Reads the syntax style of the private active entry, an Option<ActiveEntry>.
 function activeSyntax(scrollback: RunScrollbackStream) {
-  const entry = Reflect.get(scrollback, "active") as { renderable?: { syntaxStyle?: SyntaxStyle } } | undefined
-  return entry?.renderable?.syntaxStyle
+  const entry: unknown = Reflect.get(scrollback, "active")
+  if (!Option.isOption(entry) || Option.isNone(entry) || !Predicate.hasProperty(entry.value, "renderable")) {
+    return undefined
+  }
+
+  const renderable = entry.value.renderable
+  return renderable instanceof CodeRenderable || renderable instanceof MarkdownRenderable
+    ? renderable.syntaxStyle
+    : undefined
 }
 
 test("theme swaps preserve streamed markdown parser state", async () => {
@@ -219,7 +245,7 @@ function error(text: string): StreamCommit {
   }
 }
 
-function toolPart(tool: string, state: Record<string, unknown>, id: string, messageID: string): ToolPart {
+function toolPart(tool: string, state: ToolState, id: string, messageID: string): ToolPart {
   return {
     id,
     sessionID: "session-1",
@@ -228,7 +254,7 @@ function toolPart(tool: string, state: Record<string, unknown>, id: string, mess
     callID: `call-${id}`,
     tool,
     state,
-  } as ToolPart
+  }
 }
 
 function toolCommit(input: {
@@ -236,7 +262,7 @@ function toolCommit(input: {
   phase: StreamCommit["phase"]
   toolState?: StreamCommit["toolState"]
   text?: string
-  state?: Record<string, unknown>
+  state?: ToolState
   id?: string
   messageID?: string
 }): StreamCommit {
@@ -260,7 +286,8 @@ test("finalizes markdown tables for streamed and coalesced input", async () => {
   const text =
     "| Column 1 | Column 2 | Column 3 |\n|---|---|---|\n| Row 1 | Value 1 | Value 2 |\n| Row 2 | Value 3 | Value 4 |"
 
-  for (const chunks of [[text], [...text]]) {
+  // The table text is ASCII, so split("") gives one chunk per character.
+  for (const chunks of [[text], text.split("")]) {
     const out = await setup()
 
     try {
@@ -310,7 +337,7 @@ test("holds markdown code blocks until final commit and keeps newline ownership"
     const final = claim(out.renderer)
     try {
       expect(final).toHaveLength(1)
-      expect(final[0]!.trailingNewline).toBe(false)
+      expect(final[0].trailingNewline).toBe(false)
       expect(render(final)).toContain('const message = "Hello, markdown"')
       expect(render(final)).toContain("console.log(message)")
     } finally {
@@ -353,6 +380,8 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
         toolState: "completed",
         state: {
           status: "completed",
+          output: "",
+          title: "",
           input: {
             todos: [
               { status: "completed", content: "List files under `run/`" },
@@ -394,6 +423,8 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
         toolState: "completed",
         state: {
           status: "completed",
+          output: "",
+          title: "",
           input: {
             questions: [
               {
@@ -425,7 +456,7 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
       const commits = claim(out.renderer)
       try {
         expect(commits).toHaveLength(1)
-        const rows = renderRows(commits[0]!)
+        const rows = renderRows(commits[0])
         const output = rows.join("\n")
         expect(output).toContain(item.title)
         for (const line of item.include) {
@@ -452,8 +483,8 @@ test("inserts spacers for new visible groups", async () => {
     const commits = claim(prior.renderer)
     try {
       expect(commits).toHaveLength(2)
-      expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).trim()).toBe("› use subagent to explore run.ts")
+      expect(renderCommit(commits[0]).trim()).toBe("")
+      expect(renderCommit(commits[1]).trim()).toBe("› use subagent to explore run.ts")
     } finally {
       destroy(commits)
     }
@@ -487,8 +518,8 @@ test("inserts spacers for new visible groups", async () => {
     const commits = claim(grouped.renderer)
     try {
       expect(commits).toHaveLength(2)
-      expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe('✱ Glob "**/run.ts"')
+      expect(renderCommit(commits[0]).trim()).toBe("")
+      expect(renderCommit(commits[1]).replace(/ +/g, " ").trim()).toBe('✱ Glob "**/run.ts"')
     } finally {
       destroy(commits)
     }
@@ -661,6 +692,9 @@ test("renders completed bash output with one blank line after the command and be
         text: ["/tmp/demo", "git status", "On branch demo", "nothing to commit, working tree clean", ""].join("\n"),
         state: {
           status: "completed",
+          output: "",
+          title: "",
+          metadata: {},
           input: {
             command: "git status",
             workdir: "/tmp/demo",
@@ -1018,6 +1052,8 @@ test("renders structured write finals once as code blocks", async () => {
         messageID: "msg-2",
         state: {
           status: "completed",
+          output: "",
+          title: "",
           input: {
             filePath: "src/a.ts",
             content: "const x = 1\nconst y = 2\n",
@@ -1054,6 +1090,7 @@ test("renders promoted task markdown without a leading blank row", async () => {
         toolState: "completed",
         state: {
           status: "completed",
+          title: "",
           input: {
             description: "Explore run.ts",
             subagent_type: "explore",

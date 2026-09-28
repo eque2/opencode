@@ -39,13 +39,33 @@ function visible(commits: Array<Parameters<typeof entryBody>[0]>) {
   })
 }
 
+// The fixtures build only the event fields the reducer reads, so they are
+// checked for the Event envelope (a string type and a properties object).
+function isEventFixture(value: unknown): value is Event {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const properties: unknown = Reflect.get(value, "properties")
+  return typeof Reflect.get(value, "type") === "string" && !!properties && typeof properties === "object"
+}
+
+function asEvent(value: unknown): Event {
+  if (!isEventFixture(value)) {
+    throw new Error("event fixture needs a type and a properties object")
+  }
+
+  return value
+}
+
 function reduce(data: ReturnType<typeof createSubagentData>, event: unknown) {
   return reduceSubagentData({
     data,
-    event: event as Event,
+    event: asEvent(event),
     sessionID: "parent-1",
     thinking: true,
     limits: {},
+    now: Date.now(),
   })
 }
 
@@ -216,6 +236,7 @@ describe("run subagent data", () => {
     expect(
       bootstrapSubagentData({
         data,
+        now: Date.now(),
         messages: [taskMessage("child-1")],
         children: [{ id: "child-1" }, { id: "child-2" }],
         permissions: [
@@ -267,6 +288,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "interrupted")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -286,6 +308,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "running")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -422,6 +445,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "completed")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -489,6 +513,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "running")],
       children: [{ id: "child-1" }],
       permissions: [],

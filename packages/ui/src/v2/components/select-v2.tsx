@@ -1,4 +1,5 @@
 import { Select as Kobalte } from "@kobalte/core/select"
+import { MutableHashMap, Option, Predicate } from "effect"
 import { Show, createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
 import "./select-v2.css"
 
@@ -6,14 +7,15 @@ function groupOptions<T>(options: T[], groupBy?: (x: T) => string): { category: 
   if (!groupBy) {
     return [{ category: "", options }]
   }
-  const map = new Map<string, T[]>()
+  // MutableHashMap iterates in insertion order, so groups keep their first-seen order.
+  const groups = MutableHashMap.empty<string, T[]>()
   for (const opt of options) {
     const key = groupBy(opt)
-    const arr = map.get(key)
-    if (arr) arr.push(opt)
-    else map.set(key, [opt])
+    const arr = MutableHashMap.get(groups, key)
+    if (Option.isSome(arr)) arr.value.push(opt)
+    else MutableHashMap.set(groups, key, [opt])
   }
-  return [...map.entries()].map(([category, opts]) => ({ category, options: opts }))
+  return [...groups].map(([category, opts]) => ({ category, options: opts }))
 }
 
 const ChevronDown = () => (
@@ -90,15 +92,23 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
 
   const inline = () => (local.appearance ?? "base") === "inline"
 
-  const state: { key?: string; cleanup?: void | (() => void) } = {}
-
-  const stop = () => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    state.key = undefined
+  // The highlighted option key, and the cleanup that its onHighlight call returned.
+  const state: { key: Option.Option<string>; cleanup: Option.Option<() => void> } = {
+    key: Option.none(),
+    cleanup: Option.none(),
   }
 
-  const keyFor = (item: T) => (local.value ? local.value(item) : String(item as string))
+  const runCleanup = () => {
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+  }
+
+  const stop = () => {
+    runCleanup()
+    state.cleanup = Option.none()
+    state.key = Option.none()
+  }
+
+  const keyFor = (item: T) => (local.value ? local.value(item) : String(item))
 
   const move = (item: T | undefined) => {
     if (!local.onHighlight) return
@@ -107,10 +117,11 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
       return
     }
     const key = keyFor(item)
-    if (state.key === key) return
-    state.cleanup?.()
-    state.cleanup = local.onHighlight(item)
-    state.key = key
+    if (Option.exists(state.key, (current) => current === key)) return
+    runCleanup()
+    const cleanup = local.onHighlight(item)
+    state.cleanup = typeof cleanup === "function" ? Option.some(cleanup) : Option.none()
+    state.key = Option.some(key)
   }
 
   onCleanup(stop)
@@ -132,8 +143,8 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
       fitViewport={local.fitViewport ?? false}
       value={local.current}
       options={grouped()}
-      optionValue={(x) => (local.value ? local.value(x) : String(x as string))}
-      optionTextValue={(x) => (local.label ? local.label(x) : String(x as string))}
+      optionValue={(x) => (local.value ? local.value(x) : String(x))}
+      optionTextValue={(x) => (local.label ? local.label(x) : String(x))}
       optionGroupChildren="options"
       placeholder={local.placeholder}
       sectionComponent={(sectionProps) => (
@@ -156,7 +167,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
               ? local.children(itemProps.item.rawValue)
               : local.label
                 ? local.label(itemProps.item.rawValue)
-                : String(itemProps.item.rawValue as string)}
+                : String(itemProps.item.rawValue)}
           </Kobalte.ItemLabel>
           <Kobalte.ItemIndicator data-slot="menu-v2-item-indicator" forceMount>
             <CheckSmall />
@@ -164,8 +175,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
         </Kobalte.Item>
       )}
       onChange={(next) => {
-        const v = next == null ? null : Array.isArray(next) ? ((next[0] as T) ?? null) : (next as T)
-        local.onSelect?.(v)
+        local.onSelect?.(next)
         stop()
       }}
       onOpenChange={(open) => {
@@ -177,10 +187,10 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
         as="div"
         data-component="select-v2"
         data-appearance={local.appearance ?? "base"}
-        data-invalid={local.invalid ? "" : undefined}
-        data-numeric={local.numeric ? "" : undefined}
+        bool:data-invalid={!!local.invalid}
+        bool:data-numeric={!!local.numeric}
         disabled={local.disabled}
-        data-disabled={local.disabled ? "" : undefined}
+        bool:data-disabled={!!local.disabled}
         classList={{
           ...local.classList,
           [local.class ?? ""]: !!local.class,
@@ -190,8 +200,8 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
           <Kobalte.Value<T> data-slot="select-v2-value-text" class={local.valueClass}>
             {(st) => {
               const selected = st.selectedOption()
-              if (local.label && selected != null) return local.label(selected)
-              return selected != null ? (selected as string) : ""
+              if (local.label && Predicate.isNotNullish(selected)) return local.label(selected)
+              return Predicate.isNotNullish(selected) ? String(selected) : ""
             }}
           </Kobalte.Value>
         </div>

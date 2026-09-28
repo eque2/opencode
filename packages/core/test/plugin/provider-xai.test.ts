@@ -14,16 +14,24 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* XAIPlugin.effect(host)
 })
 
 function fakeSelectorSdk(calls: string[]) {
-  const make = (method: string) => (id: string) => {
-    calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
-  }
+  const make =
+    (method: string) =>
+    (id: string): LanguageModelV3 => {
+      calls.push(`${method}:${id}`)
+      return {
+        specificationVersion: "v3",
+        provider: method,
+        modelId: id,
+        supportedUrls: {},
+        doGenerate: () => Promise.reject(new Error("the fake language model does not generate")),
+        doStream: () => Promise.reject(new Error("the fake language model does not stream")),
+      }
+    }
   return {
     responses: make("responses"),
     messages: make("messages"),
@@ -35,7 +43,6 @@ function fakeSelectorSdk(calls: string[]) {
 describe("XAIPlugin", () => {
   it.effect("creates an xAI SDK only for @ai-sdk/xai", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
 
@@ -64,7 +71,6 @@ describe("XAIPlugin", () => {
 
   it.effect("creates xAI SDKs for custom provider IDs", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
 
@@ -83,7 +89,6 @@ describe("XAIPlugin", () => {
 
   it.effect("uses responses with the model api.id for xAI language models", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       const calls: string[] = []
 
@@ -104,7 +109,6 @@ describe("XAIPlugin", () => {
 
   it.effect("ignores non-xAI providers", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       const calls: string[] = []
 

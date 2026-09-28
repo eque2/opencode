@@ -3,6 +3,7 @@
   "name": "@opencode-ai/script",
   "license": "MIT",
   "dependencies": {
+    "effect": "catalog:",
     "semver": "^7.6.3"
   },
   "devDependencies": {

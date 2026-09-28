@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { OpenCode, type OpenCodeClient } from "@opencode-ai/client/promise"
+import { Option } from "effect"
 import type { ServerConnection } from "@/context/server"
 import { decode64 } from "@/utils/base64"
 
@@ -8,14 +9,25 @@ export function authTokenFromCredentials(input: { username?: string; password: s
 }
 
 export function authFromToken(token: string | null) {
-  const decoded = decode64(token ?? undefined)
-  if (!decoded) return
-  const separator = decoded.indexOf(":")
-  if (separator === -1) return
-  return {
-    username: decoded.slice(0, separator) || "opencode",
-    password: decoded.slice(separator + 1),
-  }
+  return Option.fromNullishOr(token).pipe(
+    Option.flatMap((value) => Option.fromNullishOr(decode64(value))),
+    Option.flatMap((decoded) => {
+      const separator = decoded.indexOf(":")
+      if (separator === -1) return Option.none()
+      return Option.some({
+        username: decoded.slice(0, separator) || "opencode",
+        password: decoded.slice(separator + 1),
+      })
+    }),
+    Option.getOrUndefined,
+  )
+}
+
+/** Copies the caller's headers into a plain record, so the auth header can be merged over them. */
+function headerRecord(headers: NonNullable<Parameters<typeof createOpencodeClient>[0]>["headers"]) {
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries())
+  if (Array.isArray(headers)) return Object.fromEntries(headers)
+  return headers
 }
 
 export function createSdkForServer({
@@ -24,18 +36,15 @@ export function createSdkForServer({
 }: Omit<NonNullable<Parameters<typeof createOpencodeClient>[0]>, "baseUrl"> & {
   server: ServerConnection.HttpBase
 }) {
-  const auth = (() => {
-    if (!server.password) return
-    return {
-      Authorization: `Basic ${authTokenFromCredentials({ username: server.username, password: server.password })}`,
-    }
-  })()
-
   return createOpencodeClient({
     ...config,
     headers: {
-      ...(config.headers instanceof Headers ? Object.fromEntries(config.headers.entries()) : config.headers),
-      ...auth,
+      ...headerRecord(config.headers),
+      ...(server.password
+        ? {
+            Authorization: `Basic ${authTokenFromCredentials({ username: server.username, password: server.password })}`,
+          }
+        : {}),
     },
     baseUrl: server.url,
   })
@@ -48,14 +57,16 @@ export function createApiForServer(input: {
   return OpenCode.make({
     baseUrl: input.server.url,
     fetch: input.fetch,
-    headers: input.server.password
+    ...(input.server.password
       ? {
-          Authorization: `Basic ${authTokenFromCredentials({
-            username: input.server.username,
-            password: input.server.password,
-          })}`,
+          headers: {
+            Authorization: `Basic ${authTokenFromCredentials({
+              username: input.server.username,
+              password: input.server.password,
+            })}`,
+          },
         }
-      : undefined,
+      : {}),
   })
 }
 

@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 
-import { Process } from "@/util/process"
-import { Filesystem } from "@/util/filesystem"
+import { Effect } from "effect"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { tmpdir } from "../fixture/fixture"
 
 const root = path.join(import.meta.dir, "../..")
@@ -17,10 +19,16 @@ type Msg = {
 }
 
 function run(msg: Msg) {
-  return Process.run([process.execPath, worker, JSON.stringify(msg)], {
-    cwd: root,
-    nothrow: true,
-  })
+  return Effect.runPromise(
+    AppProcess.Service.use((appProcess) =>
+      appProcess.run(
+        ChildProcess.make(process.execPath, [worker, JSON.stringify(msg)], { cwd: root, stdin: "ignore" }),
+      ),
+    ).pipe(
+      Effect.map((result) => ({ code: result.exitCode, stderr: result.stderr })),
+      Effect.provide(LayerNode.compile(AppProcess.node)),
+    ),
+  )
 }
 
 async function plugin(dir: string, kinds: Array<"server" | "tui">) {
@@ -47,8 +55,8 @@ async function plugin(dir: string, kinds: Array<"server" | "tui">) {
   return p
 }
 
-async function read(file: string) {
-  return Filesystem.readJson<{ plugin?: unknown[] }>(file)
+async function read(file: string): Promise<{ plugin?: unknown[] }> {
+  return Bun.file(file).json()
 }
 
 function mods(prefix: string, n: number) {
@@ -135,6 +143,6 @@ describe("plugin.install.concurrent", () => {
 
     const json = await read(cfg)
     expectPlugins(json.plugin, ["seed@1.0.0", ...next])
-    expect(await Filesystem.exists(path.join(tmp.path, ".opencode", "opencode.jsonc"))).toBe(false)
+    expect(await Bun.file(path.join(tmp.path, ".opencode", "opencode.jsonc")).exists()).toBe(false)
   }, 25_000)
 })

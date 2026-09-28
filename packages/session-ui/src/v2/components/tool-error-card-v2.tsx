@@ -1,5 +1,6 @@
 import { Collapsible } from "@kobalte/core/collapsible"
 import { type ComponentProps, type JSX, Show, createMemo, splitProps } from "solid-js"
+import { Predicate } from "effect"
 import "./tool-error-card-v2.css"
 
 function BanIcon() {
@@ -104,7 +105,7 @@ export function ToolErrorCardV2(props: ToolErrorCardV2Props) {
 
   const hasSuffix = createMemo(() => {
     const s = local.suffix
-    if (s == null) return false
+    if (Predicate.isNullish(s)) return false
     if (typeof s === "string") return s.length > 0
     return true
   })
@@ -117,7 +118,7 @@ export function ToolErrorCardV2(props: ToolErrorCardV2Props) {
       defaultOpen={local.defaultOpen}
       onOpenChange={local.onOpenChange}
       disabled={!hasSuffix()}
-      aria-busy={local.loading ? true : undefined}
+      {...(local.loading ? { "aria-busy": true } : {})}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
@@ -141,7 +142,7 @@ export function ToolErrorCardV2(props: ToolErrorCardV2Props) {
             >
               <a
                 data-slot="tool-error-card-subtitle"
-                href={local.subtitleHref!}
+                href={local.subtitleHref}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => e.stopPropagation()}
               >

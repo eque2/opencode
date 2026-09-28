@@ -3,6 +3,7 @@
 // Fetches session messages from the SDK and extracts user turn text for
 // the prompt history ring. Also finds the most recently used variant for
 // the current model so the footer can pre-select it.
+import { Effect, Option, Schema } from "effect"
 import { promptCopy, promptSame } from "./prompt.shared"
 import type { RunInput, RunPrompt } from "./types"
 
@@ -22,24 +23,22 @@ export type RunSession = {
   turns: Turn[]
 }
 
+const parseUrl = Option.liftThrowable((url: string) => new URL(url))
+const decodeName = Option.liftThrowable(decodeURIComponent)
+
 function fileName(url: string, filename?: string) {
   if (filename) {
     return filename
   }
 
-  try {
-    const next = new URL(url)
-    if (next.protocol !== "file:") {
-      return url
-    }
-
-    const name = next.pathname.split("/").at(-1)
-    if (name) {
-      return decodeURIComponent(name)
-    }
-  } catch {}
-
-  return url
+  // A malformed URL or a malformed percent escape falls back to the raw URL.
+  return parseUrl(url).pipe(
+    Option.filter((next) => next.protocol === "file:"),
+    Option.flatMap((next) => Option.fromNullishOr(next.pathname.split("/").at(-1))),
+    Option.filter((name) => name.length > 0),
+    Option.flatMap((name) => decodeName(name)),
+    Option.getOrElse(() => url),
+  )
 }
 
 function fileSource(
@@ -61,7 +60,6 @@ function fileSource(
 }
 
 export function messagePrompt(msg: SessionMessages[number]): RunPrompt {
-  const parts: RunPrompt["parts"] = []
   let text = msg.parts
     .filter((part): part is Extract<SessionMessages[number]["parts"][number], { type: "text" }> => {
       return part.type === "text" && !part.synthetic
@@ -98,33 +96,37 @@ export function messagePrompt(msg: SessionMessages[number]): RunPrompt {
     return { start, end, value }
   }
 
-  for (const part of msg.parts) {
+  // Each step reads the spans that earlier parts claimed, so the parts map in order.
+  const parts = msg.parts.flatMap((part): RunPrompt["parts"] => {
     if (part.type === "file") {
       const next = part.source?.text ? structuredClone(part.source.text) : take("@" + fileName(part.url, part.filename))
       const span = next ?? add("@" + fileName(part.url, part.filename))
       used.push({ start: span.start, end: span.end })
-      parts.push({
-        type: "file",
-        mime: part.mime,
-        filename: part.filename,
-        url: part.url,
-        source: fileSource(part, span),
-      })
-      continue
+      return [
+        {
+          type: "file",
+          mime: part.mime,
+          filename: part.filename,
+          url: part.url,
+          source: fileSource(part, span),
+        },
+      ]
     }
 
     if (part.type !== "agent") {
-      continue
+      return []
     }
 
     const span = part.source ? structuredClone(part.source) : (take("@" + part.name) ?? add("@" + part.name))
     used.push({ start: span.start, end: span.end })
-    parts.push({
-      type: "agent",
-      name: part.name,
-      source: span,
-    })
-  }
+    return [
+      {
+        type: "agent",
+        name: part.name,
+        source: span,
+      },
+    ]
+  })
 
   return { text, parts }
 }
@@ -152,13 +154,26 @@ export function createSession(messages: SessionMessages): RunSession {
   }
 }
 
-export async function resolveSession(sdk: RunInput["sdk"], sessionID: string, limit = LIMIT): Promise<RunSession> {
-  const response = await sdk.session.messages({
-    sessionID,
-    limit,
+export class SessionReadError extends Schema.TaggedError<SessionReadError>()("SessionReadError", {
+  sessionID: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+export const resolveSession = Effect.fn("RunSession.resolveSession")(function* (
+  sdk: RunInput["sdk"],
+  sessionID: string,
+  limit: number = LIMIT,
+) {
+  const response = yield* Effect.tryPromise({
+    try: () =>
+      sdk.session.messages({
+        sessionID,
+        limit,
+      }),
+    catch: (cause) => new SessionReadError({ sessionID, cause }),
   })
   return createSession(response.data ?? [])
-}
+})
 
 export function sessionHistory(session: RunSession, limit = LIMIT): RunPrompt[] {
   const out: RunPrompt[] = []

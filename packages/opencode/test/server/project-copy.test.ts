@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import path from "path"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
@@ -35,20 +35,22 @@ function request(directory: string, url: string, init: RequestInit = {}) {
   return requestInDirectory(url, directory, init)
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
-  return response.json.pipe(Effect.map((value) => value as T))
+function json(response: HttpClientResponse.HttpClientResponse) {
+  return response.json
 }
 
-describe("project directories and copies endpoints", () => {
-  type ProjectDirectory = { directory: string; strategy?: string }
+const decodeProject = HttpClientResponse.schemaBodyJson(Schema.Struct({ id: Schema.String }))
+const decodeName = HttpClientResponse.schemaBodyJson(Schema.Struct({ name: Schema.String }))
+const decodeDirectory = HttpClientResponse.schemaBodyJson(Schema.Struct({ directory: Schema.String }))
 
+describe("project directories and copies endpoints", () => {
   it.instance(
     "lists directories and manages git worktree copies",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
         const current = yield* request(test.directory, "/project/current")
-        const projectID = (yield* json<{ id: string }>(current)).id
+        const projectID = (yield* decodeProject(current)).id
         const base = `/project/${projectID}`
         const copies = `/experimental/project/${projectID}/copy?location%5Bdirectory%5D=${encodeURIComponent(test.directory)}`
         const createdParent = path.join(test.directory, "..", path.basename(test.directory) + "-http-copy")
@@ -59,7 +61,7 @@ describe("project directories and copies endpoints", () => {
 
         const initial = yield* request(test.directory, `${base}/directories`)
         expect(initial.status).toBe(200)
-        expect(yield* json<ProjectDirectory[]>(initial)).toEqual([{ directory: test.directory }])
+        expect(yield* json(initial)).toEqual([{ directory: test.directory }])
 
         const generated = yield* request(test.directory, `/experimental/project/${projectID}/copy/generate-name`, {
           method: "POST",
@@ -67,7 +69,7 @@ describe("project directories and copies endpoints", () => {
           body: JSON.stringify({ context: undefined }),
         })
         expect(generated.status).toBe(200)
-        expect((yield* json<{ name: string }>(generated)).name).toBeString()
+        expect((yield* decodeName(generated)).name).toBeString()
 
         const create = yield* request(test.directory, copies, {
           method: "POST",
@@ -75,11 +77,11 @@ describe("project directories and copies endpoints", () => {
           body: JSON.stringify({ strategy: "git_worktree", directory: createdParent, name: "copy" }),
         })
         expect(create.status).toBe(200)
-        const created = yield* json<{ directory: string }>(create)
+        const created = yield* decodeDirectory(create)
         expect(created.directory).toBe(createdDirectory)
 
         const listed = yield* request(test.directory, `${base}/directories`)
-        expect(yield* json<ProjectDirectory[]>(listed)).toContainEqual({
+        expect(yield* json(listed)).toContainEqual({
           directory: created.directory,
           strategy: "git_worktree",
         })
@@ -92,7 +94,7 @@ describe("project directories and copies endpoints", () => {
           body: JSON.stringify({ directory: created.directory, force: false }),
         })
         expect(remove.status).toBe(400)
-        expect(yield* json<{ data: { forceRequired?: boolean } }>(remove)).toMatchObject({
+        expect(yield* json(remove)).toMatchObject({
           data: { forceRequired: true },
         })
 
@@ -117,7 +119,7 @@ describe("project directories and copies endpoints", () => {
         )
         expect(refresh.status).toBe(204)
         const refreshed = yield* request(test.directory, `${base}/directories`)
-        expect(yield* json<ProjectDirectory[]>(refreshed)).toEqual([
+        expect(yield* json(refreshed)).toEqual([
           { directory: externalDirectory, strategy: "git_worktree" },
           { directory: test.directory },
         ])

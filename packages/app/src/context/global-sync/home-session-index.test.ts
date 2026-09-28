@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@opencode-ai/sdk/v2/client"
+import { Effect, Option } from "effect"
 import {
   applyHomeSessionEvent,
   appendHomeSessionEvent,
   createHomeSessionIndexCache,
   HOME_V2_SESSION_PAGE_LIMIT,
+  type HomeSessionWire,
   loadHomeSessionIndex,
   homeSessionIndexSessions,
   homeSessionIndexRefresh,
@@ -30,55 +32,83 @@ const session = (input: {
   location: { directory: input.directory ?? "/project" },
 })
 
+const legacySession = (id: string): Session => ({
+  id,
+  slug: id,
+  projectID: "project",
+  directory: "/project",
+  title: id,
+  version: "",
+  time: { created: 1, updated: 1 },
+})
+
 describe("Home V2 session index", () => {
-  test("loads the Home index with one global V2 request", async () => {
-    const calls: unknown[] = []
-    const result = await loadHomeSessionIndex(async (input) => {
-      calls.push(input)
-      return { data: { data: [session({ id: "root" })], cursor: {} } }
-    })
+  test("loads the Home index with one global V2 request", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls: unknown[] = []
+        const result = yield* Effect.promise(() =>
+          loadHomeSessionIndex((input) =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                calls = [...calls, input]
+                return { data: { data: [session({ id: "root" })], cursor: {} } }
+              }),
+            ),
+          ),
+        )
 
-    expect(result.sessions).toHaveLength(1)
-    expect(calls).toEqual([{ limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }])
-  })
+        expect(result.sessions).toHaveLength(1)
+        expect(calls).toEqual([{ limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }])
+      }),
+    ))
 
-  test("loads subsequent pages until the session index is complete", async () => {
-    const calls: unknown[] = []
-    const controller = new AbortController()
-    const result = await loadHomeSessionIndex(
-      async (input, options) => {
-        calls.push({ input, signal: options.signal })
-        if (!("cursor" in input)) {
-          return {
-            data: {
-              data: Array.from({ length: HOME_V2_SESSION_PAGE_LIMIT }, (_, index) =>
-                session({ id: `page-1-${index}` }),
+  test("loads subsequent pages until the session index is complete", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls: unknown[] = []
+        const controller = new AbortController()
+        const result = yield* Effect.promise(() =>
+          loadHomeSessionIndex(
+            (input, options) =>
+              Effect.runPromise(
+                Effect.sync(() => {
+                  calls = [...calls, { input, signal: options.signal }]
+                  if (!("cursor" in input)) {
+                    return {
+                      data: {
+                        data: Array.from({ length: HOME_V2_SESSION_PAGE_LIMIT }, (_, index) =>
+                          session({ id: `page-1-${index}` }),
+                        ),
+                        cursor: { next: "next-page" },
+                      },
+                    }
+                  }
+                  return { data: { data: [session({ id: "page-2" })], cursor: {} } }
+                }),
               ),
-              cursor: { next: "next-page" },
-            },
-          }
-        }
-        return { data: { data: [session({ id: "page-2" })], cursor: {} } }
-      },
-      0,
-      controller.signal,
-    )
+            0,
+            controller.signal,
+          ),
+        )
 
-    expect(result.sessions).toHaveLength(HOME_V2_SESSION_PAGE_LIMIT + 1)
-    expect(calls).toEqual([
-      { input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }, signal: controller.signal },
-      {
-        input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc", cursor: "next-page" },
-        signal: controller.signal,
-      },
-    ])
-  })
+        expect(result.sessions).toHaveLength(HOME_V2_SESSION_PAGE_LIMIT + 1)
+        expect(calls).toEqual([
+          { input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }, signal: controller.signal },
+          {
+            input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc", cursor: "next-page" },
+            signal: controller.signal,
+          },
+        ])
+      }),
+    ))
 
   test("maps visible roots to Home session summaries", () => {
-    const activeNull = {
+    const activeNull: HomeSessionWire = {
       ...session({ id: "active-null", updated: 20 }),
+      // eslint-disable-next-line effect/no-null-use-option -- (b) the V2 server sends archived: null for an active session; this wire literal is the case under test
       time: { created: 1, updated: 20, archived: null },
-    } as unknown as SessionV2Info
+    }
     const result = parseHomeSessionIndex([
       session({ id: "root", updated: 30 }),
       activeNull,
@@ -98,7 +128,7 @@ describe("Home V2 session index", () => {
       }),
       expect.objectContaining({
         id: "active-null",
-        time: { created: 1, updated: 20, archived: null },
+        time: { created: 1, updated: 20 },
       }),
     ])
   })
@@ -126,7 +156,7 @@ describe("Home V2 session index", () => {
     expect(
       applyHomeSessionEvent(afterCreate, {
         type: "session.deleted",
-        properties: { sessionID: initial[0]!.id, info: initial[0]! },
+        properties: { sessionID: initial[0].id, info: initial[0] },
       }),
     ).toEqual([created])
   })
@@ -135,11 +165,11 @@ describe("Home V2 session index", () => {
     const initial = parseHomeSessionIndex([session({ id: "old" })])
     const stale = { ...initial[0], title: "stale" }
     const current = { ...initial[0], title: "current" }
-    const first = appendHomeSessionEvent(undefined, {
+    const first = appendHomeSessionEvent(Option.none(), {
       type: "session.updated",
       properties: { sessionID: stale.id, info: stale },
     })
-    const events = appendHomeSessionEvent(first, {
+    const events = appendHomeSessionEvent(Option.some(first), {
       type: "session.updated",
       properties: { sessionID: current.id, info: current },
     })
@@ -157,10 +187,7 @@ describe("Home V2 session index", () => {
   test("removes a session from the loaded Home index", () => {
     const queryClient = new QueryClient()
     const cache = createHomeSessionIndexCache(queryClient, "server")
-    const sessions = [
-      { id: "a", time: { created: 1, updated: 1 } },
-      { id: "b", time: { created: 1, updated: 1 } },
-    ] as Session[]
+    const sessions = [legacySession("a"), legacySession("b")]
     queryClient.setQueryData(cache.indexKey, { sessions, eventSequence: 0 })
 
     cache.remove("a")
@@ -172,14 +199,11 @@ describe("Home V2 session index", () => {
   test("keeps the session out of the Home list when the index is not mounted", () => {
     const queryClient = new QueryClient()
     const cache = createHomeSessionIndexCache(queryClient, "server")
-    const sessions = [
-      { id: "a", time: { created: 1, updated: 1 } },
-      { id: "b", time: { created: 1, updated: 1 } },
-    ] as Session[]
+    const sessions = [legacySession("a"), legacySession("b")]
 
     cache.remove("a")
 
     expect(queryClient.getQueryData(cache.indexKey)).toBeUndefined()
-    expect(cache.sessions({ sessions, eventSequence: 0 }, undefined).map((item) => item.id)).toEqual(["b"])
+    expect(cache.sessions({ sessions, eventSequence: 0 }).map((item) => item.id)).toEqual(["b"])
   })
 })

@@ -2,9 +2,14 @@ import { expect, test } from "bun:test"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { TerminalColors } from "@opentui/core"
-import { DEFAULT_THEMES, addTheme, allThemes, hasTheme, resolveTheme, terminalMode } from "../src/theme"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Effect, Option, Result } from "effect"
+import { DEFAULT_THEMES, addTheme, allThemes, hasTheme, isTheme, resolveTheme, terminalMode } from "../src/theme"
 import { discoverThemes } from "../src/context/theme"
 import { tmpdir } from "./fixture/fixture"
+
+const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
 
 test("addTheme writes into module theme store", () => {
   const name = `plugin-theme-${Date.now()}`
@@ -21,7 +26,7 @@ test("addTheme keeps first theme for duplicate names", () => {
 
   expect(addTheme(name, one)).toBe(true)
   expect(addTheme(name, two)).toBe(false)
-  expect(allThemes()[name]!.theme.primary).toBe("#101010")
+  expect(allThemes()[name].theme.primary).toBe("#101010")
 })
 
 test("addTheme ignores entries without a theme object", () => {
@@ -41,7 +46,41 @@ test("resolveTheme rejects circular color refs", () => {
   const item = structuredClone(DEFAULT_THEMES.opencode)
   item.defs = { ...item.defs, one: "two", two: "one" }
   item.theme.primary = "one"
-  expect(() => resolveTheme(item, "dark")).toThrow("Circular color reference")
+  const error = Result.getFailure(resolveTheme(item, "dark"))
+  expect(Option.map(error, (value) => value.message)).toEqual(
+    Option.some("Circular color reference: one -> two -> one"),
+  )
+})
+
+test("resolveTheme rejects missing color refs", () => {
+  const item = structuredClone(DEFAULT_THEMES.opencode)
+  item.theme.primary = "missing"
+  const error = Result.getFailure(resolveTheme(item, "dark"))
+  expect(Option.map(error, (value) => value.message)).toEqual(
+    Option.some('Color reference "missing" not found in defs or theme'),
+  )
+})
+
+test("resolveTheme rejects a theme without a required color", () => {
+  // A custom or plugin theme is unchecked JSON, so isTheme accepts it without the error color.
+  const partial: unknown = {
+    ...DEFAULT_THEMES.opencode,
+    theme: Object.fromEntries(Object.entries(DEFAULT_THEMES.opencode.theme).filter(([key]) => key !== "error")),
+  }
+  expect(isTheme(partial)).toBe(true)
+  const error = isTheme(partial) ? Result.getFailure(resolveTheme(partial, "dark")) : Option.none()
+  expect(Option.map(error, (value) => [value._tag, value.message])).toEqual(
+    Option.some(["TuiTheme.ColorMissingError", 'Required theme color "error" is missing']),
+  )
+})
+
+test("every bundled theme resolves in dark and light mode", () => {
+  const failures = Object.entries(DEFAULT_THEMES).flatMap(([name, theme]) =>
+    (["dark", "light"] as const).flatMap((mode) =>
+      Result.isFailure(resolveTheme(theme, mode)) ? [`${name} (${mode})`] : [],
+    ),
+  )
+  expect(failures).toEqual([])
 })
 
 function terminalColors(defaultBackground: string | null, palette: Array<string | null> = []): TerminalColors {
@@ -77,5 +116,6 @@ test("custom theme precedence follows directory order", async () => {
   await writeFile(path.join(global, "themes", "custom.json"), JSON.stringify({ source: "global" }))
   await writeFile(path.join(project, "themes", "custom.json"), JSON.stringify({ source: "project" }))
 
-  await expect(discoverThemes([global, project])).resolves.toEqual({ custom: { source: "project" } })
+  const themes = await Effect.runPromise(discoverThemes([global, project]).pipe(Effect.provide(filesystem)))
+  expect(themes).toEqual({ custom: { source: "project" } })
 })

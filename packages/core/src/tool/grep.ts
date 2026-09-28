@@ -1,7 +1,7 @@
 export * as GrepTool from "./grep"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import path from "path"
 import { makeLocationNode } from "../effect/app-node"
 import { FileSystem } from "../filesystem"
@@ -36,17 +36,14 @@ type ModelOutput = typeof Output.Encoded
 
 /** Format raw search matches into the familiar concise model output. */
 export const toModelOutput = (output: ModelOutput) => {
-  const lines = output.length === 0 ? ["No files found"] : [`Found ${output.length} matches`]
-  let current = ""
-  for (const match of output) {
-    if (current !== match.entry.path) {
-      if (current) lines.push("")
-      current = match.entry.path
-      lines.push(`${match.entry.path}:`)
-    }
-    lines.push(`  Line ${match.line}: ${match.text}`)
-  }
-  return lines.join("\n")
+  const header = output.length === 0 ? "No files found" : `Found ${output.length} matches`
+  const body = output.flatMap((match, index) => {
+    const line = `  Line ${match.line}: ${match.text}`
+    const previous = index === 0 ? "" : output[index - 1].entry.path
+    if (previous === match.entry.path) return [line]
+    return previous ? ["", `${match.entry.path}:`, line] : [`${match.entry.path}:`, line]
+  })
+  return [header, ...body].join("\n")
 }
 
 /** Grep leaf that defaults its filesystem root to the active Location. */
@@ -84,21 +81,22 @@ const layer = Layer.effectDiscard(
                 save: ["*"],
                 metadata: {
                   root: ".",
-                  path: input.path,
-                  include: input.include,
-                  limit: input.limit,
+                  ...(input.path === undefined ? {} : { path: input.path }),
+                  ...(input.include === undefined ? {} : { include: input.include }),
+                  ...(input.limit === undefined ? {} : { limit: input.limit }),
                 },
                 sessionID: context.sessionID,
                 agent: context.agent,
                 source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
               })
               const target = path.resolve(location.directory, input.path ?? ".")
-              const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(undefined)))
+              const info = yield* fs.stat(target).pipe(Effect.option)
+              const cwd = Option.exists(info, (stat) => stat.type === "Directory") ? target : path.dirname(target)
               return yield* ripgrep
                 .grep({
-                  cwd: info?.type === "Directory" ? target : path.dirname(target),
+                  cwd,
                   pattern: input.pattern,
-                  file: info?.type === "File" ? path.basename(target) : undefined,
+                  ...(Option.exists(info, (stat) => stat.type === "File") ? { file: path.basename(target) } : {}),
                   include: input.include,
                   limit: input.limit ?? Number.MAX_SAFE_INTEGER,
                 })
@@ -106,19 +104,16 @@ const layer = Layer.effectDiscard(
                   Effect.map((result) =>
                     result.map((match) =>
                       FileSystem.Match.make({
-                        ...match,
                         entry: FileSystem.Entry.make({
-                          ...match.entry,
                           path: RelativePath.make(
-                            path.relative(
-                              location.directory,
-                              path.resolve(
-                                info?.type === "Directory" ? target : path.dirname(target),
-                                match.entry.path,
-                              ),
-                            ),
+                            path.relative(location.directory, path.resolve(cwd, match.entry.path)),
                           ),
+                          type: match.entry.type,
                         }),
+                        line: match.line,
+                        offset: match.offset,
+                        text: match.text,
+                        submatches: match.submatches,
                       }),
                     ),
                   ),

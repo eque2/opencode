@@ -1,5 +1,5 @@
 import React from "react"
-import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion"
+import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from "remotion"
 
 // stats.opencode.ai design tokens (light theme)
 const c = {

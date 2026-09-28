@@ -1,4 +1,5 @@
 import { batch, createMemo, createRoot, onCleanup } from "solid-js"
+import { Array as Arr, DateTime, Option } from "effect"
 import { createStore, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useParams } from "@solidjs/router"
@@ -20,6 +21,10 @@ export type LineComment = {
 }
 
 type CommentFocus = { file: string; id: string }
+type CommentFocusKey = "focus" | "active"
+type CommentFocusUpdate = CommentFocus | null | ((value: Option.Option<CommentFocus>) => Option.Option<CommentFocus>)
+
+const sameFocus = Option.makeEquivalence((a: CommentFocus, b: CommentFocus) => a.file === b.file && a.id === b.id)
 
 const WORKSPACE_KEY = "__workspace__"
 const MAX_COMMENT_SESSIONS = 20
@@ -66,23 +71,14 @@ function cloneComment(comment: LineComment): LineComment {
   }
 }
 
-function group(comments: LineComment[]) {
-  return comments.reduce<Record<string, LineComment[]>>((acc, comment) => {
-    const list = acc[comment.file]
-    const next = cloneComment(comment)
-    if (list) {
-      list.push(next)
-      return acc
-    }
-    acc[comment.file] = [next]
-    return acc
-  }, {})
+function group(comments: LineComment[]): Record<string, LineComment[]> {
+  return Arr.groupBy(comments.map(cloneComment), (comment) => comment.file)
 }
 
 function createCommentSessionState(store: Store<CommentStore>, setStore: SetStoreFunction<CommentStore>) {
   const [state, setState] = createStore({
-    focus: null as CommentFocus | null,
-    active: null as CommentFocus | null,
+    focus: Option.none<CommentFocus>(),
+    active: Option.none<CommentFocus>(),
   })
 
   // Reuse the previous array when contents are unchanged so consumers keep a stable
@@ -95,23 +91,34 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
     return next
   }
 
-  const setRef = (
-    key: "focus" | "active",
-    value: CommentFocus | null | ((value: CommentFocus | null) => CommentFocus | null),
-  ) => setState(key, value)
+  // Keep the stored Option when the file and id do not change, so readers of
+  // focus() and active() do not re-run for an equal value.
+  const updateRef = (
+    key: CommentFocusKey,
+    update: (value: Option.Option<CommentFocus>) => Option.Option<CommentFocus>,
+  ) =>
+    setState(key, (current) => {
+      const next = update(current)
+      return sameFocus(current, next) ? current : next
+    })
 
-  const setFocus = (value: CommentFocus | null | ((value: CommentFocus | null) => CommentFocus | null)) =>
-    setRef("focus", value)
+  const clearRef = (key: CommentFocusKey) => updateRef(key, () => Option.none())
 
-  const setActive = (value: CommentFocus | null | ((value: CommentFocus | null) => CommentFocus | null)) =>
-    setRef("active", value)
+  // The nullable value form is kept for the prompt input and file tab callers.
+  // The updater form reads and returns the stored Option.
+  const setRef = (key: CommentFocusKey, value: CommentFocusUpdate) =>
+    updateRef(key, (current) => (typeof value === "function" ? value(current) : Option.fromNullOr(value)))
+
+  const setFocus = (value: CommentFocusUpdate) => setRef("focus", value)
+
+  const setActive = (value: CommentFocusUpdate) => setRef("active", value)
 
   const list = (file: string) => store.comments[file] ?? []
 
   const add = (input: Omit<LineComment, "id" | "time">) => {
     const next: LineComment = {
       id: uuid(),
-      time: Date.now(),
+      time: DateTime.toEpochMillis(DateTime.nowUnsafe()),
       ...input,
       selection: cloneSelection(input.selection),
     }
@@ -127,7 +134,7 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
   const remove = (file: string, id: string) => {
     batch(() => {
       setStore("comments", file, (items) => (items ?? []).filter((item) => item.id !== id))
-      setFocus((current) => (current?.file === file && current.id === id ? null : current))
+      updateRef("focus", (current) => Option.filter(current, (focus) => focus.file !== file || focus.id !== id))
     })
   }
 
@@ -143,16 +150,16 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
   const replace = (comments: LineComment[]) => {
     batch(() => {
       setStore("comments", reconcile(group(comments)))
-      setFocus(null)
-      setActive(null)
+      clearRef("focus")
+      clearRef("active")
     })
   }
 
   const clear = () => {
     batch(() => {
       setStore("comments", reconcile({}))
-      setFocus(null)
-      setActive(null)
+      clearRef("focus")
+      clearRef("active")
     })
   }
 
@@ -164,12 +171,12 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
     update,
     replace,
     clear,
-    focus: () => state.focus,
+    focus: () => Option.getOrNull(state.focus),
     setFocus,
-    clearFocus: () => setRef("focus", null),
-    active: () => state.active,
+    clearFocus: () => clearRef("focus"),
+    active: () => Option.getOrNull(state.active),
     setActive,
-    clearActive: () => setRef("active", null),
+    clearActive: () => clearRef("active"),
   }
 }
 
@@ -178,11 +185,11 @@ export function createCommentSessionForTest(comments: Record<string, LineComment
   return createCommentSessionState(store, setStore)
 }
 
-function createCommentSession(scope: ServerScope, dir: string, id: string | undefined) {
-  const legacy = `${dir}/comments${id ? "/" + id : ""}.v1`
+function createCommentSession(scope: ServerScope, dir: string, id: Option.Option<string>) {
+  const legacy = `${dir}/comments${Option.match(id, { onNone: () => "", onSome: (value) => "/" + value })}.v1`
 
   const [store, setStore, _, ready] = persisted(
-    Persist.serverScoped(scope, dir, id, "comments", [legacy]),
+    Persist.serverScoped(scope, dir, Option.getOrUndefined(id), "comments", [legacy]),
     createStore<CommentStore>({
       comments: {},
     }),
@@ -221,7 +228,7 @@ export const { use: useComments, provider: CommentsProvider } = createSimpleCont
           value: createCommentSession(
             serverSDK().scope,
             decoded.dir,
-            decoded.id === WORKSPACE_KEY ? undefined : decoded.id,
+            Option.liftPredicate(decoded.id, (id) => id.length > 0 && id !== WORKSPACE_KEY),
           ),
           dispose,
         }))

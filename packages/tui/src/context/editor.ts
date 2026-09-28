@@ -1,30 +1,39 @@
 import { onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Option, Schema, SchemaGetter } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Config, Duration, Effect, Fiber, MutableHashMap, MutableHashSet, Option, Schema, SchemaGetter } from "effect"
 import { isRecord } from "../util/record"
 import { useTuiPaths } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { editorIntegration } from "../editor"
+import { isZedTerminal } from "../editor-zed"
 
 const MCP_PROTOCOL_VERSION = "2025-11-25"
 
 const JsonRpcMessageSchema = Schema.Struct({
   id: Schema.optional(Schema.Union([Schema.Number, Schema.String, Schema.Null])),
   method: Schema.optional(Schema.String),
-  params: Schema.optional(Schema.Unknown),
-  result: Schema.optional(Schema.Unknown),
+  params: Schema.optional(Schema.Json),
+  result: Schema.optional(Schema.Json),
   error: Schema.optional(
     Schema.Struct({
       code: Schema.optional(Schema.Number),
       message: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "TuiEditorContext.JsonRpcMessage" })
+
+const JsonRpcOutgoingSchema = Schema.Struct({
+  jsonrpc: Schema.Literal("2.0"),
+  id: Schema.optional(Schema.Number),
+  method: Schema.String,
+  params: Schema.optional(Schema.Json),
+}).annotate({ identifier: "TuiEditorContext.JsonRpcOutgoing" })
 
 const PositionSchema = Schema.Struct({
   line: Schema.Number,
   character: Schema.Number,
-})
+}).annotate({ identifier: "TuiEditorContext.Position" })
 
 const EditorSelectionRangeSchema = Schema.Struct({
   text: Schema.String,
@@ -32,13 +41,13 @@ const EditorSelectionRangeSchema = Schema.Struct({
     start: PositionSchema,
     end: PositionSchema,
   }),
-})
+}).annotate({ identifier: "TuiEditorContext.SelectionRange" })
 
 const EditorSelectionRangesSchema = Schema.Struct({
   filePath: Schema.String,
   source: Schema.optional(Schema.Literals(["websocket", "zed"])),
   ranges: Schema.mutable(Schema.Array(EditorSelectionRangeSchema).check(Schema.isMinLength(1))),
-})
+}).annotate({ identifier: "TuiEditorContext.SelectionRanges" })
 
 const EditorSelectionSchema = Schema.Union([
   EditorSelectionRangesSchema,
@@ -75,7 +84,7 @@ const EditorMentionSchema = Schema.Struct({
   filePath: Schema.String,
   lineStart: Schema.Number,
   lineEnd: Schema.Number,
-})
+}).annotate({ identifier: "TuiEditorContext.Mention" })
 
 const EditorServerInfoSchema = Schema.Struct({
   protocolVersion: Schema.optional(Schema.String),
@@ -85,67 +94,89 @@ const EditorServerInfoSchema = Schema.Struct({
       version: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "TuiEditorContext.ServerInfo" })
 
-const decodeJsonRpcMessage = Schema.decodeUnknownOption(JsonRpcMessageSchema)
+const decodeJsonRpcMessage = Schema.decodeUnknownOption(Schema.fromJsonString(JsonRpcMessageSchema))
+const encodeJsonRpcOutgoing = Schema.encodeSync(Schema.fromJsonString(JsonRpcOutgoingSchema))
 const decodeEditorSelection = Schema.decodeUnknownOption(EditorSelectionSchema)
 const decodeEditorMention = Schema.decodeUnknownOption(EditorMentionSchema)
 const decodeEditorServerInfo = Schema.decodeUnknownOption(EditorServerInfoSchema)
 
 type JsonRpcMessage = Schema.Schema.Type<typeof JsonRpcMessageSchema>
+type JsonRpcOutgoing = Schema.Schema.Type<typeof JsonRpcOutgoingSchema>
 export type EditorSelection = Schema.Schema.Type<typeof EditorSelectionSchema>
 export type EditorMention = Schema.Schema.Type<typeof EditorMentionSchema>
 export type EditorLabelState = "pending" | "sent" | "none"
 type EditorServerInfo = Schema.Schema.Type<typeof EditorServerInfoSchema>
 
-type EditorConnection = {
+export type EditorConnection = {
   url: string
   authToken?: string
   source: string
 }
 
 export type EditorIntegration = Readonly<{
-  connection?(directory: string): EditorConnection | undefined
-  selection?(directory: string): Promise<unknown>
+  /** Finds the editor WebSocket for a directory. None means no editor serves it. */
+  connection?(directory: string): Effect.Effect<Option.Option<EditorConnection>>
+  /** Reads the editor selection for a directory, for example from the Zed database. A failure keeps the last selection. */
+  selection?(directory: string): Effect.Effect<unknown, unknown>
 }>
+
+// An empty variable counts as not set, as the former `||` chain did.
+const setVariable = (name: string) =>
+  Config.option(Config.String(name)).pipe(Config.map(Option.filter((value: string) => value.length > 0)))
+
+// CLAUDE_CODE_SSE_PORT wins over OPENCODE_EDITOR_SSE_PORT. A value that does not parse to a port is ignored.
+const EditorPortEnv = Config.all([setVariable("CLAUDE_CODE_SSE_PORT"), setVariable("OPENCODE_EDITOR_SSE_PORT")]).pipe(
+  Config.map(([claude, opencode]) => Option.flatMap(Option.orElse(claude, () => opencode), parsePort)),
+)
 
 export const { use: useEditorContext, provider: EditorContextProvider } = createSimpleContext({
   name: "EditorContext",
   init: (props: { integration?: EditorIntegration; WebSocketImpl?: typeof WebSocket }) => {
     const paths = useTuiPaths()
     const editor = props.integration ?? editorIntegration
-    const value = process.env.CLAUDE_CODE_SSE_PORT || process.env.OPENCODE_EDITOR_SSE_PORT
-    const parsedPort = value ? Number.parseInt(value, 10) : undefined
-    const port =
-      parsedPort && Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : undefined
-    const zedTerminal = process.env.ZED_TERM === "true" || process.env.TERM_PROGRAM?.toLowerCase() === "zed"
-    const mentionListeners = new Set<(mention: EditorMention) => void>()
+    const mentionListeners = MutableHashSet.empty<(mention: EditorMention) => void>()
     const WebSocketImpl = props.WebSocketImpl ?? WebSocket
     const [store, setStore] = createStore<{
       status: "disabled" | "connecting" | "connected"
-      selection: EditorSelection | undefined
+      selection: Option.Option<EditorSelection>
       selectionSent: boolean
-      server: EditorServerInfo | undefined
+      server: Option.Option<EditorServerInfo>
+      // The configured editor port and the Zed terminal flag. The provider reads both from the environment on mount.
+      port: Option.Option<number>
+      zedTerminal: boolean
+      // Whether the last connection attempt found an editor, or can read the Zed selection.
+      enabled: boolean
     }>({
       status: "disabled",
-      selection: undefined,
+      selection: Option.none(),
       selectionSent: false,
-      server: undefined,
+      server: Option.none(),
+      port: Option.none(),
+      zedTerminal: false,
+      enabled: false,
     })
 
-    let socket: WebSocket | undefined
+    let socket: Option.Option<WebSocket> = Option.none()
     let closed = false
-    let reconnect: ReturnType<typeof setTimeout> | undefined
+    // The fiber that connects, or that waits to connect again. A new connection interrupts it, as
+    // clearTimeout cancelled the former reconnect timer.
+    let connecting: Option.Option<Fiber.Fiber<void>> = Option.none()
     let attempt = 0
     let requestID = 0
-    let zedSelection: Promise<void> | undefined
-    let lastZedSelectionKey: string | undefined
+    // True while a Zed selection read runs, so that two reads do not overlap.
+    let zedSelectionRunning = false
+    let lastZedSelectionKey: Option.Option<string> = Option.none()
     let directory = paths.cwd
     let preserveSelectionOnReconnect = false
-    const pending = new Map<number, string>()
+    // The method of each request that waits for its response, by request id.
+    const pending = MutableHashMap.empty<number, string>()
 
-    const setSelection = (selection: EditorSelection | undefined) => {
-      const changed = editorSelectionKey(selection) !== editorSelectionKey(store.selection)
+    const isCurrentSocket = (candidate: WebSocket) => Option.exists(socket, (current) => current === candidate)
+
+    const setSelection = (selection: Option.Option<EditorSelection>) => {
+      const changed = selectionKey(selection) !== selectionKey(store.selection)
       setStore("selection", selection)
       if (changed) setStore("selectionSent", false)
     }
@@ -155,67 +186,57 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
         preserveSelectionOnReconnect = false
         return
       }
-      if (options?.resetZedSelectionKey) lastZedSelectionKey = undefined
-      setSelection(undefined)
+      if (options?.resetZedSelectionKey) lastZedSelectionKey = Option.none()
+      setSelection(Option.none())
     }
 
-    const send = (payload: JsonRpcMessage) => {
-      if (!socket || socket.readyState !== 1) return
-      socket.send(JSON.stringify({ jsonrpc: "2.0", ...payload }))
+    const send = (payload: Omit<JsonRpcOutgoing, "jsonrpc">) => {
+      const current = socket
+      if (Option.isNone(current) || current.value.readyState !== 1) return
+      current.value.send(encodeJsonRpcOutgoing({ jsonrpc: "2.0", ...payload }))
     }
 
-    const request = (method: string, params?: unknown) => {
+    const request = (method: string, params: Schema.Json) => {
       requestID += 1
-      pending.set(requestID, method)
+      MutableHashMap.set(pending, requestID, method)
       send({ id: requestID, method, params })
     }
 
-    const connect = () => {
-      if (closed) return
+    const applyZedSelection = (result: unknown) => {
+      if (closed || Option.isSome(socket)) return
+      if (!isRecord(result) || result.type === "unavailable") return
+      const selection = result.type === "selection" ? decodeEditorSelection(result.selection) : Option.none()
+      const key = selectionKey(selection)
+      if (Option.contains(lastZedSelectionKey, key)) return
+      lastZedSelectionKey = Option.some(key)
+      setSelection(selection)
+      setStore("status", Option.isSome(selection) ? "connected" : "disabled")
+    }
 
-      const connection = resolveEditorConnection(directory, port, editor.connection)
-      if (!connection) {
-        if (!zedTerminal) {
-          setStore("status", "disabled")
-          scheduleReconnect()
-          return
-        }
-        if (!editor.selection) {
-          setStore("status", "disabled")
-          scheduleReconnect()
-          return
-        }
+    const readZedSelection = () => {
+      if (zedSelectionRunning || !editor.selection) return
+      zedSelectionRunning = true
+      Effect.runFork(
+        editor.selection(directory).pipe(
+          Effect.tap((result) => Effect.sync(() => applyZedSelection(result))),
+          // Keep the last known Zed selection for transient polling failures.
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              zedSelectionRunning = false
+            }),
+          ),
+        ),
+      )
+    }
 
-        zedSelection ??= editor
-          .selection(directory)
-          .then((result) => {
-            if (closed || socket) return
-            if (!isRecord(result) || result.type === "unavailable") return
-            const decoded = result.type === "selection" ? decodeEditorSelection(result.selection) : Option.none()
-            const selection = Option.getOrUndefined(decoded)
-            const key = editorSelectionKey(selection)
-            if (key !== lastZedSelectionKey) {
-              lastZedSelectionKey = key
-              setSelection(selection)
-              setStore("status", selection ? "connected" : "disabled")
-            }
-          })
-          .catch(() => {
-            // Keep the last known Zed selection for transient polling failures.
-          })
-          .finally(() => {
-            zedSelection = undefined
-          })
-        scheduleZedPoll()
-        return
-      }
-
+    const openSocket = (connection: EditorConnection) => {
       setStore("status", "connecting")
       const current = openEditorSocket(connection, WebSocketImpl)
-      socket = current
+      socket = Option.some(current)
 
       current.addEventListener("open", () => {
-        if (socket !== current) {
+        if (!isCurrentSocket(current)) {
           current.close()
           return
         }
@@ -230,61 +251,94 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       })
 
       current.addEventListener("message", (event) => {
-        const message = parseMessage(event.data)
-        if (!message) return
+        const parsed = parseMessage(event.data)
+        if (Option.isNone(parsed)) return
+        const message = parsed.value
 
         const selection = message.method === "selection_changed" ? decodeEditorSelection(message.params) : Option.none()
         if (Option.isSome(selection)) {
-          setSelection({ ...selection.value, source: "websocket" })
+          setSelection(Option.some({ ...selection.value, source: "websocket" }))
           return
         }
 
         const mention = message.method === "at_mentioned" ? decodeEditorMention(message.params) : Option.none()
         if (Option.isSome(mention)) {
-          mentionListeners.forEach((listener) => listener(mention.value))
+          for (const listener of mentionListeners) listener(mention.value)
           return
         }
 
         if (typeof message.id !== "number") return
 
-        const method = pending.get(message.id)
-        if (!method) return
+        const method = MutableHashMap.get(pending, message.id)
+        if (Option.isNone(method)) return
 
-        pending.delete(message.id)
+        MutableHashMap.remove(pending, message.id)
         if (message.error) return
 
-        const initialize = method === "initialize" ? decodeEditorServerInfo(message.result) : Option.none()
+        const initialize = method.value === "initialize" ? decodeEditorServerInfo(message.result) : Option.none()
         if (Option.isSome(initialize)) {
-          setStore("server", initialize.value)
+          setStore("server", initialize)
           send({ method: "notifications/initialized" })
           return
         }
       })
 
       current.addEventListener("close", () => {
-        if (socket !== current) return
+        if (!isCurrentSocket(current)) return
 
-        socket = undefined
-        pending.clear()
+        socket = Option.none()
+        MutableHashMap.clear(pending)
         if (closed) return
 
         setStore("status", "connecting")
-        scheduleReconnect()
+        runConnect(Effect.sleep(nextReconnectDelay()).pipe(Effect.andThen(connectUntilOpen)))
       })
     }
 
-    const scheduleReconnect = () => {
-      if (closed) return
-      if (reconnect) clearTimeout(reconnect)
+    // Backs off 1, 2, 4 and 8 seconds, then 10 seconds, until a socket opens.
+    const nextReconnectDelay = () => {
       attempt += 1
-      const delay = Math.min(1000 * 2 ** (attempt - 1), 10_000)
-      reconnect = setTimeout(connect, delay)
+      return Duration.millis(Math.min(1000 * 2 ** (attempt - 1), 10_000))
     }
 
-    const scheduleZedPoll = () => {
-      if (closed) return
-      if (reconnect) clearTimeout(reconnect)
-      reconnect = setTimeout(connect, 1000)
+    // Tries once to reach the editor. The result is the delay before the next try, or none when a socket
+    // holds the connection. In a Zed terminal with no socket, each try reads the Zed selection.
+    const connectOnce = Effect.gen(function* () {
+      const connection = yield* resolveEditorConnection(directory, store.port, editor)
+      setStore("enabled", Option.isSome(connection) || (store.zedTerminal && Boolean(editor.selection)))
+      if (Option.isSome(connection)) {
+        openSocket(connection.value)
+        return Option.none<Duration.Duration>()
+      }
+      if (!store.zedTerminal || !editor.selection) {
+        setStore("status", "disabled")
+        return Option.some(nextReconnectDelay())
+      }
+      readZedSelection()
+      return Option.some(Duration.seconds(1))
+    })
+
+    // Connects, then tries again after each delay until a socket holds the connection or the context closes.
+    const connectUntilOpen: Effect.Effect<void> = Effect.suspend(() => {
+      if (closed) return Effect.void
+      return connectOnce.pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (delay) => Effect.sleep(delay).pipe(Effect.andThen(connectUntilOpen)),
+          }),
+        ),
+      )
+    })
+
+    const cancelConnect = () => {
+      if (Option.isSome(connecting)) Effect.runFork(Fiber.interrupt(connecting.value))
+      connecting = Option.none()
+    }
+
+    const runConnect = (effect: Effect.Effect<void>) => {
+      cancelConnect()
+      connecting = Option.some(Effect.runFork(effect))
     }
 
     const reconnectWithDirectory = (nextDirectory?: string) => {
@@ -295,61 +349,69 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
       directory = resolved
       attempt = 0
-      pending.clear()
-      if (reconnect) clearTimeout(reconnect)
-      reconnect = undefined
-      if (socket) {
-        const current = socket
-        socket = undefined
+      MutableHashMap.clear(pending)
+      cancelConnect()
+      if (Option.isSome(socket)) {
+        const current = socket.value
+        socket = Option.none()
         current.close()
       }
       setStore("status", "disabled")
-      setStore("server", undefined)
-      connect()
+      setStore("server", Option.none())
+      runConnect(connectUntilOpen)
     }
 
     onMount(() => {
-      connect()
+      runConnect(
+        Effect.gen(function* () {
+          const port = yield* readEnvSnapshot(EditorPortEnv)
+          const zedTerminal = yield* isZedTerminal()
+          setStore({ port, zedTerminal })
+          yield* connectUntilOpen
+        }),
+      )
 
       onCleanup(() => {
         closed = true
-        if (reconnect) clearTimeout(reconnect)
-        socket?.close()
+        cancelConnect()
+        if (Option.isSome(socket)) socket.value.close()
       })
     })
 
     return {
       enabled() {
-        return Boolean(resolveEditorConnection(directory, port, editor.connection) || (zedTerminal && editor.selection))
+        return store.enabled
       },
       connected() {
         return store.status === "connected"
       },
       selection() {
-        return store.selection
+        return Option.getOrUndefined(store.selection)
       },
       clearSelection() {
-        lastZedSelectionKey = undefined
-        zedSelection = undefined
-        setSelection(undefined)
+        lastZedSelectionKey = Option.none()
+        zedSelectionRunning = false
+        setSelection(Option.none())
       },
       preserveSelectionFromNewSession() {
         preserveSelectionOnReconnect = true
       },
       markSelectionSent() {
-        if (!store.selection) return
+        if (Option.isNone(store.selection)) return
         setStore("selectionSent", true)
       },
       labelState(): EditorLabelState {
-        if (!store.selection) return "none"
+        if (Option.isNone(store.selection)) return "none"
         return store.selectionSent ? "sent" : "pending"
       },
       onMention(listener: (mention: EditorMention) => void) {
-        mentionListeners.add(listener)
-        return () => mentionListeners.delete(listener)
+        MutableHashSet.add(mentionListeners, listener)
+        return () => {
+          MutableHashSet.remove(mentionListeners, listener)
+        }
       },
       server() {
-        return store.server
+        return Option.getOrUndefined(store.server)
       },
       reconnect(directory?: string) {
         reconnectWithDirectory(directory)
@@ -358,26 +420,37 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
   },
 })
 
-function resolveEditorConnection(
-  directory: string,
-  port: number | undefined,
-  discover: ((directory: string) => EditorConnection | undefined) | undefined,
-): EditorConnection | undefined {
-  if (port) {
-    return {
-      url: `ws://127.0.0.1:${port}`,
-      source: `env:${port}`,
-    }
-  }
-
-  return discover?.(directory)
+function parsePort(value: string): Option.Option<number> {
+  const port = Number.parseInt(value, 10)
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? Option.some(port) : Option.none()
 }
 
+// A configured port wins over the integration's lookup.
+function resolveEditorConnection(
+  directory: string,
+  port: Option.Option<number>,
+  editor: EditorIntegration,
+): Effect.Effect<Option.Option<EditorConnection>> {
+  if (Option.isSome(port)) {
+    return Effect.succeedSome({
+      url: `ws://127.0.0.1:${port.value}`,
+      source: `env:${port.value}`,
+    })
+  }
+
+  return editor.connection ? editor.connection(directory) : Effect.succeedNone
+}
+
+/** A key that differs when the file, a range or its text differs. An empty key means no selection. */
 export function editorSelectionKey(selection: EditorSelection | undefined) {
-  if (!selection) return ""
+  return selectionKey(Option.fromNullishOr(selection))
+}
+
+function selectionKey(selection: Option.Option<EditorSelection>) {
+  if (Option.isNone(selection)) return ""
   return [
-    selection.filePath,
-    ...selection.ranges.flatMap((range) => [
+    selection.value.filePath,
+    ...selection.value.ranges.flatMap((range) => [
       range.selection.start.line,
       range.selection.start.character,
       range.selection.end.line,
@@ -387,22 +460,23 @@ export function editorSelectionKey(selection: EditorSelection | undefined) {
   ].join("\0")
 }
 
+// Bun's WebSocket constructor takes Bun.WebSocketOptions, which carry request headers. This package loads
+// lib.dom, so bun-types falls back to the lib.dom constructor type, which declares only the protocols argument.
+type HeaderWebSocketConstructor = new (url: string, options?: Bun.WebSocketOptions) => WebSocket
+
 function openEditorSocket(connection: EditorConnection, WebSocketImpl: typeof WebSocket) {
   if (!connection.authToken) return new WebSocketImpl(connection.url)
 
-  return new WebSocketImpl(connection.url, {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) bun-types WebSocket: with lib.dom loaded, the constructor type omits Bun's (url, Bun.WebSocketOptions) overload, which Bun accepts at run time
+  const HeaderWebSocket = WebSocketImpl as HeaderWebSocketConstructor
+  return new HeaderWebSocket(connection.url, {
     headers: {
       "x-claude-code-ide-authorization": connection.authToken,
     },
-  } as any)
+  })
 }
 
-function parseMessage(value: unknown) {
-  if (typeof value !== "string") return
-
-  try {
-    return Option.getOrUndefined(decodeJsonRpcMessage(JSON.parse(value)))
-  } catch {
-    return
-  }
+// A text frame that is not JSON, or JSON that is not a JSON-RPC message, decodes to none.
+function parseMessage(value: unknown): Option.Option<JsonRpcMessage> {
+  return typeof value === "string" ? decodeJsonRpcMessage(value) : Option.none()
 }

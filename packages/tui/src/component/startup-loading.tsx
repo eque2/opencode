@@ -1,3 +1,4 @@
+import { DateTime, Effect, Fiber, Option } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { useTheme } from "../context/theme"
 import { Spinner } from "./spinner"
@@ -6,49 +7,66 @@ export function StartupLoading(props: { ready: () => boolean }) {
   const theme = useTheme().theme
   const [show, setShow] = createSignal(false)
   const text = createMemo(() => (props.ready() ? "Finishing startup…" : "Loading plugins…"))
-  let wait: NodeJS.Timeout | undefined
-  let hold: NodeJS.Timeout | undefined
+  // The pending "show after 500 ms" and "hide after the minimum display time" delays.
+  let wait: Option.Option<Fiber.Fiber<void>> = Option.none()
+  let hold: Option.Option<Fiber.Fiber<void>> = Option.none()
   let stamp = 0
+
+  const interrupt = (fiber: Option.Option<Fiber.Fiber<void>>) => {
+    if (Option.isSome(fiber)) Effect.runFork(Fiber.interrupt(fiber.value))
+  }
 
   createEffect(() => {
     if (props.ready()) {
-      if (wait) {
-        clearTimeout(wait)
-        wait = undefined
-      }
+      interrupt(wait)
+      wait = Option.none()
       if (!show()) return
-      if (hold) return
+      if (Option.isSome(hold)) return
 
-      const left = 3000 - (Date.now() - stamp)
+      const left = 3000 - (DateTime.toEpochMillis(DateTime.nowUnsafe()) - stamp)
       if (left <= 0) {
         setShow(false)
         return
       }
 
-      hold = setTimeout(() => {
-        hold = undefined
-        setShow(false)
-      }, left).unref()
+      hold = Option.some(
+        Effect.runFork(
+          Effect.sleep(left).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                hold = Option.none()
+                setShow(false)
+              }),
+            ),
+          ),
+        ),
+      )
       return
     }
 
-    if (hold) {
-      clearTimeout(hold)
-      hold = undefined
-    }
+    interrupt(hold)
+    hold = Option.none()
     if (show()) return
-    if (wait) return
+    if (Option.isSome(wait)) return
 
-    wait = setTimeout(() => {
-      wait = undefined
-      stamp = Date.now()
-      setShow(true)
-    }, 500).unref()
+    wait = Option.some(
+      Effect.runFork(
+        Effect.sleep("500 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              wait = Option.none()
+              stamp = DateTime.toEpochMillis(DateTime.nowUnsafe())
+              setShow(true)
+            }),
+          ),
+        ),
+      ),
+    )
   })
 
   onCleanup(() => {
-    if (wait) clearTimeout(wait)
-    if (hold) clearTimeout(hold)
+    interrupt(wait)
+    interrupt(hold)
   })
 
   return (

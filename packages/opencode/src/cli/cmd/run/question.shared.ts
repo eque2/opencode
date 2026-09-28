@@ -13,6 +13,7 @@
 //
 // Custom answers: if a question has custom=true, an extra "Type your own
 // answer" option appears. Selecting it enters editing mode with a text field.
+import { Array as Arr } from "effect"
 import type { QuestionInfo, QuestionRequest } from "@opencode-ai/sdk/v2"
 import type { QuestionReject, QuestionReply } from "./types"
 
@@ -193,15 +194,9 @@ function questionPick(
 }
 
 function questionToggle(state: QuestionBodyState, answer: string): QuestionBodyState {
-  const list = [...(state.answers[state.tab] ?? [])]
+  const list = state.answers[state.tab] ?? []
   const idx = list.indexOf(answer)
-  if (idx === -1) {
-    list.push(answer)
-  } else {
-    list.splice(idx, 1)
-  }
-
-  return storeAnswers(state, state.tab, list)
+  return storeAnswers(state, state.tab, idx === -1 ? Arr.append(list, answer) : Arr.remove(list, idx))
 }
 
 export function questionMove(state: QuestionBodyState, request: QuestionRequest, dir: -1 | 1): QuestionBodyState {
@@ -284,17 +279,10 @@ export function questionSave(state: QuestionBodyState, request: QuestionRequest)
   }
 
   if (info.multiple) {
-    const answers = [...(state.answers[state.tab] ?? [])]
-    if (prev) {
-      const idx = answers.indexOf(prev)
-      if (idx !== -1) {
-        answers.splice(idx, 1)
-      }
-    }
-
-    if (!answers.includes(value)) {
-      answers.push(value)
-    }
+    const current = state.answers[state.tab] ?? []
+    // Arr.remove returns a copy when prev is absent (index -1).
+    const kept = prev ? Arr.remove(current, current.indexOf(prev)) : current
+    const answers = kept.includes(value) ? kept : Arr.append(kept, value)
 
     const next = questionStoreCustom(state, state.tab, value)
     return {

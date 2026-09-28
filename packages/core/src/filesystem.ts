@@ -12,7 +12,7 @@ export { Entry, Match, Submatch } from "@opencode-ai/schema/filesystem"
 
 export const ReadInput = Schema.Struct({
   path: RelativePath,
-})
+}).annotate({ identifier: "FileSystem.ReadInput" })
 export type ReadInput = typeof ReadInput.Type
 
 export const Content = Schema.Struct({
@@ -26,7 +26,7 @@ export type Content = typeof Content.Type
 
 export const ListInput = Schema.Struct({
   path: RelativePath.pipe(Schema.optional),
-})
+}).annotate({ identifier: "FileSystem.ListInput" })
 export type ListInput = typeof ListInput.Type
 
 export { FindInput }

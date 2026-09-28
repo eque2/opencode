@@ -114,7 +114,7 @@ test.describe("regression: session timeline local row state", () => {
     await expectExpanded(wrapper, true)
 
     await wrapper.evaluate((element) => {
-      ;(element as HTMLElement).dataset.regressionMarker = "before-stream"
+      element.dataset.regressionMarker = "before-stream"
     })
     await wrapper.locator('[data-slot="collapsible-trigger"]').first().click()
     await expectExpanded(wrapper, false)
@@ -223,7 +223,6 @@ test.describe("regression: session timeline local row state", () => {
     await expectSessionTitle(page, title)
 
     const wrapper = page.locator(`[data-timeline-part-id="${editPartID}"]`).first()
-    const trigger = wrapper.locator('[data-slot="collapsible-trigger"]').first()
     const diff = wrapper.locator('[data-component="edit-content"]').first()
     await expectAppVisible(diff)
     await expect.poll(() => wrapper.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(500)
@@ -246,8 +245,8 @@ test.describe("regression: session timeline local row state", () => {
       return result
     })
 
-    expect(samples[0]!.trigger).toBeLessThan(samples[0]!.diff)
-    expect(samples.every((sample) => Math.abs(sample.trigger - samples[0]!.trigger) <= 1)).toBe(true)
+    expect(samples[0].trigger).toBeLessThan(samples[0].diff)
+    expect(samples.every((sample) => Math.abs(sample.trigger - samples[0].trigger) <= 1)).toBe(true)
     expect(samples.every((sample) => sample.trigger < sample.bottom)).toBe(true)
   })
 })
@@ -300,7 +299,9 @@ async function readToolState(page: Page) {
 async function installDiffProbe(page: Page) {
   await page.addInitScript(() => {
     let shadowRootCount = 0
-    const attachShadow = Element.prototype.attachShadow
+    // The wrapper keeps the native method detached, so its type names the Element receiver that call(this, init) supplies.
+    const native: { attachShadow: (this: Element, init: ShadowRootInit) => ShadowRoot } = Element.prototype
+    const attachShadow = native.attachShadow
     Element.prototype.attachShadow = function (init) {
       shadowRootCount += 1
       return attachShadow.call(this, init)
@@ -319,7 +320,7 @@ async function markDiffProbe(page: Page) {
     .locator(`[data-timeline-part-id="${editPartID}"]`)
     .first()
     .evaluate((element) => {
-      const tool = element as HTMLElement
+      const tool = element
       const file = tool.querySelector<HTMLElement>('[data-component="file"][data-mode="diff"]')
       const row = tool.closest<HTMLElement>("[data-timeline-key]")
       const frame = tool.closest<HTMLElement>("[data-timeline-row]")
@@ -340,7 +341,7 @@ async function readDiffProbe(page: Page) {
     .locator(`[data-timeline-part-id="${editPartID}"]`)
     .first()
     .evaluate((element) => {
-      const tool = element as HTMLElement
+      const tool = element
       const file = tool.querySelector<HTMLElement>('[data-component="file"][data-mode="diff"]')
       const row = tool.closest<HTMLElement>("[data-timeline-key]")
       const frame = tool.closest<HTMLElement>("[data-timeline-row]")

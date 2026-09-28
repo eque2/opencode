@@ -2,7 +2,7 @@ export * as Git from "./git"
 
 import path from "path"
 import { randomUUID } from "crypto"
-import { Context, Effect, Layer, Schema, Stream } from "effect"
+import { Array, Context, Effect, HashMap, HashSet, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { AbsolutePath, RelativePath } from "./schema"
 import { FSUtil } from "./fs-util"
@@ -134,7 +134,7 @@ export interface Interface {
     readonly ignored: (input: {
       repository: Repository
       paths: readonly RelativePath[]
-    }) => Effect.Effect<ReadonlySet<RelativePath>, OperationError>
+    }) => Effect.Effect<HashSet.HashSet<RelativePath>, OperationError>
   }
   readonly tree: {
     readonly capture: (input: {
@@ -159,12 +159,12 @@ export interface Interface {
     readonly preview: (input: {
       repository: Repository
       current: TreeID
-      files: ReadonlyMap<RelativePath, TreeID>
+      files: HashMap.HashMap<RelativePath, TreeID>
       context?: number
     }) => Effect.Effect<readonly File.Diff[], OperationError>
     readonly restore: (input: {
       repository: Repository
-      files: ReadonlyMap<RelativePath, TreeID>
+      files: HashMap.HashMap<RelativePath, TreeID>
     }) => Effect.Effect<void, OperationError>
     readonly checkout: (input: { repository: Repository; tree: TreeID }) => Effect.Effect<void, OperationError>
   }
@@ -183,12 +183,12 @@ const layer = Layer.effect(
 
     const discover = Effect.fn("Git.repo.discover")(function* (input: AbsolutePath) {
       const dotgit = yield* fs.up({ targets: [".git"], start: input }).pipe(
-        Effect.map((matches) => matches[0]),
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.map(Array.head),
+        Effect.catch(() => Effect.succeedNone),
       )
-      if (!dotgit) return undefined
+      if (Option.isNone(dotgit)) return undefined
 
-      const cwd = path.dirname(dotgit)
+      const cwd = path.dirname(dotgit.value)
       const git = run(cwd, proc)
       const topLevel = yield* git(["rev-parse", "--show-toplevel"])
       const gitDir = yield* git(["rev-parse", "--git-dir"])
@@ -205,7 +205,7 @@ const layer = Layer.effect(
     const remote = Effect.fn("Git.remote.get")(function* (repository: Repository, name = "origin") {
       const result = yield* run(repository.worktree, proc)(["remote", "get-url", name])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const roots = Effect.fn("Git.history.rootCommits")(function* (repository: Repository) {
@@ -221,13 +221,13 @@ const layer = Layer.effect(
     const head = Effect.fn("Git.history.head")(function* (repository: Repository) {
       const result = yield* run(repository.worktree, proc)(["rev-parse", "HEAD"])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const branch = Effect.fn("Git.history.branch")(function* (repository: Repository) {
       const result = yield* run(repository.worktree, proc)(["symbolic-ref", "--quiet", "--short", "HEAD"])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const remoteHead = Effect.fn("Git.history.defaultRemoteBranch")(function* (
@@ -236,7 +236,7 @@ const layer = Layer.effect(
     ) {
       const result = yield* run(repository.worktree, proc)(["symbolic-ref", `refs/remotes/${remoteName}/HEAD`])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim().replace(new RegExp(`^refs/remotes/${remoteName}/`), "") || undefined
+      return present(result.text.trim().replace(new RegExp(`^refs/remotes/${remoteName}/`), ""))
     })
 
     const operation = Effect.fnUntraced(function* (
@@ -250,12 +250,15 @@ const layer = Layer.effect(
       )(args).pipe(
         Effect.mapError((cause) => new OperationError({ operation, directory, message: cause.message, cause })),
       )
-      if (result.exitCode === 0) return
-      return yield* new OperationError({
-        operation,
-        directory,
-        message: result.stderr.trim() || result.text.trim() || `Git ${operation} failed`,
-      })
+      return yield* result.exitCode === 0
+        ? Effect.void
+        : Effect.fail(
+            new OperationError({
+              operation,
+              directory,
+              message: result.stderr.trim() || result.text.trim() || `Git ${operation} failed`,
+            }),
+          )
     })
 
     const clone = Effect.fn("Git.repo.clone")(function* (input: {
@@ -443,31 +446,35 @@ const layer = Layer.effect(
         ],
         { concurrency: 2 },
       )
-      const candidates = Array.from(new Set([...tracked, ...untracked]))
+      const candidates = Array.dedupe([...tracked, ...untracked])
       if (!candidates.length) return { skipped: [] }
       const ignored = input.ignores
-        ? new Set(
+        ? HashSet.fromIterable(
             (yield* repositoryOperation("refresh", input.ignores, ["check-ignore", "--no-index", "--stdin", "-z"], {
               stdin: candidates.join("\0") + "\0",
             }).pipe(Effect.catch(() => Effect.succeed({ text: "", stderr: "" })))).text
               .split("\0")
               .filter(Boolean),
           )
-        : new Set<string>()
-      const allowed = candidates.filter((item) => !ignored.has(item))
+        : HashSet.empty<string>()
+      const allowed = candidates.filter((item) => !HashSet.has(ignored, item))
       const maximum = input.maximumUntrackedFileBytes
       const skipped = maximum
-        ? (yield* Effect.forEach(
-            untracked.filter((item) => allowed.includes(item)),
-            (item) =>
-              fs.stat(path.join(input.repository.worktree, item)).pipe(
-                Effect.map((info) =>
-                  info.type === "File" && Number(info.size) > maximum ? RelativePath.make(item) : undefined,
+        ? Array.getSomes(
+            yield* Effect.forEach(
+              untracked.filter((item) => allowed.includes(item)),
+              (item) =>
+                fs.stat(path.join(input.repository.worktree, item)).pipe(
+                  Effect.map((info) =>
+                    info.type === "File" && Number(info.size) > maximum
+                      ? Option.some(RelativePath.make(item))
+                      : Option.none(),
+                  ),
+                  Effect.catch(() => Effect.succeedNone),
                 ),
-                Effect.catch(() => Effect.succeed(undefined)),
-              ),
-            { concurrency: 8 },
-          )).filter((item): item is RelativePath => item !== undefined)
+              { concurrency: 8 },
+            ),
+          )
         : []
       const stage = allowed.filter((item) => !skipped.includes(RelativePath.make(item)))
       const remove = [...ignored, ...skipped]
@@ -492,7 +499,7 @@ const layer = Layer.effect(
       repository: Repository
       paths: readonly RelativePath[]
     }) {
-      if (!input.paths.length) return new Set<RelativePath>()
+      if (!input.paths.length) return HashSet.empty<RelativePath>()
       const result = yield* proc
         .run(
           ChildProcess.make("git", repositoryArgs(input.repository, ["check-ignore", "--no-index", "--stdin", "-z"]), {
@@ -518,7 +525,7 @@ const layer = Layer.effect(
           directory: input.repository.worktree,
           message: result.stderr.toString("utf8").trim() || "Failed to check ignored paths",
         })
-      return new Set(
+      return HashSet.fromIterable(
         result.stdout
           .toString("utf8")
           .split("\0")
@@ -624,7 +631,8 @@ const layer = Layer.effect(
         "--",
         file,
       ])).text.replace(/\0$/, "")
-      if (!text) return
+      // No ls-tree output means the file is absent from the tree.
+      if (!text) return Option.none<{ readonly mode: string; readonly object: string }>()
       const match = text.match(/^(\d+)\s+\w+\s+([0-9a-f]+)\t/)
       if (!match)
         return yield* new OperationError({
@@ -632,14 +640,14 @@ const layer = Layer.effect(
           directory: repository.worktree,
           message: `Invalid tree entry for ${file}`,
         })
-      return { mode: match[1], object: match[2] }
+      return Option.some({ mode: match[1], object: match[2] })
     })
 
     const preview = Effect.fn("Git.tree.preview")(
       (input: {
         repository: Repository
         current: TreeID
-        files: ReadonlyMap<RelativePath, TreeID>
+        files: HashMap.HashMap<RelativePath, TreeID>
         context?: number
       }) =>
         locked(
@@ -654,7 +662,7 @@ const layer = Layer.effect(
                 ([file, tree]) =>
                   Effect.gen(function* () {
                     const source = yield* entry(input.repository, tree, file)
-                    if (!source) {
+                    if (Option.isNone(source)) {
                       yield* repositoryOperation(
                         "diff",
                         input.repository,
@@ -666,7 +674,7 @@ const layer = Layer.effect(
                     yield* repositoryOperation(
                       "diff",
                       input.repository,
-                      ["update-index", "--add", "--cacheinfo", source.mode, source.object, file],
+                      ["update-index", "--add", "--cacheinfo", source.value.mode, source.value.object, file],
                       { env },
                     )
                   }),
@@ -680,7 +688,7 @@ const layer = Layer.effect(
                 from: input.current,
                 to: target,
                 context: input.context,
-                paths: Array.from(input.files.keys()),
+                paths: Array.fromIterable(HashMap.keys(input.files)),
               })
             }).pipe(Effect.ensuring(fs.remove(index).pipe(Effect.catch(() => Effect.void))))
           }),
@@ -688,14 +696,14 @@ const layer = Layer.effect(
     )
 
     const restore = Effect.fn("Git.tree.restore")(
-      (input: { repository: Repository; files: ReadonlyMap<RelativePath, TreeID> }) =>
+      (input: { repository: Repository; files: HashMap.HashMap<RelativePath, TreeID> }) =>
         locked(
           input.repository,
           Effect.forEach(
             input.files,
             ([file, tree]) =>
               Effect.gen(function* () {
-                if (yield* entry(input.repository, tree, file)) {
+                if (Option.isSome(yield* entry(input.repository, tree, file))) {
                   yield* repositoryOperation("restore", input.repository, ["checkout", tree, "--", file])
                   return
                 }
@@ -804,13 +812,18 @@ const layer = Layer.effect(
             (cause) => new PatchError({ operation: "apply", directory: input.path, message: cause.message, cause }),
           ),
         )
-      if (result.exitCode === 0) return
-      return yield* new PatchError({
-        operation: "apply",
-        directory: input.path,
-        message:
-          result.stderr.toString("utf8").trim() || result.stdout.toString("utf8").trim() || "Failed to apply changes",
-      })
+      return yield* result.exitCode === 0
+        ? Effect.void
+        : Effect.fail(
+            new PatchError({
+              operation: "apply",
+              directory: input.path,
+              message:
+                result.stderr.toString("utf8").trim() ||
+                result.stdout.toString("utf8").trim() ||
+                "Failed to apply changes",
+            }),
+          )
     })
 
     const discard = Effect.fn("Git.change.discard")(function* (input: {
@@ -835,21 +848,26 @@ const layer = Layer.effect(
           message: restore.stderr.trim() || restore.text.trim() || "Failed to restore tracked changes",
         })
       }
-      if (input.untracked === "preserve") return
-      const clean = yield* execute(
+      const clean = execute(
         input.repository.worktree,
         proc,
       )(["clean", "-fd", "--", scope]).pipe(
         Effect.mapError(
           (cause) => new PatchError({ operation: "reset", directory: input.path, message: cause.message, cause }),
         ),
+        Effect.flatMap((result) =>
+          result.exitCode === 0
+            ? Effect.void
+            : Effect.fail(
+                new PatchError({
+                  operation: "reset",
+                  directory: input.path,
+                  message: result.stderr.trim() || result.text.trim() || "Failed to clean untracked changes",
+                }),
+              ),
+        ),
       )
-      if (clean.exitCode === 0) return
-      return yield* new PatchError({
-        operation: "reset",
-        directory: input.path,
-        message: clean.stderr.trim() || clean.text.trim() || "Failed to clean untracked changes",
-      })
+      return yield* input.untracked === "preserve" ? Effect.void : clean
     })
 
     const worktreeRun = Effect.fnUntraced(function* (
@@ -976,6 +994,11 @@ function execute(cwd: string, proc: AppProcess.Interface) {
             }) satisfies Result,
         ),
       )
+}
+
+// Git prints nothing for an unset value; the Interface reports that as undefined.
+function present(text: string) {
+  return Option.getOrUndefined(Option.liftPredicate(text, (value) => value.length > 0))
 }
 
 function resolvePath(cwd: string, value: string) {

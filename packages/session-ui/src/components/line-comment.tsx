@@ -6,6 +6,7 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
 import { installLineCommentStyles } from "./line-comment-styles"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
+import { Effect, Option, Predicate } from "effect"
 
 installLineCommentStyles()
 
@@ -39,9 +40,13 @@ export type LineCommentAnchorProps = {
   variant?: LineCommentVariant
   icon?: "comment" | "plus"
   buttonLabel?: string
-  onClick?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-  onMouseEnter?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-  onPopoverFocusOut?: JSX.EventHandlerUnion<HTMLDivElement, FocusEvent>
+  // Plain handlers: they bind through Solid `on:` listeners, which take a
+  // function (or a handleEvent object), never a bound [handler, data] tuple.
+  // The click and mouseenter handlers serve both the button and the inline
+  // popover div, so they take any HTMLElement as currentTarget.
+  onClick?: JSX.EventHandler<HTMLElement, MouseEvent>
+  onMouseEnter?: JSX.EventHandler<HTMLElement, MouseEvent>
+  onPopoverFocusOut?: JSX.EventHandler<HTMLDivElement, FocusEvent>
   class?: string
   popoverClass?: string
   children?: JSX.Element
@@ -59,20 +64,20 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
       data-prevent-autofocus=""
       data-variant={variant()}
       data-comment-id={props.id}
-      data-open={props.open ? "" : undefined}
-      data-inline={props.inline ? "" : undefined}
+      bool:data-open={props.open}
+      bool:data-inline={props.inline}
       classList={{
         [props.class ?? ""]: !!props.class,
       }}
-      style={
-        props.inline
-          ? undefined
-          : {
+      {...(props.inline
+        ? {}
+        : {
+            style: {
               top: `${props.top ?? 0}px`,
               opacity: hidden() ? 0 : 1,
               "pointer-events": hidden() ? "none" : "auto",
-            }
-      }
+            },
+          })}
     >
       <Show
         when={inlineBody()}
@@ -84,8 +89,8 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
               data-slot="line-comment-button"
               on:mousedown={(e) => e.stopPropagation()}
               on:mouseup={(e) => e.stopPropagation()}
-              on:click={props.onClick as any}
-              on:mouseenter={props.onMouseEnter as any}
+              on:click={props.onClick}
+              on:mouseenter={props.onMouseEnter}
             >
               <Show
                 when={props.inline}
@@ -101,7 +106,7 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
                   [props.popoverClass ?? ""]: !!props.popoverClass,
                 }}
                 on:mousedown={(e) => e.stopPropagation()}
-                on:focusout={props.onPopoverFocusOut as any}
+                on:focusout={props.onPopoverFocusOut}
               >
                 {props.children}
               </div>
@@ -116,9 +121,9 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
             [props.popoverClass ?? ""]: !!props.popoverClass,
           }}
           on:mousedown={(e) => e.stopPropagation()}
-          on:click={props.onClick as any}
-          on:mouseenter={props.onMouseEnter as any}
-          on:focusout={props.onPopoverFocusOut as any}
+          on:click={props.onClick}
+          on:mouseenter={props.onMouseEnter}
+          on:focusout={props.onPopoverFocusOut}
         >
           {props.children}
         </div>
@@ -207,50 +212,58 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     "mention",
   ])
 
-  const refs = {
-    textarea: undefined as HTMLTextAreaElement | undefined,
-  }
+  let textarea = Option.none<HTMLTextAreaElement>()
   const [open, setOpen] = createSignal(false)
 
   function selectMention(item: { path: string } | undefined) {
     if (!item) return
 
-    const textarea = refs.textarea
-    const query = currentMention()
-    if (!textarea || !query) return
+    const found = currentMention()
+    if (Option.isNone(textarea) || Option.isNone(found)) return
+    const el = textarea.value
+    const query = found.value
 
-    const value = `${textarea.value.slice(0, query.start)}@${item.path} ${textarea.value.slice(query.end)}`
+    const value = `${el.value.slice(0, query.start)}@${item.path} ${el.value.slice(query.end)}`
     const cursor = query.start + item.path.length + 2
 
     split.onInput(value)
     closeMention()
 
     requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(cursor, cursor)
+      el.focus()
+      el.setSelectionRange(cursor, cursor)
     })
   }
 
   const mention = useFilteredList<{ path: string }>({
-    items: async (query) => {
-      if (!split.mention) return []
-      if (!query.trim()) return []
-      const paths = await split.mention.items(query)
-      return paths.map((path) => ({ path }))
-    },
+    // useFilteredList takes a Promise-returning source; the mention source may
+    // answer synchronously or with a Promise.
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const source = split.mention
+          if (!source) return []
+          if (!query.trim()) return []
+          const found = source.items(query)
+          const paths = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          return paths.map((path) => ({ path }))
+        }),
+      ),
     key: (item) => item.path,
     filterKeys: ["path"],
     skipFilter: () => true,
     onSelect: selectMention,
   })
 
-  const focus = () => refs.textarea?.focus()
-  const hold: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> = (e) => {
+  const focus = () => {
+    if (Option.isSome(textarea)) textarea.value.focus()
+  }
+  const hold: JSX.EventHandler<HTMLButtonElement, MouseEvent> = (e) => {
     e.preventDefault()
     e.stopPropagation()
   }
   const click =
-    (fn: VoidFunction): JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> =>
+    (fn: VoidFunction): JSX.EventHandler<HTMLButtonElement, MouseEvent> =>
     (e) => {
       e.stopPropagation()
       fn()
@@ -261,32 +274,32 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     mention.clear()
   }
 
-  const currentMention = () => {
-    const textarea = refs.textarea
-    if (!textarea) return
-    if (!split.mention) return
-    if (textarea.selectionStart !== textarea.selectionEnd) return
+  const currentMention = (): Option.Option<{ query: string; start: number; end: number }> => {
+    if (Option.isNone(textarea)) return Option.none()
+    const el = textarea.value
+    if (!split.mention) return Option.none()
+    if (el.selectionStart !== el.selectionEnd) return Option.none()
 
-    const end = textarea.selectionStart
-    const match = textarea.value.slice(0, end).match(/@(\S*)$/)
-    if (!match) return
+    const end = el.selectionStart
+    const match = el.value.slice(0, end).match(/@(\S*)$/)
+    if (!match) return Option.none()
 
-    return {
+    return Option.some({
       query: match[1] ?? "",
       start: end - match[0].length,
       end,
-    }
+    })
   }
 
   const syncMention = () => {
     const item = currentMention()
-    if (!item) {
+    if (Option.isNone(item)) {
       closeMention()
       return
     }
 
     setOpen(true)
-    mention.onInput(item.query)
+    mention.onInput(item.value.query)
   }
 
   const selectActiveMention = () => {
@@ -312,7 +325,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
       <div data-slot="line-comment-editor">
         <textarea
           ref={(el) => {
-            refs.textarea = el
+            textarea = Option.some(el)
           }}
           data-slot="line-comment-textarea"
           rows={split.rows ?? 3}
@@ -375,7 +388,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   <button
                     type="button"
                     data-slot="line-comment-mention-item"
-                    data-active={mention.active() === item.path ? "" : undefined}
+                    bool:data-active={mention.active() === item.path}
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => mention.setActive(item.path)}
                     onClick={() => selectMention(item)}
@@ -407,8 +420,8 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   type="button"
                   data-slot="line-comment-action"
                   data-variant="ghost"
-                  on:mousedown={hold as any}
-                  on:click={click(split.onCancel) as any}
+                  on:mousedown={hold}
+                  on:click={click(split.onCancel)}
                 >
                   {split.cancelLabel ?? i18n.t("ui.common.cancel")}
                 </button>
@@ -417,8 +430,8 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   data-slot="line-comment-action"
                   data-variant="primary"
                   disabled={split.value.trim().length === 0}
-                  on:mousedown={hold as any}
-                  on:click={click(submit) as any}
+                  on:mousedown={hold}
+                  on:click={click(submit)}
                 >
                   {split.submitLabel ?? i18n.t("ui.lineComment.submit")}
                 </button>

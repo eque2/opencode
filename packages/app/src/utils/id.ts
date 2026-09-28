@@ -1,3 +1,5 @@
+import { Data, DateTime, Option, Random } from "effect"
+
 const prefixes = {
   session: "ses",
   message: "msg",
@@ -12,6 +14,10 @@ let lastTimestamp = 0
 let counter = 0
 
 type Prefix = keyof typeof prefixes
+
+/** A given ID does not start with the prefix of its kind. */
+class IdentifierPrefixError extends Data.TaggedError("App.IdentifierPrefixError")<{ readonly message: string }> {}
+
 export namespace Identifier {
   export function ascending(prefix: Prefix, given?: string) {
     return generateID(prefix, false, given)
@@ -27,15 +33,14 @@ function generateID(prefix: Prefix, descending: boolean, given?: string): string
     return create(prefix, descending)
   }
 
-  if (!given.startsWith(prefixes[prefix])) {
-    throw new Error(`ID ${given} does not start with ${prefixes[prefix]}`)
-  }
-
-  return given
+  return Option.getOrThrowWith(
+    Option.liftPredicate(given, (id) => id.startsWith(prefixes[prefix])),
+    () => new IdentifierPrefixError({ message: `ID ${given} does not start with ${prefixes[prefix]}` }),
+  )
 }
 
 function create(prefix: Prefix, descending: boolean, timestamp?: number): string {
-  const currentTimestamp = timestamp ?? Date.now()
+  const currentTimestamp = timestamp ?? DateTime.toEpochMillis(DateTime.nowUnsafe())
 
   if (currentTimestamp !== lastTimestamp) {
     lastTimestamp = currentTimestamp
@@ -78,15 +83,19 @@ function randomBase62(length: number): string {
 
 function getRandomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length)
-  const cryptoObj = typeof globalThis !== "undefined" ? globalThis.crypto : undefined
+  const cryptoObj = Option.fromNullishOr(globalThis.crypto).pipe(
+    Option.filter((source) => typeof source.getRandomValues === "function"),
+  )
 
-  if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
-    cryptoObj.getRandomValues(bytes)
+  if (Option.isSome(cryptoObj)) {
+    cryptoObj.value.getRandomValues(bytes)
     return bytes
   }
 
+  // Identifier is a synchronous API with no fiber, so the fallback reads the default Random service directly.
+  const random = Random.Random.defaultValue()
   for (let i = 0; i < length; i += 1) {
-    bytes[i] = Math.floor(Math.random() * 256)
+    bytes[i] = Math.floor(random.nextDoubleUnsafe() * 256)
   }
 
   return bytes

@@ -57,7 +57,7 @@ export function DialogHeader(props: DialogHeaderProps) {
   const hideClose = () => local.hideClose === true
 
   return (
-    <div data-slot="dialog-header" data-hide-close={hideClose() ? "" : undefined}>
+    <div data-slot="dialog-header" bool:data-hide-close={hideClose()}>
       {local.children}
       {!hideClose() && (
         <Kobalte.CloseButton data-slot="dialog-close-button" aria-label={local.closeLabel ?? i18n.t("ui.common.close")}>
@@ -87,8 +87,8 @@ export function Dialog(props: DialogProps) {
   return (
     <div
       data-component="dialog-v2"
-      data-variant={local.variant === "settings" ? "settings" : undefined}
-      data-fit={local.fit ? true : undefined}
+      data-variant={local.variant}
+      bool:data-fit={!!local.fit}
       data-size={local.size || "normal"}
     >
       <div data-slot="dialog-container" class={local.containerClass}>
@@ -99,9 +99,10 @@ export function Dialog(props: DialogProps) {
             [local.class ?? ""]: !!local.class,
           }}
           onOpenAutoFocus={(e) => {
-            const target = e.currentTarget as HTMLElement | null
-            const autofocusEl = target?.querySelector("[autofocus]") as HTMLElement | null
-            if (autofocusEl) {
+            const target = e.currentTarget
+            if (!(target instanceof Element)) return
+            const autofocusEl = target.querySelector("[autofocus]")
+            if (autofocusEl instanceof HTMLElement) {
               e.preventDefault()
               autofocusEl.focus({ preventScroll: true })
             }

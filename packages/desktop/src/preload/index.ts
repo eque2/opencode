@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron"
 import type { ElectronAPI, WslServersEvent } from "./types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
 
+// eslint-disable-next-line effect/no-set-use-hashset -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; the callback registry needs a plain Set
 const updaterCallbacks = new Set<(state: UpdaterState) => void>()
 let updaterState: UpdaterState | undefined
 let updaterSubscription: Promise<void> | undefined
@@ -37,6 +38,7 @@ const api: ElectronAPI = {
     startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
   },
   updater: {
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; ElectronAPI.updater.subscribe returns a Promise
     subscribe: async (cb) => {
       updaterCallbacks.add(cb)
       if (updaterState) cb(updaterState)
@@ -44,11 +46,13 @@ const api: ElectronAPI = {
         ipcRenderer.on("updater-state", updaterHandler)
         updaterSubscription = ipcRenderer.invoke("updater-subscribe")
       }
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; the subscribe Promise waits for the updater-subscribe IPC reply
       await updaterSubscription
       return () => {
         updaterCallbacks.delete(cb)
         if (updaterCallbacks.size > 0) return
         ipcRenderer.removeListener("updater-state", updaterHandler)
+        // eslint-disable-next-line effect/no-undefined-use-option -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; Option cannot load, so undefined marks the absent subscription
         updaterSubscription = undefined
         void ipcRenderer.invoke("updater-unsubscribe")
       }

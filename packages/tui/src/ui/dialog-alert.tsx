@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Effect } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { useBindings } from "../keymap"
@@ -56,11 +57,13 @@ export function DialogAlert(props: DialogAlertProps) {
   )
 }
 
-DialogAlert.show = (dialog: DialogContext, title: string, message: string) => {
-  return new Promise<void>((resolve) => {
-    dialog.replace(
-      () => <DialogAlert title={title} message={message} onConfirm={() => resolve()} />,
-      () => resolve(),
-    )
-  })
-}
+// Resolves when the alert is confirmed or closed. A later close after confirm is ignored.
+DialogAlert.show = (dialog: DialogContext, title: string, message: string): Promise<void> =>
+  Effect.runPromise(
+    Effect.callback<void>((resume) => {
+      dialog.replace(
+        () => <DialogAlert title={title} message={message} onConfirm={() => resume(Effect.void)} />,
+        () => resume(Effect.void),
+      )
+    }),
+  )

@@ -1,65 +1,44 @@
+import { Option } from "effect"
 import type { RunPromptPart } from "./types"
 
 type Mention = Extract<RunPromptPart, { type: "file" | "agent" }>
 
 export function resolveEditorSlashValue(text: string) {
-  const head = slashHead(text)
-  if (!head || head.name.toLowerCase() !== "editor") {
-    return text
-  }
-
-  return head.arguments
+  return slashHead(text).pipe(
+    Option.filter((head) => head.name.toLowerCase() === "editor"),
+    Option.match({ onNone: () => text, onSome: (head) => head.arguments }),
+  )
 }
 
+// A mention whose text no longer appears in the edited content is dropped. The
+// used ranges keep two mentions with the same text from claiming one match.
 export function realignEditorPromptParts(content: string, parts: RunPromptPart[]): RunPromptPart[] {
-  const matches = new Map<number, Mention | undefined>()
   const used: Array<{ start: number; end: number }> = []
 
-  for (const [index, part] of parts.entries()) {
+  return parts.flatMap((part): RunPromptPart[] => {
     if (part.type !== "file" && part.type !== "agent") {
-      continue
+      return [part]
     }
 
     const text = promptPartText(part)
     if (!text) {
-      continue
+      return [part]
     }
 
     const start = findPromptPartIndex(content, text, used, promptPartStart(part))
     if (start === -1) {
-      matches.set(index, undefined)
-      continue
+      return []
     }
 
     const end = start + text.length
     used.push({ start, end })
-    matches.set(index, updatePromptPart(part, start, end, text))
-  }
-
-  const next: RunPromptPart[] = []
-  for (const [index, part] of parts.entries()) {
-    if (part.type !== "file" && part.type !== "agent") {
-      next.push(part)
-      continue
-    }
-
-    if (!promptPartText(part)) {
-      next.push(part)
-      continue
-    }
-
-    const match = matches.get(index)
-    if (match) {
-      next.push(match)
-    }
-  }
-
-  return next
+    return [updatePromptPart(part, start, end, text)]
+  })
 }
 
-function slashHead(text: string) {
+function slashHead(text: string): Option.Option<{ name: string; arguments: string }> {
   if (!text.startsWith("/")) {
-    return
+    return Option.none()
   }
 
   for (let i = 1; i < text.length; i++) {
@@ -67,17 +46,17 @@ function slashHead(text: string) {
       case " ":
       case "\t":
       case "\n":
-        return {
+        return Option.some({
           name: text.slice(1, i),
           arguments: text.slice(i + 1),
-        }
+        })
     }
   }
 
-  return {
+  return Option.some({
     name: text.slice(1),
     arguments: "",
-  }
+  })
 }
 
 function promptPartText(part: Mention) {

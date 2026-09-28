@@ -2,7 +2,9 @@ export * as PermissionV1 from "./permission"
 
 import { Schema } from "effect"
 export * from "@opencode-ai/schema/permission-v1"
-import { ID } from "@opencode-ai/schema/permission-v1"
+import { ID, Ruleset } from "@opencode-ai/schema/permission-v1"
+
+const encodeRulesetText = Schema.encodeSync(Schema.fromJsonString(Ruleset))
 
 export class RejectedError extends Schema.TaggedError<RejectedError>()("PermissionRejectedError", {}) {
   override get message() {
@@ -19,10 +21,10 @@ export class CorrectedError extends Schema.TaggedError<CorrectedError>()("Permis
 }
 
 export class DeniedError extends Schema.TaggedError<DeniedError>()("PermissionDeniedError", {
-  ruleset: Schema.Any,
+  ruleset: Ruleset,
 }) {
   override get message() {
-    return `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${JSON.stringify(this.ruleset)}`
+    return `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${encodeRulesetText(this.ruleset)}`
   }
 }
 

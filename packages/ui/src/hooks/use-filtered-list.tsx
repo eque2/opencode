@@ -1,5 +1,5 @@
+import { Array, Effect, Predicate, Record } from "effect"
 import fuzzysort from "fuzzysort"
-import { entries, flatMap, groupBy, map, pipe } from "remeda"
 import { createEffect, createMemo, createResource, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createList } from "solid-list"
@@ -23,44 +23,41 @@ export function useFilteredList<T>(props: FilteredListProps<T>) {
   type Group = { category: string; items: [T, ...T[]] }
   const empty: Group[] = []
 
+  const search = (all: T[], needle: string) => {
+    const skipFilter = props.skipFilter
+    const filterable = skipFilter ? all.filter((item) => !skipFilter(item)) : all
+    const skipped = skipFilter ? all.filter(skipFilter) : []
+    const filtered =
+      !props.filterKeys && Array.isArray(filterable) && filterable.every((e) => typeof e === "string")
+        ? fuzzysort.go(needle, filterable, { key: (item) => item }).map((x) => x.obj)
+        : fuzzysort.go(needle, filterable, { keys: props.filterKeys! }).map((x) => x.obj)
+    return skipped.length ? [...filtered, ...skipped] : filtered
+  }
+
   const [grouped, { refetch }] = createResource(
     () => ({
       filter: store.filter,
       items: typeof props.items === "function" ? props.items(store.filter) : props.items,
     }),
-    async ({ filter, items }) => {
-      const query = filter ?? ""
-      const needle = query.toLowerCase()
-      const all = (await Promise.resolve(items)) || []
-      const result = pipe(
-        all,
-        (x) => {
-          if (!needle) return x
-          const skipFilter = props.skipFilter
-          const filterable = skipFilter ? x.filter((item) => !skipFilter(item)) : x
-          const skipped = skipFilter ? x.filter(skipFilter) : []
-          const filtered =
-            !props.filterKeys && Array.isArray(filterable) && filterable.every((e) => typeof e === "string")
-              ? (fuzzysort.go(needle, filterable).map((x) => x.target) as T[])
-              : fuzzysort.go(needle, filterable, { keys: props.filterKeys! }).map((x) => x.obj)
-          return skipped.length ? [...filtered, ...skipped] : filtered
-        },
-        groupBy((x) => (props.groupBy ? props.groupBy(x) : "")),
-        entries(),
-        map(([k, v]) => ({ category: k, items: props.sortBy ? v.sort(props.sortBy) : v })),
-        (groups) => (props.sortGroupsBy ? groups.sort(props.sortGroupsBy) : groups),
-      )
-      return result
-    },
+    ({ filter, items }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const query = filter ?? ""
+          const needle = query.toLowerCase()
+          const all = (Predicate.isPromiseLike(items) ? yield* Effect.promise(() => items) : items) || []
+          const groups = Array.map(
+            Record.toEntries(
+              Array.groupBy(needle ? search(all, needle) : all, (x) => (props.groupBy ? props.groupBy(x) : "")),
+            ),
+            ([k, v]) => ({ category: k, items: props.sortBy ? v.sort(props.sortBy) : v }),
+          )
+          return props.sortGroupsBy ? groups.sort(props.sortGroupsBy) : groups
+        }),
+      ),
     { initialValue: empty },
   )
 
-  const flat = createMemo(() => {
-    return pipe(
-      grouped.latest || [],
-      flatMap((x) => x.items),
-    )
-  })
+  const flat = createMemo(() => Array.flatMap(grouped.latest || [], (x) => x.items))
 
   function initialActive() {
     if (props.noInitialSelection) return ""

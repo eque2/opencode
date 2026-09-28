@@ -2,14 +2,15 @@ import { Database } from "../src/drizzle/index.js"
 import { CouponTable, CouponType } from "../src/schema/billing.sql.js"
 
 const email = process.argv[2]
-const type = process.argv[3] as (typeof CouponType)[number]
+const typeArg = process.argv[3]
 
-if (!email || !type) {
+if (!email || !typeArg) {
   console.error(`Usage: bun create-coupon.ts <email> <${CouponType.join("|")}>`)
   process.exit(1)
 }
 
-if (!(CouponType as readonly string[]).includes(type)) {
+const type = CouponType.find((value) => value === typeArg)
+if (!type) {
   console.error(`Error: type must be one of ${CouponType.join(", ")}`)
   process.exit(1)
 }

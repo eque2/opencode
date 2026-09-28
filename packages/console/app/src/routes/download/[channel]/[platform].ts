@@ -33,9 +33,9 @@ export async function GET({ params: { platform, channel } }: APIEvent) {
 }
 
 function getAssetUrl(input: unknown, assetName: string) {
-  if (!isRecord(input) || !isRecord(input.metadata) || !isRecord(input.metadata.files)) return
+  if (!isRecord(input) || !isRecord(input.metadata) || !isRecord(input.metadata.files)) return undefined
   const asset = input.metadata.files[assetName]
-  if (!isRecord(asset) || typeof asset.url !== "string") return
+  if (!isRecord(asset) || typeof asset.url !== "string") return undefined
   return asset.url
 }
 

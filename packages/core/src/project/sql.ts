@@ -1,3 +1,4 @@
+import { DateTime } from "effect"
 import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core"
 import * as DatabasePath from "../database/path"
 import { Timestamps } from "../database/schema.sql"
@@ -29,7 +30,7 @@ export const ProjectDirectoryTable = sqliteTable(
     strategy: text(),
     time_created: integer()
       .notNull()
-      .$default(() => Date.now()),
+      .$default(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
   },
   (table) => [primaryKey({ columns: [table.project_id, table.directory] })],
 )

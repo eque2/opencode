@@ -1,85 +1,95 @@
-import { type SelectedLineRange } from "@pierre/diffs"
-import { toRange } from "./selection-bridge"
+import { type SelectedLineRange, type SelectionSide } from "@pierre/diffs"
+import { Array as Arr, Option } from "effect"
+import { readShadowSelection, toRange } from "./selection-bridge"
 
-export function findElement(node: Node | null): HTMLElement | undefined {
-  if (!node) return
-  if (node instanceof HTMLElement) return node
-  return node.parentElement ?? undefined
+export type ShadowLineSelection = {
+  range: SelectedLineRange
+  text: Option.Option<Range>
 }
 
-export function findFileLineNumber(node: Node | null): number | undefined {
-  const el = findElement(node)
-  if (!el) return
-
-  const line = el.closest("[data-line]")
-  if (!(line instanceof HTMLElement)) return
-
-  const value = parseInt(line.dataset.line ?? "", 10)
-  if (Number.isNaN(value)) return
-  return value
+/** Parses a line number attribute value. None when the value is missing or is not a number. */
+export function parseLineNumber(raw: string | undefined): Option.Option<number> {
+  const value = parseInt(raw ?? "", 10)
+  return Number.isNaN(value) ? Option.none() : Option.some(value)
 }
 
-export function findDiffLineNumber(node: Node | null): number | undefined {
-  const el = findElement(node)
-  if (!el) return
-
-  const line = el.closest("[data-line], [data-alt-line]")
-  if (!(line instanceof HTMLElement)) return
-
-  const primary = parseInt(line.dataset.line ?? "", 10)
-  if (!Number.isNaN(primary)) return primary
-
-  const alt = parseInt(line.dataset.altLine ?? "", 10)
-  if (!Number.isNaN(alt)) return alt
+export function findElement(node: Node | null): Option.Option<HTMLElement> {
+  if (!node) return Option.none()
+  if (node instanceof HTMLElement) return Option.some(node)
+  return Option.fromNullOr(node.parentElement)
 }
 
-export function findCodeSelectionSide(node: Node | null): SelectedLineRange["side"] {
-  const el = findElement(node)
-  if (!el) return
+export function findFileLineNumber(node: Node | null): Option.Option<number> {
+  return Option.flatMap(findElement(node), (el) => {
+    const line = el.closest("[data-line]")
+    if (!(line instanceof HTMLElement)) return Option.none()
+    return parseLineNumber(line.dataset.line)
+  })
+}
 
-  const code = el.closest("[data-code]")
-  if (!(code instanceof HTMLElement)) return
-  if (code.hasAttribute("data-deletions")) return "deletions"
-  return "additions"
+export function findDiffLineNumber(node: Node | null): Option.Option<number> {
+  return Option.flatMap(findElement(node), (el) => {
+    const line = el.closest("[data-line], [data-alt-line]")
+    if (!(line instanceof HTMLElement)) return Option.none()
+    return Option.orElse(parseLineNumber(line.dataset.line), () => parseLineNumber(line.dataset.altLine))
+  })
+}
+
+export function findCodeSelectionSide(node: Node | null): Option.Option<SelectionSide> {
+  return Option.flatMap(findElement(node), (el): Option.Option<SelectionSide> => {
+    const code = el.closest("[data-code]")
+    if (!(code instanceof HTMLElement)) return Option.none()
+    if (code.hasAttribute("data-deletions")) return Option.some("deletions")
+    return Option.some("additions")
+  })
+}
+
+// Selection.getComposedRanges is missing in older engines, so check for it before the call.
+function composedRange(selection: Selection, root: ShadowRoot): Option.Option<StaticRange> {
+  if (typeof selection.getComposedRanges !== "function") return Option.none()
+  return Arr.head(selection.getComposedRanges({ shadowRoots: [root] }))
 }
 
 export function readShadowLineSelection(opts: {
   root: ShadowRoot
-  lineForNode: (node: Node | null) => number | undefined
-  sideForNode?: (node: Node | null) => SelectedLineRange["side"]
+  lineForNode: (node: Node | null) => Option.Option<number>
+  sideForNode?: (node: Node | null) => Option.Option<SelectionSide>
   preserveTextSelection?: boolean
-}) {
-  const selection =
-    (opts.root as unknown as { getSelection?: () => Selection | null }).getSelection?.() ?? window.getSelection()
-  if (!selection || selection.isCollapsed) return
+}): Option.Option<ShadowLineSelection> {
+  const found = readShadowSelection(opts.root)
+  if (Option.isNone(found) || found.value.isCollapsed) return Option.none()
+  const selection = found.value
 
-  const domRange =
-    (
-      selection as unknown as {
-        getComposedRanges?: (options?: { shadowRoots?: ShadowRoot[] }) => StaticRange[]
-      }
-    ).getComposedRanges?.({ shadowRoots: [opts.root] })?.[0] ??
-    (selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined)
+  const domRange = Option.orElse(composedRange(selection, opts.root), () =>
+    selection.rangeCount > 0 ? Option.some(selection.getRangeAt(0)) : Option.none(),
+  )
 
-  const startNode = domRange?.startContainer ?? selection.anchorNode
-  const endNode = domRange?.endContainer ?? selection.focusNode
-  if (!startNode || !endNode) return
-  if (!opts.root.contains(startNode) || !opts.root.contains(endNode)) return
+  const startNode = Option.match(domRange, {
+    onNone: () => selection.anchorNode,
+    onSome: (range) => range.startContainer,
+  })
+  const endNode = Option.match(domRange, {
+    onNone: () => selection.focusNode,
+    onSome: (range) => range.endContainer,
+  })
+  if (!startNode || !endNode) return Option.none()
+  if (!opts.root.contains(startNode) || !opts.root.contains(endNode)) return Option.none()
 
   const start = opts.lineForNode(startNode)
   const end = opts.lineForNode(endNode)
-  if (start === undefined || end === undefined) return
+  if (Option.isNone(start) || Option.isNone(end)) return Option.none()
 
-  const startSide = opts.sideForNode?.(startNode)
-  const endSide = opts.sideForNode?.(endNode)
-  const side = startSide ?? endSide
+  const sideForNode = opts.sideForNode ?? (() => Option.none<SelectionSide>())
+  const startSide = sideForNode(startNode)
+  const endSide = sideForNode(endNode)
+  const side = Option.orElse(startSide, () => endSide)
 
-  const range: SelectedLineRange = { start, end }
-  if (side) range.side = side
-  if (endSide && side && endSide !== side) range.endSide = endSide
+  const range: SelectedLineRange = { start: start.value, end: end.value }
+  if (Option.isSome(side)) range.side = side.value
+  if (Option.isSome(endSide) && Option.isSome(side) && endSide.value !== side.value) range.endSide = endSide.value
 
-  return {
+  return Option.some({
     range,
-    text: opts.preserveTextSelection && domRange ? toRange(domRange).cloneRange() : undefined,
-  }
+    text: opts.preserveTextSelection ? Option.map(domRange, (value) => toRange(value).cloneRange()) : Option.none(),
+  })
 }

@@ -1,50 +1,54 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { Option, Redacted } from "effect"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { Effect, Option, Redacted } from "effect"
 import { ServerAuth } from "../../src/server/auth"
 
 const original = {
-  OPENCODE_SERVER_PASSWORD: Flag.OPENCODE_SERVER_PASSWORD,
-  OPENCODE_SERVER_USERNAME: Flag.OPENCODE_SERVER_USERNAME,
+  OPENCODE_SERVER_PASSWORD: process.env.OPENCODE_SERVER_PASSWORD,
+  OPENCODE_SERVER_USERNAME: process.env.OPENCODE_SERVER_USERNAME,
+}
+
+function setEnv(key: keyof typeof original, value: string | undefined) {
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
 }
 
 afterEach(() => {
-  Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-  Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
+  setEnv("OPENCODE_SERVER_PASSWORD", original.OPENCODE_SERVER_PASSWORD)
+  setEnv("OPENCODE_SERVER_USERNAME", original.OPENCODE_SERVER_USERNAME)
 })
 
 describe("ServerAuth", () => {
-  test("does not emit auth headers without a password", () => {
-    Flag.OPENCODE_SERVER_PASSWORD = undefined
-    Flag.OPENCODE_SERVER_USERNAME = "alice"
+  test("does not emit auth headers without a password", async () => {
+    setEnv("OPENCODE_SERVER_PASSWORD", undefined)
+    setEnv("OPENCODE_SERVER_USERNAME", "alice")
 
-    expect(ServerAuth.header()).toBeUndefined()
-    expect(ServerAuth.headers()).toBeUndefined()
+    expect(await Effect.runPromise(ServerAuth.header())).toBeUndefined()
+    expect(await Effect.runPromise(ServerAuth.headers())).toBeUndefined()
   })
 
-  test("defaults to the opencode username", () => {
-    Flag.OPENCODE_SERVER_PASSWORD = "secret"
-    Flag.OPENCODE_SERVER_USERNAME = undefined
+  test("defaults to the opencode username", async () => {
+    setEnv("OPENCODE_SERVER_PASSWORD", "secret")
+    setEnv("OPENCODE_SERVER_USERNAME", undefined)
 
-    expect(ServerAuth.headers()).toEqual({
+    expect(await Effect.runPromise(ServerAuth.headers())).toEqual({
       Authorization: `Basic ${Buffer.from("opencode:secret").toString("base64")}`,
     })
   })
 
-  test("uses the configured username", () => {
-    Flag.OPENCODE_SERVER_PASSWORD = "secret"
-    Flag.OPENCODE_SERVER_USERNAME = "alice"
+  test("uses the configured username", async () => {
+    setEnv("OPENCODE_SERVER_PASSWORD", "secret")
+    setEnv("OPENCODE_SERVER_USERNAME", "alice")
 
-    expect(ServerAuth.headers()).toEqual({
+    expect(await Effect.runPromise(ServerAuth.headers())).toEqual({
       Authorization: `Basic ${Buffer.from("alice:secret").toString("base64")}`,
     })
   })
 
-  test("prefers explicit credentials", () => {
-    Flag.OPENCODE_SERVER_PASSWORD = "secret"
-    Flag.OPENCODE_SERVER_USERNAME = "alice"
+  test("prefers explicit credentials", async () => {
+    setEnv("OPENCODE_SERVER_PASSWORD", "secret")
+    setEnv("OPENCODE_SERVER_USERNAME", "alice")
 
-    expect(ServerAuth.headers({ password: "cli-secret", username: "bob" })).toEqual({
+    expect(await Effect.runPromise(ServerAuth.headers({ password: "cli-secret", username: "bob" }))).toEqual({
       Authorization: `Basic ${Buffer.from("bob:cli-secret").toString("base64")}`,
     })
   })

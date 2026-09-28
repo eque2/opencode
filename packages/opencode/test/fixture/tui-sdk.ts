@@ -5,10 +5,10 @@ export const worktree = "/tmp/opencode"
 export const directory = `${worktree}/packages/opencode`
 
 export function json(data: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  })
+  // HeadersInit may be a record, a tuple list or a Headers; the caller's content-type wins.
+  const headers = new Headers(init?.headers)
+  if (!headers.has("content-type")) headers.set("content-type", "application/json")
+  return new Response(JSON.stringify(data), { ...init, headers })
 }
 
 export function eventSource(): EventSource {
@@ -38,7 +38,7 @@ export type FetchHandler = (url: URL) => Response | Promise<Response> | undefine
 
 export function createFetch(override?: FetchHandler) {
   const session = [] as URL[]
-  const fetch = (async (input: RequestInfo | URL) => {
+  const handle = async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     if (url.pathname === "/session") session.push(url)
 
@@ -76,7 +76,8 @@ export function createFetch(override?: FetchHandler) {
     }
 
     throw new Error(`unexpected request: ${url.pathname}`)
-  }) as typeof globalThis.fetch
+  }
+  const fetch = Object.assign(handle, { preconnect: globalThis.fetch.preconnect }) satisfies typeof globalThis.fetch
 
   return { fetch, session }
 }

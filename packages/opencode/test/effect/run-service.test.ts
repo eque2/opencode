@@ -1,5 +1,5 @@
 import { expect } from "bun:test"
-import { Effect, Layer, Context } from "effect"
+import { Effect, Layer, Context, Option } from "effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { makeRuntime } from "../../src/effect/run-service"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -65,7 +65,7 @@ it.live("makeRuntime inherits InstanceRef from the current fiber", () =>
         NeedsInstance.of({
           directory: () =>
             Effect.gen(function* () {
-              return (yield* InstanceRef)?.directory
+              return Option.getOrUndefined(Option.map(yield* InstanceRef, (ctx) => ctx.directory))
             }),
         }),
       ),
@@ -75,15 +75,18 @@ it.live("makeRuntime inherits InstanceRef from the current fiber", () =>
 
     expect(actual).toBe(testDirectory)
   }).pipe(
-    Effect.provideService(InstanceRef, {
-      directory: testDirectory,
-      worktree: testDirectory,
-      project: {
-        id: ProjectV2.ID.global,
+    Effect.provideService(
+      InstanceRef,
+      Option.some({
+        directory: testDirectory,
         worktree: testDirectory,
-        time: { created: 0, updated: 0 },
-        sandboxes: [],
-      },
-    }),
+        project: {
+          id: ProjectV2.ID.global,
+          worktree: testDirectory,
+          time: { created: 0, updated: 0 },
+          sandboxes: [],
+        },
+      }),
+    ),
   ),
 )

@@ -25,9 +25,9 @@ const partID = Schema.decodeUnknownSync(PartID)("prt_01J5Y5H0AH4Q4NXJ6P4C3P5V2N"
 const projectID = ProjectV2.ID.make("proj-alpha")
 const workspaceID = Schema.decodeUnknownSync(WorkspaceV2.ID)("wrk-primary")
 
-function decodeUnknown<S extends Schema.Top>(schema: S) {
-  const decode = Schema.decodeUnknownSync(schema as any)
-  return (input: unknown): Schema.Schema.Type<S> => decode(input) as Schema.Schema.Type<S>
+function decodeUnknown<S extends Schema.ConstraintDecoder<unknown>>(schema: S) {
+  const decode = Schema.decodeUnknownSync(schema)
+  return (input: unknown): S["Type"] => decode(input)
 }
 
 describe("Session.Info", () => {

@@ -1,5 +1,6 @@
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 import { useLocation, useNavigate } from "@solidjs/router"
+import { HashMap, MutableHashSet, Option } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { messageIdFromHash } from "./message-id-from-hash"
 
@@ -13,7 +14,8 @@ export const useSessionHashScroll = (input: {
   loadMore: (sessionID: string) => Promise<void>
   currentMessageId: () => string | undefined
   pendingMessage: () => string | undefined
-  setPendingMessage: (value: string | undefined) => void
+  setPendingMessage: (value: string) => void
+  clearPendingMessage: () => void
   setActiveMessage: (message: UserMessage | undefined) => void
   autoScroll: { pause: () => void; forceScrollToBottom: () => void }
   scroller: () => HTMLDivElement | undefined
@@ -23,30 +25,30 @@ export const useSessionHashScroll = (input: {
   consumePendingMessage: (key: string) => string | undefined
 }) => {
   const visibleUserMessages = createMemo(() => input.visibleUserMessages())
-  const messageById = createMemo(() => new Map(visibleUserMessages().map((m) => [m.id, m])))
+  const messageById = createMemo(() => HashMap.fromIterable(visibleUserMessages().map((m) => [m.id, m] as const)))
   let pendingKey = ""
   let clearing = false
 
   const location = useLocation()
   const navigate = useNavigate()
 
-  const frames = new Set<number>()
+  const frames = MutableHashSet.empty<number>()
   const queue = (fn: () => void) => {
     const id = requestAnimationFrame(() => {
-      frames.delete(id)
+      MutableHashSet.remove(frames, id)
       fn()
     })
-    frames.add(id)
+    MutableHashSet.add(frames, id)
   }
   const cancel = () => {
     for (const id of frames) cancelAnimationFrame(id)
-    frames.clear()
+    MutableHashSet.clear(frames)
   }
 
   const clearMessageHash = () => {
     cancel()
     input.consumePendingMessage(input.sessionKey())
-    if (input.pendingMessage()) input.setPendingMessage(undefined)
+    if (input.pendingMessage()) input.clearPendingMessage()
     if (!location.hash) return
     clearing = true
     navigate(location.pathname + location.search, { replace: true })
@@ -110,9 +112,9 @@ export const useSessionHashScroll = (input: {
     const messageId = messageIdFromHash(hash)
     if (messageId) {
       input.autoScroll.pause()
-      const msg = messageById().get(messageId)
-      if (msg) {
-        scrollToMessage(msg, behavior)
+      const msg = HashMap.get(messageById(), messageId)
+      if (Option.isSome(msg)) {
+        scrollToMessage(msg.value, behavior)
         return
       }
       return
@@ -160,15 +162,15 @@ export const useSessionHashScroll = (input: {
     if (!targetId) return
 
     const pending = input.pendingMessage() === targetId
-    const msg = messageById().get(targetId)
-    if (!msg) return
+    const msg = HashMap.get(messageById(), targetId)
+    if (Option.isNone(msg)) return
 
-    if (pending) input.setPendingMessage(undefined)
+    if (pending) input.clearPendingMessage()
     if (input.currentMessageId() === targetId && !pending) return
 
     input.autoScroll.pause()
     cancel()
-    queue(() => scrollToMessage(msg, "auto"))
+    queue(() => scrollToMessage(msg.value, "auto"))
   })
 
   createEffect(() => {
@@ -180,7 +182,7 @@ export const useSessionHashScroll = (input: {
     let targetId = input.pendingMessage()
     if (!targetId && !clearing) targetId = messageIdFromHash(location.hash)
     if (!targetId) return
-    if (messageById().has(targetId)) return
+    if (HashMap.has(messageById(), targetId)) return
     if (!input.historyMore() || input.historyLoading()) return
 
     void input.loadMore(sessionID)

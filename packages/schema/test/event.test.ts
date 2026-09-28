@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Schema } from "effect"
+import { Option, Result, Schema } from "effect"
 import { Event } from "../src/event"
 
 describe("public event schemas", () => {
@@ -21,8 +21,21 @@ describe("public event schemas", () => {
       schema: { id: Schema.String, value: Schema.String },
     })
 
-    expect(Event.latest([historical, current]).get(current.type)).toBe(current)
-    expect(Event.latest([current, historical]).get(current.type)).toBe(current)
+    expect(Result.getOrThrow(Event.latest([historical, current])).get(current.type)).toBe(current)
+    expect(Result.getOrThrow(Event.latest([current, historical])).get(current.type)).toBe(current)
+  })
+
+  test("latest selection rejects a second definition for one type and version", () => {
+    const first = Event.define({ type: "test.duplicate", schema: { id: Schema.String } })
+    const second = Event.define({ type: "test.duplicate", schema: { id: Schema.String } })
+    const result = Event.latest([first, second])
+
+    expect(Option.getOrUndefined(Result.getFailure(result))).toMatchObject({
+      _tag: "Event.DuplicateDefinition",
+      key: "test.duplicate",
+    })
+    expect(() => Result.getOrThrow(result)).toThrow("Duplicate latest event definition for test.duplicate")
+    expect(Result.getOrThrow(Event.latest([first, first])).get(first.type)).toBe(first)
   })
 
   test("durable definitions are indexed by type and version", () => {
@@ -32,6 +45,23 @@ describe("public event schemas", () => {
       schema: { id: Schema.String },
     })
 
-    expect(Event.durable([definition]).get("test.durable.1")).toBe(definition)
+    expect(Result.getOrThrow(Event.durable([definition])).get("test.durable.1")).toBe(definition)
+  })
+
+  test("durable definitions reject a second definition for one type and version", () => {
+    const first = Event.define({
+      type: "test.durable-duplicate",
+      durable: { aggregate: "id", version: 1 },
+      schema: { id: Schema.String },
+    })
+    const second = Event.define({
+      type: "test.durable-duplicate",
+      durable: { aggregate: "id", version: 1 },
+      schema: { id: Schema.String },
+    })
+    const result = Event.durable([first, second])
+
+    expect(Option.getOrUndefined(Result.getFailure(result))).toBeInstanceOf(Event.DuplicateDefinitionError)
+    expect(() => Result.getOrThrow(result)).toThrow("Duplicate durable event definition for test.durable-duplicate.1")
   })
 })

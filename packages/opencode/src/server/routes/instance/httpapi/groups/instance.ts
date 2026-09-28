@@ -27,7 +27,7 @@ export const VcsDiffQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   mode: Vcs.Mode,
   context: Schema.optional(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
-})
+}).annotate({ description: "Query parameters for the version control diff" })
 
 export class ApiVcsApplyError extends Schema.Error<ApiVcsApplyError>("VcsApplyError")(
   {

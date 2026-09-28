@@ -1,10 +1,10 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { DiffRenderable, type Renderable, ScrollBoxRenderable } from "@opentui/core"
+import { DiffRenderable, KeyEvent, type Renderable, ScrollBoxRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import type { TuiPluginApi, TuiPluginMeta, TuiRouteCurrent, TuiRouteDefinition } from "@opencode-ai/plugin/tui"
-import type { Session } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type Session } from "@opencode-ai/sdk/v2"
 import { KVProvider } from "../../../src/context/kv"
 import { ThemeProvider } from "../../../src/context/theme"
 import { TuiConfigProvider } from "../../../src/config"
@@ -14,6 +14,10 @@ import diffViewerPlugin from "../../../src/feature-plugins/system/diff-viewer"
 import { createTuiPluginApi } from "../../fixture/tui-plugin"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
 import { TestTuiContexts } from "../../fixture/tui-environment"
+import { json } from "../../fixture/tui-sdk"
+
+type DiffCommand = NonNullable<Parameters<TuiPluginApi["keymap"]["registerLayer"]>[0]["commands"]>[number]
+type DiffCommandContext = Parameters<NonNullable<DiffCommand["run"]>>[0]
 
 test("closing the diff viewer returns to the route it opened from", async () => {
   const viewer = await renderDiffViewer([])
@@ -22,10 +26,12 @@ test("closing the diff viewer returns to the route it opened from", async () => 
       name: "diff",
       params: { mode: "git", sessionID: "session-1", returnRoute: startRoute },
     })
-    expect(viewer.vcsDiffInput()).toEqual({ directory: "/repo/session", mode: "git", context: 12 })
+    // The SDK client sends the request a few microtasks after the viewer asks for it.
+    await viewer.app.waitFor(() => viewer.vcsDiffInput() !== undefined)
+    expect(viewer.vcsDiffInput()).toEqual({ directory: "/repo/session", mode: "git", context: "12" })
 
     expect(viewer.commands.has("diff.close")).toBe(true)
-    viewer.commands.get("diff.close")!.run?.({} as never)
+    await viewer.run("diff.close")
     expect(viewer.current()).toEqual(startRoute)
   } finally {
     viewer.app.renderer.destroy()
@@ -71,26 +77,26 @@ test("brackets navigate diff hunks", async () => {
     expect(TuiKeybind.defaultValue("diff_next_hunk")).toBe("]")
     expect(TuiKeybind.defaultValue("diff_previous_hunk")).toBe("[")
 
-    viewer.commands.get("diff.next_hunk")!.run?.({} as never)
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     const first = scroll.scrollTop
     expect(first).toBeGreaterThan(initial)
 
-    viewer.commands.get("diff.next_hunk")!.run?.({} as never)
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     const second = scroll.scrollTop
     expect(second).toBeGreaterThan(first)
 
-    viewer.commands.get("diff.previous_hunk")!.run?.({} as never)
+    await viewer.run("diff.previous_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(first)
 
-    viewer.commands.get("diff.next_hunk")!.run?.({} as never)
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(second)
 
     scroll.scrollTo(initial)
-    viewer.commands.get("diff.next_hunk")!.run?.({} as never)
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(first)
   } finally {
@@ -99,39 +105,46 @@ test("brackets navigate diff hunks", async () => {
 })
 
 async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: TuiRouteCurrent) {
-  const commands = new Map<
-    string,
-    NonNullable<Parameters<TuiPluginApi["keymap"]["registerLayer"]>[0]["commands"]>[number]
-  >()
+  const commands = new Map<string, DiffCommand>()
   let current = initialRoute ?? startRoute
   let renderDiff: TuiRouteDefinition["render"] | undefined
+  let context: DiffCommandContext | undefined
   let vcsDiffInput: unknown
   let sessionDiffInput: unknown
   const config = createTuiResolvedConfig()
+  // A real SDK client over a fetch that answers the two diff endpoints and records their query parameters.
+  const answer = async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    const query = Object.fromEntries(url.searchParams)
+    if (url.pathname === "/vcs/diff") {
+      vcsDiffInput = query
+      return json(vcsDiff)
+    }
+    const sessionDiff = /^\/session\/([^/]+)\/diff$/.exec(url.pathname)
+    if (sessionDiff) {
+      sessionDiffInput = { sessionID: decodeURIComponent(sessionDiff[1]), ...query }
+      return json([])
+    }
+    return new Response(null, { status: 404 })
+  }
+  const client = createOpencodeClient({
+    baseUrl: "http://localhost:4096",
+    fetch: Object.assign(answer, { preconnect: fetch.preconnect }),
+  })
   function Harness() {
     const renderer = useRenderer()
     const keymap = createDefaultOpenTuiKeymap(renderer)
+    const commandContext = createCommandContext(keymap)
+    context = commandContext
     const registerLayer = keymap.registerLayer.bind(keymap)
     keymap.registerLayer = (layer) => {
       layer.commands?.forEach((command) => commands.set(command.name, command))
       return registerLayer(layer)
     }
     const base = createTuiPluginApi({
+      renderer,
       keymap,
-      client: {
-        vcs: {
-          diff: async (input: unknown) => {
-            vcsDiffInput = input
-            return { data: vcsDiff }
-          },
-        },
-        session: {
-          diff: async (input: unknown) => {
-            sessionDiffInput = input
-            return { data: [] }
-          },
-        },
-      } as unknown as TuiPluginApi["client"],
+      client,
       state: {
         session: {
           get: () => session,
@@ -155,7 +168,8 @@ async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: 
     } satisfies TuiPluginApi
 
     void diffViewerPlugin.tui(api, undefined, pluginMeta)
-    if (!initialRoute) commands.get("diff.open")?.run?.({} as never)
+    // The component body is synchronous, and diff.open navigates synchronously before the route renders below.
+    if (!initialRoute) void commands.get("diff.open")?.run?.(commandContext)
 
     return (
       <TestTuiContexts>
@@ -180,6 +194,34 @@ async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: 
     current: () => current,
     vcsDiffInput: () => vcsDiffInput,
     sessionDiffInput: () => sessionDiffInput,
+    run: async (name: string) => {
+      const command = commands.get(name)
+      if (!command?.run || !context) throw new Error(`command ${name} is not registered`)
+      await command.run(context)
+    },
+  }
+}
+
+function createCommandContext(keymap: TuiPluginApi["keymap"]): DiffCommandContext {
+  return {
+    keymap,
+    event: new KeyEvent({
+      name: "",
+      ctrl: false,
+      meta: false,
+      shift: false,
+      option: false,
+      sequence: "",
+      number: false,
+      raw: "",
+      eventType: "press",
+      source: "raw",
+    }),
+    focused: null,
+    target: null,
+    data: {},
+    input: "",
+    payload: undefined,
   }
 }
 
@@ -218,7 +260,8 @@ test("branch diff source requests branch VCS diff", async () => {
       name: "diff",
       params: { mode: "branch", sessionID: "session-1", returnRoute: startRoute },
     })
-    expect(viewer.vcsDiffInput()).toEqual({ directory: "/repo/session", mode: "branch", context: 12 })
+    await viewer.app.waitFor(() => viewer.vcsDiffInput() !== undefined)
+    expect(viewer.vcsDiffInput()).toEqual({ directory: "/repo/session", mode: "branch", context: "12" })
     expect(viewer.sessionDiffInput()).toBeUndefined()
   } finally {
     viewer.app.renderer.destroy()
@@ -235,6 +278,7 @@ test("last-turn diff source requests session diff", async () => {
       name: "diff",
       params: { mode: "last-turn", sessionID: "session-1", messageID: "message-1", returnRoute: startRoute },
     })
+    await viewer.app.waitFor(() => viewer.sessionDiffInput() !== undefined)
     expect(viewer.sessionDiffInput()).toEqual({ sessionID: "session-1", messageID: "message-1" })
     expect(viewer.vcsDiffInput()).toBeUndefined()
   } finally {

@@ -1,6 +1,6 @@
 export * as Ripgrep from "./ripgrep"
 
-import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { Entry, Match } from "@opencode-ai/schema/filesystem"
 import { makeGlobalNode } from "./effect/app-node"
@@ -34,11 +34,14 @@ const RawMatch = Schema.Struct({
       }),
     ),
   }),
-})
+}).annotate({ identifier: "Ripgrep.RawMatch" })
 
 type RawMatchData = (typeof RawMatch.Type)["data"]
 
-export class Error extends Schema.TaggedError<Error>()("Ripgrep.Error", {
+// Each --json line is one ripgrep record; only "match" records decode as RawMatch.
+const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
+export class SearchError extends Schema.TaggedError<SearchError>()("Ripgrep.Error", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
@@ -77,14 +80,14 @@ export interface GrepInput {
 }
 
 export interface Interface {
-  readonly find: (input: FindInput) => Effect.Effect<readonly Entry[], Error>
-  readonly glob: (input: GlobInput) => Effect.Effect<readonly Entry[], Error>
-  readonly grep: (input: GrepInput) => Effect.Effect<readonly Match[], Error | InvalidPatternError>
+  readonly find: (input: FindInput) => Effect.Effect<readonly Entry[], SearchError>
+  readonly glob: (input: GlobInput) => Effect.Effect<readonly Entry[], SearchError>
+  readonly grep: (input: GrepInput) => Effect.Effect<readonly Match[], SearchError | InvalidPatternError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/Ripgrep") {}
 
-const failure = (message: string, cause?: unknown) => new Error({ message, cause })
+const failure = (message: string, cause?: unknown) => new SearchError({ message, cause })
 
 const isInvalidPattern = (stderr: string) =>
   stderr.includes("regex parse error") || stderr.includes("error parsing regex")
@@ -100,7 +103,8 @@ const layer = Layer.effect(
       readonly args: string[]
       readonly limit: number
       readonly signal?: AbortSignal
-      readonly parse: (line: string) => Effect.Effect<A | undefined, Error>
+      /** Parses one output line; None skips a line that carries no row. */
+      readonly parse: (line: string) => Effect.Effect<Option.Option<A>, SearchError>
       readonly pattern?: string
       readonly onItem?: (item: A) => Effect.Effect<void>
     }) => {
@@ -118,7 +122,8 @@ const layer = Layer.effect(
             Stream.splitLines,
             Stream.filter((line) => line.length > 0),
             Stream.mapEffect(input.parse),
-            Stream.filter((row): row is A => row !== undefined),
+            Stream.filter(Option.isSome),
+            Stream.map((row) => row.value),
             Stream.tap((row) => {
               if (!input.onItem || observed++ >= input.limit) return Effect.void
               return input.onItem(row)
@@ -144,7 +149,7 @@ const layer = Layer.effect(
       const abortable = input.signal ? program.pipe(Effect.raceFirst(waitForAbort(input.signal))) : program
       return abortable.pipe(
         Effect.mapError((cause) =>
-          cause instanceof Error || cause instanceof InvalidPatternError
+          cause instanceof SearchError || cause instanceof InvalidPatternError
             ? cause
             : failure("ripgrep execution failed", cause),
         ),
@@ -168,10 +173,12 @@ const layer = Layer.effect(
           ],
           parse: (line) =>
             Effect.succeed(
-              line
-                .replace(/^(?:\.[\\/])+/u, "")
-                .replace(/^[\\/]+/u, "")
-                .replaceAll("\\", "/"),
+              Option.some(
+                line
+                  .replace(/^(?:\.[\\/])+/u, "")
+                  .replace(/^[\\/]+/u, "")
+                  .replaceAll("\\", "/"),
+              ),
             ),
         }).pipe(
           Effect.map((result) =>
@@ -204,10 +211,12 @@ const layer = Layer.effect(
               .replace(/^[\\/]+/u, "")
               .replaceAll("\\", "/")
             return Effect.succeed(
-              Entry.make({
-                path: RelativePath.make(relative),
-                type: "file",
-              }),
+              Option.some(
+                Entry.make({
+                  path: RelativePath.make(relative),
+                  type: "file",
+                }),
+              ),
             )
           },
           onItem: input.onEntry,
@@ -232,20 +241,19 @@ const layer = Layer.effect(
           parse: (line) =>
             (Buffer.byteLength(line, "utf8") > MAX_RECORD_BYTES
               ? Effect.fail(failure(`Ripgrep JSON record exceeded ${MAX_RECORD_BYTES} bytes`))
-              : Effect.try({
-                  try: () => JSON.parse(line) as unknown,
-                  catch: (cause) => failure("Invalid ripgrep JSON output", cause),
-                })
+              : decodeRecord(line).pipe(Effect.mapError((cause) => failure("Invalid ripgrep JSON output", cause)))
             ).pipe(
               Effect.flatMap((json) => {
                 if (!json || typeof json !== "object" || !("type" in json) || json.type !== "match")
-                  return Effect.succeed(undefined)
+                  return Effect.succeedNone
                 return Schema.decodeUnknownEffect(RawMatch)(json).pipe(
-                  Effect.map((match) => ({
-                    ...match.data,
-                    path: { text: match.data.path.text.replace(/^\.[\\/]/, "") },
-                    submatches: match.data.submatches.slice(0, MAX_SUBMATCHES),
-                  })),
+                  Effect.map((match) =>
+                    Option.some({
+                      ...match.data,
+                      path: { text: match.data.path.text.replace(/^\.[\\/]/, "") },
+                      submatches: match.data.submatches.slice(0, MAX_SUBMATCHES),
+                    }),
+                  ),
                   Effect.mapError((cause) => failure("Invalid ripgrep match output", cause)),
                 )
               }),

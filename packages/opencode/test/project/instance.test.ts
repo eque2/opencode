@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Deferred, Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option } from "effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { registerDisposer } from "../../src/effect/instance-registry"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
@@ -58,7 +58,7 @@ describe("InstanceStore", () => {
 
       yield* setBootstrap(
         Effect.gen(function* () {
-          initializedDirectory = (yield* InstanceRef)?.directory
+          initializedDirectory = Option.getOrUndefined(Option.map(yield* InstanceRef, (ctx) => ctx.directory))
         }),
       )
       yield* store.load({ directory: dir })
@@ -130,8 +130,7 @@ describe("InstanceStore", () => {
       yield* setBootstrap(
         Effect.sync(() => {
           attempts++
-          throw new Error("init failed")
-        }),
+        }).pipe(Effect.andThen(Effect.die(new Error("init failed")))),
       )
       const failed = yield* store.load({ directory: dir }).pipe(
         Effect.as(false),

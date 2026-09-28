@@ -42,21 +42,22 @@ type LogoTemplateCell = {
   bottomDist: number
 }
 
+// A space leaves no cell, so each character maps to zero or one cells.
 const LOGO_TEMPLATE: LogoTemplateCell[] = LOGO_LINES.flatMap((line, y) =>
-  Array.from(line)
-    .map((char, x) => {
-      if (char === " ") return
-      const kind =
-        char === "_"
-          ? LogoCellKind.Background
-          : char === "^"
-            ? LogoCellKind.Top
-            : char === "~"
-              ? LogoCellKind.ShadowTop
-              : char === "█"
-                ? LogoCellKind.Solid
-                : LogoCellKind.Char
-      return {
+  Array.from(line).flatMap((char, x): LogoTemplateCell[] => {
+    if (char === " ") return []
+    const kind =
+      char === "_"
+        ? LogoCellKind.Background
+        : char === "^"
+          ? LogoCellKind.Top
+          : char === "~"
+            ? LogoCellKind.ShadowTop
+            : char === "█"
+              ? LogoCellKind.Solid
+              : LogoCellKind.Char
+    return [
+      {
         x,
         y,
         kind,
@@ -64,9 +65,9 @@ const LOGO_TEMPLATE: LogoTemplateCell[] = LOGO_LINES.flatMap((line, y) =>
         attributes: x > LOGO_LEFT_WIDTH ? TextAttributes.BOLD : 0,
         topDist: Math.hypot(x + 0.5 - LOGO_WIDTH / 2, y * 2 - LOGO_HEIGHT),
         bottomDist: Math.hypot(x + 0.5 - LOGO_WIDTH / 2, y * 2 + 1 - LOGO_HEIGHT),
-      }
-    })
-    .filter((cell): cell is LogoTemplateCell => !!cell),
+      },
+    ]
+  }),
 )
 
 export type Rgb = [number, number, number]
@@ -270,7 +271,7 @@ export class GoUpsellArtPainter {
 
     this.logoIndexes = new Int32Array(LOGO_TEMPLATE.length)
     for (let i = 0; i < LOGO_TEMPLATE.length; i++) {
-      const cell = LOGO_TEMPLATE[i]!
+      const cell = LOGO_TEMPLATE[i]
       const index = (this.logoY + cell.y) * this.geometryWidth + this.logoX + cell.x
       this.logoIndexes[i] = index
       buffers.attributes[index] = cell.attributes
@@ -391,8 +392,8 @@ export class GoUpsellArtPainter {
     const head1 = phase1 * LOGO_REACH
 
     for (let i = 0; i < LOGO_TEMPLATE.length; i++) {
-      const cell = LOGO_TEMPLATE[i]!
-      const index = this.logoIndexes[i]!
+      const cell = LOGO_TEMPLATE[i]
+      const index = this.logoIndexes[i]
       const offset = index * 4
       this.setLogoPulse(cell.topDist, head0, eased0, head1, eased1)
       const topPeak = this.pulsePeak

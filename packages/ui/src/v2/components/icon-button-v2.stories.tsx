@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { IconButtonV2 } from "./icon-button-v2"
 
 const docs = `### Overview
@@ -92,7 +93,7 @@ export const AllStates = {
                 <IconButtonV2
                   icon="plus"
                   variant={variant}
-                  data-state={state === "default" ? undefined : state}
+                  data-state={Option.getOrUndefined(Option.liftPredicate(state, (s) => s !== "default"))}
                   disabled={state === "disabled"}
                 />
               ))}

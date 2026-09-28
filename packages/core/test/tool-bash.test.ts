@@ -2,9 +2,9 @@ import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import path from "path"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
-import { ChildProcess } from "effect/unstable/process"
-import { FSUtil } from "@opencode-ai/core/fs-util"
+import { ToolCallID } from "@opencode-ai/llm"
+import { Effect, Layer, Stream } from "effect"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -64,13 +64,15 @@ const permission = Layer.succeed(
 const appProcess = Layer.succeed(
   AppProcess.Service,
   AppProcess.Service.of({
+    ...ChildProcessSpawner.make(() => Effect.die("unused")),
     run: (command: ChildProcess.Command, options?: AppProcess.RunOptions) =>
       Effect.suspend(() => {
         if (command._tag !== "StandardCommand") throw new Error("expected standard command")
         runs.push({ command: command.command, cwd: command.options.cwd, shell: command.options.shell, options })
         return runFailure ? Effect.fail(runFailure) : Effect.succeed(result)
       }),
-  } as unknown as AppProcess.Interface),
+    runStream: () => Stream.die("unused"),
+  }),
 )
 const config = Layer.succeed(
   Config.Service,
@@ -127,7 +129,7 @@ const withTool = <A, E, R>(
 const call = (input: typeof BashTool.Input.Type, id = "call-bash") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "bash", input },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "bash", input },
 })
 
 const it = testEffect(Layer.empty)
@@ -147,6 +149,13 @@ describe("BashTool", () => {
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.output")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.command")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.cwd")
+            // The structured output schema is a named definition; check the resolved fields as well.
+            const structuredOutput = ["$defs", "BashTool.StructuredOutput", "properties"]
+            expect(definitions[0]?.outputSchema).toMatchObject({ $ref: "#/$defs/BashTool.StructuredOutput" })
+            expect(definitions[0]?.outputSchema).toHaveProperty([...structuredOutput, "truncated"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "output"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "command"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "cwd"])
             expect(yield* toolDefinitions(registry, [{ action: "bash", resource: "*", effect: "deny" }])).toEqual([])
             expect(yield* settleTool(registry, call({ command: "pwd" }))).toEqual({
               result: {

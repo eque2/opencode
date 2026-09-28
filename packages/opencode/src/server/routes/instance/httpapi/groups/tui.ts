@@ -9,7 +9,7 @@ import { ApiNotFoundError } from "../errors"
 import { described } from "./metadata"
 
 const root = "/tui"
-export const CommandPayload = Schema.Struct({ command: Schema.String })
+export const CommandPayload = Schema.Struct({ command: Schema.String }).annotate({ description: "TUI command to run" })
 const EventTuiPromptAppend = Schema.Struct({
   type: Schema.Literal(TuiEvent.PromptAppend.type),
   properties: TuiEvent.PromptAppend.data,
@@ -55,7 +55,9 @@ export const TuiApi = HttpApi.make("tui")
       .add(
         HttpApiEndpoint.post("appendPrompt", TuiPaths.appendPrompt, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.PromptAppend.data,
+          // An unnamed struct keeps the payload inline in OpenAPI; the event data schema is identified,
+          // and a $ref body would stop the legacy SDK generator from flattening it into call parameters.
+          payload: Schema.Struct(TuiEvent.PromptAppend.data.fields),
           success: described(Schema.Boolean, "Prompt processed successfully"),
           error: HttpApiError.BadRequest,
         }).annotateMerge(
@@ -139,7 +141,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("showToast", TuiPaths.showToast, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.ToastShow.data,
+          payload: Schema.Struct(TuiEvent.ToastShow.data.fields),
           success: described(Schema.Boolean, "Toast notification shown successfully"),
         }).annotateMerge(
           OpenApi.annotations({
@@ -162,7 +164,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("selectSession", TuiPaths.selectSession, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.SessionSelect.data,
+          payload: Schema.Struct(TuiEvent.SessionSelect.data.fields),
           success: described(Schema.Boolean, "Session selected successfully"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
@@ -184,6 +186,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("controlResponse", TuiPaths.controlResponse, {
           query: WorkspaceRoutingQuery,
+          // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an opaque TUI response relayed as is; an empty body decodes to undefined
           payload: Schema.Unknown,
           success: described(Schema.Boolean, "Response submitted successfully"),
         }).annotateMerge(

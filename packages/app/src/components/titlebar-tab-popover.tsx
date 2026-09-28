@@ -1,4 +1,5 @@
 import { HoverCard as Kobalte } from "@kobalte/core/hover-card"
+import { DateTime } from "effect"
 import { createSignal, Show, type JSXElement } from "solid-js"
 import "./titlebar-tab-popover.css"
 
@@ -31,13 +32,13 @@ export function TabPreviewPopover(props: {
   // "cold" preview animates. Mirrors how browsers reuse one tab tooltip.
   const [instant, setInstant] = createSignal(false)
 
-  const warm = () => Date.now() - lastClosedAt < SKIP_WINDOW
+  const warm = () => DateTime.toEpochMillis(DateTime.nowUnsafe()) - lastClosedAt < SKIP_WINDOW
   // Kobalte reads openDelay lazily when the pointer enters the trigger, so this
   // resolves the skip window per-hover.
   const resolveOpenDelay = () => (warm() ? 0 : OPEN_DELAY)
   const handleOpenChange = (open: boolean) => {
     if (open) setInstant(warm())
-    else lastClosedAt = Date.now()
+    else lastClosedAt = DateTime.toEpochMillis(DateTime.nowUnsafe())
     props.onOpenChange(open)
   }
 
@@ -65,7 +66,7 @@ export function TabPreviewPopover(props: {
             if (theme) el.setAttribute("data-theme", theme)
           }}
           data-component="session-tab-popover"
-          data-instant={instant() || undefined}
+          {...(instant() ? { "data-instant": true } : {})}
         >
           <div data-slot="header">
             <Show when={props.data.projectName}>

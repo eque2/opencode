@@ -3,8 +3,8 @@ import type {
   Hooks,
   PluginInput,
   Plugin as PluginInstance,
-  PluginModule,
   WorkspaceAdapter as PluginWorkspaceAdapter,
+  WorkspaceInfo as PluginWorkspaceInfo,
 } from "@opencode-ai/plugin"
 import { Config } from "@/config/config"
 import { createOpencodeClient } from "@opencode-ai/sdk"
@@ -22,14 +22,14 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { CerebrasPlugin } from "./cerebras"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { Effect, Layer, Context } from "effect"
+import { Array as Arr, Effect, Layer, Context, Option, Predicate, Schema } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
 import { PluginLoader } from "./loader"
-import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
+import { PluginExportError, parsePluginSpecifier, pluginId, pluginIdOf, v1Plugin } from "./shared"
 import { registerAdapter } from "@/control-plane/adapters"
-import type { WorkspaceAdapter } from "@/control-plane/types"
+import type { WorkspaceAdapter, WorkspaceInfo } from "@/control-plane/types"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
@@ -43,14 +43,23 @@ type TriggerName = {
   [K in keyof Hooks]-?: NonNullable<Hooks[K]> extends (input: any, output: any) => Promise<void> ? K : never
 }[keyof Hooks]
 
+// Trigger callers pass a partial input, so a hook runs with an unchecked input. A method signature
+// has bivariant parameters, so every trigger hook type assigns to this one without a cast.
+type UncheckedTriggerHook = { run(input: unknown, output: unknown): unknown }["run"]
+
+type PluginEvent = Parameters<NonNullable<Hooks["event"]>>[0]["event"]
+
+// A plugin module threw, rejected, or returned an invalid value while it loaded or ran a hook.
+class PluginHookError extends Schema.TaggedError<PluginHookError>()("PluginHookError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export interface Interface {
-  readonly trigger: <
-    Name extends TriggerName,
-    Input = Parameters<Required<Hooks>[Name]>[0],
-    Output = Parameters<Required<Hooks>[Name]>[1],
-  >(
+  // Callers may pass a partial input, so the input is not checked against the hook type.
+  readonly trigger: <Name extends TriggerName, Output = Parameters<Required<Hooks>[Name]>[1]>(
     name: Name,
-    input: Input,
+    input: unknown,
     output: Output,
   ) => Effect.Effect<Output>
   readonly list: () => Effect.Effect<Hooks[]>
@@ -89,38 +98,93 @@ function isServerPlugin(value: unknown): value is PluginInstance {
   return typeof value === "function"
 }
 
-function getServerPlugin(value: unknown) {
-  if (isServerPlugin(value)) return value
-  if (!value || typeof value !== "object" || !("server" in value)) return
-  if (!isServerPlugin(value.server)) return
-  return value.server
+function getServerPlugin(value: unknown): Option.Option<PluginInstance> {
+  if (isServerPlugin(value)) return Option.some(value)
+  if (!value || typeof value !== "object" || !("server" in value)) return Option.none()
+  if (!isServerPlugin(value.server)) return Option.none()
+  return Option.some(value.server)
 }
 
+// A module can export the same plugin under several names, so each export runs once.
 function getLegacyPlugins(mod: Record<string, unknown>) {
-  const seen = new Set<unknown>()
-  const result: PluginInstance[] = []
-
-  for (const entry of Object.values(mod)) {
-    if (seen.has(entry)) continue
-    seen.add(entry)
-    const plugin = getServerPlugin(entry)
-    if (!plugin) throw new TypeError("Plugin export is not a function")
-    result.push(plugin)
-  }
-
-  return result
+  return Effect.forEach(
+    Arr.dedupeWith(Object.values(mod), (left, right) => left === right),
+    (entry) =>
+      Option.match(getServerPlugin(entry), {
+        onNone: () => Effect.fail(new PluginExportError({ message: "Plugin export is not a function" })),
+        onSome: Effect.succeed,
+      }),
+  )
 }
 
-async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, hooks: Hooks[]) {
-  const plugin = readV1Plugin(load.mod, load.spec, "server", "detect")
-  if (plugin) {
-    await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
-    hooks.push(await (plugin as PluginModule).server(input, load.options))
-    return
+// Runs plugin code the way `await` did: a sync throw or a rejection is a defect that keeps the
+// original error, and a plain value counts as the result.
+function awaited<A>(run: () => A | PromiseLike<A>): Effect.Effect<A> {
+  return Effect.suspend(() => {
+    const result = run()
+    return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.succeed(result)
+  })
+}
+
+// Plugin code is untyped at runtime: a hook can return a plain value instead of a Promise, or throw
+// synchronously. Both count as the hook result, as they did with await.
+function settle<A>(run: () => A | PromiseLike<A>) {
+  const failed = (cause: unknown) => new PluginHookError({ message: errorMessage(cause), cause })
+  return Effect.try({ try: run, catch: failed }).pipe(
+    Effect.flatMap((result) =>
+      Predicate.isPromiseLike(result)
+        ? Effect.tryPromise({ try: () => result, catch: failed })
+        : Effect.succeed(result),
+    ),
+  )
+}
+
+const applyPlugin = Effect.fn("Plugin.apply")(function* (
+  load: PluginLoader.Loaded,
+  input: PluginInput,
+  add: (hooks: Hooks) => void,
+) {
+  const plugin = yield* Effect.fromResult(v1Plugin(load.mod, load.spec, "server", "detect"))
+  if (Option.isNone(plugin)) {
+    const servers = yield* getLegacyPlugins(load.mod)
+    return yield* Effect.forEach(servers, (server) => settle(() => server(input, load.options)).pipe(Effect.map(add)), {
+      discard: true,
+    })
   }
 
-  for (const server of getLegacyPlugins(load.mod)) {
-    hooks.push(await server(input, load.options))
+  const server = plugin.value.server
+  // v1Plugin has checked that a server-kind module exports server() as a function.
+  if (!isServerPlugin(server)) {
+    return yield* new PluginExportError({ message: `Plugin ${load.spec} has invalid server export` })
+  }
+  const id = yield* Effect.fromResult(pluginId(plugin.value.id, load.spec))
+  yield* pluginIdOf(load.source, load.spec, load.target, id, Option.fromNullishOr(load.pkg))
+  return yield* settle(() => server(input, load.options)).pipe(Effect.map(add))
+})
+
+// The plugin SDK adapter takes its own WorkspaceInfo, where branch and directory are required
+// and the ids are plain strings. The control plane ignores the ids that configure returns.
+function toPluginWorkspace(info: WorkspaceInfo): PluginWorkspaceInfo {
+  // eslint-disable-next-line effect/no-null-use-option -- (a) the plugin SDK WorkspaceInfo type requires branch and directory as string | null
+  return { ...info, branch: info.branch ?? null, directory: info.directory ?? null, extra: info.extra }
+}
+
+function workspaceAdapter(adapter: PluginWorkspaceAdapter): WorkspaceAdapter {
+  return {
+    name: adapter.name,
+    description: adapter.description,
+    configure: (info) =>
+      Effect.runPromise(
+        awaited(() => adapter.configure(toPluginWorkspace(info))).pipe(
+          Effect.map((configured) => ({ ...configured, id: info.id, projectID: info.projectID })),
+        ),
+      ),
+    create: (info, env, from) =>
+      from
+        ? adapter.create(toPluginWorkspace(info), env, toPluginWorkspace(from))
+        : adapter.create(toPluginWorkspace(info), env),
+    remove: (info) => adapter.remove(toPluginWorkspace(info)),
+    target: (info) => adapter.target(toPluginWorkspace(info)),
   }
 }
 
@@ -133,7 +197,10 @@ const layer = Layer.effect(
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Plugin.state")(function* (ctx) {
-        const hooks: Hooks[] = []
+        let hooks: Hooks[] = []
+        const add = (hook: Hooks) => {
+          hooks = Arr.append(hooks, hook)
+        }
         const bridge = yield* EffectBridge.make()
 
         function publishPluginError(message: string) {
@@ -146,8 +213,10 @@ const layer = Layer.effect(
         const client = createOpencodeClient({
           baseUrl: serverUrl?.toString() ?? "http://localhost:4096",
           directory: ctx.directory,
-          headers: ServerAuth.headers(),
-          ...(serverUrl ? {} : { fetch: async (...args) => Server.Default().app.fetch(...args) }),
+          headers: yield* ServerAuth.headers(),
+          ...(serverUrl
+            ? {}
+            : { fetch: (request: Request) => Effect.runPromise(awaited(() => Server.Default().app.fetch(request))) }),
         })
         const cfg = yield* config.get()
         const input: PluginInput = {
@@ -157,13 +226,14 @@ const layer = Layer.effect(
           directory: ctx.directory,
           experimental_workspace: {
             register(type: string, adapter: PluginWorkspaceAdapter) {
-              registerAdapter(ctx.project.id, type, adapter as WorkspaceAdapter)
+              registerAdapter(ctx.project.id, type, workspaceAdapter(adapter))
             },
           },
           get serverUrl(): URL {
             return Server.url ?? new URL("http://localhost:4096")
           },
           // @ts-expect-error
+          // eslint-disable-next-line effect/no-undefined-use-option -- (a) the plugin SDK PluginInput.$ is a BunShell, and a runtime without Bun has no shell to pass
           $: typeof Bun === "undefined" ? undefined : Bun.$,
         }
 
@@ -175,7 +245,7 @@ const layer = Layer.effect(
             Effect.tapError((error) => Effect.logError("failed to load internal plugin", { name: plugin.name, error })),
             Effect.option,
           )
-          if (init._tag === "Some") hooks.push(init.value)
+          if (Option.isSome(init)) add(init.value)
         }
 
         const plugins = flags.pure ? [] : (cfg.plugin_origins ?? [])
@@ -188,9 +258,9 @@ const layer = Layer.effect(
             items: plugins,
             kind: "server",
             report: {
-              start(candidate) {},
-              missing(candidate, _retry, message) {},
-              error(candidate, _retry, stage, error, resolved) {
+              start() {},
+              missing() {},
+              error(candidate, _retry, stage, error) {
                 const spec = candidate.plan.spec
                 const cause = error instanceof Error ? (error.cause ?? error) : error
                 const message = stage === "load" ? errorMessage(error) : errorMessage(cause)
@@ -221,14 +291,10 @@ const layer = Layer.effect(
 
           // Keep plugin execution sequential so hook registration and execution
           // order remains deterministic across plugin runs.
-          yield* Effect.tryPromise({
-            try: () => applyPlugin(load, input, hooks),
-            catch: (err) => {
-              const message = errorMessage(err)
-              return message
-            },
-          }).pipe(
-            Effect.tapError((error) => Effect.logError("failed to load plugin", { path: load.spec, error })),
+          yield* applyPlugin(load, input, add).pipe(
+            Effect.tapError((error) =>
+              Effect.logError("failed to load plugin", { path: load.spec, error: errorMessage(error) }),
+            ),
             Effect.catch(() => {
               // TODO: make proper events for this
               // events.publish(Session.Event.Error, {
@@ -243,11 +309,12 @@ const layer = Layer.effect(
 
         // Notify plugins of current config
         for (const hook of hooks) {
-          yield* Effect.tryPromise({
-            try: () => Promise.resolve((hook as any).config?.(cfg)),
-            catch: errorMessage,
-          }).pipe(
-            Effect.tapError((error) => Effect.logError("plugin config hook failed", { error })),
+          const configHook = hook.config
+          if (!configHook) continue
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.config takes the generated v1 SDK Config, which marks model modalities input and output as required where Config.Info leaves them optional
+          const sdkConfig = cfg as Parameters<typeof configHook>[0]
+          yield* settle(() => configHook(sdkConfig)).pipe(
+            Effect.tapError((error) => Effect.logError("plugin config hook failed", { error: error.message })),
             Effect.ignore,
           )
         }
@@ -255,8 +322,11 @@ const layer = Layer.effect(
         const unsubscribe = yield* events.listen((event) => {
           if (event.location?.directory !== ctx.directory) return Effect.void
           return Effect.sync(() => {
+            // The payload is the same wire shape that the SSE event stream sends to SDK clients.
+            // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
+            const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
             for (const hook of hooks) {
-              void hook["event"]?.({ event: { id: event.id, type: event.type, properties: event.data } as any })
+              void hook["event"]?.({ event: payload })
             }
           })
         })
@@ -266,11 +336,8 @@ const layer = Layer.effect(
           Effect.forEach(
             hooks,
             (hook) =>
-              Effect.tryPromise({
-                try: () => Promise.resolve(hook.dispose?.()),
-                catch: errorMessage,
-              }).pipe(
-                Effect.tapError((error) => Effect.logError("plugin dispose hook failed", { error })),
+              settle(() => hook.dispose?.()).pipe(
+                Effect.tapError((error) => Effect.logError("plugin dispose hook failed", { error: error.message })),
                 Effect.ignore,
               ),
             { discard: true },
@@ -283,15 +350,15 @@ const layer = Layer.effect(
 
     const trigger = Effect.fn("Plugin.trigger")(function* <
       Name extends TriggerName,
-      Input = Parameters<Required<Hooks>[Name]>[0],
       Output = Parameters<Required<Hooks>[Name]>[1],
-    >(name: Name, input: Input, output: Output) {
+    >(name: Name, input: unknown, output: Output) {
       if (!name) return output
       const s = yield* InstanceState.get(state)
       for (const hook of s.hooks) {
-        const fn = hook[name] as any
+        const fn: UncheckedTriggerHook | undefined = hook[name]
         if (!fn) continue
-        yield* Effect.promise(async () => fn(input, output))
+        // A rejected or throwing trigger hook is a defect, as it was with Effect.promise.
+        yield* awaited(() => fn(input, output))
       }
       return output
     })

@@ -8,30 +8,49 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 export { AuthError, OutputLengthError } from "./message-error"
 
+// Legacy v1 message data is stored JSON. The IDs are opaque strings from that data.
+export const ToolCallID = Schema.String.pipe(Schema.brand("Message.ToolCallID")).annotate({
+  identifier: "Message.ToolCallID",
+  description: "Tool call identifier in a legacy v1 message.",
+})
+export type ToolCallID = Schema.Schema.Type<typeof ToolCallID>
+
+export const SourceID = Schema.String.pipe(Schema.brand("Message.SourceID")).annotate({
+  identifier: "Message.SourceID",
+  description: "Source identifier in a legacy v1 message.",
+})
+export type SourceID = Schema.Schema.Type<typeof SourceID>
+
+export const ID = Schema.String.pipe(Schema.brand("Message.ID")).annotate({
+  identifier: "Message.ID",
+  description: "Identifier of a legacy v1 message.",
+})
+export type ID = Schema.Schema.Type<typeof ID>
+
 export const ToolCall = Schema.Struct({
   state: Schema.Literal("call"),
   step: Schema.optional(NonNegativeInt),
-  toolCallId: Schema.String,
+  toolCallId: ToolCallID,
   toolName: Schema.String,
-  args: Schema.Unknown,
+  args: Schema.Json,
 }).annotate({ identifier: "ToolCall" })
 export type ToolCall = Schema.Schema.Type<typeof ToolCall>
 
 export const ToolPartialCall = Schema.Struct({
   state: Schema.Literal("partial-call"),
   step: Schema.optional(NonNegativeInt),
-  toolCallId: Schema.String,
+  toolCallId: ToolCallID,
   toolName: Schema.String,
-  args: Schema.Unknown,
+  args: Schema.Json,
 }).annotate({ identifier: "ToolPartialCall" })
 export type ToolPartialCall = Schema.Schema.Type<typeof ToolPartialCall>
 
 export const ToolResult = Schema.Struct({
   state: Schema.Literal("result"),
   step: Schema.optional(NonNegativeInt),
-  toolCallId: Schema.String,
+  toolCallId: ToolCallID,
   toolName: Schema.String,
-  args: Schema.Unknown,
+  args: Schema.Json,
   result: Schema.String,
 }).annotate({ identifier: "ToolResult" })
 export type ToolResult = Schema.Schema.Type<typeof ToolResult>
@@ -51,7 +70,7 @@ export type TextPart = Schema.Schema.Type<typeof TextPart>
 export const ReasoningPart = Schema.Struct({
   type: Schema.Literal("reasoning"),
   text: Schema.String,
-  providerMetadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  providerMetadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "ReasoningPart" })
 export type ReasoningPart = Schema.Schema.Type<typeof ReasoningPart>
 
@@ -63,10 +82,10 @@ export type ToolInvocationPart = Schema.Schema.Type<typeof ToolInvocationPart>
 
 export const SourceUrlPart = Schema.Struct({
   type: Schema.Literal("source-url"),
-  sourceId: Schema.String,
+  sourceId: SourceID,
   url: Schema.String,
   title: Schema.optional(Schema.String),
-  providerMetadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  providerMetadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "SourceUrlPart" })
 export type SourceUrlPart = Schema.Schema.Type<typeof SourceUrlPart>
 
@@ -94,7 +113,7 @@ export const MessagePart = Schema.Union([
 export type MessagePart = Schema.Schema.Type<typeof MessagePart>
 
 export const Info = Schema.Struct({
-  id: Schema.String,
+  id: ID,
   role: Schema.Literals(["user", "assistant"]),
   parts: Schema.Array(MessagePart),
   metadata: Schema.Struct({
@@ -115,7 +134,7 @@ export const Info = Schema.Struct({
             end: NonNegativeInt,
           }),
         }),
-        [Schema.Record(Schema.String, Schema.Unknown)],
+        [Schema.Record(Schema.String, Schema.Json)],
       ),
     ),
     assistant: Schema.optional(

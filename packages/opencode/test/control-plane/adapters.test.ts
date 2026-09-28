@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { getAdapter, registerAdapter } from "../../src/control-plane/adapters"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import type { WorkspaceInfo } from "../../src/control-plane/types"
+import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 
 function info(projectID: WorkspaceInfo["projectID"], type: string): WorkspaceInfo {
   return {
-    id: "workspace-test" as WorkspaceInfo["id"],
+    id: WorkspaceV2.ID.make("wrk_workspace-test"),
     type,
     name: "workspace-test",
     branch: null,
@@ -41,11 +43,11 @@ describe("control-plane/adapters", () => {
     registerAdapter(one, type, adapter("/one"))
     registerAdapter(two, type, adapter("/two"))
 
-    expect(await (await getAdapter(one, type)).target(info(one, type))).toEqual({
+    expect(await (await Effect.runPromise(getAdapter(one, type))).target(info(one, type))).toEqual({
       type: "local",
       directory: "/one",
     })
-    expect(await (await getAdapter(two, type)).target(info(two, type))).toEqual({
+    expect(await (await Effect.runPromise(getAdapter(two, type))).target(info(two, type))).toEqual({
       type: "local",
       directory: "/two",
     })
@@ -56,14 +58,14 @@ describe("control-plane/adapters", () => {
     const id = ProjectV2.ID.make(`project-${Math.random().toString(36).slice(2)}`)
     registerAdapter(id, type, adapter("/one"))
 
-    expect(await (await getAdapter(id, type)).target(info(id, type))).toEqual({
+    expect(await (await Effect.runPromise(getAdapter(id, type))).target(info(id, type))).toEqual({
       type: "local",
       directory: "/one",
     })
 
     registerAdapter(id, type, adapter("/two"))
 
-    expect(await (await getAdapter(id, type)).target(info(id, type))).toEqual({
+    expect(await (await Effect.runPromise(getAdapter(id, type))).target(info(id, type))).toEqual({
       type: "local",
       directory: "/two",
     })

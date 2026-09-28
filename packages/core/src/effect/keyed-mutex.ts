@@ -1,6 +1,6 @@
 export * as KeyedMutex from "./keyed-mutex"
 
-import { Effect, Semaphore } from "effect"
+import { Effect, MutableHashMap, Option, Semaphore } from "effect"
 
 export interface KeyedMutex<in Key> {
   readonly size: Effect.Effect<number>
@@ -18,27 +18,29 @@ export interface KeyedMutex<in Key> {
  * will reuse it.
  */
 export const makeUnsafe = <Key>(): KeyedMutex<Key> => {
-  const locks = new Map<Key, { readonly semaphore: Semaphore.Semaphore; users: number }>()
+  const locks = MutableHashMap.empty<Key, { readonly semaphore: Semaphore.Semaphore; users: number }>()
 
   const withLock =
     (key: Key) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => {
-        const current = locks.get(key)
-        const entry = current ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 }
-        if (!current) locks.set(key, entry)
+        const entry = Option.getOrElse(MutableHashMap.get(locks, key), () => {
+          const created = { semaphore: Semaphore.makeUnsafe(1), users: 0 }
+          MutableHashMap.set(locks, key, created)
+          return created
+        })
         entry.users++
         return entry.semaphore.withPermit(effect).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               entry.users--
-              if (entry.users === 0) locks.delete(key)
+              if (entry.users === 0) MutableHashMap.remove(locks, key)
             }),
           ),
         )
       })
 
-  return { size: Effect.sync(() => locks.size), withLock }
+  return { size: Effect.sync(() => MutableHashMap.size(locks)), withLock }
 }
 
 /** Creates an in-memory keyed mutex inside an Effect workflow. */

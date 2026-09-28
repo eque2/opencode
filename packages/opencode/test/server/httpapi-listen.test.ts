@@ -1,26 +1,25 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import net from "node:net"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Server } from "../../src/server/server"
 import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
-import { withTimeout } from "../../src/util/timeout"
+import { withTimeout } from "../lib/timeout"
+import { Schema } from "effect"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 
 const original = {
-  OPENCODE_SERVER_PASSWORD: Flag.OPENCODE_SERVER_PASSWORD,
-  OPENCODE_SERVER_USERNAME: Flag.OPENCODE_SERVER_USERNAME,
   envPassword: process.env.OPENCODE_SERVER_PASSWORD,
   envUsername: process.env.OPENCODE_SERVER_USERNAME,
 }
 const auth = { username: "opencode", password: "listen-secret" }
+const decodeTicket = Schema.decodeUnknownSync(Schema.Struct({ ticket: Schema.String, expires_in: Schema.Number }))
+const decodeMint = Schema.decodeUnknownSync(Schema.Struct({ ticket: Schema.String }))
+const decodeCreated = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }))
 const testPty = process.platform === "win32" ? test.skip : test
 
 afterEach(async () => {
-  Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-  Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
   if (original.envPassword === undefined) delete process.env.OPENCODE_SERVER_PASSWORD
   else process.env.OPENCODE_SERVER_PASSWORD = original.envPassword
   if (original.envUsername === undefined) delete process.env.OPENCODE_SERVER_USERNAME
@@ -30,16 +29,12 @@ afterEach(async () => {
 })
 
 async function startListener() {
-  Flag.OPENCODE_SERVER_PASSWORD = auth.password
-  Flag.OPENCODE_SERVER_USERNAME = auth.username
   process.env.OPENCODE_SERVER_PASSWORD = auth.password
   process.env.OPENCODE_SERVER_USERNAME = auth.username
   return Server.listen({ hostname: "127.0.0.1", port: 0 })
 }
 
 async function startNoAuthListener() {
-  Flag.OPENCODE_SERVER_PASSWORD = undefined
-  Flag.OPENCODE_SERVER_USERNAME = auth.username
   delete process.env.OPENCODE_SERVER_PASSWORD
   process.env.OPENCODE_SERVER_USERNAME = auth.username
   return Server.listen({ hostname: "127.0.0.1", port: 0 })
@@ -80,7 +75,7 @@ async function requestTicket(
 async function connectTicket(listener: Awaited<ReturnType<typeof startListener>>, id: string, dir: string) {
   const response = await requestTicket(listener, id, dir)
   expect(response.status).toBe(200)
-  return (await response.json()) as { ticket: string; expires_in: number }
+  return decodeTicket(await response.json())
 }
 
 async function createCat(listener: Awaited<ReturnType<typeof startListener>>, dir: string) {
@@ -94,7 +89,7 @@ async function createCat(listener: Awaited<ReturnType<typeof startListener>>, di
     body: JSON.stringify({ command: "/bin/cat", title: "listen-smoke" }),
   })
   expect(response.status).toBe(200)
-  return (await response.json()) as { id: string }
+  return decodeCreated(await response.json())
 }
 
 async function openSocket(url: URL) {
@@ -111,9 +106,9 @@ async function openSocket(url: URL) {
   return ws
 }
 
-async function expectSocketRejected(url: URL, init?: { headers?: Record<string, string> }) {
-  // Bun's WebSocket accepts an init object with headers; standard DOM types don't reflect that.
-  const Ctor = WebSocket as unknown as new (url: URL, init?: { headers?: Record<string, string> }) => WebSocket
+async function expectSocketRejected(url: URL, init?: Bun.WebSocketOptions) {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) bun-types WebSocket: with lib.dom loaded, the constructor type omits Bun's (url, Bun.WebSocketOptions) overload, which Bun accepts at run time
+  const Ctor = WebSocket as unknown as new (url: URL, init?: Bun.WebSocketOptions) => WebSocket
   const ws = new Ctor(url, init)
   await withTimeout(
     new Promise<void>((resolve, reject) => {
@@ -143,7 +138,13 @@ function waitForMessage(ws: WebSocket, predicate: (message: string) => boolean) 
   return withTimeout(
     new Promise<string>((resolve) => {
       onMessage = (event: MessageEvent) => {
-        const message = typeof event.data === "string" ? event.data : decoder.decode(event.data as ArrayBuffer)
+        // binaryType is "arraybuffer", so a binary frame arrives as an ArrayBuffer.
+        const message =
+          typeof event.data === "string"
+            ? event.data
+            : event.data instanceof ArrayBuffer
+              ? decoder.decode(event.data)
+              : String(event.data)
         if (!predicate(message)) return
         resolve(message)
       }
@@ -279,24 +280,27 @@ describe("HttpApi Server.listen", () => {
     const listener = await startListener()
     await withTimeout(listener.stop(), 10_000, "timed out waiting for graceful listener.stop()")
     await withTimeout(listener.stop(), 5_000, "timed out waiting for repeated graceful listener.stop()")
-    await expect(
-      fetch(new URL(PtyPaths.shells, listener.url), { headers: { authorization: authorization() } }),
-    ).rejects.toThrow()
+    const failure: unknown = await fetch(new URL(PtyPaths.shells, listener.url), {
+      headers: { authorization: authorization() },
+    }).then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
   })
 
   test("default in-process handler does not emit Effect HTTP response logs", async () => {
     let output = ""
-    // oxlint-disable-next-line typescript-eslint/unbound-method -- restored in finally after temporarily capturing stderr.
-    const original = process.stderr.write
-    process.stderr.write = ((chunk) => {
+    // The spy captures stderr and mockRestore puts the original write method back.
+    const write = spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
       output += String(chunk)
       return true
-    }) as typeof process.stderr.write
+    })
     try {
       const response = await Server.Default().app.request("/status")
       expect(response.status).toBe(200)
     } finally {
-      process.stderr.write = original
+      write.mockRestore()
     }
 
     expect(output).not.toContain("Sent HTTP response")
@@ -407,7 +411,7 @@ describe("HttpApi Server.listen", () => {
         },
       )
       expect(directoryScoped.status).toBe(200)
-      const mint = (await directoryScoped.json()) as { ticket: string }
+      const mint = decodeMint(await directoryScoped.json())
       const scopedWs = await openSocket(socketURL(listener, info.id, tmp.path, mint.ticket))
       scopedWs.close(1000)
 

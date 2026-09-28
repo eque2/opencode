@@ -3,18 +3,19 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Tag } from "@opencode-ai/ui/tag"
 import { showToast } from "@/utils/toast"
-import { popularProviders, useProviders } from "@/hooks/use-providers"
+import { popularProviders, useGlobalProviders } from "@/hooks/use-providers"
 import { createMemo, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerProtocol, useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
+import { Data, Effect, HashSet } from "effect"
 import { DialogConnectProvider, useProviderConnectController } from "./dialog-connect-provider"
 import { DialogCustomProvider } from "./dialog-custom-provider"
 import { SettingsList } from "./settings-list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
 
 type ProviderSource = "env" | "api" | "config" | "custom"
-type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
+type ProviderItem = ReturnType<ReturnType<typeof useGlobalProviders>["connected"]>[number]
 
 const PROVIDER_NOTES = [
   { match: (id: string) => id === "opencode", key: "dialog.provider.opencode.note" },
@@ -26,6 +27,21 @@ const PROVIDER_NOTES = [
   { match: (id: string) => id === "openrouter", key: "dialog.provider.openrouter.note" },
   { match: (id: string) => id === "vercel", key: "dialog.provider.vercel.note" },
 ] as const
+
+/** A provider request that rejected. `message` is the text the failure toast shows. */
+class ProviderRequestError extends Data.TaggedError("ProviderRequestError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+/** Runs one SDK request. The failure keeps the rejection's own message, which the toast shows. */
+function request<A>(run: () => Promise<A>) {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new ProviderRequestError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  })
+}
 
 export const SettingsProviders: Component<{ onBack?: () => void }> = (props) => {
   return (
@@ -41,7 +57,8 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
   const serverSDK = useServerSDK()
   const protocol = useServerProtocol()
   const serverSync = useServerSync()
-  const providers = useProviders(() => undefined)
+  // The v1 settings screen reads the global provider catalog, so it names no project directory.
+  const providers = useGlobalProviders()
   const providerConnect = useProviderConnectController({ onBack: props.onBack })
 
   const connect = (provider?: string) => {
@@ -56,20 +73,20 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
   })
 
   const popular = createMemo(() => {
-    const connectedIDs = new Set(connected().map((p) => p.id))
+    const connectedIDs = HashSet.fromIterable(connected().map((p) => p.id))
     const items = providers
       .popular()
-      .filter((p) => !connectedIDs.has(p.id))
+      .filter((p) => !HashSet.has(connectedIDs, p.id))
       .slice()
     items.sort((a, b) => popularProviders.indexOf(a.id) - popularProviders.indexOf(b.id))
     return items
   })
 
   const source = (item: ProviderItem): ProviderSource | undefined => {
-    if (!("source" in item)) return
+    if (!("source" in item)) return undefined
     const value = item.source
     if (value === "env" || value === "api" || value === "config" || value === "custom") return value
-    return
+    return undefined
   }
 
   const type = (item: ProviderItem) => {
@@ -97,53 +114,49 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
     return true
   }
 
-  const disableProvider = async (providerID: string, name: string) => {
-    if (protocol() !== "v1") return
-    const before = serverSync().data.config.disabled_providers ?? []
-    const next = before.includes(providerID) ? before : [...before, providerID]
-    serverSync().set("config", "disabled_providers", next)
+  const disconnected = (name: string) =>
+    Effect.sync(() =>
+      showToast({
+        variant: "success",
+        icon: "circle-check",
+        title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
+        description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
+      }),
+    )
 
-    await serverSync()
-      .updateConfig({ disabled_providers: next })
-      .then(() => {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        serverSync().set("config", "disabled_providers", before)
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
+  const failed = (error: ProviderRequestError) =>
+    Effect.sync(() => showToast({ title: language.t("common.requestFailed"), description: error.message }))
 
-  const disconnect = async (providerID: string, name: string) => {
-    if (isConfigCustom(providerID)) {
-      await serverSDK()
-        .client.auth.remove({ providerID })
-        .catch(() => undefined)
-      await disableProvider(providerID, name)
-      return
-    }
-    await serverSDK()
-      .client.auth.remove({ providerID })
-      .then(async () => {
-        await serverSDK().client.global.dispose()
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
+  const disableProvider = (providerID: string, name: string) =>
+    Effect.gen(function* () {
+      if (protocol() !== "v1") return
+      const before = serverSync().data.config.disabled_providers ?? []
+      const next = before.includes(providerID) ? before : [...before, providerID]
+      serverSync().set("config", "disabled_providers", next)
+
+      yield* request(() => serverSync().updateConfig({ disabled_providers: next })).pipe(
+        Effect.matchEffect({
+          onSuccess: () => disconnected(name),
+          onFailure: (error) =>
+            Effect.sync(() => serverSync().set("config", "disabled_providers", before)).pipe(
+              Effect.andThen(failed(error)),
+            ),
+        }),
+      )
+    })
+
+  const disconnect = (providerID: string, name: string) =>
+    Effect.gen(function* () {
+      if (isConfigCustom(providerID)) {
+        yield* request(() => serverSDK().client.auth.remove({ providerID })).pipe(Effect.ignore)
+        yield* disableProvider(providerID, name)
+        return
+      }
+      yield* request(() => serverSDK().client.auth.remove({ providerID })).pipe(
+        Effect.andThen(request(() => serverSDK().client.global.dispose())),
+        Effect.matchEffect({ onSuccess: () => disconnected(name), onFailure: failed }),
+      )
+    }).pipe(Effect.tapDefect((defect) => Effect.logError(defect)))
 
   return (
     <div class="flex flex-col h-full overflow-y-auto no-scrollbar px-4 pb-10 sm:px-10 sm:pb-10">
@@ -182,7 +195,11 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
                         </span>
                       }
                     >
-                      <Button size="large" variant="ghost" onClick={() => void disconnect(item.id, item.name)}>
+                      <Button
+                        size="large"
+                        variant="ghost"
+                        onClick={() => Effect.runFork(disconnect(item.id, item.name))}
+                      >
                         {language.t("common.disconnect")}
                       </Button>
                     </Show>
@@ -241,7 +258,7 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
                   variant="secondary"
                   icon="plus-small"
                   onClick={() => {
-                    dialog.show(() => <DialogCustomProvider onBack={dialog.close} />)
+                    void dialog.show(() => <DialogCustomProvider onBack={() => dialog.close()} />)
                   }}
                 >
                   {language.t("common.connect")}

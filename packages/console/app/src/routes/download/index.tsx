@@ -28,8 +28,8 @@ function CopyStatus() {
 export default function Download() {
   const i18n = useI18n()
   const language = useLanguage()
-  const handleCopyClick = (command: string) => (event: Event) => {
-    const button = event.currentTarget as HTMLButtonElement
+  const handleCopyClick = (command: string) => (event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
+    const button = event.currentTarget
     void navigator.clipboard.writeText(command)
     button.setAttribute("data-copied", "")
     setTimeout(() => {

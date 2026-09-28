@@ -1,3 +1,4 @@
+import { Option, Schema } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 type WatcherEvent = {
@@ -5,22 +6,27 @@ type WatcherEvent = {
   properties: unknown
 }
 
+const WatcherUpdate = Schema.Struct({ file: Schema.String, event: Schema.String }).annotate({
+  identifier: "FileWatcher.Update",
+})
+const decodeWatcherUpdate = Schema.decodeUnknownOption(WatcherUpdate)
+
 type WatcherOps = {
   normalize: (input: string) => string
   hasFile: (path: string) => boolean
   isOpen?: (path: string) => boolean
   loadFile: (path: string) => void
-  node: (path: string) => FileNode | undefined
+  node: (path: string) => Option.Option<FileNode>
   isDirLoaded: (path: string) => boolean
   refreshDir: (path: string) => void
 }
 
 export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   if (event.type !== "file.watcher.updated") return
-  const props =
-    typeof event.properties === "object" && event.properties ? (event.properties as Record<string, unknown>) : undefined
-  const rawPath = typeof props?.file === "string" ? props.file : undefined
-  const kind = typeof props?.event === "string" ? props.event : undefined
+  const update = decodeWatcherUpdate(event.properties)
+  if (Option.isNone(update)) return
+  const rawPath = update.value.file
+  const kind = update.value.event
   if (!rawPath) return
   if (!kind) return
 
@@ -33,15 +39,13 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   }
 
   if (kind === "change") {
-    const dir = (() => {
-      if (path === "") return ""
-      const node = ops.node(path)
-      if (node?.type !== "directory") return
-      return path
-    })()
-    if (dir === undefined) return
-    if (!ops.isDirLoaded(dir)) return
-    ops.refreshDir(dir)
+    const dir =
+      path === ""
+        ? Option.some(path)
+        : Option.liftPredicate(path, (p) => Option.exists(ops.node(p), (node) => node.type === "directory"))
+    if (Option.isNone(dir)) return
+    if (!ops.isDirLoaded(dir.value)) return
+    ops.refreshDir(dir.value)
     return
   }
   if (kind !== "add" && kind !== "unlink") return

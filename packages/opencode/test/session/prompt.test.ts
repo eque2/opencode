@@ -6,7 +6,8 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { eq } from "drizzle-orm"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { expect } from "bun:test"
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer } from "effect"
+import { EventV2 } from "@opencode-ai/core/event"
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Schema } from "effect"
 import path from "path"
 import { fileURLToPath } from "url"
 import { NamedError } from "@opencode-ai/core/util/error"
@@ -97,16 +98,31 @@ function toolPart(parts: SessionV1.Part[]) {
 type CompletedToolPart = SessionV1.ToolPart & { state: SessionV1.ToolStateCompleted }
 type ErrorToolPart = SessionV1.ToolPart & { state: SessionV1.ToolStateError }
 
+// The status tag decides the state variant, so these guards narrow the whole part.
+const isCompletedTool = (part: SessionV1.ToolPart): part is CompletedToolPart => part.state.status === "completed"
+const isErrorTool = (part: SessionV1.ToolPart): part is ErrorToolPart => part.state.status === "error"
+
+// A failed expectation inside an Effect test body.
+class ExpectationError extends Schema.TaggedError<ExpectationError>()("PromptTestExpectationError", {
+  message: Schema.String,
+}) {}
+
+// Narrows a published payload to one event definition by its type tag, as EventV2 routing does.
+const isPayloadOf =
+  <D extends EventV2.Definition>(definition: D) =>
+  (event: EventV2.Payload): event is EventV2.Payload<D> =>
+    event.type === definition.type
+
 function completedTool(parts: SessionV1.Part[]) {
   const part = toolPart(parts)
   expect(part?.state.status).toBe("completed")
-  return part?.state.status === "completed" ? (part as CompletedToolPart) : undefined
+  return part && isCompletedTool(part) ? part : undefined
 }
 
 function errorTool(parts: SessionV1.Part[]) {
   const part = toolPart(parts)
   expect(part?.state.status).toBe("error")
-  return part?.state.status === "error" ? (part as ErrorToolPart) : undefined
+  return part && isErrorTool(part) ? part : undefined
 }
 
 function makeMcp(instructions: MCP.ServerInstructions[] = []) {
@@ -338,23 +354,7 @@ const waitForBusy = (sessionID: SessionID, duration: Duration.Input = "2 seconds
 
 const hasBash = Effect.sync(() => Bun.which("bash") !== null)
 
-const deferredAsPromise = <A>(deferred: Deferred.Deferred<A>): PromiseLike<A> => ({
-  then: (onfulfilled, onrejected) => {
-    Effect.runFork(
-      Deferred.await(deferred).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            onrejected?.(error)
-          },
-          onSuccess: (value) => {
-            onfulfilled?.(value)
-          },
-        }),
-      ),
-    )
-    return deferredAsPromise(deferred) as PromiseLike<never>
-  },
-})
+const deferredAsPromise = <A>(deferred: Deferred.Deferred<A>): Promise<A> => Effect.runPromise(Deferred.await(deferred))
 
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -641,8 +641,8 @@ it.instance("loop surfaces content-filter finishes as session errors", () =>
       data: { message: "The response was blocked by the provider's content filter" },
     } satisfies NonNullable<SessionV1.Assistant["error"]>
     const off = yield* events.listen((event) => {
-      if (event.type !== Session.Event.Error.type) return Effect.void
-      const data = event.data as typeof Session.Event.Error.data.Type
+      if (!isPayloadOf(Session.Event.Error)(event)) return Effect.void
+      const data = event.data
       if (data.sessionID === chat.id && data.error) errors.push(data.error)
       return Effect.void
     })
@@ -1006,7 +1006,7 @@ it.instance("subtask child inherits parent session external_directory allow", ()
 
     const kids = yield* sessions.children(chat.id)
     expect(kids).toHaveLength(1)
-    const child = kids[0]!
+    const child = kids[0]
     const rules = child.permission ?? []
     expect(rules).toEqual(
       expect.arrayContaining([{ permission: "external_directory", pattern: "/tmp/allowed/*", action: "allow" }]),
@@ -1063,6 +1063,7 @@ it.instance(
           const taskMsg = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "general")
           const tool = taskMsg?.parts.find((part): part is SessionV1.ToolPart => part.type === "tool")
           if (tool?.state.status === "running" && tool.state.metadata?.sessionId) return tool
+          return undefined
         }),
         "timed out waiting for running subtask metadata",
       )
@@ -1107,6 +1108,7 @@ it.instance(
             (part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "task",
           )
           if (tool?.state.status === "running" && tool.state.metadata?.sessionId) return tool
+          return undefined
         }),
         "timed out waiting for running task metadata",
       )
@@ -1293,7 +1295,7 @@ noLLMServer.instance(
       const aborted = yield* Deferred.make<void>()
       const registry = yield* ToolRegistry.Service
       const { task } = yield* registry.named()
-      const original = task.execute
+      const original = task.execute.bind(task)
       task.execute = (_args, ctx) =>
         Effect.callback<never>((_resume) => {
           ctx.abort.addEventListener("abort", () => succeedVoid(aborted), { once: true })
@@ -1484,14 +1486,14 @@ it.instance("prompt submitted during an active run is included in the next LLM i
     const assistants = msgs.filter((msg) => msg.info.role === "assistant")
     expect(assistants).toHaveLength(2)
     const last = assistants.at(-1)
-    if (!last || last.info.role !== "assistant") throw new Error("expected second assistant")
+    if (!last || last.info.role !== "assistant") throw new ExpectationError({ message: "expected second assistant" })
     expect(last.info.parentID).toBe(id)
     expect(last.parts.some((part) => part.type === "text" && part.text === "second")).toBe(true)
 
     const inputs = yield* llm.inputs
     expect(inputs).toHaveLength(2)
     const messages = inputs.at(-1)?.messages
-    if (!Array.isArray(messages)) throw new Error("expected LLM messages")
+    if (!Array.isArray(messages)) throw new ExpectationError({ message: "expected LLM messages" })
     expect(messages.at(-1)).toEqual({ role: "user", content: "second" })
   }),
 )
@@ -1723,6 +1725,7 @@ unixNoLLMServer(
             const taskMsg = msgs.find((item) => item.info.role === "assistant")
             const tool = taskMsg ? toolPart(taskMsg.parts) : undefined
             if (tool?.state.status === "running" && tool.state.metadata?.output.includes("first")) return true
+            return undefined
           }),
           "timed out waiting for running shell metadata",
         )
@@ -1962,6 +1965,7 @@ unix(
           const assistant = msgs.findLast((item) => item.info.role === "assistant")
           const tool = assistant ? toolPart(assistant.parts) : undefined
           if (tool?.state.status === "running" && tool.state.metadata?.output.includes("truncation-ready")) return true
+          return undefined
         }),
         "timed out waiting for truncated shell output",
       )

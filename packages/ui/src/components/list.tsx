@@ -12,6 +12,7 @@ function findByKey(container: HTMLElement, key: string) {
   for (const node of nodes) {
     if (node.getAttribute("data-key") === key) return node
   }
+  return undefined
 }
 
 export interface ListSearchProps {
@@ -58,9 +59,12 @@ export interface ListRef {
 export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) {
   const i18n = useI18n()
   let inputRef: HTMLInputElement | HTMLTextAreaElement | undefined
-  const [store, setStore] = createStore({
+  const [store, setStore] = createStore<{
+    mouseActive: boolean
+    scrollRef?: HTMLDivElement
+    internalFilter: string
+  }>({
     mouseActive: false,
-    scrollRef: undefined as HTMLDivElement | undefined,
     internalFilter: "",
   })
   const scrollRef = () => store.scrollRef
@@ -202,20 +206,19 @@ export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) 
     setFilter: (value) => applyFilter(value, { ref: true }),
   })
 
-  const renderAdd = () => {
-    const add = addProps()
-    if (!add) return null
-    return (
-      <div data-slot="list-item-add" classList={{ [add.class ?? ""]: !!add.class }}>
-        {add.render()}
-      </div>
-    )
-  }
+  const renderAdd = () => (
+    <Show when={addProps()} keyed>
+      {(add) => (
+        <div data-slot="list-item-add" classList={{ [add.class ?? ""]: !!add.class }}>
+          {add.render()}
+        </div>
+      )}
+    </Show>
+  )
 
   function GroupHeader(groupProps: { group: { category: string; items: T[] } }): JSX.Element {
-    const [state, setState] = createStore({
+    const [state, setState] = createStore<{ stuck: boolean; header?: HTMLDivElement }>({
       stuck: false,
-      header: undefined as HTMLDivElement | undefined,
     })
 
     createEffect(() => {
@@ -351,6 +354,7 @@ export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) 
                             }}
                             onMouseLeave={() => {
                               if (!store.mouseActive) return
+                              // eslint-disable-next-line effect/no-null-use-option -- (a) solid-list setActive is Setter<string | null>, and null is its only "no active item" value
                               setActive(null)
                             }}
                           >

@@ -1,4 +1,5 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { Option } from "effect"
 import { createQuery } from "@tanstack/solid-query"
 import { useNavigate, useSearchParams } from "@solidjs/router"
 import { type Accessor, createMemo } from "solid-js"
@@ -20,7 +21,7 @@ import { pathKey } from "@/utils/path-key"
 export function createPromptInputController(input: {
   sessionKey: Accessor<string>
   sessionID: Accessor<string | undefined>
-  queryOptions: Pick<QueryOptionsApi, "agents" | "providers">
+  queryOptions: Pick<QueryOptionsApi, "agents" | "providers" | "serverProviders">
   model?: ModelSelection
 }) {
   const layout = useLayout()
@@ -30,7 +31,7 @@ export function createPromptInputController(input: {
   const providers = useProviders(() => sdk().directory)
   const view = layout.view(input.sessionKey)
   const agentsQuery = createQuery(() => input.queryOptions.agents(pathKey(sdk().directory)))
-  const globalProvidersQuery = createQuery(() => input.queryOptions.providers(null))
+  const globalProvidersQuery = createQuery(() => input.queryOptions.serverProviders())
   const providersQuery = createQuery(() => input.queryOptions.providers(pathKey(sdk().directory)))
 
   return createMemo<PromptInputControls>(() => {
@@ -41,7 +42,7 @@ export function createPromptInputController(input: {
         current: local.agent.current()?.name ?? "",
         loading: agentsQuery.isLoading,
         visible: local.agent.visible(),
-        select: local.agent.set,
+        select: (name) => local.agent.set(name),
       },
       model: {
         selection: input.model ?? local.model,
@@ -84,8 +85,14 @@ export function createPromptProjectControls() {
         .map((project) => ({ ...project, server: item }))
     })
   })
-  const selectProject = (worktree: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
+  const connection = (serverKey: Option.Option<string>) =>
+    Option.match(serverKey, {
+      onNone: () => projectServer(),
+      onSome: (key) => server.list.find((conn) => ServerConnection.key(conn) === key),
+    })
+
+  const selectProject = (worktree: string, serverKey: Option.Option<string>) => {
+    const conn = connection(serverKey)
     if (search.draftId) {
       if (!conn) return
       const target = global.ensureServerCtx(conn)
@@ -95,7 +102,7 @@ export function createPromptProjectControls() {
       return
     }
 
-    if (!serverKey) {
+    if (Option.isNone(serverKey)) {
       layout.projects.open(worktree)
       server.projects.touch(worktree)
       navigate(`/${base64Encode(worktree)}/session`)
@@ -110,14 +117,15 @@ export function createPromptProjectControls() {
     navigate(`/${base64Encode(worktree)}/session`)
   }
 
-  const addProject = (title: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
+  const addProject = (title: string, serverKey: Option.Option<string>) => {
+    const conn = connection(serverKey)
     if (!conn) return
     pickDirectory({
       server: conn,
       title,
       onSelect: (result) => {
-        const directory = Array.isArray(result) ? result[0] : result
+        if (Option.isNone(result)) return
+        const directory = Array.isArray(result.value) ? result.value[0] : result.value
         if (directory) selectProject(directory, serverKey)
       },
     })
@@ -126,7 +134,7 @@ export function createPromptProjectControls() {
   return createMemo<PromptProjectControls>(() => ({
     available: projects(),
     directory: sdk().directory,
-    server: server.list.length > 1 ? ServerConnection.key(projectServer()) : undefined,
+    ...(server.list.length > 1 ? { server: ServerConnection.key(projectServer()) } : {}),
     select: selectProject,
     add: addProject,
   }))

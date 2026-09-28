@@ -1,6 +1,5 @@
 import type { Argv, InferredOptionTypes } from "yargs"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
-import type { Config } from "@/config/config"
 import { Effect } from "effect"
 
 const options = {
@@ -50,7 +49,7 @@ function hasBooleanArg(name: string) {
 
 function networkArgs() {
   const separator = process.argv.indexOf("--")
-  return process.argv.slice(2, separator === -1 ? undefined : separator)
+  return process.argv.slice(2, separator === -1 ? process.argv.length : separator)
 }
 
 export const resolveNetworkOptions = Effect.fn("Cli.resolveNetworkOptions")(function* (args: NetworkOptions) {

@@ -1,4 +1,4 @@
-import { sortBy, pipe } from "remeda"
+import { Array as Arr, Option, Order } from "effect"
 
 export function match(str: string, pattern: string) {
   if (str) str = str.replaceAll("\\", "/")
@@ -18,30 +18,33 @@ export function match(str: string, pattern: string) {
   return new RegExp("^" + escaped + "$", flags).test(str)
 }
 
-export function all(input: string, patterns: Record<string, any>) {
-  const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-  let result = undefined
-  for (const [pattern, value] of sorted) {
-    if (match(input, pattern)) {
-      result = value
-      continue
-    }
-  }
-  return result
+// Shorter patterns sort first, so the last match is the most specific pattern.
+const byPattern = Order.combine(
+  Order.mapInput(Order.Number, ([key]: [string, unknown]) => key.length),
+  Order.mapInput(Order.String, ([key]: [string, unknown]) => key),
+)
+
+function sortedEntries<T>(patterns: Record<string, T>) {
+  return Arr.sort(Object.entries(patterns), byPattern)
 }
 
-export function allStructured(input: { head: string; tail: string[] }, patterns: Record<string, any>) {
-  const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-  let result = undefined
-  for (const [pattern, value] of sorted) {
+// The public result is `T | undefined`: callers and tests read a missing rule as undefined.
+export function all<T>(input: string, patterns: Record<string, T>): T | undefined {
+  return Arr.findLast(sortedEntries(patterns), ([pattern]) => match(input, pattern)).pipe(
+    Option.map(([, value]) => value),
+    Option.getOrUndefined,
+  )
+}
+
+export function allStructured<T>(input: { head: string; tail: string[] }, patterns: Record<string, T>): T | undefined {
+  return Arr.findLast(sortedEntries(patterns), ([pattern]) => {
     const parts = pattern.split(/\s+/)
-    if (!match(input.head, parts[0])) continue
-    if (parts.length === 1 || matchSequence(input.tail, parts.slice(1))) {
-      result = value
-      continue
-    }
-  }
-  return result
+    if (!match(input.head, parts[0])) return false
+    return parts.length === 1 || matchSequence(input.tail, parts.slice(1))
+  }).pipe(
+    Option.map(([, value]) => value),
+    Option.getOrUndefined,
+  )
 }
 
 function matchSequence(items: string[], patterns: string[]): boolean {

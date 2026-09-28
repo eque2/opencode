@@ -1,29 +1,45 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part } from "@opencode-ai/sdk/v2/client"
+import type { AssistantMessage, Message, TextPart, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { estimateSessionContextBreakdown } from "./session-context-breakdown"
 
-const user = (id: string) => {
-  return {
-    id,
-    role: "user",
-    time: { created: 1 },
-  } as unknown as Message
-}
+const user = (id: string): UserMessage => ({
+  id,
+  sessionID: "ses_1",
+  role: "user",
+  time: { created: 1 },
+  agent: "build",
+  model: { providerID: "openai", modelID: "gpt-4.1" },
+})
 
-const assistant = (id: string) => {
-  return {
-    id,
-    role: "assistant",
-    time: { created: 1 },
-  } as unknown as Message
-}
+const assistant = (id: string): AssistantMessage => ({
+  id,
+  sessionID: "ses_1",
+  role: "assistant",
+  time: { created: 1 },
+  parentID: "u1",
+  modelID: "gpt-4.1",
+  providerID: "openai",
+  mode: "build",
+  agent: "build",
+  path: { cwd: "/", root: "/" },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+})
+
+const text = (messageID: string, value: string): TextPart => ({
+  id: `prt_${messageID}`,
+  sessionID: "ses_1",
+  messageID,
+  type: "text",
+  text: value,
+})
 
 describe("estimateSessionContextBreakdown", () => {
   test("estimates tokens and keeps remaining tokens as other", () => {
-    const messages = [user("u1"), assistant("a1")]
+    const messages: Message[] = [user("u1"), assistant("a1")]
     const parts = {
-      u1: [{ type: "text", text: "hello world" }] as unknown as Part[],
-      a1: [{ type: "text", text: "assistant response" }] as unknown as Part[],
+      u1: [text("u1", "hello world")],
+      a1: [text("a1", "assistant response")],
     }
 
     const output = estimateSessionContextBreakdown({
@@ -41,10 +57,10 @@ describe("estimateSessionContextBreakdown", () => {
   })
 
   test("scales segments when estimates exceed input", () => {
-    const messages = [user("u1"), assistant("a1")]
+    const messages: Message[] = [user("u1"), assistant("a1")]
     const parts = {
-      u1: [{ type: "text", text: "x".repeat(400) }] as unknown as Part[],
-      a1: [{ type: "text", text: "y".repeat(400) }] as unknown as Part[],
+      u1: [text("u1", "x".repeat(400))],
+      a1: [text("a1", "y".repeat(400))],
     }
 
     const output = estimateSessionContextBreakdown({

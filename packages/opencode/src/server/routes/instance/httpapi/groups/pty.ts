@@ -15,16 +15,18 @@ import { PtyForbiddenError, PtyNotFoundError } from "../errors"
 import { described } from "./metadata"
 
 const root = "/pty"
-export const Params = Schema.Struct({ ptyID: PtyID })
+export const Params = Schema.Struct({ ptyID: PtyID }).annotate({
+  description: "Path parameters that identify the PTY session",
+})
 export const CursorQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   cursor: Schema.optional(Schema.String),
-})
+}).annotate({ description: "Query parameters for the PTY output cursor" })
 export const ShellItem = Schema.Struct({
   path: Schema.String,
   name: Schema.String,
   acceptable: Schema.Boolean,
-})
+}).annotate({ description: "Shell that the PTY can start" })
 
 export const PtyPaths = {
   shells: `${root}/shells`,

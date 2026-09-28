@@ -8,13 +8,14 @@ import { Api } from "../api"
 
 const subscriberCapacity = 256
 
-function eventData(data: unknown): Sse.Event {
-  return {
-    _tag: "Event",
-    event: "message",
-    id: undefined,
-    data: JSON.stringify(Schema.encodeUnknownSync(OpenCodeEvent)(data)),
-  }
+const encodeEventJson = Schema.encodeUnknownEffect(Schema.fromJsonString(OpenCodeEvent))
+
+// An event that fails to encode is a server bug, so it stays a defect, as the former sync encode made it.
+function eventMessage(event: unknown) {
+  return encodeEventJson(event).pipe(
+    Effect.map((data) => ({ event: "message", data })),
+    Effect.orDie,
+  )
 }
 
 export const EventHandler = HttpApiBuilder.group(Api, "server.event", (handlers) =>
@@ -33,7 +34,7 @@ export const EventHandler = HttpApiBuilder.group(Api, "server.event", (handlers)
             const live = yield* EventV2.allBounded(events, subscriberCapacity)
             return Stream.make(connected).pipe(Stream.concat(live))
           }),
-        ).pipe(Stream.map(eventData), Stream.pipeThroughChannel(Sse.encode()))
+        ).pipe(Stream.mapEffect(eventMessage), Stream.pipeThroughChannel(Sse.encodeSchema(Sse.EventEncoded)))
         const heartbeat = Stream.tick("15 seconds").pipe(Stream.map(() => ": heartbeat\n\n"))
         return HttpServerResponse.stream(
           output.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }), Stream.encodeText),

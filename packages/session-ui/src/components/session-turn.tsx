@@ -3,6 +3,7 @@ import {
   type SnapshotFileDiff,
   Message as MessageType,
   Part as PartType,
+  type UserMessage,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionStatus } from "@opencode-ai/sdk/v2"
@@ -26,56 +27,54 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
+import { Equivalence, HashSet, MutableHashSet, Option, Predicate, Schema } from "effect"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
+// JSON text of any shape. A parse failure is None.
+const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+// A string field with at least one character, as the old truthiness checks required.
+function filledString(value: unknown): Option.Option<string> {
+  return Option.filter(Option.liftPredicate(value, Predicate.isString), (text) => text.length > 0)
+}
+
 function unwrap(message: string) {
   const text = message.replace(/^Error:\s*/, "").trim()
 
-  const parse = (value: string) => {
-    try {
-      return JSON.parse(value) as unknown
-    } catch {
-      return undefined
-    }
-  }
+  // Error payloads are sometimes JSON-encoded twice, so a string result is parsed once more.
+  const read = (value: string): Option.Option<unknown> =>
+    Option.flatMap(parseJson(value), (first) => (typeof first === "string" ? parseJson(first.trim()) : Option.some(first)))
 
-  const read = (value: string) => {
-    const first = parse(value)
-    if (typeof first !== "string") return first
-    return parse(first.trim())
-  }
-
-  let json = read(text)
-
-  if (json === undefined) {
+  const parsed = Option.orElse(read(text), () => {
     const start = text.indexOf("{")
     const end = text.lastIndexOf("}")
-    if (start !== -1 && end > start) {
-      json = read(text.slice(start, end + 1))
-    }
+    if (start !== -1 && end > start) return read(text.slice(start, end + 1))
+    return Option.none()
+  })
+
+  const found = Option.filter(parsed, record)
+  if (Option.isNone(found)) return message
+  const json = found.value
+
+  const err = json.error
+  if (record(err)) {
+    const type = filledString(err.type)
+    const msg = filledString(err.message)
+    if (Option.isSome(type) && Option.isSome(msg)) return `${type.value}: ${msg.value}`
+    if (Option.isSome(msg)) return msg.value
+    if (Option.isSome(type)) return type.value
+    const code = filledString(err.code)
+    if (Option.isSome(code)) return code.value
   }
 
-  if (!record(json)) return message
+  const msg = filledString(json.message)
+  if (Option.isSome(msg)) return msg.value
 
-  const err = record(json.error) ? json.error : undefined
-  if (err) {
-    const type = typeof err.type === "string" ? err.type : undefined
-    const msg = typeof err.message === "string" ? err.message : undefined
-    if (type && msg) return `${type}: ${msg}`
-    if (msg) return msg
-    if (type) return type
-    const code = typeof err.code === "string" ? err.code : undefined
-    if (code) return code
-  }
-
-  const msg = typeof json.message === "string" ? json.message : undefined
-  if (msg) return msg
-
-  const reason = typeof json.error === "string" ? json.error : undefined
-  if (reason) return reason
+  const reason = filledString(json.error)
+  if (Option.isSome(reason)) return reason.value
 
   return message
 }
@@ -97,21 +96,22 @@ function summaryDiff(value: SnapshotFileDiff): value is SummaryDiff {
   return typeof value.file === "string"
 }
 
-const hidden = new Set(["todowrite"])
+const hidden = HashSet.make("todowrite")
 
-function partState(part: PartType, showReasoningSummaries: boolean) {
+function partState(part: PartType, showReasoningSummaries: boolean): "visible" | "hidden" {
   if (part.type === "tool") {
-    if (hidden.has(part.tool)) return
-    if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running")) return
-    return "visible" as const
+    if (HashSet.has(hidden, part.tool)) return "hidden"
+    if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running"))
+      return "hidden"
+    return "visible"
   }
-  if (part.type === "text") return part.text?.trim() ? ("visible" as const) : undefined
+  if (part.type === "text") return part.text?.trim() ? "visible" : "hidden"
   if (part.type === "reasoning") {
-    if (showReasoningSummaries && part.text?.trim()) return "visible" as const
-    return
+    if (showReasoningSummaries && part.text?.trim()) return "visible"
+    return "hidden"
   }
-  if (PART_MAPPING[part.type]) return "visible" as const
-  return
+  if (PART_MAPPING[part.type]) return "visible"
+  return "hidden"
 }
 
 function clean(value: string) {
@@ -122,32 +122,34 @@ function clean(value: string) {
     .trim()
 }
 
-function heading(text: string) {
+function heading(text: string): Option.Option<string> {
   const markdown = text.replace(/\r\n?/g, "\n")
 
   const html = markdown.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
   if (html?.[1]) {
     const value = clean(html[1].replace(/<[^>]+>/g, " "))
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const atx = markdown.match(/^\s{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/m)
   if (atx?.[1]) {
     const value = clean(atx[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const setext = markdown.match(/^([^\n]+)\n(?:=+|-+)\s*$/m)
   if (setext?.[1]) {
     const value = clean(setext[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const strong = markdown.match(/^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/m)
   if (strong?.[1]) {
     const value = clean(strong[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
+
+  return Option.none()
 }
 
 export function SessionTurn(
@@ -205,21 +207,21 @@ export function SessionTurn(
     return msg
   })
 
-  const pending = createMemo(() => {
-    if (typeof props.active === "boolean") return
+  const pending = createMemo((): AssistantMessage | undefined => {
+    if (typeof props.active === "boolean") return undefined
     const messages = allMessages() ?? emptyMessages
     return messages.findLast(
       (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
     )
   })
 
-  const pendingUser = createMemo(() => {
+  const pendingUser = createMemo((): UserMessage | undefined => {
     const item = pending()
-    if (!item?.parentID) return
+    if (!item?.parentID) return undefined
     const messages = allMessages() ?? emptyMessages
     const result = Binary.search(messages, item.parentID, (m) => m.id)
     const msg = result.found ? messages[result.index] : messages.find((m) => m.id === item.parentID)
-    if (!msg || msg.role !== "user") return
+    if (!msg || msg.role !== "user") return undefined
     return msg
   })
 
@@ -243,12 +245,12 @@ export function SessionTurn(
     const files = message()?.summary?.diffs
     if (!files?.length) return emptyDiffs
 
-    const seen = new Set<string>()
+    const seen = MutableHashSet.empty<string>()
     return files
       .reduceRight<SummaryDiff[]>((result, diff) => {
         if (!summaryDiff(diff)) return result
-        if (seen.has(diff.file)) return result
-        seen.add(diff.file)
+        if (MutableHashSet.has(seen, diff.file)) return result
+        MutableHashSet.add(seen, diff.file)
         result.push(diff)
         return result
       }, [])
@@ -281,7 +283,7 @@ export function SessionTurn(
       for (let i = 0; i < messages.length; i++) {
         const item = messages[i]
         if (!item) continue
-        if (item.role === "assistant" && item.parentID === msg.id) result.push(item as AssistantMessage)
+        if (item.role === "assistant" && item.parentID === msg.id) result.push(item)
       }
       return result
     },
@@ -320,7 +322,7 @@ export function SessionTurn(
     if (!data || typeof data !== "object" || !("message" in data)) return ""
     const msg = data.message
     if (typeof msg === "string") return unwrap(msg)
-    if (msg === undefined || msg === null) return ""
+    if (Predicate.isNullish(msg)) return ""
     // oxlint-disable-next-line no-base-to-string -- msg is unknown from error data, coercion is intentional
     return unwrap(String(msg))
   })
@@ -333,24 +335,25 @@ export function SessionTurn(
   const working = createMemo(() => status().type !== "idle" && active())
   const showReasoningSummaries = createMemo(() => props.showReasoningSummaries ?? true)
 
-  const assistantCopyPartID = createMemo(() => {
-    if (working()) return null
-    return showAssistantCopyPartID() ?? null
-  })
+  // None hides the copy action on every assistant part. AssistantParts reads that case as null.
+  const assistantCopyPartID = createMemo(
+    () => (working() ? Option.none<string>() : Option.fromUndefinedOr(showAssistantCopyPartID())),
+    Option.none<string>(),
+    { equals: Option.makeEquivalence(Equivalence.strictEqual<string>()) },
+  )
   const turnDurationMs = createMemo(() => {
     const start = message()?.time.created
     if (typeof start !== "number") return undefined
 
-    const end = assistantMessages().reduce<number | undefined>((max, item) => {
+    const end = assistantMessages().reduce((max, item) => {
       const completed = item.time.completed
       if (typeof completed !== "number") return max
-      if (max === undefined) return completed
-      return Math.max(max, completed)
-    }, undefined)
+      return Option.some(Option.match(max, { onNone: () => completed, onSome: (value) => Math.max(value, completed) }))
+    }, Option.none<number>())
 
-    if (typeof end !== "number") return undefined
-    if (end < start) return undefined
-    return end - start
+    if (Option.isNone(end)) return undefined
+    if (end.value < start) return undefined
+    return end.value - start
   })
   const assistantDerived = createMemo(() => {
     let visible = 0
@@ -363,7 +366,7 @@ export function SessionTurn(
         }
         if (part.type === "reasoning" && part.text) {
           const h = heading(part.text)
-          if (h) reason = h
+          if (Option.isSome(h)) reason = h.value
         }
       }
     }
@@ -412,7 +415,7 @@ export function SessionTurn(
                 <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
                   <AssistantParts
                     messages={assistantMessages()}
-                    showAssistantCopyPartID={assistantCopyPartID()}
+                    showAssistantCopyPartID={Option.getOrNull(assistantCopyPartID())}
                     turnDurationMs={turnDurationMs()}
                     working={working()}
                     showReasoningSummaries={showReasoningSummaries()}
@@ -439,7 +442,7 @@ export function SessionTurn(
                 <div
                   data-slot="session-turn-diffs"
                   data-component="session-turn-diffs-group"
-                  data-show-all={showAll() || undefined}
+                  {...(showAll() ? { "data-show-all": true } : {})}
                 >
                   <div data-slot="session-turn-diffs-header">
                     <span data-slot="session-turn-diffs-label">

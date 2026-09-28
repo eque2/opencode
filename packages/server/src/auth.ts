@@ -1,6 +1,6 @@
 export * as ServerAuth from "./auth"
 
-import { Config as EffectConfig, Context, Effect, Layer, Option, Redacted } from "effect"
+import { Config as EffectConfig, ConfigProvider, Context, Effect, Layer, Option, Redacted } from "effect"
 
 export type Credentials = {
   password?: string
@@ -49,15 +49,35 @@ export function authorized(credentials: DecodedCredentials, config: Info) {
   )
 }
 
-export function header(credentials?: Credentials) {
-  const password = credentials?.password ?? process.env.OPENCODE_SERVER_PASSWORD
-  if (!password) return undefined
+const ClientEnv = EffectConfig.all({
+  password: EffectConfig.Redacted("OPENCODE_SERVER_PASSWORD").pipe(EffectConfig.option),
+  username: EffectConfig.String("OPENCODE_SERVER_USERNAME").pipe(EffectConfig.option),
+})
 
-  return `Basic ${Buffer.from(`${credentials?.username ?? process.env.OPENCODE_SERVER_USERNAME ?? "opencode"}:${password}`).toString("base64")}`
-}
+// Clients read the environment at each call, because hosts and tests change it at run time.
+// Each read parses a fresh provider that keeps empty strings, as the former `process.env.X ??`
+// reads did. Optional configs cannot fail on a missing variable, so a ConfigError is a defect.
+const readClientEnv = Effect.suspend(() =>
+  ClientEnv.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+).pipe(Effect.orDie)
 
-export function headers(credentials?: Credentials) {
-  const authorization = header(credentials)
+export const header = Effect.fn("ServerAuth.header")(function* (credentials?: Credentials) {
+  const env = yield* readClientEnv
+  const password = Option.fromNullishOr(credentials?.password).pipe(
+    Option.orElse(() => Option.map(env.password, Redacted.value)),
+    Option.filter((value) => value !== ""),
+  )
+  if (Option.isNone(password)) return undefined
+
+  const username = Option.fromNullishOr(credentials?.username).pipe(
+    Option.orElse(() => env.username),
+    Option.getOrElse(() => "opencode"),
+  )
+  return `Basic ${Buffer.from(`${username}:${password.value}`).toString("base64")}`
+})
+
+export const headers = Effect.fn("ServerAuth.headers")(function* (credentials?: Credentials) {
+  const authorization = yield* header(credentials)
   if (!authorization) return undefined
   return { Authorization: authorization }
-}
+})

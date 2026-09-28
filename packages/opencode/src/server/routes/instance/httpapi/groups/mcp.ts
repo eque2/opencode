@@ -11,19 +11,19 @@ import { described } from "./metadata"
 export const AddPayload = Schema.Struct({
   name: Schema.String,
   config: ConfigMCPV1.Info,
-})
+}).annotate({ description: "Request to add an MCP server" })
 
 export const StatusMap = Schema.Record(Schema.String, MCP.Status)
 export const AuthStartResponse = Schema.Struct({
   authorizationUrl: Schema.String,
   oauthState: Schema.String,
-})
+}).annotate({ description: "Start of the MCP OAuth flow" })
 export const AuthCallbackPayload = Schema.Struct({
   code: Schema.String,
-})
+}).annotate({ description: "OAuth callback code for an MCP server" })
 export const AuthRemoveResponse = Schema.Struct({
   success: Schema.Literal(true),
-})
+}).annotate({ description: "Result of the MCP credential removal" })
 export class UnsupportedOAuthError extends Schema.Error<UnsupportedOAuthError>("McpUnsupportedOAuthError")(
   { error: Schema.String },
   { httpApiStatus: 400 },

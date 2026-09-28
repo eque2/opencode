@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import { create as createIdentifier } from "@opencode-ai/schema/identifier"
 
 const prefixes = {
@@ -26,10 +27,12 @@ function generateID(prefix: keyof typeof prefixes, direction: "descending" | "as
     return create(prefixes[prefix], direction)
   }
 
-  if (!given.startsWith(prefixes[prefix])) {
-    throw new Error(`ID ${given} does not start with ${prefixes[prefix]}`)
-  }
-  return given
+  // ascending and descending are synchronous, so decodeSync rejects a foreign ID by throwing the schema error.
+  return Schema.decodeSync(
+    Schema.String.check(
+      Schema.isStartsWith(prefixes[prefix], { message: `ID ${given} does not start with ${prefixes[prefix]}` }),
+    ),
+  )(given)
 }
 
 export function create(prefix: string, direction: "descending" | "ascending", timestamp?: number): string {

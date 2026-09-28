@@ -128,8 +128,10 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
                           model.store.color !== color,
                       }}
                       onClick={() => {
-                        if (model.store.color === color && !props.project.icon?.url) return
-                        model.setStore("color", model.store.color === color ? undefined : color)
+                        const selected = model.store.color === color
+                        if (selected && !props.project.icon?.url) return
+                        if (selected) model.clearColor()
+                        else model.setStore("color", color)
                       }}
                     >
                       <Avatar

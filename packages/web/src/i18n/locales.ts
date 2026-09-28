@@ -1,3 +1,5 @@
+import { Array, Option } from "effect"
+
 export const docsLocale = [
   "ar",
   "bs",
@@ -72,46 +74,44 @@ const starts = [
   ["en", "root"],
 ] as const
 
-function parse(input: string) {
-  let decoded = ""
-  try {
-    decoded = decodeURIComponent(input)
-  } catch {
-    return null
-  }
+const decode = Option.liftThrowable(decodeURIComponent)
 
-  const value = decoded.trim().toLowerCase()
-  if (!value) return null
-  return value
+function isAlias(value: string): value is keyof typeof localeAlias {
+  return Object.hasOwn(localeAlias, value)
+}
+
+function alias(value: string) {
+  return isAlias(value) ? Option.some(localeAlias[value]) : Option.none<Locale>()
+}
+
+function parse(input: string) {
+  return decode(input).pipe(
+    Option.map((decoded) => decoded.trim().toLowerCase()),
+    Option.filter((value) => value.length > 0),
+  )
 }
 
 export function exactLocale(input: string) {
-  const value = parse(input)
-  if (!value) return null
-  if (value in localeAlias) {
-    return localeAlias[value as keyof typeof localeAlias]
-  }
-
-  return null
+  return parse(input).pipe(Option.flatMap(alias))
 }
 
 export function matchLocale(input: string) {
-  const value = parse(input)
-  if (!value) return null
+  return parse(input).pipe(Option.flatMap(matchParsed))
+}
 
+function matchParsed(value: string): Option.Option<Locale> {
   if (value.startsWith("zh")) {
     if (value.includes("hant") || value.includes("-tw") || value.includes("-hk") || value.includes("-mo")) {
-      return "zh-tw"
+      return Option.some("zh-tw")
     }
-    return "zh-cn"
+    return Option.some("zh-cn")
   }
 
-  if (value in localeAlias) {
-    return localeAlias[value as keyof typeof localeAlias]
-  }
+  const hit = alias(value)
+  if (Option.isSome(hit)) return hit
 
-  if (value.startsWith("pt")) return "pt-br"
-  if (value.startsWith("no") || value.startsWith("nb") || value.startsWith("nn")) return "nb"
+  if (value.startsWith("pt")) return Option.some("pt-br")
+  if (value.startsWith("no") || value.startsWith("nb") || value.startsWith("nn")) return Option.some("nb")
 
-  return starts.find((item) => value.startsWith(item[0]))?.[1] ?? null
+  return Array.findFirst(starts, (item) => value.startsWith(item[0])).pipe(Option.map((item) => item[1]))
 }

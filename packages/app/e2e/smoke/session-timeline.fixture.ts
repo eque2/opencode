@@ -124,7 +124,10 @@ function toolPart(
       ? { files: [patchFile(index, "update"), patchFile(index + 1, index % 2 === 0 ? "add" : "delete")] }
       : tool === "edit" || tool === "write"
         ? {
-            filediff: fileDiff(String(input.filePath ?? `src/generated/file-${index}.ts`), index),
+            filediff: fileDiff(
+              typeof input.filePath === "string" ? input.filePath : `src/generated/file-${index}.ts`,
+              index,
+            ),
             diff: patch(index, outputLength),
             preview: patch(index + 1, 420),
           }
@@ -299,8 +302,15 @@ export const fixture = {
   },
 }
 
+const messagesBySession: Partial<Record<string, Message[]>> = fixture.messages
+
+/** Returns the seeded messages of a session, or no messages for an unknown session ID. */
+export function sessionMessages(sessionID: string) {
+  return messagesBySession[sessionID] ?? []
+}
+
 export function pageMessages(sessionID: string, limit: number, before?: string) {
-  const messages = fixture.messages[sessionID as keyof typeof fixture.messages] ?? []
+  const messages = sessionMessages(sessionID)
   const end = before
     ? Math.max(
         0,
@@ -310,6 +320,6 @@ export function pageMessages(sessionID: string, limit: number, before?: string) 
   const start = Math.max(0, end - limit)
   return {
     items: messages.slice(start, end),
-    cursor: start > 0 ? messages[start]!.info.id : undefined,
+    cursor: start > 0 ? messages[start].info.id : undefined,
   }
 }

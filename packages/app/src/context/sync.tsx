@@ -4,8 +4,7 @@ import { useServerSync } from "./server-sync"
 import { useSDK } from "./sdk"
 import type { Message, Part } from "@opencode-ai/sdk/v2/client"
 import { messageKey } from "@/utils/session-message"
-
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
+import { MutableHashMap, Option } from "effect"
 
 function sortParts(parts: Part[]) {
   return parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id))
@@ -41,13 +40,15 @@ type MessagePage = {
   complete: boolean
 }
 
-const hasParts = (parts: Part[] | undefined, want: Part[]) => {
-  if (!parts) return want.length === 0
-  return want.every((part) => Binary.search(parts, part.id, (item) => item.id).found)
-}
+const hasParts = (current: Option.Option<Part[]>, want: Part[]) =>
+  Option.match(current, {
+    onNone: () => want.length === 0,
+    onSome: (parts) => want.every((part) => Binary.search(parts, part.id, (item) => item.id).found),
+  })
 
-const mergeParts = (parts: Part[] | undefined, want: Part[]) => {
-  if (!parts) return sortParts(want)
+const mergeParts = (current: Option.Option<Part[]>, want: Part[]) => {
+  if (Option.isNone(current)) return sortParts(want)
+  const parts = current.value
   const next = [...parts]
   let changed = false
   for (const part of want) {
@@ -64,7 +65,9 @@ export function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) 
   if (items.length === 0) return { ...page, confirmed: [] as string[] }
 
   const session = [...page.session]
-  const part = new Map(page.part.map((item) => [item.id, sortParts(item.part)]))
+  const part = MutableHashMap.fromIterable(
+    page.part.map((item): readonly [string, Part[]] => [item.id, sortParts(item.part)]),
+  )
   const confirmed: string[] = []
 
   for (const item of items) {
@@ -72,20 +75,20 @@ export function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) 
     const found = result.found
     if (!found) session.splice(result.index, 0, item.message)
 
-    const current = part.get(item.message.id)
+    const current = MutableHashMap.get(part, item.message.id)
     if (found && hasParts(current, item.parts)) {
       confirmed.push(item.message.id)
       continue
     }
 
-    part.set(item.message.id, mergeParts(current, item.parts))
+    MutableHashMap.set(part, item.message.id, mergeParts(current, item.parts))
   }
 
   return {
     cursor: page.cursor,
     complete: page.complete,
     session,
-    part: [...part.entries()].sort((a, b) => cmp(a[0], b[0])).map(([id, part]) => ({ id, part })),
+    part: [...part].sort((a, b) => cmp(a[0], b[0])).map(([id, part]) => ({ id, part })),
     confirmed,
   }
 }
@@ -94,7 +97,7 @@ export function applyOptimisticAdd(draft: OptimisticStore, input: OptimisticAddI
   const messages = draft.message[input.sessionID]
   if (messages) {
     const result = Binary.search(messages, messageKey(input.message), messageKey)
-    messages.splice(result.index, 0, input.message)
+    draft.message[input.sessionID] = messages.toSpliced(result.index, 0, input.message)
   } else {
     draft.message[input.sessionID] = [input.message]
   }
@@ -105,7 +108,7 @@ export function applyOptimisticRemove(draft: OptimisticStore, input: OptimisticR
   const messages = draft.message[input.sessionID]
   if (messages) {
     const index = messages.findIndex((message) => message.id === input.messageID)
-    if (index >= 0) messages.splice(index, 1)
+    if (index >= 0) draft.message[input.sessionID] = messages.toSpliced(index, 1)
   }
   delete draft.part[input.messageID]
 }

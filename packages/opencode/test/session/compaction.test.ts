@@ -4,7 +4,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { APICallError } from "ai"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Config } from "@/config/config"
 import { LLM } from "../../src/session/llm"
@@ -63,9 +63,9 @@ function createModel(opts: {
   cost?: Provider.Model["cost"]
   npm?: string
 }): Provider.Model {
-  return {
-    id: "test-model",
-    providerID: "test",
+  return ProviderTest.model({
+    id: ref.modelID,
+    providerID: ref.providerID,
     name: "Test",
     limit: {
       context: opts.context,
@@ -78,12 +78,13 @@ function createModel(opts: {
       attachment: false,
       reasoning: false,
       temperature: true,
-      input: { text: true, image: false, audio: false, video: false },
-      output: { text: true, image: false, audio: false, video: false },
+      interleaved: false,
+      input: { text: true, image: false, audio: false, video: false, pdf: false },
+      output: { text: true, image: false, audio: false, video: false, pdf: false },
     },
-    api: { npm: opts.npm ?? "@ai-sdk/anthropic" },
+    api: { id: ref.modelID, url: "https://example.com", npm: opts.npm ?? "@ai-sdk/anthropic" },
     options: {},
-  } as Provider.Model
+  })
 }
 
 const wide = () => ProviderTest.fake({ model: createModel({ context: 100_000, output: 32_000 }) })
@@ -218,8 +219,8 @@ function processorLayer(result: "continue" | "compact") {
 }
 
 function cfg(compaction?: ConfigV1.Info["compaction"]) {
-  const base = Schema.decodeUnknownSync(ConfigV1.Info)({}) as ConfigV1.Info
-  return Layer.succeed(Config.Service, TestConfig.make({ get: () => Effect.succeed({ ...base, compaction }) }))
+  // An empty config decodes to {}, so the test config holds only the compaction settings.
+  return Layer.succeed(Config.Service, TestConfig.make({ get: () => Effect.succeed({ compaction }) }))
 }
 
 const defaultProvider = wide()
@@ -339,7 +340,7 @@ function reply(
 
 function plugin(ready: Deferred.Deferred<void>) {
   return Layer.mock(Plugin.Service)({
-    trigger: <Name extends string, Input, Output>(name: Name, _input: Input, output: Output) => {
+    trigger: <Output>(name: string, _input: unknown, output: Output) => {
       if (name !== "experimental.session.compacting") return Effect.succeed(output)
       return Effect.sync(() => Deferred.doneUnsafe(ready, Effect.void)).pipe(
         Effect.andThen(Effect.never),
@@ -353,10 +354,10 @@ function plugin(ready: Deferred.Deferred<void>) {
 
 function autocontinue(enabled: boolean) {
   return Layer.mock(Plugin.Service)({
-    trigger: <Name extends string, Input, Output>(name: Name, _input: Input, output: Output) => {
+    trigger: <Output>(name: string, _input: unknown, output: Output) => {
       if (name !== "experimental.compaction.autocontinue") return Effect.succeed(output)
       return Effect.sync(() => {
-        ;(output as { enabled: boolean }).enabled = enabled
+        if (Predicate.hasProperty(output, "enabled")) output.enabled = enabled
         return output
       })
     },
@@ -367,10 +368,10 @@ function autocontinue(enabled: boolean) {
 
 function compactionContext(context: string) {
   return Layer.mock(Plugin.Service)({
-    trigger: <Name extends string, Input, Output>(name: Name, _input: Input, output: Output) => {
+    trigger: <Output>(name: string, _input: unknown, output: Output) => {
       if (name !== "experimental.session.compacting") return Effect.succeed(output)
       return Effect.sync(() => {
-        ;(output as { context: string[] }).context.push(context)
+        if (Predicate.hasProperty(output, "context") && Array.isArray(output.context)) output.context.push(context)
         return output
       })
     },
@@ -855,7 +856,7 @@ describe("session.compaction.process", () => {
       const unsub = yield* events.listen((evt) => {
         seen.push(evt.type)
         if (evt.type !== SessionCompaction.Event.Compacted.type) return Effect.void
-        if ((evt.data as typeof SessionCompaction.Event.Compacted.data.Type).sessionID !== session.id)
+        if (!Schema.is(SessionCompaction.Event.Compacted.data)(evt.data) || evt.data.sessionID !== session.id)
           return Effect.void
         Deferred.doneUnsafe(done, Effect.void)
         return Effect.void
@@ -1232,7 +1233,8 @@ describe("session.compaction.process", () => {
         const msgs = yield* ssn.messages({ sessionID: session.id })
         const off = yield* events.listen((evt) => {
           if (evt.type !== SessionStatus.Event.Status.type) return Effect.void
-          const data = evt.data as typeof SessionStatus.Event.Status.data.Type
+          const data = evt.data
+          if (!Schema.is(SessionStatus.Event.Status.data)(data)) return Effect.void
           if (data.sessionID !== session.id || data.status.type !== "retry") return Effect.void
           Deferred.doneUnsafe(ready, Effect.void)
           return Effect.void

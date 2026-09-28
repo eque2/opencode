@@ -21,11 +21,11 @@ export function DialogStatus() {
       if (value.startsWith("file://")) {
         const path = fileURLToPath(value)
         const parts = path.split("/")
-        const filename = parts.pop() || path
+        const filename = parts.at(-1) || path
         if (!filename.includes(".")) return { name: filename }
         const basename = filename.split(".")[0]
         if (basename === "index") {
-          const dirname = parts.pop()
+          const dirname = parts.at(-2)
           const name = dirname || basename
           return { name }
         }
@@ -79,11 +79,11 @@ export function DialogStatus() {
                       <Match when={item.status === "connected"}>Connected</Match>
                       <Match when={item.status === "failed" && item}>{(val) => val().error}</Match>
                       <Match when={item.status === "disabled"}>Disabled in configuration</Match>
-                      <Match when={(item.status as string) === "needs_auth"}>
+                      <Match when={item.status === "needs_auth"}>
                         Needs authentication (run: opencode mcp auth {key})
                       </Match>
-                      <Match when={(item.status as string) === "needs_client_registration" && item}>
-                        {(val) => (val() as { error: string }).error}
+                      <Match when={item.status === "needs_client_registration" && item}>
+                        {(val) => val().error}
                       </Match>
                     </Switch>
                   </span>

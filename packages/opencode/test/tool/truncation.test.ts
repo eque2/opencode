@@ -7,7 +7,9 @@ import { Effect, FileSystem } from "effect"
 import { Truncate } from "@/tool/truncate"
 import { Config } from "@/config/config"
 import { Identifier } from "../../src/id/id"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
+import type { Agent } from "@/agent/agent"
 import path from "path"
 import { testEffect } from "../lib/effect"
 import { writeFileStringScoped } from "../lib/filesystem"
@@ -187,7 +189,7 @@ describe("Truncate", () => {
         expect(result.outputPath).toContain("tool_")
 
         const fsys = yield* FSUtil.Service
-        const written = yield* fsys.readFileString(result.outputPath!)
+        const written = yield* fsys.readFileString(result.outputPath)
         expect(written).toBe(lines)
       }),
     )
@@ -196,8 +198,13 @@ describe("Truncate", () => {
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        const agent = { permission: [{ permission: "task", pattern: "*", action: "allow" as const }] }
-        const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
+        const agent = {
+          name: "test",
+          mode: "primary",
+          permission: [{ permission: "task", pattern: "*", action: "allow" }],
+          options: {},
+        } satisfies Agent.Info
+        const result = yield* svc.output(lines, { maxLines: 10 }, agent)
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("Grep")
@@ -209,8 +216,13 @@ describe("Truncate", () => {
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        const agent = { permission: [{ permission: "task", pattern: "*", action: "deny" as const }] }
-        const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
+        const agent = {
+          name: "test",
+          mode: "primary",
+          permission: [{ permission: "task", pattern: "*", action: "deny" }],
+          options: {},
+        } satisfies Agent.Info
+        const result = yield* svc.output(lines, { maxLines: 10 }, agent)
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("Grep")
@@ -231,11 +243,18 @@ describe("Truncate", () => {
     )
 
     test("loads truncate effect in a fresh process", async () => {
-      const out = await Process.run([process.execPath, "run", path.join(ROOT, "src", "tool", "truncate.ts")], {
-        cwd: ROOT,
-      })
+      const out = await Effect.runPromise(
+        AppProcess.Service.use((appProcess) =>
+          appProcess.run(
+            ChildProcess.make(process.execPath, ["run", path.join(ROOT, "src", "tool", "truncate.ts")], {
+              cwd: ROOT,
+              stdin: "ignore",
+            }),
+          ),
+        ).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
+      )
 
-      expect(out.code).toBe(0)
+      expect(out.exitCode).toBe(0)
     }, 20000)
   })
 

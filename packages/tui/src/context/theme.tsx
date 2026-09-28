@@ -17,8 +17,10 @@ import {
   terminalMode,
   tint,
   upsertTheme,
+  type Theme,
   type ThemeJson,
 } from "../theme"
+import { Data, Duration, Effect, Fiber, FileSystem, MutableHashSet, Option, Record, Result, Schema } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -26,39 +28,68 @@ import { useKV } from "./kv"
 import { useTuiConfig } from "../config"
 import { Global } from "@opencode-ai/core/global"
 import { Glob } from "@opencode-ai/core/util/glob"
-import { readFile } from "node:fs/promises"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "node:path"
 
+/** Listing or reading the custom theme files failed. */
+export class ThemeDiscoveryError extends Schema.TaggedError<ThemeDiscoveryError>()("TuiTheme.DiscoveryError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export type ThemeSource = Readonly<{
-  discover(): Promise<Record<string, unknown>>
+  /** The custom theme files by name, as parsed JSON. */
+  discover: Effect.Effect<Record<string, unknown>, ThemeDiscoveryError>
   subscribeRefresh?(refresh: () => void): () => void
 }>
 
+const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
+
+/** Reading the terminal palette, or building the system theme from it, failed. */
+class ThemePaletteError extends Data.TaggedError("TuiTheme.PaletteError")<{ readonly cause: unknown }> {}
+
+// The .opencode directory in `directory` and in each of its ancestors, nearest first.
+function projectConfigDirectories(directory: string): ReadonlyArray<string> {
+  const parent = path.dirname(directory)
+  const own = path.join(directory, ".opencode")
+  return parent === directory ? [own] : [own, ...projectConfigDirectories(parent)]
+}
+
 const themeSource: ThemeSource = {
-  async discover() {
-    const directories = [Global.Path.config]
-    for (let current = process.cwd(); ; current = path.dirname(current)) {
-      directories.push(path.join(current, ".opencode"))
-      if (path.dirname(current) === current) break
-    }
-    return discoverThemes(directories)
-  },
+  discover: Effect.suspend(() =>
+    discoverThemes([Global.Path.config, ...projectConfigDirectories(process.cwd())]),
+  ).pipe(Effect.provide(filesystem)),
   subscribeRefresh(refresh) {
     process.on("SIGUSR2", refresh)
     return () => process.off("SIGUSR2", refresh)
   },
 }
 
-export async function discoverThemes(directories: string[]) {
-  const result: Record<string, unknown> = {}
-  for (const directory of directories) {
-    const files = await Glob.scan("themes/*.json", { cwd: directory, absolute: true, dot: true, symlink: true })
-    for (const file of files) {
-      result[path.basename(file, ".json")] = JSON.parse(await readFile(file, "utf8")) as unknown
-    }
-  }
-  return result
-}
+// Theme files are untyped JSON here; isTheme checks each one before it is used.
+const decodeThemeFile = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
+/** Reads `themes/*.json` in each directory. A later directory wins for the same theme name. */
+export const discoverThemes = Effect.fn("TuiTheme.discoverThemes")(function* (directories: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem
+  const found = yield* Effect.forEach(directories, (directory) =>
+    Effect.tryPromise({
+      try: () => Glob.scan("themes/*.json", { cwd: directory, absolute: true, dot: true, symlink: true }),
+      catch: (cause) => new ThemeDiscoveryError({ message: `Failed to list the themes in ${directory}`, cause }),
+    }).pipe(
+      Effect.flatMap((files) =>
+        Effect.forEach(files, (file) =>
+          fs.readFileString(file).pipe(
+            Effect.flatMap(decodeThemeFile),
+            Effect.map((theme): readonly [string, unknown] => [path.basename(file, ".json"), theme]),
+            Effect.mapError((cause) => new ThemeDiscoveryError({ message: `Failed to read the theme ${file}`, cause })),
+          ),
+        ),
+      ),
+    ),
+  )
+  return Object.fromEntries(found.flat())
+})
 
 export {
   DEFAULT_THEMES,
@@ -81,10 +112,16 @@ export {
 
 const THEME_REFRESH_DELAYS = [250, 1000] as const
 
+// The JSON text of the terminal colors. An unchanged signature skips regenerating the system theme; the colors are
+// untyped JSON here, so the text matches JSON.stringify.
+const encodePaletteSignature = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
+
+type Mode = "dark" | "light"
+
 type State = {
   themes: Record<string, ThemeJson>
-  mode: "dark" | "light"
-  lock: "dark" | "light" | undefined
+  mode: Mode
+  lock: Option.Option<Mode>
   active: string
   ready: boolean
 }
@@ -92,96 +129,107 @@ type State = {
 const [store, setStore] = createStore<State>({
   themes: allThemes(),
   mode: "dark",
-  lock: undefined,
+  lock: Option.none(),
   active: "opencode",
   ready: false,
 })
+
+const isMode = (value: unknown): value is Mode => value === "dark" || value === "light"
 
 subscribeThemes((themes) => setStore("themes", themes))
 
 export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   name: "Theme",
-  init: (props: { mode: "dark" | "light"; source?: ThemeSource }) => {
+  init: (props: { mode: Mode; source?: ThemeSource }) => {
     const renderer = useRenderer()
     const config = useTuiConfig()
     const kv = useKV()
     const themes = props.source ?? themeSource
-    const pick = (value: unknown) => {
-      if (value === "dark" || value === "light") return value
-      return
-    }
+    const pick = (value: unknown): Option.Option<Mode> => Option.liftPredicate(value, isMode)
+
+    // kv keeps the mode lock, and the pinned mode next to it, only while the mode is locked. Both are written from
+    // the lock state; an unset key is how kv stores "no value".
+    const persistLock = () => kv.set("theme_mode_lock", Option.getOrUndefined(store.lock))
+    const persistPinnedMode = () => kv.set("theme_mode", Option.getOrUndefined(Option.as(store.lock, store.mode)))
 
     setStore(
       produce((draft) => {
         const lock = pick(kv.get("theme_mode_lock"))
-        const mode = lock ?? pick(renderer.themeMode) ?? props.mode
-        if (!lock && pick(kv.get("theme_mode")) !== undefined) kv.set("theme_mode", undefined)
-        draft.mode = mode
+        draft.mode = lock.pipe(
+          Option.orElse(() => pick(renderer.themeMode)),
+          Option.getOrElse(() => props.mode),
+        )
         draft.lock = lock
         const active = config.theme ?? kv.get("theme", "opencode")
         draft.active = typeof active === "string" ? active : "opencode"
         draft.ready = false
       }),
     )
+    if (Option.isNone(store.lock) && Option.isSome(pick(kv.get("theme_mode")))) persistPinnedMode()
 
     createEffect(() => {
       const theme = config.theme
       if (theme) setStore("active", theme)
     })
 
-    function syncCustomThemes() {
-      return themes
-        .discover()
-        .then((themes) => {
-          setCustomThemes(
-            Object.entries(themes).reduce<Record<string, ThemeJson>>((result, [name, theme]) => {
-              if (isTheme(theme)) result[name] = theme
-              return result
-            }, {}),
-          )
-        })
-        .catch(() => setStore("active", "opencode"))
-    }
+    // Replaces the custom themes with the discovered files that are themes. A failed discovery resets the active
+    // theme to opencode.
+    const syncCustomThemes = themes.discover.pipe(
+      Effect.andThen((found) => Effect.sync(() => setCustomThemes(Record.filter(found, isTheme)))),
+      Effect.catch(() => Effect.sync(() => setStore("active", "opencode"))),
+    )
 
     onMount(() => {
-      void Promise.allSettled([resolveSystemTheme(store.mode), syncCustomThemes()]).finally(() => {
-        setStore("ready", true)
-      })
+      Effect.runFork(
+        Effect.all([resolveSystemTheme(store.mode), syncCustomThemes], { concurrency: "unbounded", discard: true }).pipe(
+          Effect.ensuring(Effect.sync(() => setStore("ready", true))),
+        ),
+      )
     })
 
     let systemThemeSignature: string | undefined
-    let systemThemeMode: "dark" | "light" | undefined
+    let systemThemeMode: Mode | undefined
     let hasResolvedSystemTheme = false
-    function resolveSystemTheme(mode: "dark" | "light" = store.mode) {
-      return renderer
-        .getPalette({ size: 16 })
-        .then((colors: TerminalColors) => {
-          if (!colors.palette[0]) {
-            if (hasResolvedSystemTheme) return
-            setSystemTheme(undefined)
-            if (store.active === "system") setStore("active", "opencode")
-            return
-          }
-          const next = store.lock ?? terminalMode(colors) ?? mode
-          if (store.mode !== next) setStore("mode", next)
-          const signature = JSON.stringify(colors)
-          hasResolvedSystemTheme = true
-          if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
-          systemThemeSignature = signature
-          systemThemeMode = next
-          setSystemTheme(generateSystem(colors, next))
-        })
-        .catch(() => {
-          if (hasResolvedSystemTheme) return
-          setSystemTheme(undefined)
-          if (store.active === "system") setStore("active", "opencode")
-        })
+
+    // Until a palette has been read once, a missing palette removes the system theme.
+    function dropSystemTheme() {
+      if (hasResolvedSystemTheme) return
+      setSystemTheme(Option.none())
+      if (store.active === "system") setStore("active", "opencode")
+    }
+
+    function applyPalette(colors: TerminalColors, mode: Mode) {
+      if (!colors.palette[0]) {
+        dropSystemTheme()
+        return
+      }
+      const next = Option.getOrElse(store.lock, () => terminalMode(colors) ?? mode)
+      if (store.mode !== next) setStore("mode", next)
+      const signature = encodePaletteSignature(colors)
+      hasResolvedSystemTheme = true
+      if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
+      systemThemeSignature = signature
+      systemThemeMode = next
+      setSystemTheme(Option.some(generateSystem(colors, next)))
+    }
+
+    // Reads the terminal palette and regenerates the system theme when the palette or the mode changed.
+    function resolveSystemTheme(mode: Mode = store.mode) {
+      return Effect.tryPromise({
+        try: () => renderer.getPalette({ size: 16 }),
+        catch: (cause) => new ThemePaletteError({ cause }),
+      }).pipe(
+        Effect.flatMap((colors) =>
+          Effect.try({ try: () => applyPalette(colors, mode), catch: (cause) => new ThemePaletteError({ cause }) }),
+        ),
+        Effect.catch(() => Effect.sync(dropSystemTheme)),
+      )
     }
 
     let systemRefreshRunning = false
     let systemRefreshQueued = false
     let systemRefreshMode = store.mode
-    function refreshSystemTheme(mode: "dark" | "light" = store.mode) {
+    function refreshSystemTheme(mode: Mode = store.mode) {
       systemRefreshMode = mode
       if (systemRefreshRunning) {
         systemRefreshQueued = true
@@ -191,36 +239,42 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       systemRefreshRunning = true
       const retry = renderer.paletteDetectionStatus === "detecting"
       renderer.clearPaletteCache()
-      void resolveSystemTheme(mode).finally(() => {
-        systemRefreshRunning = false
-        if (!retry && !systemRefreshQueued) return
-        systemRefreshQueued = false
-        refreshSystemTheme(systemRefreshMode)
-      })
+      Effect.runFork(
+        resolveSystemTheme(mode).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              systemRefreshRunning = false
+              if (!retry && !systemRefreshQueued) return
+              systemRefreshQueued = false
+              refreshSystemTheme(systemRefreshMode)
+            }),
+          ),
+        ),
+      )
     }
 
-    function apply(mode: "dark" | "light") {
-      if (store.lock !== undefined) kv.set("theme_mode", mode)
-      if (store.mode === mode) return
-      setStore("mode", mode)
-      refreshSystemTheme(mode)
+    function apply(mode: Mode) {
+      const changed = store.mode !== mode
+      if (changed) setStore("mode", mode)
+      if (Option.isSome(store.lock)) persistPinnedMode()
+      if (changed) refreshSystemTheme(mode)
     }
 
-    function pin(mode: "dark" | "light" = store.mode) {
-      setStore("lock", mode)
-      kv.set("theme_mode_lock", mode)
+    function pin(mode: Mode = store.mode) {
+      setStore("lock", Option.some(mode))
+      persistLock()
       apply(mode)
     }
 
     function free() {
-      setStore("lock", undefined)
-      kv.set("theme_mode_lock", undefined)
-      kv.set("theme_mode", undefined)
+      setStore("lock", Option.none())
+      persistLock()
+      persistPinnedMode()
       refreshSystemTheme(renderer.themeMode ?? store.mode)
     }
 
-    const handle = (mode: "dark" | "light") => {
-      if (store.lock) return
+    const handle = (mode: Mode) => {
+      if (Option.isSome(store.lock)) return
       apply(mode)
     }
     renderer.on(CliRenderEvents.THEME_MODE, handle)
@@ -232,14 +286,29 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     }
     renderer.prependInputHandler(handleThemeNotification)
 
-    let themeRefreshTimeouts: ReturnType<typeof setTimeout>[] = []
+    // A refresh request re-reads the terminal palette after each delay, and the custom theme files after the last
+    // one. The delays run side by side in one fiber, and a new request interrupts it and starts again.
+    let refreshFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
+    const interruptRefresh = () => {
+      if (Option.isSome(refreshFiber)) Effect.runFork(Fiber.interrupt(refreshFiber.value))
+      refreshFiber = Option.none()
+    }
+    const lastRefreshDelay = THEME_REFRESH_DELAYS[THEME_REFRESH_DELAYS.length - 1]
     const refresh = () => {
-      for (const timeout of themeRefreshTimeouts) clearTimeout(timeout)
-      themeRefreshTimeouts = THEME_REFRESH_DELAYS.map((delay) =>
-        setTimeout(() => {
-          refreshSystemTheme()
-          if (delay === THEME_REFRESH_DELAYS[THEME_REFRESH_DELAYS.length - 1]) void syncCustomThemes()
-        }, delay),
+      interruptRefresh()
+      refreshFiber = Option.some(
+        Effect.runFork(
+          Effect.forEach(
+            THEME_REFRESH_DELAYS,
+            (delay) =>
+              Effect.sleep(Duration.millis(delay)).pipe(
+                Effect.andThen(Effect.sync(() => refreshSystemTheme())),
+                // The custom theme re-read runs detached, so a newer refresh request does not cancel it.
+                Effect.andThen(delay === lastRefreshDelay ? Effect.forkDetach(syncCustomThemes) : Effect.void),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+        ),
       )
     }
     let unsubscribeRefresh: (() => void) | undefined
@@ -249,22 +318,34 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       renderer.off(CliRenderEvents.THEME_MODE, handle)
       renderer.removeInputHandler(handleThemeNotification)
       unsubscribeRefresh?.()
-      for (const timeout of themeRefreshTimeouts) clearTimeout(timeout)
-      themeRefreshTimeouts.length = 0
+      interruptRefresh()
     })
 
-    const values = createMemo(() => {
-      const active = store.themes[store.active]
-      if (active) return resolveTheme(active, store.mode)
+    // Resolves a known theme. A theme whose colors do not resolve is logged and skipped, so the next choice applies.
+    const tryResolve = (name: string): Option.Option<Theme> => {
+      const theme = store.themes[name]
+      if (!theme) return Option.none()
+      return Result.match(resolveTheme(theme, store.mode), {
+        onSuccess: Option.some,
+        onFailure: (error) => {
+          Effect.runFork(Effect.logWarning("Theme colors do not resolve", { theme: name, error: error.message }))
+          return Option.none()
+        },
+      })
+    }
 
-      const saved = kv.get("theme")
-      if (typeof saved === "string") {
-        const theme = store.themes[saved]
-        if (theme) return resolveTheme(theme, store.mode)
-      }
-
-      return resolveTheme(store.themes.opencode, store.mode)
-    })
+    // The active theme, else the saved theme, else opencode. The bundled opencode theme always resolves
+    // (theme.test.ts checks every bundled theme), so a failure there is a defect in the bundled asset.
+    const values = createMemo(() =>
+      tryResolve(store.active).pipe(
+        Option.orElse(() => {
+          const saved = kv.get("theme")
+          return typeof saved === "string" ? tryResolve(saved) : Option.none()
+        }),
+        Option.orElse(() => tryResolve("opencode")),
+        Option.getOrElse(() => Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, store.mode))),
+      ),
+    )
 
     createEffect(() => renderer.setBackgroundColor(values().background))
 
@@ -286,7 +367,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       syntax,
       subtleSyntax,
       mode: () => store.mode,
-      locked: () => store.lock !== undefined,
+      locked: () => Option.isSome(store.lock),
       lock: () => pin(store.mode),
       unlock: free,
       setMode: pin,
@@ -305,18 +386,24 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
 export function createSyntaxStyleMemo(factory: () => SyntaxStyle) {
   const renderer = useRenderer()
-  const retained = new Set<SyntaxStyle>()
+  const retained = MutableHashSet.empty<SyntaxStyle>()
   let current: SyntaxStyle | undefined
 
+  // Destroys a replaced style once the renderer is idle, whether or not the idle wait fails.
   const release = (style: SyntaxStyle) => {
-    retained.add(style)
-    void renderer
-      .idle()
-      .catch(() => {})
-      .finally(() => {
-        if (!retained.delete(style)) return
-        style.destroy()
-      })
+    MutableHashSet.add(retained, style)
+    Effect.runFork(
+      Effect.tryPromise(() => renderer.idle()).pipe(
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!MutableHashSet.has(retained, style)) return
+            MutableHashSet.remove(retained, style)
+            style.destroy()
+          }),
+        ),
+      ),
+    )
   }
 
   onCleanup(() => {

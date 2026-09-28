@@ -5,7 +5,7 @@ import { Provider } from "@/provider/provider"
 import { Auth } from "@/auth"
 
 import { mapValues } from "remeda"
-import { Effect, Schema } from "effect"
+import { Effect, HashSet, Option, Schema } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -42,11 +42,12 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
       const config = yield* cfg.get()
       const all = yield* ModelsDev.Service.use((s) => s.get())
-      const disabled = new Set(config.disabled_providers ?? [])
-      const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+      const disabled = HashSet.fromIterable(config.disabled_providers ?? [])
+      const enabled = Option.map(Option.fromNullishOr(config.enabled_providers), HashSet.fromIterable)
       const filtered: Record<string, (typeof all)[string]> = {}
       for (const [key, value] of Object.entries(all)) {
-        if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) filtered[key] = value
+        const allowed = Option.match(enabled, { onNone: () => true, onSome: (ids) => HashSet.has(ids, key) })
+        if (allowed && !HashSet.has(disabled, key)) filtered[key] = value
       }
       const connected = yield* provider.list()
       const credentials = yield* authStore.all().pipe(Effect.orDie)
@@ -90,7 +91,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       // result (e.g. no further redirect), serialize as JSON `null` instead
       // of an empty body so clients can `.json()` parse the response.
       const result = yield* authorize({ params: ctx.params, payload })
-      return HttpServerResponse.jsonUnsafe(result ?? null)
+      return HttpServerResponse.jsonUnsafe(Option.getOrNull(Option.fromNullishOr(result)))
     })
 
     const callback = Effect.fn("ProviderHttpApi.callback")(function* (ctx: {

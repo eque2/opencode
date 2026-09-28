@@ -6,16 +6,14 @@ export namespace Context {
   export function create<T>() {
     const storage = new AsyncLocalStorage<T>()
     return {
-      use() {
+      use: () => {
         const result = storage.getStore()
         if (!result) {
           throw new NotFound()
         }
         return result
       },
-      provide<R>(value: T, fn: () => R) {
-        return storage.run(value, fn)
-      },
+      provide: <R>(value: T, fn: () => R) => storage.run(value, fn),
     }
   }
 }

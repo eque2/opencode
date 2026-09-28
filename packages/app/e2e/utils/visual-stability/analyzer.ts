@@ -1,5 +1,6 @@
+import { Record } from "effect"
 import type { VisualInvariant, VisualPlan } from "./invariant"
-import type { VisualObservation, VisualStabilityTrace } from "./model"
+import type { VisualObservation, VisualRegionSample, VisualStabilityTrace } from "./model"
 
 export function analyzeVisualObservations<RegionName extends string>(
   observations: readonly VisualObservation<RegionName>[],
@@ -7,7 +8,11 @@ export function analyzeVisualObservations<RegionName extends string>(
 ) {
   const issues: string[] = []
   const invariants = plan.invariants
-  const names = [...new Set(observations.flatMap((sample) => Object.keys(sample.regions) as RegionName[]))]
+  const names = [
+    ...new Set(
+      observations.flatMap((sample) => Record.keys<RegionName, VisualRegionSample | undefined>(sample.regions)),
+    ),
+  ]
   const required = regions(invariants, "required")
   const continuousAny = invariants.filter(
     (invariant): invariant is Extract<VisualInvariant<RegionName>, { type: "continuous-any" }> =>
@@ -88,7 +93,7 @@ export function analyzeVisualObservations<RegionName extends string>(
       for (const metric of ["top", "bottom", "width", "height"] as const) {
         const directions = visible
           .slice(1)
-          .map((sample, index) => sample[metric] - visible[index]![metric])
+          .map((sample, index) => sample[metric] - visible[index][metric])
           .filter((delta) => Math.abs(delta) > (invariant.tolerance ?? 1))
           .map(Math.sign)
         const reversals = directions.slice(1).filter((direction, index) => direction !== directions[index]).length
@@ -133,9 +138,7 @@ export function analyzeVisualObservations<RegionName extends string>(
   for (const invariant of invariants.filter(
     (item): item is Extract<VisualInvariant<RegionName>, { type: "flow" }> => item.type === "flow",
   )) {
-    for (const [before, after] of invariant.regions
-      .slice(1)
-      .map((after, index) => [invariant.regions[index]!, after])) {
+    for (const [before, after] of invariant.regions.slice(1).map((after, index) => [invariant.regions[index], after])) {
       let maximum: { overlap: number; at: number } | undefined
       let inverted: { at: number } | undefined
       for (const sample of observations) {
@@ -195,13 +198,13 @@ export function analyzeVisualTraceByMarker<RegionName extends string>(
   return [...new Set([...required, ...aggregateMotion, ...windows])]
 }
 
-function regions<RegionName extends string, Type extends VisualInvariant<RegionName>["type"]>(
+function regions<RegionName extends string>(
   invariants: readonly VisualInvariant<RegionName>[],
-  type: Type,
+  type: VisualInvariant<RegionName>["type"],
 ) {
   return invariants.flatMap((invariant) =>
     invariant.type === type && "regions" in invariant && invariant.regions !== "all" ? [...invariant.regions] : [],
-  ) as RegionName[]
+  )
 }
 
 function includes<RegionName extends string>(regions: readonly RegionName[] | "all", name: RegionName) {

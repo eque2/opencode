@@ -1,37 +1,45 @@
+import { Data, Effect, Option } from "effect"
 import { nativeT } from "../native-translations"
 
 export function wslServerIdsToStartOnInitialize(servers: { id: string }[]) {
   return servers.map((server) => server.id)
 }
 
-export function expectOpencodeVersion(installed: string | null, expected: string, distro = "Debian") {
-  if (installed === expected) return
-  throw new Error(
-    nativeT("desktop.wsl.error.updateVersion", {
-      distro,
-      installed: installed ?? nativeT("desktop.wsl.error.noVersion"),
-      expected,
+export class WslVersionMismatchError extends Data.TaggedError("WslVersionMismatchError")<{
+  readonly message: string
+}> {}
+
+export function expectOpencodeVersion(installed: Option.Option<string>, expected: string, distro = "Debian") {
+  if (Option.contains(installed, expected)) return Effect.void
+  return Effect.fail(
+    new WslVersionMismatchError({
+      message: nativeT("desktop.wsl.error.updateVersion", {
+        distro,
+        installed: Option.getOrElse(installed, () => nativeT("desktop.wsl.error.noVersion")),
+        expected,
+      }),
     }),
   )
 }
 
 export const pendingRestartAfterWslInstall = (runtime: { available: boolean }) => !runtime.available
 
-export async function pollWslHealth(check: () => Promise<boolean>, signal: AbortSignal, interval = 100) {
-  while (!signal.aborted) {
-    if (await check()) return
-    await abortableDelay(interval, signal)
-  }
+export function pollWslHealth(check: () => Promise<boolean>, signal: AbortSignal, interval = 100): Promise<void> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      while (!signal.aborted) {
+        if (yield* Effect.promise(check)) return
+        yield* Effect.raceFirst(Effect.sleep(interval), aborted(signal))
+      }
+    }),
+  )
 }
 
-function abortableDelay(duration: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    const done = () => {
-      clearTimeout(timeout)
-      signal.removeEventListener("abort", done)
-      resolve()
-    }
-    const timeout = setTimeout(done, duration)
+function aborted(signal: AbortSignal) {
+  return Effect.callback<void>((resume) => {
+    const done = () => resume(Effect.void)
     signal.addEventListener("abort", done, { once: true })
+    if (signal.aborted) done()
+    return Effect.sync(() => signal.removeEventListener("abort", done))
   })
 }

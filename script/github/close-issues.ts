@@ -27,6 +27,20 @@ type Issue = {
   user: { login: string } | null
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isIssue(value: unknown): value is Issue {
+  return (
+    isRecord(value) &&
+    typeof value.number === "number" &&
+    typeof value.updated_at === "string" &&
+    typeof value.author_association === "string" &&
+    (value.user === null || (isRecord(value.user) && typeof value.user.login === "string"))
+  )
+}
+
 const headers = {
   Authorization: `Bearer ${token}`,
   "Content-Type": "application/json",
@@ -70,7 +84,8 @@ async function main() {
     )
     if (!res.ok) throw new Error(res.statusText)
 
-    const all = (await res.json()) as Issue[]
+    const all: unknown = await res.json()
+    if (!Array.isArray(all) || !all.every(isIssue)) throw new Error(`Unexpected issues response on page ${page}`)
     if (all.length === 0) break
     console.log(`Fetched page ${page} ${all.length} issues`)
 

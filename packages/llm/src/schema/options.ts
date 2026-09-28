@@ -1,11 +1,23 @@
-import { Schema } from "effect"
+import { Option, Predicate, Schema } from "effect"
 import { JsonSchema, ModelID, ProviderID } from "./ids"
 import type { AnyRoute } from "../route/client"
 import { isRecord } from "../utils/record"
 
-export const mergeJsonRecords = (
+/** A record with at least one key, or none. */
+const nonEmptyRecord = <A extends object>(record: A): Option.Option<A> =>
+  Option.liftPredicate(record, (value: A) => Object.keys(value).length > 0)
+
+/**
+ * Deep-merge records, later values winning and undefined values skipped.
+ * Merging JSON objects yields a JSON object: every value comes from an input.
+ */
+export function mergeJsonRecords(...items: ReadonlyArray<Schema.JsonObject | undefined>): Schema.JsonObject | undefined
+export function mergeJsonRecords(
   ...items: ReadonlyArray<Record<string, unknown> | undefined>
-): Record<string, unknown> | undefined => {
+): Record<string, unknown> | undefined
+export function mergeJsonRecords(
+  ...items: ReadonlyArray<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
   const defined = items.filter((item): item is Record<string, unknown> => item !== undefined)
   if (defined.length === 0) return undefined
   if (defined.length === 1 && Object.values(defined[0]).every((value) => value !== undefined)) return defined[0]
@@ -16,30 +28,30 @@ export const mergeJsonRecords = (
       result[key] = isRecord(result[key]) && isRecord(value) ? mergeJsonRecords(result[key], value) : value
     }
   }
-  return Object.keys(result).length === 0 ? undefined : result
+  return Option.getOrUndefined(nonEmptyRecord(result))
 }
 
 const mergeStringRecords = (
   ...items: ReadonlyArray<Record<string, string> | undefined>
-): Record<string, string> | undefined => {
-  const defined = items.filter((item): item is Record<string, string> => item !== undefined)
-  if (defined.length === 0) return undefined
-  if (defined.length === 1) return defined[0]
-  const result = Object.fromEntries(
-    defined.flatMap((item) =>
-      Object.entries(item).filter((entry): entry is [string, string] => entry[1] !== undefined),
+): Option.Option<Record<string, string>> => {
+  const defined = items.filter(Predicate.isNotUndefined)
+  if (defined.length === 1) return Option.some(defined[0])
+  return nonEmptyRecord(
+    Object.fromEntries(
+      defined.flatMap((item) =>
+        Object.entries(item).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
     ),
   )
-  return Object.keys(result).length === 0 ? undefined : result
 }
 
-export const ProviderOptions = Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))
+export const ProviderOptions = Schema.Record(Schema.String, Schema.JsonObject)
 export type ProviderOptions = Schema.Schema.Type<typeof ProviderOptions>
 
 export const mergeProviderOptions = (
   ...items: ReadonlyArray<ProviderOptions | undefined>
 ): ProviderOptions | undefined => {
-  const result: Record<string, Record<string, unknown>> = {}
+  const result: Record<string, Schema.JsonObject> = {}
   for (const item of items) {
     if (!item) continue
     for (const [provider, options] of Object.entries(item)) {
@@ -47,7 +59,7 @@ export const mergeProviderOptions = (
       if (merged) result[provider] = merged
     }
   }
-  return Object.keys(result).length === 0 ? undefined : result
+  return Option.getOrUndefined(nonEmptyRecord(result))
 }
 
 export class HttpOptions extends Schema.Class<HttpOptions>("LLM.HttpOptions")({
@@ -67,8 +79,8 @@ export const mergeHttpOptions = (...items: ReadonlyArray<HttpOptions | undefined
   const body = mergeJsonRecords(...items.map((item) => item?.body))
   const headers = mergeStringRecords(...items.map((item) => item?.headers))
   const query = mergeStringRecords(...items.map((item) => item?.query))
-  if (!body && !headers && !query) return undefined
-  return new HttpOptions({ body, headers, query })
+  if (!body && Option.isNone(headers) && Option.isNone(query)) return undefined
+  return new HttpOptions({ body, headers: Option.getOrUndefined(headers), query: Option.getOrUndefined(query) })
 }
 
 export class GenerationOptions extends Schema.Class<GenerationOptions>("LLM.GenerationOptions")({
@@ -118,7 +130,9 @@ export const mergeGenerationOptions = (...items: ReadonlyArray<GenerationOptions
     seed: latestGeneration(items, "seed"),
     stop: latestGeneration(items, "stop"),
   })
-  return Object.values(result).some((value) => value !== undefined) ? result : undefined
+  return Option.getOrUndefined(
+    Option.liftPredicate(result, (options: GenerationOptions) => Object.values(options).some(Predicate.isNotUndefined)),
+  )
 }
 
 export class ModelLimits extends Schema.Class<ModelLimits>("LLM.ModelLimits")({
@@ -142,23 +156,28 @@ export class ModelDefaults extends Schema.Class<ModelDefaults>("LLM.ModelDefault
 }) {}
 
 export namespace ModelDefaults {
+  /** Constructor input of the class; `providerOptions` accepts its make-side JSON input type. */
+  type MakeInput = NonNullable<ConstructorParameters<typeof ModelDefaults>[0]>
   export type Input =
     | ModelDefaults
-    | {
+    | (Omit<MakeInput, "limits" | "generation" | "http"> & {
         readonly limits?: ModelLimits.Input
         readonly generation?: GenerationOptions.Input
-        readonly providerOptions?: ProviderOptions
         readonly http?: HttpOptions.Input
-      }
+      })
 
-  /** Normalize selected-model request defaults without applying precedence. */
-  export const make = (input: Input) => {
+  /**
+   * Normalize selected-model request defaults without applying precedence.
+   * Like the schema class `make` it overrides, it accepts no argument for empty defaults.
+   */
+  export const make = (input: Input | void) => {
+    if (input === undefined) return new ModelDefaults({})
     if (input instanceof ModelDefaults) return input
     return new ModelDefaults({
-      limits: input.limits === undefined ? undefined : ModelLimits.make(input.limits),
-      generation: input.generation === undefined ? undefined : GenerationOptions.make(input.generation),
+      ...(input.limits === undefined ? {} : { limits: ModelLimits.make(input.limits) }),
+      ...(input.generation === undefined ? {} : { generation: GenerationOptions.make(input.generation) }),
       providerOptions: input.providerOptions,
-      http: input.http === undefined ? undefined : HttpOptions.make(input.http),
+      ...(input.http === undefined ? {} : { http: HttpOptions.make(input.http) }),
     })
   }
 }
@@ -197,8 +216,8 @@ export class Model {
       id: ModelID.make(input.id),
       provider: ProviderID.make(input.provider),
       route: input.route,
-      defaults: input.defaults === undefined ? undefined : ModelDefaults.make(input.defaults),
-      compatibility: input.compatibility === undefined ? undefined : ModelCompatibility.make(input.compatibility),
+      ...(input.defaults === undefined ? {} : { defaults: ModelDefaults.make(input.defaults) }),
+      ...(input.compatibility === undefined ? {} : { compatibility: ModelCompatibility.make(input.compatibility) }),
     })
   }
 
@@ -269,7 +288,7 @@ export const CachePolicyObject = Schema.Struct({
     ]),
   ),
   ttlSeconds: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "LLM.CachePolicyObject" })
 export type CachePolicyObject = Schema.Schema.Type<typeof CachePolicyObject>
 
 export const CachePolicy = Schema.Union([Schema.Literal("auto"), Schema.Literal("none"), CachePolicyObject])

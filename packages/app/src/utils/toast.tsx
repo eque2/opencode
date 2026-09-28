@@ -7,6 +7,8 @@ import {
   type ToastVariant,
 } from "@opencode-ai/ui/toast"
 import { ToastV2, showToastV2, toasterV2 } from "@opencode-ai/ui/v2/toast-v2"
+import { Option } from "effect"
+import type { JSX } from "solid-js"
 
 let v2 = false
 
@@ -23,9 +25,14 @@ export function showToast(options: ToastOptions | string) {
   if (!v2) return showLegacyToast(options)
   if (typeof options === "string") return showToastV2(options)
 
+  // The v1 icon is an icon name; the v2 toast takes an element, and leaves the slot out without one.
+  const { icon, ...rest } = options
   return showToastV2({
-    ...options,
-    icon: resolveIcon(options.icon, options.variant),
+    ...rest,
+    ...Option.match(resolveIcon(icon, options.variant), {
+      onNone: () => ({}),
+      onSome: (element) => ({ icon: element }),
+    }),
     actions: options.actions?.map((action) => ({
       ...action,
       variant: action.onClick === "dismiss" ? "secondary" : "primary",
@@ -40,8 +47,12 @@ export function dismissToast(toastId: number) {
   return toasterV2.dismiss(toastId)
 }
 
-function resolveIcon(icon: IconProps["name"] | undefined, variant: ToastVariant | undefined) {
-  const name = icon ?? (variant === "success" ? "check" : undefined)
-  if (!name) return
-  return <Icon name={name} />
+function resolveIcon(
+  icon: IconProps["name"] | undefined,
+  variant: ToastVariant | undefined,
+): Option.Option<JSX.Element> {
+  return Option.fromNullishOr(icon).pipe(
+    Option.orElse(() => (variant === "success" ? Option.some<IconProps["name"]>("check") : Option.none())),
+    Option.map((name) => <Icon name={name} />),
+  )
 }

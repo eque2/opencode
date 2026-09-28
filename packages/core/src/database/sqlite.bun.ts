@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { Database, type SQLQueryBindings } from "bun:sqlite"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -20,14 +20,6 @@ const ATTR_DB_SYSTEM_NAME = "db.system.name"
 const TypeId = "~@opencode-ai/core/database/SqliteBun" as const
 type TypeId = typeof TypeId
 
-interface SqliteClient extends Client.SqlClient {
-  readonly [TypeId]: TypeId
-  readonly config: Config
-  readonly export: Effect.Effect<Uint8Array, SqlError>
-  readonly loadExtension: (path: string) => Effect.Effect<void, SqlError>
-  readonly updateValues: never
-}
-
 interface Config {
   readonly filename: string
   readonly readonly?: boolean
@@ -44,45 +36,46 @@ interface SqliteConnection extends Connection {
   readonly loadExtension: (path: string) => Effect.Effect<void, SqlError>
 }
 
+/** The bun:sqlite handle that nativeLayer provides. Sqlite.Native is shared with the node driver, so it is typed unknown. */
+const nativeDatabase = Effect.gen(function* () {
+  const native = yield* Sqlite.Native
+  if (native instanceof Database) return native
+  return yield* Effect.die("Sqlite.Native is not a bun:sqlite Database")
+})
+
+/**
+ * effect/unstable/sql passes statement parameters as ReadonlyArray<unknown>. bun:sqlite checks each binding at
+ * run time and accepts more than SQLQueryBindings declares (it binds undefined as NULL), so the values pass as is.
+ */
+const bindings = (params: ReadonlyArray<unknown>) =>
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) effect/unstable/sql gives params as ReadonlyArray<unknown>; bun:sqlite all/values declare SQLQueryBindings[] and check each value at run time
+  params as SQLQueryBindings[]
+
+const executeError = (cause: unknown) =>
+  new SqlError({
+    reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
+  })
+
 const make = (options: Config) =>
   Effect.gen(function* () {
-    const native = (yield* Sqlite.Native) as Database
+    const native = yield* nativeDatabase
 
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
-    const transformRows = options.transformResultNames
-      ? Statement.defaultTransforms(options.transformResultNames).array
-      : undefined
 
     const run = (query: string, params: ReadonlyArray<unknown> = []) =>
       Effect.withFiber<Array<Record<string, unknown>>, SqlError>((fiber) => {
-        const statement = native.query(query)
+        const statement = native.query<Record<string, unknown>, SQLQueryBindings[]>(query)
         // @ts-ignore bun-types missing safeIntegers method, fixed in https://github.com/oven-sh/bun/pull/26627
         statement.safeIntegers(Context.get(fiber.context, Client.SafeIntegers))
-        try {
-          return Effect.succeed((statement.all(...(params as any)) ?? []) as Array<Record<string, unknown>>)
-        } catch (cause) {
-          return Effect.fail(
-            new SqlError({
-              reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
-            }),
-          )
-        }
+        return Effect.try({ try: () => statement.all(...bindings(params)) ?? [], catch: executeError })
       })
 
     const runValues = (query: string, params: ReadonlyArray<unknown> = []) =>
       Effect.withFiber<Array<unknown[]>, SqlError>((fiber) => {
-        const statement = native.query(query)
+        const statement = native.query<Record<string, unknown>, SQLQueryBindings[]>(query)
         // @ts-ignore bun-types missing safeIntegers method, fixed in https://github.com/oven-sh/bun/pull/26627
         statement.safeIntegers(Context.get(fiber.context, Client.SafeIntegers))
-        try {
-          return Effect.succeed((statement.values(...(params as any)) ?? []) as Array<unknown[]>)
-        } catch (cause) {
-          return Effect.fail(
-            new SqlError({
-              reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
-            }),
-          )
-        }
+        return Effect.try({ try: () => statement.values(...bindings(params)) ?? [], catch: executeError })
       })
 
     const connection = identity<SqliteConnection>({
@@ -133,7 +126,7 @@ const make = (options: Config) =>
     })
 
     const client = Object.assign(
-      (yield* Client.make({
+      yield* Client.make({
         acquirer,
         compiler,
         transactionAcquirer,
@@ -141,8 +134,10 @@ const make = (options: Config) =>
           ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
           [ATTR_DB_SYSTEM_NAME, "sqlite"],
         ],
-        transformRows,
-      })) as SqliteClient,
+        ...(options.transformResultNames
+          ? { transformRows: Statement.defaultTransforms(options.transformResultNames).array }
+          : {}),
+      }),
       {
         [TypeId]: TypeId,
         config: options,
@@ -174,7 +169,7 @@ const sqliteLayer = (config: Config) => Layer.effect(Client.SqlClient, make(conf
 const drizzleLayer = Layer.effect(
   Sqlite.Drizzle,
   Effect.gen(function* () {
-    return drizzle({ client: (yield* Sqlite.Native) as Database })
+    return drizzle({ client: yield* nativeDatabase })
   }),
 )
 

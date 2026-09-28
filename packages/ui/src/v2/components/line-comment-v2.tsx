@@ -1,3 +1,4 @@
+import { Effect, Predicate } from "effect"
 import { For, Show, createSignal, onMount, splitProps, type ComponentProps, type JSX } from "solid-js"
 import { FileIcon } from "../../components/file-icon"
 import { useI18n } from "../../context/i18n"
@@ -118,13 +119,13 @@ export function LineCommentEditorV2(props: LineCommentEditorV2Props) {
 
   const currentMention = () => {
     const textarea = textareaRef
-    if (!textarea) return
-    if (!local.mention) return
-    if (textarea.selectionStart !== textarea.selectionEnd) return
+    if (!textarea) return undefined
+    if (!local.mention) return undefined
+    if (textarea.selectionStart !== textarea.selectionEnd) return undefined
 
     const end = textarea.selectionStart
     const match = textarea.value.slice(0, end).match(/@(\S*)$/)
-    if (!match) return
+    if (!match) return undefined
 
     return {
       query: match[1] ?? "",
@@ -153,12 +154,17 @@ export function LineCommentEditorV2(props: LineCommentEditorV2Props) {
   }
 
   const mention = useFilteredList<{ path: string }>({
-    items: async (query) => {
-      if (!local.mention) return []
-      if (!query.trim()) return []
-      const paths = await local.mention.items(query)
-      return paths.map((path) => ({ path }))
-    },
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const source = local.mention
+          if (!source) return []
+          if (!query.trim()) return []
+          const found = source.items(query)
+          const paths = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          return paths.map((path) => ({ path }))
+        }),
+      ),
     key: (item) => item.path,
     filterKeys: ["path"],
     skipFilter: () => true,
@@ -270,7 +276,7 @@ export function LineCommentEditorV2(props: LineCommentEditorV2Props) {
                     <button
                       type="button"
                       data-slot="line-comment-v2-mention-item"
-                      data-active={mention.active() === item.path ? "" : undefined}
+                      bool:data-active={mention.active() === item.path}
                       onMouseDown={(event) => event.preventDefault()}
                       onMouseEnter={() => mention.setActive(item.path)}
                       onClick={() => selectMention(item)}

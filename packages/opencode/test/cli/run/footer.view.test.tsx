@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import { BoxRenderable, RGBA, type RootRenderable } from "@opentui/core"
+import { BoxRenderable, RGBA, parseColor, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
+import { Effect, Option } from "effect"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { OpencodeKeymapProvider, registerOpencodeKeymap } from "@opencode-ai/tui/keymap"
@@ -137,7 +138,7 @@ function subagent(input: {
 }
 
 function footerState(input: Partial<FooterState> = {}) {
-  return createSignal<FooterState>({
+  const state: FooterState = {
     phase: "idle",
     status: "",
     queue: 0,
@@ -148,7 +149,8 @@ function footerState(input: Partial<FooterState> = {}) {
     interrupt: 0,
     exit: 0,
     ...input,
-  })[0]
+  }
+  return createSignal(state)[0]
 }
 
 async function renderFooter(
@@ -169,7 +171,7 @@ async function renderFooter(
   } = {},
 ) {
   const [view] = createSignal<FooterView>({ type: "prompt" })
-  const [subagents] = createSignal<FooterSubagentState>(
+  const [subagents] = createSignal(
     input.subagents ?? { tabs: [], details: {}, permissions: [], questions: [] },
   )
   const state = footerState(input.state)
@@ -192,7 +194,7 @@ async function renderFooter(
           providers={() => input.providers}
           currentModel={() => input.currentModel}
           variants={() => []}
-          currentVariant={() => input.currentVariant}
+          currentVariant={() => Option.fromNullishOr(input.currentVariant)}
           state={state}
           view={view}
           subagent={subagents}
@@ -201,9 +203,9 @@ async function renderFooter(
           backgroundSubagents={input.backgroundSubagents ?? true}
           agent="opencode"
           onSubmit={input.onSubmit ?? (() => true)}
-          onPermissionReply={() => {}}
-          onQuestionReply={() => {}}
-          onQuestionReject={() => {}}
+          onPermissionReply={() => Effect.void}
+          onQuestionReply={() => Effect.void}
+          onQuestionReject={() => Effect.void}
           onCycle={input.onCycle ?? (() => {})}
           onInterrupt={() => false}
           onEditorOpen={async () => undefined}
@@ -214,7 +216,7 @@ async function renderFooter(
           onRows={() => {}}
           onLayout={() => {}}
           onStatus={() => {}}
-          onQueuedRemove={async () => true}
+          onQueuedRemove={() => Effect.succeed(true)}
         />
       </OpencodeKeymapProvider>
     )
@@ -242,14 +244,19 @@ async function renderFooter(
 }
 
 function expectPaletteList(list: BoxRenderable, selectedIndex: number) {
-  expect(list.backgroundColor.toInts()).toEqual((RUN_THEME_FALLBACK.footer.shade as RGBA).toInts())
-  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual(
-    (RUN_THEME_FALLBACK.footer.selected as RGBA).toInts(),
+  expect(list.backgroundColor.toInts()).toEqual(parseColor(RUN_THEME_FALLBACK.footer.shade).toInts())
+  expect(asBox(list.getChildren()[selectedIndex]).backgroundColor.toInts()).toEqual(
+    parseColor(RUN_THEME_FALLBACK.footer.selected).toInts(),
   )
 }
 
+function asBox(item: unknown) {
+  if (item instanceof BoxRenderable) return item
+  throw new Error("Expected a BoxRenderable")
+}
+
 function child(root: BoxRenderable | RootRenderable, index: number) {
-  return root.getChildren()[index] as BoxRenderable
+  return asBox(root.getChildren()[index])
 }
 
 function boxPath(root: BoxRenderable | RootRenderable, name: string): BoxRenderable[] | undefined {
@@ -259,6 +266,7 @@ function boxPath(root: BoxRenderable | RootRenderable, name: string): BoxRendera
     const path = boxPath(item, name)
     if (path) return root instanceof BoxRenderable ? [root, ...path] : path
   }
+  return undefined
 }
 
 function footerComposerFrame(root: BoxRenderable | RootRenderable) {
@@ -266,8 +274,8 @@ function footerComposerFrame(root: BoxRenderable | RootRenderable) {
 }
 
 function footerStatusline(root: BoxRenderable | RootRenderable) {
-  const status = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-  const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
+  const status = parseColor(RUN_THEME_FALLBACK.footer.status).toInts()
+  const accent = parseColor(RUN_THEME_FALLBACK.footer.statusAccent).toInts()
   const boxes = root.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
   for (const box of boxes) {
     const first = box.getChildren().find((item): item is BoxRenderable => item instanceof BoxRenderable)
@@ -284,7 +292,7 @@ function footerStatusline(root: BoxRenderable | RootRenderable) {
 function panelMenu(root: BoxRenderable | RootRenderable) {
   const panel = child(child(root, 0), 0)
   const content = child(panel, 0)
-  return child(content.getChildren().at(-1) as BoxRenderable, 0)
+  return child(asBox(content.getChildren().at(-1)), 0)
 }
 
 test("direct footer composer area does not adopt footer surface", async () => {
@@ -600,7 +608,7 @@ test("direct subagent panel renders active subagents", async () => {
     subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow" }),
     subagent({ sessionID: "s-2", label: "General", description: "Write migration plan", status: "completed" }),
   ])
-  const [current] = createSignal<string | undefined>("s-1")
+  const [current] = createSignal(Option.some("s-1"))
   let rows = 0
 
   const app = await testRender(
@@ -647,7 +655,7 @@ test("direct subagent panel closes when moving up from the first item", async ()
     subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow" }),
     subagent({ sessionID: "s-2", label: "General", description: "Write migration plan" }),
   ])
-  const [current] = createSignal<string | undefined>()
+  const [current] = createSignal(Option.none<string>())
   let closed = 0
 
   const app = await testRender(
@@ -978,7 +986,7 @@ test("direct footer shows editable prompts and additional queued work while runn
             modelID: "a-model-name-long-enough-to-force-responsive-truncation",
           })}
           variants={() => []}
-          currentVariant={() => undefined}
+          currentVariant={() => Option.none()}
           state={state}
           view={view}
           subagent={subagents}
@@ -990,9 +998,9 @@ test("direct footer shows editable prompts and additional queued work while runn
           backgroundSubagents={true}
           agent="opencode"
           onSubmit={() => true}
-          onPermissionReply={() => {}}
-          onQuestionReply={() => {}}
-          onQuestionReject={() => {}}
+          onPermissionReply={() => Effect.void}
+          onQuestionReply={() => Effect.void}
+          onQuestionReject={() => Effect.void}
           onCycle={() => {}}
           onInterrupt={() => false}
           onEditorOpen={async () => undefined}
@@ -1003,7 +1011,7 @@ test("direct footer shows editable prompts and additional queued work while runn
           onRows={() => {}}
           onLayout={() => {}}
           onStatus={() => {}}
-          onQueuedRemove={async () => true}
+          onQueuedRemove={() => Effect.succeed(true)}
         />
       </OpencodeKeymapProvider>
     )
@@ -1025,8 +1033,8 @@ test("direct footer shows editable prompts and additional queued work while runn
     await app.renderOnce()
     const frame = app.captureCharFrame()
     const transparent = RGBA.fromValues(0, 0, 0, 0).toInts()
-    const tinted = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-    const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
+    const tinted = parseColor(RUN_THEME_FALLBACK.footer.status).toInts()
+    const accent = parseColor(RUN_THEME_FALLBACK.footer.statusAccent).toInts()
     const statusline = footerStatusline(app.renderer.root)
     const statusItems = statusline.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
     const mode = statusItems[0]
@@ -1187,10 +1195,12 @@ test("direct question body separates single-select checkmark from label", async 
         <RunQuestionBody
           request={request}
           theme={RUN_THEME_FALLBACK.footer}
-          onReply={(input) => {
-            replies.push(input)
-          }}
-          onReject={() => {}}
+          onReply={(input) =>
+            Effect.sync(() => {
+              replies.push(input)
+            })
+          }
+          onReject={() => Effect.void}
         />
       </box>
     ),
@@ -1239,10 +1249,12 @@ test.skip("direct custom answer submits through keymap return binding", async ()
         <RunQuestionBody
           request={question}
           theme={RUN_THEME_FALLBACK.footer}
-          onReply={(input) => {
-            questions.push(input)
-          }}
-          onReject={() => {}}
+          onReply={(input) =>
+            Effect.sync(() => {
+              questions.push(input)
+            })
+          }
+          onReject={() => Effect.void}
         />
       </OpencodeKeymapProvider>
     )
@@ -1372,7 +1384,7 @@ test("direct model panel renders current model selector", async () => {
 
 test("direct variant panel renders current variant selector", async () => {
   const [variants] = createSignal(["high", "minimal"])
-  const [current] = createSignal<string | undefined>("high")
+  const [current] = createSignal(Option.some("high"))
 
   const app = await testRender(
     () => (

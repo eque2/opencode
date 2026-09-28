@@ -13,7 +13,12 @@ import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
-import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
+import {
+  downloadSessionExport,
+  fetchSessionExport,
+  sessionExportFailureCause,
+  sessionExportFilename,
+} from "@/utils/session-export"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
@@ -21,6 +26,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContext } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
+import { Data, Effect, HashMap, Option, Schema } from "effect"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   system: "var(--syntax-info)",
@@ -39,10 +45,14 @@ function Stat(props: { label: string; value: JSX.Element }) {
   )
 }
 
+class SessionExportError extends Data.TaggedError("SessionExportError")<{ readonly cause: unknown }> {}
+
+const encodeRawMessage = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 function RawMessageContent(props: { message: Message; getParts: (id: string) => Part[]; onRendered: () => void }) {
   const file = createMemo(() => {
     const parts = props.getParts(props.message.id)
-    const contents = JSON.stringify({ message: props.message, parts }, null, 2)
+    const contents = encodeRawMessage({ message: props.message, parts })
     return {
       name: `${props.message.role}-${props.message.id}.json`,
       contents,
@@ -101,29 +111,29 @@ export function SessionContextTab() {
   const providers = useProviders(() => sdk().directory)
   const { params, view } = useSessionLayout()
 
-  const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
+  const info = createMemo(() =>
+    Option.fromNullishOr(params.id).pipe(Option.flatMapNullishOr((id) => sync().session.get(id))),
+  )
 
   const messages = createMemo(
     () => {
       const id = params.id
       if (!id) return emptyMessages
-      return (sync().data.message[id] ?? []) as Message[]
+      return sync().data.message[id] ?? []
     },
     emptyMessages,
     { equals: same },
   )
 
-  const userMessages = createMemo(
-    () => messages().filter((m) => m.role === "user") as UserMessage[],
-    emptyUserMessages,
-    { equals: same },
-  )
+  const userMessages = createMemo(() => messages().filter((m) => m.role === "user"), emptyUserMessages, {
+    equals: same,
+  })
 
   const visibleUserMessages = createMemo(
     () => {
-      const revert = info()?.revert?.messageID
-      if (!revert) return userMessages()
-      const boundary = userMessages().findIndex((message) => message.id === revert)
+      const revert = Option.flatMapNullishOr(info(), (session) => session.revert?.messageID)
+      if (Option.isNone(revert) || !revert.value) return userMessages()
+      const boundary = userMessages().findIndex((message) => message.id === revert.value)
       return boundary < 0 ? userMessages() : userMessages().slice(0, boundary)
     },
     emptyUserMessages,
@@ -138,11 +148,16 @@ export function SessionContextTab() {
       }),
   )
 
-  const ctx = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const ctx = createMemo(() => getSessionContext(messages(), HashMap.toValues(providers.all())))
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
 
   const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
+    return usd().format(
+      info().pipe(
+        Option.flatMapNullishOr((session) => session.cost),
+        Option.getOrElse(() => 0),
+      ),
+    )
   })
 
   const counts = createMemo(() => {
@@ -159,9 +174,9 @@ export function SessionContextTab() {
   const systemPrompt = createMemo(() => {
     const msg = findLast(visibleUserMessages(), (m) => !!m.system)
     const system = msg?.system
-    if (!system) return
+    if (!system) return undefined
     const trimmed = system.trim()
-    if (!trimmed) return
+    if (!trimmed) return undefined
     return trimmed
   })
 
@@ -202,13 +217,23 @@ export function SessionContextTab() {
   }
 
   const stats = [
-    { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
+    {
+      label: "context.stats.session",
+      value: () =>
+        Option.match(info(), {
+          onNone: () => params.id ?? "—",
+          onSome: (session) => session.title,
+        }),
+    },
     { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
     { label: "context.stats.provider", value: providerLabel },
     { label: "context.stats.model", value: modelLabel },
     { label: "context.stats.limit", value: () => formatter().number(ctx()?.limit) },
     { label: "context.stats.totalTokens", value: () => formatter().number(ctx()?.total) },
-    { label: "context.stats.usage", value: () => formatter().percent(ctx()?.usage) },
+    {
+      label: "context.stats.usage",
+      value: () => formatter().percent(Option.flatMap(Option.fromNullishOr(ctx()), (context) => context.usage)),
+    },
     { label: "context.stats.inputTokens", value: () => formatter().number(ctx()?.input) },
     { label: "context.stats.outputTokens", value: () => formatter().number(ctx()?.message.tokens.output) },
     { label: "context.stats.reasoningTokens", value: () => formatter().number(ctx()?.message.tokens.reasoning) },
@@ -220,39 +245,57 @@ export function SessionContextTab() {
     { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
     { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
     { label: "context.stats.totalCost", value: cost },
-    { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
+    {
+      label: "context.stats.sessionCreated",
+      value: () => formatter().time(Option.getOrUndefined(Option.map(info(), (session) => session.time.created))),
+    },
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]
 
-  const exportSession = async () => {
-    const sessionID = params.id
-    if (!sessionID) return
-    try {
-      const data = await fetchSessionExport({
+  const exportSessionProgram = (sessionID: string) =>
+    Effect.gen(function* () {
+      const data = yield* fetchSessionExport({
         sessionID,
         client: sdk().client,
+      }).pipe(Effect.mapError((error) => new SessionExportError({ cause: sessionExportFailureCause(error) })))
+      yield* Effect.try({
+        try: () => {
+          const filename = sessionExportFilename(data.info)
+          downloadSessionExport(filename, data)
+          showToast({
+            variant: "success",
+            icon: "circle-check",
+            title: language.t("toast.session.export.success.title"),
+            description: language.t("toast.session.export.success.description", { filename }),
+          })
+        },
+        catch: (cause) => new SessionExportError({ cause }),
       })
-      const filename = sessionExportFilename(data.info)
-      downloadSessionExport(filename, data)
-      showToast({
-        variant: "success",
-        icon: "circle-check",
-        title: language.t("toast.session.export.success.title"),
-        description: language.t("toast.session.export.success.description", { filename }),
-      })
-    } catch (err) {
-      showToast({
-        variant: "error",
-        title: language.t("toast.session.export.failed.title"),
-        description: err instanceof Error ? err.message : language.t("toast.session.export.failed.description"),
-      })
-    }
+    }).pipe(
+      Effect.catchTag("SessionExportError", (error) =>
+        Effect.sync(() =>
+          showToast({
+            variant: "error",
+            title: language.t("toast.session.export.failed.title"),
+            description:
+              error.cause instanceof Error
+                ? error.cause.message
+                : language.t("toast.session.export.failed.description"),
+          }),
+        ),
+      ),
+    )
+
+  const exportSession = () => {
+    const sessionID = params.id
+    if (!sessionID) return
+    Effect.runFork(exportSessionProgram(sessionID))
   }
 
   let scroll: HTMLDivElement | undefined
-  let frame: number | undefined
-  let pending: { x: number; y: number } | undefined
-  const getParts = (id: string) => (sync().data.part[id] ?? []) as Part[]
+  let frame: Option.Option<number> = Option.none()
+  let pending: Option.Option<{ x: number; y: number }> = Option.none()
+  const getParts = (id: string) => sync().data.part[id] ?? []
 
   const restoreScroll = () => {
     const el = scroll
@@ -266,21 +309,23 @@ export function SessionContextTab() {
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
-    pending = {
+    pending = Option.some({
       x: event.currentTarget.scrollLeft,
       y: event.currentTarget.scrollTop,
-    }
-    if (frame !== undefined) return
-
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-
-      const next = pending
-      pending = undefined
-      if (!next) return
-
-      view().setScroll("context", next)
     })
+    if (Option.isSome(frame)) return
+
+    frame = Option.some(
+      requestAnimationFrame(() => {
+        frame = Option.none()
+
+        const next = pending
+        pending = Option.none()
+        if (Option.isNone(next)) return
+
+        view().setScroll("context", next.value)
+      }),
+    )
   }
 
   createEffect(
@@ -294,8 +339,8 @@ export function SessionContextTab() {
   )
 
   onCleanup(() => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
+    if (Option.isNone(frame)) return
+    cancelAnimationFrame(frame.value)
   })
 
   return (
@@ -372,7 +417,12 @@ export function SessionContextTab() {
           <Accordion multiple>
             <For each={messages()}>
               {(message) => (
-                <RawMessage message={message} getParts={getParts} onRendered={restoreScroll} time={formatter().time} />
+                <RawMessage
+                  message={message}
+                  getParts={getParts}
+                  onRendered={restoreScroll}
+                  time={(value) => formatter().time(value)}
+                />
               )}
             </For>
           </Accordion>

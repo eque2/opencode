@@ -1,32 +1,39 @@
 import { createProviderToolFactoryWithOutputSchema } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 
-export const codeInterpreterInputSchema = z.object({
-  code: z.string().nullish(),
-  containerId: z.string(),
-})
+// The Responses API names the code interpreter container with this id.
+export const ContainerID = Schema.String.pipe(Schema.brand("CopilotResponses.ContainerID"))
 
-export const codeInterpreterOutputSchema = z.object({
-  outputs: z
-    .array(
-      z.discriminatedUnion("type", [
-        z.object({ type: z.literal("logs"), logs: z.string() }),
-        z.object({ type: z.literal("image"), url: z.string() }),
-      ]),
-    )
-    .nullish(),
-})
+export const codeInterpreterInputSchema = Schema.Struct({
+  code: Schema.optional(Schema.NullOr(Schema.String)),
+  containerId: ContainerID,
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterInput" })
 
-export const codeInterpreterArgsSchema = z.object({
-  container: z
-    .union([
-      z.string(),
-      z.object({
-        fileIds: z.array(z.string()).optional(),
+export const codeInterpreterOutputSchema = Schema.Struct({
+  outputs: Schema.optional(
+    Schema.NullOr(
+      Schema.mutable(
+        Schema.Array(
+          Schema.Union([
+            Schema.Struct({ type: Schema.Literal("logs"), logs: Schema.String }),
+            Schema.Struct({ type: Schema.Literal("image"), url: Schema.String }),
+          ]),
+        ),
+      ),
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterOutput" })
+
+export const codeInterpreterArgsSchema = Schema.Struct({
+  container: Schema.optional(
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        fileIds: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
       }),
-    ])
-    .optional(),
-})
+    ]),
+  ),
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterArgs" })
 
 type CodeInterpreterArgs = {
   /**
@@ -76,8 +83,8 @@ export const codeInterpreterToolFactory = createProviderToolFactoryWithOutputSch
   CodeInterpreterArgs
 >({
   id: "openai.code_interpreter",
-  inputSchema: codeInterpreterInputSchema,
-  outputSchema: codeInterpreterOutputSchema,
+  inputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(codeInterpreterInputSchema)),
+  outputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(codeInterpreterOutputSchema)),
 })
 
 export const codeInterpreter = (

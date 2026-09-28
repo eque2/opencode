@@ -1,5 +1,4 @@
-/* oxlint-disable */
-import { Effect } from "effect"
+import { Effect, Predicate, Random } from "effect"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import type { MutationOption } from "drizzle-orm/cache/core/cache"
@@ -26,6 +25,19 @@ import { SQLiteEffectSelectBuilder } from "./select"
 import type { SQLiteEffectSelectBase } from "./select"
 import type { SQLiteEffectSession, SQLiteEffectTransaction } from "./session"
 import { SQLiteEffectUpdateBuilder } from "./update"
+
+/**
+ * Reads the selection of a query builder for a CTE. drizzle-orm select builders
+ * expose it through their internal getSelectedFields(); other builders and raw
+ * SQL have none, so the CTE gets an empty selection.
+ */
+const selectedFieldsOf = (qb: TypedQueryBuilder<ColumnsSelection | undefined> | SQL): ColumnsSelection => {
+  if (Predicate.hasProperty(qb, "getSelectedFields") && Predicate.isFunction(qb.getSelectedFields)) {
+    const fields: unknown = qb.getSelectedFields()
+    if (Predicate.isObject(fields)) return fields
+  }
+  return {}
+}
 
 export class SQLiteEffectDatabase<
   TEffectHKT extends QueryEffectHKTBase,
@@ -57,12 +69,14 @@ export class SQLiteEffectDatabase<
       session,
     }
 
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm declares db.query as a mapped type over the generic keyof TRelations; no Record or Partial source is assignable to it (TS2322), so the empty start needs the same cast upstream sqlite-core/db.ts uses
     this.query = {} as (typeof this)["query"]
     for (const [tableName, relation] of Object.entries(relations)) {
       ;(this.query as SQLiteEffectDatabase<TEffectHKT, TRunResult, AnyRelations>["query"])[tableName] =
         new SQLiteEffectRelationalQueryBuilder(
           relations,
-          relations[relation.name]!.table as SQLiteTable,
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm TableRelationalConfig.table is the dialect-neutral Table | View, but the relational builder takes SQLiteTable; a runtime guard would add a failure path upstream lacks, and upstream sqlite-core/db.ts casts the same entry
+          relations[relation.name].table as SQLiteTable,
           relation,
           dialect,
           session,
@@ -77,7 +91,6 @@ export class SQLiteEffectDatabase<
   }
 
   $with: WithBuilder = (alias: string, selection?: ColumnsSelection) => {
-    const self = this
     const as = (
       qb:
         | TypedQueryBuilder<ColumnsSelection | undefined>
@@ -85,16 +98,13 @@ export class SQLiteEffectDatabase<
         | ((qb: QueryBuilder) => TypedQueryBuilder<ColumnsSelection | undefined> | SQL),
     ) => {
       if (typeof qb === "function") {
-        qb = qb(new QueryBuilder(self.dialect))
+        qb = qb(new QueryBuilder(this.dialect))
       }
 
       return new Proxy(
         new WithSubquery(
           qb.getSQL(),
-          selection ??
-            (("getSelectedFields" in qb
-              ? ((qb as { getSelectedFields(): SelectedFields | undefined }).getSelectedFields() ?? {})
-              : {}) as SelectedFields),
+          selection ?? selectedFieldsOf(qb),
           alias,
           true,
         ),
@@ -106,12 +116,13 @@ export class SQLiteEffectDatabase<
 
   $cache: { invalidate: EffectCacheShape["onMutate"] }
 
-  $count(source: SQLiteTable | SQLiteViewBase | SQL | SQLWrapper, filters?: SQL<unknown>) {
+  $count(source: SQLiteTable | SQLiteViewBase | SQL | SQLWrapper, filters?: SQL) {
     return new SQLiteEffectCountBuilder({ source, filters, session: this.session })
   }
 
   with(...queries: WithSubquery[]) {
-    const self = this
+    const session = this.session
+    const dialect = this.dialect
 
     function select(): SQLiteEffectSelectBuilder<undefined, TRunResult, TEffectHKT>
     function select<TSelection extends SelectedFields>(
@@ -121,9 +132,9 @@ export class SQLiteEffectDatabase<
       fields?: SelectedFields,
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
-        fields: fields ?? undefined,
-        session: self.session,
-        dialect: self.dialect,
+        fields,
+        session,
+        dialect,
         withList: queries,
       })
     }
@@ -136,9 +147,9 @@ export class SQLiteEffectDatabase<
       fields?: SelectedFields,
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
-        fields: fields ?? undefined,
-        session: self.session,
-        dialect: self.dialect,
+        fields,
+        session,
+        dialect,
         withList: queries,
         distinct: true,
       })
@@ -147,19 +158,19 @@ export class SQLiteEffectDatabase<
     function update<TTable extends SQLiteTable>(
       table: TTable,
     ): SQLiteEffectUpdateBuilder<TTable, TRunResult, TEffectHKT> {
-      return new SQLiteEffectUpdateBuilder(table, self.session, self.dialect, queries)
+      return new SQLiteEffectUpdateBuilder(table, session, dialect, queries)
     }
 
     function insert<TTable extends SQLiteTable>(
       into: TTable,
     ): SQLiteEffectInsertBuilder<TTable, TRunResult, TEffectHKT> {
-      return new SQLiteEffectInsertBuilder(into, self.session, self.dialect, queries)
+      return new SQLiteEffectInsertBuilder(into, session, dialect, queries)
     }
 
     function delete_<TTable extends SQLiteTable>(
       from: TTable,
     ): SQLiteEffectDeleteBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
-      return new SQLiteEffectDeleteBase(from, self.session, self.dialect, queries)
+      return new SQLiteEffectDeleteBase(from, session, dialect, queries)
     }
 
     return { select, selectDistinct, update, insert, delete: delete_ }
@@ -170,7 +181,7 @@ export class SQLiteEffectDatabase<
     fields: TSelection,
   ): SQLiteEffectSelectBuilder<TSelection, TRunResult, TEffectHKT>
   select(fields?: SelectedFields): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
-    return new SQLiteEffectSelectBuilder({ fields: fields ?? undefined, session: this.session, dialect: this.dialect })
+    return new SQLiteEffectSelectBuilder({ fields, session: this.session, dialect: this.dialect })
   }
 
   selectDistinct(): SQLiteEffectSelectBuilder<undefined, TRunResult, TEffectHKT>
@@ -181,7 +192,7 @@ export class SQLiteEffectDatabase<
     fields?: SelectedFields,
   ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
     return new SQLiteEffectSelectBuilder({
-      fields: fields ?? undefined,
+      fields,
       session: this.session,
       dialect: this.dialect,
       distinct: true,
@@ -249,16 +260,16 @@ export const withReplicas = <
 >(
   primary: Q,
   replicas: [Q, ...Q[]],
-  getReplica: (replicas: Q[]) => Q = () => replicas[Math.floor(Math.random() * replicas.length)]!,
+  getReplica: (replicas: Q[]) => Q = () =>
+    // eslint-disable-next-line effect/no-effect-runsync-unguarded -- (a) drizzle-orm withReplicas declares getReplica?: (replicas: Q[]) => Q, a synchronous callback, so this default is a sync boundary; runSync runs only the pure Random.nextIntBetween
+    Effect.runSync(
+      Random.nextIntBetween(0, replicas.length, { halfOpen: true }).pipe(Effect.map((index) => replicas[index])),
+    ),
 ): SQLiteEffectWithReplicas<Q> => {
   const select: Q["select"] = (...args: []) => getReplica(replicas).select(...args)
   const selectDistinct: Q["selectDistinct"] = (...args: []) => getReplica(replicas).selectDistinct(...args)
   const $count: Q["$count"] = (...args: [any]) => getReplica(replicas).$count(...args)
   const _with: Q["with"] = (...args: []) => getReplica(replicas).with(...args)
-  const $with = ((...args: [string] | [string, ColumnsSelection]) =>
-    args.length === 1
-      ? getReplica(replicas).$with(args[0])
-      : getReplica(replicas).$with(args[0], args[1])) as Q["$with"]
 
   const update: Q["update"] = (...args: [any]) => primary.update(...args)
   const insert: Q["insert"] = (...args: [any]) => primary.insert(...args)
@@ -270,6 +281,7 @@ export const withReplicas = <
   const transaction: Q["transaction"] = (...args: [any]) => primary.transaction(...args)
 
   return {
+    // oxlint-disable-next-line typescript-eslint/no-misused-spread -- (a) drizzle-orm withReplicas returns SQLiteWithReplicas<Q>, a plain object with every own field of the primary (session, dialect, $client, _, and any a subclass adds); each prototype method is re-added below, as upstream does
     ...primary,
     update,
     insert,
@@ -284,7 +296,9 @@ export const withReplicas = <
     select,
     selectDistinct,
     $count,
-    $with,
+    get $with() {
+      return getReplica(replicas).$with
+    },
     with: _with,
     get query() {
       return getReplica(replicas).query

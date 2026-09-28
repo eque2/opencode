@@ -2,11 +2,13 @@ import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
 import * as InstanceState from "@/effect/instance-state"
 import { Format } from "@/format"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
 import { Skill } from "@/skill"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
+import os from "os"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { ApiVcsApplyError } from "../groups/instance"
@@ -28,8 +30,11 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
 
     const getPath = Effect.fn("InstanceHttpApi.path")(function* () {
       const ctx = yield* InstanceState.context
+      // Tests point the home at OPENCODE_TEST_HOME after start, so read it on each request. The
+      // variable is optional, so a ConfigError is a defect.
+      const home = Option.getOrElse(yield* FlagConfig.OPENCODE_TEST_HOME.pipe(Effect.orDie), () => os.homedir())
       return {
-        home: Global.Path.home,
+        home,
         state: Global.Path.state,
         config: Global.Path.config,
         worktree: ctx.worktree,

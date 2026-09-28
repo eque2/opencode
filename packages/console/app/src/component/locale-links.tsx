@@ -5,14 +5,15 @@ import { config } from "~/config"
 import { useLanguage } from "~/context/language"
 import { LOCALES, route, tag } from "~/lib/language"
 
+// Paths that already rendered locale links, per request. Keyed by the request's locals object.
+const seenByRequest = new WeakMap<object, Set<string>>()
+
 function skip(path: string) {
   const evt = getRequestEvent()
   if (!evt) return false
 
-  const key = "__locale_links_seen"
-  const locals = evt.locals as Record<string, unknown>
-  const seen = locals[key] instanceof Set ? (locals[key] as Set<string>) : new Set<string>()
-  locals[key] = seen
+  const seen = seenByRequest.get(evt.locals) ?? new Set<string>()
+  seenByRequest.set(evt.locals, seen)
   if (seen.has(path)) return true
   seen.add(path)
   return false

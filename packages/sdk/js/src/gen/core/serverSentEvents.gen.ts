@@ -79,7 +79,9 @@ export const createSseClient = <TData = unknown>({
 
   const sleep = sseSleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
 
-  const createStream = async function* () {
+  type StreamItem = TData extends Record<string, unknown> ? TData[keyof TData] : TData
+
+  const createStream = async function* (): ServerSentEventsResult<TData>["stream"] {
     let retryDelay: number = sseDefaultRetryDelay ?? 3000
     let attempt = 0
     const signal = options.signal ?? new AbortController().signal
@@ -89,10 +91,7 @@ export const createSseClient = <TData = unknown>({
 
       attempt++
 
-      const headers =
-        options.headers instanceof Headers
-          ? options.headers
-          : new Headers(options.headers as Record<string, string> | undefined)
+      const headers = options.headers instanceof Headers ? options.headers : new Headers(options.headers)
 
       if (lastEventId !== undefined) {
         headers.set("Last-Event-ID", lastEventId)
@@ -179,7 +178,8 @@ export const createSseClient = <TData = unknown>({
               })
 
               if (dataLines.length) {
-                yield data as any
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts SSE boundary: JSON.parse output becomes the caller's generic TData, and the client has no typed validator
+                yield data as StreamItem
               }
             }
           }

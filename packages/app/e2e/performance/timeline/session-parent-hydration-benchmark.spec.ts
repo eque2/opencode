@@ -61,7 +61,7 @@ benchmark("hydrates an orphaned latest turn after a cold session click", async (
       ),
     )
   }
-  const timing = results.map((result) => result.metrics.firstCorrectObservedMs!).sort((a, b) => a - b)
+  const timing = results.map((result) => result.metrics.firstCorrectObservedMs).sort((a, b) => a - b)
   report(
     {
       results: results.map((result) => ({ ...result.metrics, historyGateCount: result.historyGateCount })),
@@ -102,7 +102,7 @@ async function trial(page: Page, mode: ParentHydrationBenchmarkMode) {
       if (request.sessionID === fixture.targetID && request.messageID === userID) requests.push({ type: "parent" })
     },
     message: (sessionID, messageID) => {
-      if (sessionID !== fixture.targetID || messageID !== userID) return
+      if (sessionID !== fixture.targetID || messageID !== userID) return undefined
       return user
     },
     pageMessages: (sessionID, limit, before) => {

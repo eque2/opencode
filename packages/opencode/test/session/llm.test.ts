@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import path from "path"
 import { tool, type ModelMessage } from "ai"
-import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import z from "zod"
@@ -17,9 +17,8 @@ import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { testEffect } from "../lib/effect"
 import type { Agent } from "../../src/agent/agent"
 import { MessageV2 } from "../../src/session/message-v2"
-import { SessionID, MessageID } from "../../src/session/schema"
+import { SessionID, MessageID, PartID } from "../../src/session/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Permission } from "@/permission"
 import { LLMAISDK } from "@/session/llm/ai-sdk"
 import { Session as SessionNs } from "@/session/session"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -28,11 +27,14 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
 import { ProviderError } from "@/provider/error"
+import { isRecord } from "@/util/record"
 
 type ConfigModel = NonNullable<NonNullable<ConfigV1.Info["provider"]>[string]["models"]>[string]
 
+// Captured JSON bodies are untyped; keep the object entries of an array field.
+const records = (value: unknown) => (Array.isArray(value) ? value.filter(isRecord) : [])
+
 const openAIConfig = (model: ModelsDev.Provider["models"][string], baseURL: string): Partial<ConfigV1.Info> => {
-  const { experimental: _experimental, ...configModel } = model
   return {
     enabled_providers: ["openai"],
     provider: {
@@ -42,7 +44,7 @@ const openAIConfig = (model: ModelsDev.Provider["models"][string], baseURL: stri
         npm: "@ai-sdk/openai",
         api: "https://api.openai.com/v1",
         models: {
-          [model.id]: JSON.parse(JSON.stringify(configModel)) as ConfigModel,
+          [model.id]: configModel(model),
         },
         options: {
           apiKey: "test-openai-key",
@@ -63,7 +65,7 @@ const drain = (input: LLM.StreamInput) => LLM.Service.use((svc) => svc.stream(in
 const drainWith = (layer: Layer.Layer<LLM.Service>, input: LLM.StreamInput) =>
   Effect.gen(function* () {
     const ctx = yield* InstanceRef
-    if (!ctx) return yield* Effect.die("InstanceRef not provided")
+    if (Option.isNone(ctx)) return yield* Effect.die("InstanceRef not provided")
     return yield* Effect.promise(() =>
       Effect.runPromise(
         LLM.Service.use((svc) => svc.stream(input).pipe(Stream.runDrain)).pipe(
@@ -118,10 +120,11 @@ describe("session.llm.hasToolCalls", () => {
             type: "tool-call",
             toolCallId: "call-123",
             toolName: "bash",
+            input: {},
           },
         ],
       },
-    ] as ModelMessage[]
+    ] satisfies ModelMessage[]
     expect(LLM.hasToolCalls(messages)).toBe(true)
   })
 
@@ -134,10 +137,11 @@ describe("session.llm.hasToolCalls", () => {
             type: "tool-result",
             toolCallId: "call-123",
             toolName: "bash",
+            output: { type: "text", value: "" },
           },
         ],
       },
-    ] as ModelMessage[]
+    ] satisfies ModelMessage[]
     expect(LLM.hasToolCalls(messages)).toBe(true)
   })
 
@@ -165,10 +169,11 @@ describe("session.llm.hasToolCalls", () => {
             type: "tool-call",
             toolCallId: "call-456",
             toolName: "read",
+            input: {},
           },
         ],
       },
-    ] as ModelMessage[]
+    ] satisfies ModelMessage[]
     expect(LLM.hasToolCalls(messages)).toBe(true)
   })
 })
@@ -481,8 +486,8 @@ describe("session.llm.ai-sdk adapter", () => {
     // End-to-end: with the metadata preserved, getUsage extracts cache.write from the fallback path.
     const result = SessionNs.getUsage({
       model: {
-        id: "claude-3-5-sonnet",
-        providerID: "anthropic",
+        id: ModelV2.ID.make("claude-3-5-sonnet"),
+        providerID: ProviderV2.ID.make("anthropic"),
         name: "Claude",
         limit: { context: 200_000, output: 8_000 },
         cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
@@ -491,12 +496,16 @@ describe("session.llm.ai-sdk adapter", () => {
           attachment: false,
           reasoning: false,
           temperature: true,
-          input: { text: true, image: false, audio: false, video: false },
-          output: { text: true, image: false, audio: false, video: false },
+          input: { text: true, image: false, audio: false, video: false, pdf: false },
+          output: { text: true, image: false, audio: false, video: false, pdf: false },
+          interleaved: false,
         },
-        api: { npm: "@ai-sdk/anthropic" },
+        api: { id: "claude-3-5-sonnet", url: "https://api.anthropic.com/v1", npm: "@ai-sdk/anthropic" },
+        status: "active",
         options: {},
-      } as never,
+        headers: {},
+        release_date: "2024-10-22",
+      } satisfies Provider.Model,
       usage: stepFinish.usage!,
       metadata: stepFinish.providerMetadata,
     })
@@ -572,11 +581,7 @@ const state = {
 }
 
 function deferred<T>() {
-  const result = {} as { promise: Promise<T>; resolve: (value: T) => void }
-  result.promise = new Promise((resolve) => {
-    result.resolve = resolve
-  })
-  return result
+  return Promise.withResolvers<T>()
 }
 
 function waitRequest(pathname: string, response: Response) {
@@ -647,7 +652,8 @@ beforeAll(() => {
       }
 
       const url = new URL(req.url)
-      const body = (await req.json()) as Record<string, unknown>
+      const json: unknown = await req.json()
+      const body = isRecord(json) ? json : {}
       next.resolve({ url, headers: req.headers, body })
 
       if (!url.pathname.endsWith(next.path)) {
@@ -699,9 +705,9 @@ function createChatStream(text: string) {
   })
 }
 
-const MODELS_FIXTURE = JSON.parse(
-  await Bun.file(path.join(import.meta.dir, "../tool/fixtures/models-api.json")).text(),
-) as Record<string, ModelsDev.Provider>
+const MODELS_FIXTURE = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, ModelsDev.Provider)),
+)(await Bun.file(path.join(import.meta.dir, "../tool/fixtures/models-api.json")).text())
 
 function loadFixture(providerID: string, modelID: string) {
   const provider = MODELS_FIXTURE[providerID]
@@ -711,7 +717,9 @@ function loadFixture(providerID: string, modelID: string) {
   return { provider, model }
 }
 
-function configModel(model: ModelsDev.Model) {
+// Project a models.dev catalog entry onto the config model shape (config has no cost tiers,
+// catalog-only fields, or readonly modality arrays).
+function configModel(model: ModelsDev.Model): ConfigModel {
   return {
     id: model.id,
     name: model.name,
@@ -722,9 +730,19 @@ function configModel(model: ModelsDev.Model) {
     temperature: model.temperature,
     tool_call: model.tool_call,
     interleaved: model.interleaved,
-    cost: model.cost ? { ...model.cost, tiers: undefined } : undefined,
+    cost: model.cost
+      ? {
+          input: model.cost.input,
+          output: model.cost.output,
+          cache_read: model.cost.cache_read,
+          cache_write: model.cost.cache_write,
+          context_over_200k: model.cost.context_over_200k,
+        }
+      : undefined,
     limit: model.limit,
-    modalities: model.modalities,
+    modalities: model.modalities
+      ? { input: [...model.modalities.input], output: [...model.modalities.output] }
+      : undefined,
     status: model.status,
     provider: model.provider,
   }
@@ -760,7 +778,6 @@ describe("session.llm.stream", () => {
     "sends the parent session header for opencode providers",
     () =>
       Effect.gen(function* () {
-        const fixture = loadFixture(vivgridFixture.providerID, vivgridFixture.modelID)
         const request = waitRequest(
           "/chat/completions",
           new Response(createChatStream("Hello"), {
@@ -814,7 +831,7 @@ describe("session.llm.stream", () => {
             [opencodeFixture.providerID]: {
               name: "OpenCode Test",
               npm: "@ai-sdk/openai-compatible",
-              models: { [fixture.model.id]: configModel(fixture.model) as ConfigModel },
+              models: { [fixture.model.id]: configModel(fixture.model) },
               options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
             },
           },
@@ -883,11 +900,11 @@ describe("session.llm.stream", () => {
         expect(body.top_p).toBe(0.8)
         expect(body.stream).toBe(true)
 
-        const maxTokens = (body.max_tokens as number | undefined) ?? (body.max_output_tokens as number | undefined)
+        const maxTokens = body.max_tokens ?? body.max_output_tokens
         const expectedMaxTokens = ProviderTransform.maxOutputTokens(resolved)
         expect(maxTokens).toBe(expectedMaxTokens)
 
-        const reasoning = (body.reasoningEffort as string | undefined) ?? (body.reasoning_effort as string | undefined)
+        const reasoning = body.reasoningEffort ?? body.reasoning_effort
         expect(reasoning).toBe("high")
       }),
     {
@@ -1022,7 +1039,7 @@ describe("session.llm.stream", () => {
         })
 
         const capture = yield* Effect.promise(() => request)
-        const messages = capture.body.messages as Array<Record<string, unknown>>
+        const messages = records(capture.body.messages)
         const assistant = messages.find((msg) => msg.role === "assistant")
 
         expect(assistant?.reasoning).toBe("thinking")
@@ -1133,7 +1150,7 @@ describe("session.llm.stream", () => {
         })
 
         const capture = yield* Effect.promise(() => request)
-        const messages = capture.body.messages as Array<Record<string, unknown>>
+        const messages = records(capture.body.messages)
         expect(messages.find((message) => message.role === "assistant")).toEqual({
           role: "assistant",
           content: [thinking, { type: "text", text: "Previous answer" }],
@@ -1267,8 +1284,8 @@ describe("session.llm.stream", () => {
         })
 
         const capture = yield* Effect.promise(() => request)
-        const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
-        expect(tools?.some((item) => item.function?.name === "question")).toBe(true)
+        const tools = records(capture.body.tools)
+        expect(tools.some((item) => isRecord(item.function) && item.function.name === "question")).toBe(true)
       }),
     {
       config: () => ({
@@ -1367,11 +1384,9 @@ describe("session.llm.stream", () => {
         expect(capture.url.pathname.endsWith("/responses")).toBe(true)
         expect(body.model).toBe(resolved.api.id)
         expect(body.stream).toBe(true)
-        expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe("high")
-        expect((body.reasoning as { mode?: string } | undefined)?.mode).toBe("pro")
+        expect(body.reasoning).toMatchObject({ effort: "high", mode: "pro" })
 
-        const maxTokens = body.max_output_tokens as number | undefined
-        expect(maxTokens).toBe(undefined) // match codex cli behavior
+        expect(body.max_output_tokens).toBe(undefined) // match codex cli behavior
       }),
     { config: () => openAIConfig(loadFixture("openai", "gpt-5.2").model, `${state.server!.url.origin}/v1`) },
   )
@@ -1536,7 +1551,7 @@ describe("session.llm.stream", () => {
         expect(capture.headers.get("Authorization")).toBe("Bearer test-openai-key")
         expect(capture.body.model).toBe(model.id)
         expect(capture.body.stream).toBe(true)
-        expect((capture.body.reasoning as { effort?: string } | undefined)?.effort).toBe("high")
+        expect(capture.body.reasoning).toMatchObject({ effort: "high" })
         expect(capture.body.include).toEqual(["reasoning.encrypted_content"])
         expect(JSON.stringify(capture.body.input)).toContain("You are a helpful assistant.")
         expect(capture.body.input).toContainEqual({ role: "user", content: [{ type: "input_text", text: "Hello" }] })
@@ -1582,7 +1597,8 @@ describe("session.llm.stream", () => {
             execute: (request) =>
               Effect.gen(function* () {
                 const web = yield* HttpClientRequest.toWeb(request).pipe(Effect.orDie)
-                captured = (yield* Effect.promise(() => web.json())) as Record<string, unknown>
+                const json: unknown = yield* Effect.promise(() => web.json())
+                captured = isRecord(json) ? json : undefined
                 return HttpClientResponse.fromWeb(request, createEventResponse(chunks, true))
               }),
           }),
@@ -1741,7 +1757,7 @@ describe("session.llm.stream", () => {
               env: ["OPENAI_API_KEY"],
               npm: "@ai-sdk/openai",
               api: "https://api.openai.com/v1",
-              models: { [model.id]: JSON.parse(JSON.stringify(model)) as ConfigModel },
+              models: { [model.id]: configModel(model) },
               options: { apiKey: "test-openai-key", baseURL: `${state.server!.url.origin}/v1` },
             },
           },
@@ -2005,21 +2021,25 @@ describe("session.llm.stream", () => {
           model: { providerID: ProviderV2.ID.make("anthropic"), modelID: resolved.id, variant: "max" },
         } satisfies SessionV1.User
 
-        const input = [
+        const input: SessionV1.WithParts[] = [
           {
             info: {
-              id: "msg_user",
+              id: MessageID.make("msg_user"),
               sessionID,
               role: "user",
               time: { created: 1 },
               agent: "gentleman",
-              model: { providerID: "anthropic", modelID: "claude-opus-4-6", variant: "max" },
+              model: {
+                providerID: ProviderV2.ID.make("anthropic"),
+                modelID: ModelV2.ID.make("claude-opus-4-6"),
+                variant: "max",
+              },
             },
             parts: [
               {
-                id: "p_user",
+                id: PartID.make("prt_user"),
                 sessionID,
-                messageID: "msg_user",
+                messageID: MessageID.make("msg_user"),
                 type: "text",
                 text: "Can you check whether there are any PDF files in my home directory?",
               },
@@ -2027,9 +2047,9 @@ describe("session.llm.stream", () => {
           },
           {
             info: {
-              id: "msg_call",
+              id: MessageID.make("msg_call"),
               sessionID,
-              parentID: "msg_user",
+              parentID: MessageID.make("msg_user"),
               role: "assistant",
               mode: "gentleman",
               agent: "gentleman",
@@ -2037,22 +2057,22 @@ describe("session.llm.stream", () => {
               path: { cwd: "/root", root: "/" },
               cost: 0,
               tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-              modelID: "claude-opus-4-6",
-              providerID: "anthropic",
+              modelID: ModelV2.ID.make("claude-opus-4-6"),
+              providerID: ProviderV2.ID.make("anthropic"),
               time: { created: 2, completed: 3 },
               finish: "tool-calls",
             },
             parts: [
               {
-                id: "p_step",
+                id: PartID.make("prt_step"),
                 sessionID,
-                messageID: "msg_call",
+                messageID: MessageID.make("msg_call"),
                 type: "step-start",
               },
               {
-                id: "p_read",
+                id: PartID.make("prt_read"),
                 sessionID,
-                messageID: "msg_call",
+                messageID: MessageID.make("msg_call"),
                 type: "tool",
                 tool: "read",
                 callID: "toolu_01N8mDEzG8DSTs7UPHFtmgCT",
@@ -2066,9 +2086,9 @@ describe("session.llm.stream", () => {
                 },
               },
               {
-                id: "p_glob",
+                id: PartID.make("prt_glob"),
                 sessionID,
-                messageID: "msg_call",
+                messageID: MessageID.make("msg_call"),
                 type: "tool",
                 tool: "glob",
                 callID: "toolu_01APxrADs7VozN8uWzw9WwHr",
@@ -2082,18 +2102,18 @@ describe("session.llm.stream", () => {
                 },
               },
               {
-                id: "p_text",
+                id: PartID.make("prt_text"),
                 sessionID,
-                messageID: "msg_call",
+                messageID: MessageID.make("msg_call"),
                 type: "text",
                 text: "I checked your home directory and looked for PDF files.",
                 time: { start: 14, end: 15 },
               },
             ],
           },
-        ] as any[]
+        ]
 
-        const modelMessages = yield* Effect.promise(() => MessageV2.toModelMessages(input as any, resolved))
+        const modelMessages = yield* Effect.promise(() => MessageV2.toModelMessages(input, resolved))
         yield* drain({
           user,
           sessionID,
@@ -2119,7 +2139,10 @@ describe("session.llm.stream", () => {
         const body = capture.body
 
         expect(capture.url.pathname.endsWith("/messages")).toBe(true)
-        const messages = body.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>
+        const messages = records(body.messages).map((message) => ({
+          role: message.role,
+          content: records(message.content),
+        }))
         expect(messages[0]?.role).toBe("user")
         expect(messages[0]?.content[0]).toMatchObject({
           type: "text",
@@ -2162,7 +2185,7 @@ describe("session.llm.stream", () => {
               env: ["ANTHROPIC_API_KEY"],
               npm: "@ai-sdk/anthropic",
               api: "https://api.anthropic.com/v1",
-              models: { [model.id]: configModel(model) as ConfigModel },
+              models: { [model.id]: configModel(model) },
               options: { apiKey: "test-anthropic-key", baseURL: `${state.server!.url.origin}/v1` },
             },
           },
@@ -2225,9 +2248,7 @@ describe("session.llm.stream", () => {
 
         const capture = yield* Effect.promise(() => request)
         const body = capture.body
-        const config = body.generationConfig as
-          | { temperature?: number; topP?: number; maxOutputTokens?: number }
-          | undefined
+        const config = isRecord(body.generationConfig) ? body.generationConfig : undefined
 
         expect(capture.url.pathname).toBe(pathSuffix)
         expect(body.contents).toEqual([{ role: "user", parts: [{ text: "Hello" }] }])

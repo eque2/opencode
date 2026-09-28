@@ -114,12 +114,7 @@ function summarize(results: Record<"cold" | "hot", Result[]>) {
 }
 
 function summarizeReviewPane(results: Record<"closed" | "open", Record<"cold" | "hot", Result[]>>) {
-  return Object.fromEntries(
-    Object.entries(results).map(([reviewPane, values]) => [
-      reviewPane,
-      summarize(values as Record<"cold" | "hot", Result[]>),
-    ]),
-  )
+  return Object.fromEntries(Object.entries(results).map(([reviewPane, values]) => [reviewPane, summarize(values)]))
 }
 
 async function switchSession(page: Page, sessionID: string, title: string) {

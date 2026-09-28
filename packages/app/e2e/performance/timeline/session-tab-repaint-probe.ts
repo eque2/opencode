@@ -57,10 +57,11 @@ export async function installCachedRepaintProbe(
               entry.startTime < state.startedAtPerformanceMs ||
               entry.startTime > state.startedAtPerformanceMs + state.windowMs
             )
-              return
+              return undefined
+            if (!("value" in entry) || typeof entry.value !== "number") return undefined
             return {
               occurredAtMs: entry.startTime - state.startedAtPerformanceMs,
-              value: (entry as PerformanceEntry & { value: number }).value,
+              value: entry.value,
             }
           })
           .filter((entry): entry is { occurredAtMs: number; value: number } => entry !== undefined),
@@ -167,7 +168,7 @@ export async function installCachedRepaintProbe(
 }
 
 export function layoutShiftSample(entry: Pick<PerformanceEntry, "startTime"> & { value: number }, started: number) {
-  if (entry.startTime < started) return
+  if (entry.startTime < started) return undefined
   return { occurredAtMs: entry.startTime - started, value: entry.value }
 }
 

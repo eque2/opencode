@@ -1,5 +1,6 @@
-import { HttpClient } from "effect/unstable/http"
-import { make, type Definition } from "../tool.js"
+import { HashSet, Option } from "effect"
+import { HttpClient, HttpMethod } from "effect/unstable/http"
+import { isDefinition, make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
 import {
   componentDefinitions,
@@ -11,6 +12,7 @@ import {
   operationOutput,
   operationPath,
   operationSecurityRequirements,
+  own,
   securityRequirements,
   securitySchemes,
   specServerUrl,
@@ -42,22 +44,23 @@ export const fromSpec = (options: Options): Result => {
   const defaultSecurity = securityRequirements(document.security)
   const definitions = componentDefinitions(document)
   const paths = isRecord(document.paths) ? document.paths : {}
-  const used = new Set<string>()
-  const namespaces = new Set<string>()
+  let used = HashSet.empty<string>()
+  let namespaces = HashSet.empty<string>()
   const skipped: Array<Skipped> = []
-  const tools = Object.create(null) as Tools
+  const tools = emptyTools()
 
   for (const [path, pathValue] of Object.entries(paths)) {
     if (!isRecord(pathValue)) continue
     for (const [method, operationValue] of Object.entries(pathValue)) {
-      if (!methods.has(method) || !isRecord(operationValue)) continue
+      const httpMethod = method.toUpperCase()
+      if (!HashSet.has(methods, method) || !HttpMethod.isHttpMethod(httpMethod) || !isRecord(operationValue)) continue
       const segments = operationPath(method, path, operationValue, used, namespaces)
       const operation: Operation = {
-        operationId: nonEmptyString(operationValue.operationId),
-        method: method.toUpperCase(),
+        operationId: Option.getOrUndefined(nonEmptyString(operationValue.operationId)),
+        method: httpMethod,
         path,
-        summary: nonEmptyString(operationValue.summary),
-        description: nonEmptyString(operationValue.description),
+        summary: Option.getOrUndefined(nonEmptyString(operationValue.summary)),
+        description: Option.getOrUndefined(nonEmptyString(operationValue.description)),
       }
       const output = operationOutput(document, operationValue, definitions)
       if (!output.ok) {
@@ -89,6 +92,7 @@ export const fromSpec = (options: Options): Result => {
       }
       const plan = {
         operation,
+        method: httpMethod,
         url: `${resolvedBaseUrl.value.replace(/\/+$/, "")}${path}`,
         fields: input.fields,
         body: input.body,
@@ -97,15 +101,17 @@ export const fromSpec = (options: Options): Result => {
         auth: options.auth,
         headers: options.headers ?? {},
       }
-      used.add(segments.join("."))
-      for (const index of segments.slice(0, -1).keys()) namespaces.add(segments.slice(0, index + 1).join("."))
+      used = HashSet.add(used, segments.join("."))
+      for (const index of segments.slice(0, -1).keys()) {
+        namespaces = HashSet.add(namespaces, segments.slice(0, index + 1).join("."))
+      }
       setTool(
         tools,
         segments,
         make({
           description: operation.description ?? operation.summary ?? `${operation.method} ${path}`,
           input: inputSchema(input.fields, definitions),
-          output: output.value,
+          output: Option.getOrUndefined(output.value),
           run: (input) => invoke(plan, input),
         }),
       )
@@ -115,6 +121,11 @@ export const fromSpec = (options: Options): Result => {
   return { tools, skipped }
 }
 
+// Tool names come from the spec, so the tree is prototype-free: a segment such as
+// `constructor` never reads an inherited member.
+// eslint-disable-next-line effect/no-null-use-option -- (a) Object.create(null) is the only platform API that builds a prototype-free object
+const emptyTools = (): Tools => Object.create(null)
+
 const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definition<HttpClient.HttpClient>): void => {
   const [head, ...rest] = path
   if (head === undefined) return
@@ -122,9 +133,12 @@ const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definiti
     tools[head] = definition
     return
   }
-  const child = tools[head]
-  if (child === undefined || !isRecord(child) || child._tag === "CodeModeTool") {
-    tools[head] = Object.create(null) as Tools
+  const child = own(tools, head)
+  if (Option.isSome(child) && !isDefinition<HttpClient.HttpClient>(child.value)) {
+    setTool(child.value, rest, definition)
+    return
   }
-  setTool(tools[head] as Tools, rest, definition)
+  const namespace = emptyTools()
+  tools[head] = namespace
+  setTool(namespace, rest, definition)
 }

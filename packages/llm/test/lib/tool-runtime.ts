@@ -8,8 +8,7 @@ import {
   type ProviderMetadata,
   type ToolCallPart,
   ToolResultPart,
-  type ToolResultValue,
-  type Usage,
+  Usage,
 } from "../../src/schema"
 import { type Tools, toDefinitions } from "../../src/tool"
 import { ToolRuntime } from "../../src/tool-runtime"
@@ -130,11 +129,9 @@ const appendText = (
 const addUsage = (left: Usage | undefined, right: Usage | undefined): Usage | undefined => {
   if (!left) return right
   if (!right) return left
-  const sum = (key: keyof Usage) =>
-    typeof left[key] !== "number" && typeof right[key] !== "number"
-      ? undefined
-      : ((left[key] as number | undefined) ?? 0) + ((right[key] as number | undefined) ?? 0)
-  return {
+  const sum = (key: UsageCount) =>
+    left[key] === undefined && right[key] === undefined ? undefined : (left[key] ?? 0) + (right[key] ?? 0)
+  return new Usage({
     inputTokens: sum("inputTokens"),
     outputTokens: sum("outputTokens"),
     nonCachedInputTokens: sum("nonCachedInputTokens"),
@@ -142,5 +139,14 @@ const addUsage = (left: Usage | undefined, right: Usage | undefined): Usage | un
     cacheWriteInputTokens: sum("cacheWriteInputTokens"),
     reasoningTokens: sum("reasoningTokens"),
     totalTokens: sum("totalTokens"),
-  } as Usage
+  })
 }
+
+type UsageCount =
+  | "inputTokens"
+  | "outputTokens"
+  | "nonCachedInputTokens"
+  | "cacheReadInputTokens"
+  | "cacheWriteInputTokens"
+  | "reasoningTokens"
+  | "totalTokens"

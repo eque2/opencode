@@ -1,7 +1,8 @@
-import { DIFFS_TAG_NAME, FileDiff, VirtualizedFileDiff } from "@pierre/diffs"
+import { DIFFS_TAG_NAME, FileDiff, type SelectedLineRange, VirtualizedFileDiff, type Virtualizer } from "@pierre/diffs"
 import { type PreloadFileDiffResult, type PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { createEffect, onCleanup, onMount, Show, splitProps } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
+import { Option, Predicate } from "effect"
 import { useWorkerPool } from "@opencode-ai/ui/context/worker-pool"
 import { createDefaultOptions, styleVariables } from "../pierre"
 import { markCommentedDiffLines } from "../pierre/commented-lines"
@@ -13,7 +14,7 @@ import {
   notifyShadowReady,
   observeViewerScheme,
 } from "../pierre/file-runtime"
-import { acquireVirtualizer, virtualMetrics } from "../pierre/virtualizer"
+import { acquireVirtualizer, type VirtualizerLease, virtualMetrics } from "../pierre/virtualizer"
 import { File, type DiffFileProps, type FileProps } from "./file"
 
 type DiffPreload<T> = PreloadMultiFileDiffResult<T> | PreloadFileDiffResult<T>
@@ -26,7 +27,7 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
   let container!: HTMLDivElement
   let fileDiffRef!: HTMLElement
   let fileDiffInstance: FileDiff<T> | undefined
-  let sharedVirtualizer: NonNullable<ReturnType<typeof acquireVirtualizer>> | undefined
+  let sharedVirtualizer: Option.Option<VirtualizerLease> = Option.none()
 
   const ready = createReadyWatcher()
   const workerPool = useWorkerPool(props.diffStyle)
@@ -49,28 +50,27 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
     "preloadedDiff",
   ])
 
-  const getRoot = () => fileDiffRef?.shadowRoot ?? undefined
+  const getRoot = () => Option.fromNullishOr(fileDiffRef?.shadowRoot)
 
-  const getVirtualizer = () => {
-    if (sharedVirtualizer) return sharedVirtualizer.virtualizer
-    const result = acquireVirtualizer(container)
-    if (!result) return
-    sharedVirtualizer = result
-    return result.virtualizer
+  const getVirtualizer = (): Option.Option<Virtualizer> => {
+    if (Option.isSome(sharedVirtualizer)) return Option.some(sharedVirtualizer.value.virtualizer)
+    sharedVirtualizer = acquireVirtualizer(container)
+    return Option.map(sharedVirtualizer, (lease) => lease.virtualizer)
   }
 
-  const setSelectedLines = (range: DiffFileProps<T>["selectedLines"], attempt = 0) => {
+  const setSelectedLines = (range: Option.Option<SelectedLineRange>, attempt = 0) => {
     const diff = fileDiffInstance
     if (!diff) return
 
-    const fixed = fixDiffSelection(getRoot(), range ?? null)
-    if (fixed === undefined) {
+    const fixed = fixDiffSelection(getRoot(), range)
+    if (fixed._tag === "Pending") {
       if (attempt >= 120) return
-      requestAnimationFrame(() => setSelectedLines(range ?? null, attempt + 1))
+      requestAnimationFrame(() => setSelectedLines(range, attempt + 1))
       return
     }
 
-    diff.setSelectedLines(fixed)
+    // FileDiff.setSelectedLines takes null to clear the selection.
+    diff.setSelectedLines(Option.getOrNull(fixed.range))
   }
 
   const notifyRendered = () => {
@@ -78,10 +78,10 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
       state: ready,
       container,
       getRoot,
-      isReady: (root) => root.querySelector("[data-line]") != null,
+      isReady: (root) => Predicate.isNotNull(root.querySelector("[data-line]")),
       settleFrames: 1,
       onReady: () => {
-        setSelectedLines(local.selectedLines ?? null)
+        setSelectedLines(Option.fromNullishOr(local.selectedLines))
         local.onRendered?.()
       },
     })
@@ -90,31 +90,34 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
   onMount(() => {
     if (isServer) return
 
-    onCleanup(observeViewerScheme(() => fileDiffRef))
+    onCleanup(observeViewerScheme(() => Option.some(fileDiffRef)))
 
     const virtualizer = getVirtualizer()
     const annotations = local.annotations ?? local.preloadedDiff.annotations ?? []
-    fileDiffInstance = virtualizer
-      ? new VirtualizedFileDiff<T>(
+    fileDiffInstance = Option.match(virtualizer, {
+      onNone: (): FileDiff<T> =>
+        new FileDiff<T>(
           {
             ...createDefaultOptions(props.diffStyle),
             ...others,
             ...local.preloadedDiff.options,
           },
-          virtualizer,
+          workerPool,
+        ),
+      onSome: (value) =>
+        new VirtualizedFileDiff<T>(
+          {
+            ...createDefaultOptions(props.diffStyle),
+            ...others,
+            ...local.preloadedDiff.options,
+          },
+          value,
           virtualMetrics,
           workerPool,
-        )
-      : new FileDiff<T>(
-          {
-            ...createDefaultOptions(props.diffStyle),
-            ...others,
-            ...local.preloadedDiff.options,
-          },
-          workerPool,
-        )
+        ),
+    })
 
-    applyViewerScheme(fileDiffRef)
+    applyViewerScheme(Option.some(fileDiffRef))
 
     // @ts-expect-error private field required for hydration
     fileDiffInstance.fileContainer = fileDiffRef
@@ -152,23 +155,23 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
   })
 
   createEffect(() => {
-    setSelectedLines(local.selectedLines ?? null)
+    setSelectedLines(Option.fromNullishOr(local.selectedLines))
   })
 
   createEffect(() => {
     const ranges = local.commentedLines ?? []
     requestAnimationFrame(() => {
       const root = getRoot()
-      if (!root) return
-      markCommentedDiffLines(root, ranges)
+      if (Option.isNone(root)) return
+      markCommentedDiffLines(root.value, ranges)
     })
   })
 
   onCleanup(() => {
     clearReadyWatcher(ready)
     fileDiffInstance?.cleanUp()
-    sharedVirtualizer?.release()
-    sharedVirtualizer = undefined
+    if (Option.isSome(sharedVirtualizer)) sharedVirtualizer.value.release()
+    sharedVirtualizer = Option.none()
   })
 
   return (
@@ -191,7 +194,11 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
 
 export type FileSSRProps<T = {}> = FileProps<T>
 
+function hasPreloadedDiff<T>(props: DiffFileProps<T>): props is SSRDiffFileProps<T> {
+  return props.preloadedDiff !== undefined
+}
+
 export function FileSSR<T>(props: FileSSRProps<T>) {
-  if (props.mode !== "diff" || !props.preloadedDiff) return File(props)
-  return DiffSSRViewer(props as SSRDiffFileProps<T>)
+  if (props.mode !== "diff" || !hasPreloadedDiff(props)) return File(props)
+  return DiffSSRViewer(props)
 }

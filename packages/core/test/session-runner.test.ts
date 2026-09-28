@@ -6,7 +6,6 @@ import {
   Model,
   TransportReason,
   InvalidRequestReason,
-  type LLMClientShape,
   type LLMRequest,
 } from "@opencode-ai/llm"
 import * as OpenAIChat from "@opencode-ai/llm/protocols/openai-chat"
@@ -55,7 +54,7 @@ import { ReferenceGuidance } from "@opencode-ai/core/reference/guidance"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Location } from "@opencode-ai/core/location"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Schema, Stream, absurd } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
@@ -75,7 +74,7 @@ const client = Layer.succeed(
   LLMClient.Service,
   LLMClient.Service.of({
     prepare: () => Effect.die("unused"),
-    stream: ((request: LLMRequest) => {
+    stream: (request: LLMRequest): Stream.Stream<LLMEvent, LLMError> => {
       requests.push(request)
       if (responseStream) {
         const stream = responseStream
@@ -92,7 +91,7 @@ const client = Layer.succeed(
           Effect.as(events),
         ),
       )
-    }) as unknown as LLMClientShape["stream"],
+    },
     generate: () => Effect.die("unused"),
   }),
 )
@@ -168,7 +167,7 @@ const systemContext = Layer.effectDiscard(
     Effect.flatMap((registry) =>
       registry.register({
         key: systemContextKey,
-        load: Effect.sync(() =>
+        load: Effect.suspend(() =>
           SystemContext.combine(
             systemRemoved
               ? []
@@ -465,6 +464,8 @@ const fragmentFixture = (kind: FragmentKind, id: string, chunks: readonly string
         expectedContent,
       }
     }
+    default:
+      return absurd(kind)
   }
 }
 
@@ -874,7 +875,7 @@ describe("SessionRunnerLLM", () => {
         ["Initial context\n\nBuild skills"],
         ["Initial context\n\nBuild skills"],
       ])
-      expect(systemTexts(requests[1]!)).toContainEqual(expect.stringContaining("Reviewer skills"))
+      expect(systemTexts(requests[1])).toContainEqual(expect.stringContaining("Reviewer skills"))
     }),
   )
 
@@ -1568,7 +1569,7 @@ describe("SessionRunnerLLM", () => {
         ["Initial context"],
         ["Initial context"],
       ])
-      expect(systemTexts(requests[1]!)).toContain("Replacement context")
+      expect(systemTexts(requests[1])).toContain("Replacement context")
     }),
   )
 
@@ -1904,8 +1905,8 @@ describe("SessionRunnerLLM", () => {
       yield* Effect.yieldNow
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[0]!)).toEqual(["Start working"])
-      expect(userTexts(requests[1]!)).toEqual(["Start working", "Change direction"])
+      expect(userTexts(requests[0])).toEqual(["Start working"])
+      expect(userTexts(requests[1])).toEqual(["Start working", "Change direction"])
       expect((yield* session.context(sessionID)).map((message) => message.type)).toEqual([
         "user",
         "assistant",
@@ -1956,9 +1957,9 @@ describe("SessionRunnerLLM", () => {
       streamStarted = undefined
 
       expect(requests).toHaveLength(3)
-      expect(userTexts(requests[0]!)).toEqual(["Start working"])
-      expect(userTexts(requests[1]!)).toEqual(["Start working"])
-      expect(userTexts(requests[2]!)).toEqual(["Start working", "Wait until continuation ends"])
+      expect(userTexts(requests[0])).toEqual(["Start working"])
+      expect(userTexts(requests[1])).toEqual(["Start working"])
+      expect(userTexts(requests[2])).toEqual(["Start working", "Wait until continuation ends"])
     }),
   )
 
@@ -2000,8 +2001,8 @@ describe("SessionRunnerLLM", () => {
       streamStarted = undefined
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[0]!)).toEqual(["Interrupt current work"])
-      expect(userTexts(requests[1]!)).toEqual(["Interrupt current work", "Run after interrupt"])
+      expect(userTexts(requests[0])).toEqual(["Interrupt current work"])
+      expect(userTexts(requests[1])).toEqual(["Interrupt current work", "Run after interrupt"])
     }),
   )
 
@@ -2043,8 +2044,8 @@ describe("SessionRunnerLLM", () => {
       streamStarted = undefined
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[0]!)).toEqual(["Interrupt current work"])
-      expect(userTexts(requests[1]!)).toEqual(["Interrupt current work", "Steer after interrupt"])
+      expect(userTexts(requests[0])).toEqual(["Interrupt current work"])
+      expect(userTexts(requests[1])).toEqual(["Interrupt current work", "Steer after interrupt"])
     }),
   )
 
@@ -2085,9 +2086,9 @@ describe("SessionRunnerLLM", () => {
       streamStarted = undefined
 
       expect(requests).toHaveLength(3)
-      expect(userTexts(requests[0]!)).toEqual(["Start working"])
-      expect(userTexts(requests[1]!)).toEqual(["Start working", "Queue first"])
-      expect(userTexts(requests[2]!)).toEqual(["Start working", "Queue first", "Queue second"])
+      expect(userTexts(requests[0])).toEqual(["Start working"])
+      expect(userTexts(requests[1])).toEqual(["Start working", "Queue first"])
+      expect(userTexts(requests[2])).toEqual(["Start working", "Queue first", "Queue second"])
     }),
   )
 
@@ -2120,8 +2121,8 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[0]!)).toEqual(["Start steering"])
-      expect(userTexts(requests[1]!)).toEqual(["Start steering", "Queue for later"])
+      expect(userTexts(requests[0])).toEqual(["Start steering"])
+      expect(userTexts(requests[1])).toEqual(["Start steering", "Queue for later"])
     }),
   )
 
@@ -2172,15 +2173,15 @@ describe("SessionRunnerLLM", () => {
       streamGate = undefined
 
       expect(requests).toHaveLength(4)
-      expect(userTexts(requests[0]!)).toEqual(["Start working"])
-      expect(userTexts(requests[1]!)).toEqual(["Start working", "Queue first"])
-      expect(userTexts(requests[2]!)).toEqual([
+      expect(userTexts(requests[0])).toEqual(["Start working"])
+      expect(userTexts(requests[1])).toEqual(["Start working", "Queue first"])
+      expect(userTexts(requests[2])).toEqual([
         "Start working",
         "Queue first",
         "Steer before next queued input",
         "Also steer before next queued input",
       ])
-      expect(userTexts(requests[3]!)).toEqual([
+      expect(userTexts(requests[3])).toEqual([
         "Start working",
         "Queue first",
         "Steer before next queued input",
@@ -2223,7 +2224,7 @@ describe("SessionRunnerLLM", () => {
       yield* Effect.yieldNow
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[1]!)).toEqual(["Start working", "First steer", "Second steer"])
+      expect(userTexts(requests[1])).toEqual(["Start working", "First steer", "Second steer"])
       yield* (yield* SessionExecution.Service).wake(sessionID)
       yield* Effect.yieldNow
       expect(requests).toHaveLength(2)
@@ -2255,7 +2256,7 @@ describe("SessionRunnerLLM", () => {
       yield* Effect.yieldNow
 
       expect(requests).toHaveLength(2)
-      expect(userTexts(requests[1]!)).toEqual(["Start working", "Recover with this"])
+      expect(userTexts(requests[1])).toEqual(["Start working", "Recover with this"])
     }),
   )
 
@@ -2278,21 +2279,21 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         name: "echo",
       })
       yield* events.publish(SessionEvent.Tool.Input.Ended, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         text: '{"text":"stale"}',
       })
       yield* events.publish(SessionEvent.Tool.Called, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         tool: "echo",
         input: { text: "stale" },
         provider: { executed: false },
@@ -2342,21 +2343,21 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         name: "web_search",
       })
       yield* events.publish(SessionEvent.Tool.Input.Ended, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         text: '{"query":"stale"}',
       })
       yield* events.publish(SessionEvent.Tool.Called, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         tool: "web_search",
         input: { query: "stale" },
         provider: { executed: true, metadata: { openai: { itemId: "call-hosted-interrupted" } } },
@@ -2402,7 +2403,7 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-pending-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-pending-interrupted"),
         name: "echo",
       })
       requests.length = 0
@@ -2434,7 +2435,7 @@ describe("SessionRunnerLLM", () => {
       yield* Effect.yieldNow
 
       expect(requests).toHaveLength(1)
-      expect(userTexts(requests[0]!)).toEqual(["Wait in queue"])
+      expect(userTexts(requests[0])).toEqual(["Wait in queue"])
     }),
   )
 
@@ -2460,7 +2461,7 @@ describe("SessionRunnerLLM", () => {
       yield* (yield* SessionExecution.Service).wake(sessionID)
       while (requests.length === 0) yield* Effect.yieldNow
 
-      expect(userTexts(requests[0]!)).toEqual(["Recover promoted input"])
+      expect(userTexts(requests[0])).toEqual(["Recover promoted input"])
     }),
   )
 
@@ -2469,9 +2470,10 @@ describe("SessionRunnerLLM", () => {
       yield* setup
       const session = yield* SessionV2.Service
       const events = yield* EventV2.Service
-      yield* events.listen((event) =>
+      const unsubscribe = yield* events.listen((event) =>
         event.type === SessionEvent.Prompted.type ? Effect.die("fail after prompt promotion commits") : Effect.void,
       )
+      yield* Effect.addFinalizer(() => unsubscribe)
       yield* session.prompt({
         sessionID,
         prompt: Prompt.make({ text: "Run committed promotion" }),
@@ -2482,7 +2484,7 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
 
       expect(requests).toHaveLength(1)
-      expect(userTexts(requests[0]!)).toEqual(["Run committed promotion"])
+      expect(userTexts(requests[0])).toEqual(["Run committed promotion"])
     }),
   )
 
@@ -2886,7 +2888,7 @@ describe("SessionRunnerLLM", () => {
         yield* Effect.yieldNow
         pending = yield* questions.list()
       }
-      yield* questions.reject(pending[0]!.id)
+      yield* questions.reject(pending[0].id)
       const exit = yield* Fiber.join(run)
 
       expect(exit._tag).toBe("Failure")

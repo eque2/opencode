@@ -1,10 +1,29 @@
 import { describe, expect, test } from "bun:test"
+import type { CliRenderer } from "@opentui/core"
+import { createTestRenderer } from "@opentui/core/testing"
 import Notifications from "../../../../src/feature-plugins/system/notifications"
 import type { Event, PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2"
-import type { TuiAttentionNotifyInput } from "@opencode-ai/plugin/tui"
+import type { TuiAttentionNotifyInput, TuiPluginMeta } from "@opencode-ai/plugin/tui"
 import { createTuiPluginApi } from "../../../fixture/tui-plugin"
 
-async function setup() {
+const pluginMeta = {
+  id: "internal:notifications",
+  source: "internal",
+  spec: "internal:notifications",
+  target: "internal:notifications",
+  first_time: 0,
+  last_time: 0,
+  time_changed: 0,
+  load_count: 1,
+  fingerprint: "test",
+  state: "same",
+} satisfies TuiPluginMeta
+
+function isEventType<Type extends Event["type"]>(event: Event, type: Type): event is Extract<Event, { type: Type }> {
+  return event.type === type
+}
+
+async function setup(renderer: CliRenderer) {
   const notifications: TuiAttentionNotifyInput[] = []
   const handlers = new Map<Event["type"], ((event: Event) => void)[]>()
   const session = (id: string, title: string, parentID?: string): Session => ({
@@ -26,6 +45,7 @@ async function setup() {
 
   await Notifications.tui(
     createTuiPluginApi({
+      renderer,
       attention: {
         async notify(input) {
           notifications.push(input)
@@ -35,7 +55,9 @@ async function setup() {
       event: {
         on: <Type extends Event["type"]>(type: Type, handler: (event: Extract<Event, { type: Type }>) => void) => {
           const list = handlers.get(type) ?? []
-          const wrapped = handler as (event: Event) => void
+          const wrapped = (event: Event) => {
+            if (isEventType(event, type)) handler(event)
+          }
           list.push(wrapped)
           handlers.set(type, list)
           return () => {
@@ -53,7 +75,7 @@ async function setup() {
       },
     }),
     undefined,
-    {} as never,
+    pluginMeta,
   )
 
   return {
@@ -61,6 +83,17 @@ async function setup() {
     emit(event: Event) {
       for (const handler of handlers.get(event.type) ?? []) handler(event)
     },
+  }
+}
+
+type Harness = Awaited<ReturnType<typeof setup>>
+
+async function withHarness(run: (harness: Harness) => void) {
+  const { renderer } = await createTestRenderer({ width: 40, height: 10 })
+  try {
+    run(await setup(renderer))
+  } finally {
+    renderer.destroy()
   }
 }
 
@@ -98,170 +131,164 @@ const permissionNotification: TuiAttentionNotifyInput = {
 }
 
 describe("internal notifications TUI plugin", () => {
-  test("notifies for question and permission requests with blurred notifications and always-on sounds", async () => {
-    const harness = await setup()
+  test("notifies for question and permission requests with blurred notifications and always-on sounds", () =>
+    withHarness((harness) => {
+      harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1") })
+      harness.emit({ id: "event-2", type: "permission.asked", properties: permission("permission-1") })
 
-    harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1") })
-    harness.emit({ id: "event-2", type: "permission.asked", properties: permission("permission-1") })
+      expect(harness.notifications).toEqual([questionNotification, permissionNotification])
+    }))
 
-    expect(harness.notifications).toEqual([questionNotification, permissionNotification])
-  })
+  test("dedupes pending questions and permissions until they are resolved", () =>
+    withHarness((harness) => {
+      harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1") })
+      harness.emit({ id: "event-2", type: "question.asked", properties: question("question-1") })
+      harness.emit({
+        id: "event-3",
+        type: "question.replied",
+        properties: { sessionID: "session", requestID: "question-1", answers: [] },
+      })
+      harness.emit({ id: "event-4", type: "question.asked", properties: question("question-1") })
 
-  test("dedupes pending questions and permissions until they are resolved", async () => {
-    const harness = await setup()
+      harness.emit({ id: "event-5", type: "permission.asked", properties: permission("permission-1") })
+      harness.emit({ id: "event-6", type: "permission.asked", properties: permission("permission-1") })
+      harness.emit({
+        id: "event-7",
+        type: "permission.replied",
+        properties: { sessionID: "session", requestID: "permission-1", reply: "once" },
+      })
+      harness.emit({ id: "event-8", type: "permission.asked", properties: permission("permission-1") })
 
-    harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1") })
-    harness.emit({ id: "event-2", type: "question.asked", properties: question("question-1") })
-    harness.emit({
-      id: "event-3",
-      type: "question.replied",
-      properties: { sessionID: "session", requestID: "question-1", answers: [] },
-    })
-    harness.emit({ id: "event-4", type: "question.asked", properties: question("question-1") })
+      expect(harness.notifications).toEqual([
+        questionNotification,
+        questionNotification,
+        permissionNotification,
+        permissionNotification,
+      ])
+    }))
 
-    harness.emit({ id: "event-5", type: "permission.asked", properties: permission("permission-1") })
-    harness.emit({ id: "event-6", type: "permission.asked", properties: permission("permission-1") })
-    harness.emit({
-      id: "event-7",
-      type: "permission.replied",
-      properties: { sessionID: "session", requestID: "permission-1", reply: "once" },
-    })
-    harness.emit({ id: "event-8", type: "permission.asked", properties: permission("permission-1") })
+  test("notifies when an active session becomes idle and suppresses no-op idle", () =>
+    withHarness((harness) => {
+      harness.emit({
+        id: "event-1",
+        type: "session.status",
+        properties: { sessionID: "session", status: { type: "idle" } },
+      })
+      harness.emit({
+        id: "event-2",
+        type: "session.status",
+        properties: { sessionID: "session", status: { type: "busy" } },
+      })
+      harness.emit({
+        id: "event-3",
+        type: "session.status",
+        properties: { sessionID: "session", status: { type: "idle" } },
+      })
 
-    expect(harness.notifications).toEqual([
-      questionNotification,
-      questionNotification,
-      permissionNotification,
-      permissionNotification,
-    ])
-  })
+      expect(harness.notifications).toEqual([
+        {
+          title: "Demo session",
+          message: "Session done",
+          notification: { when: "blurred" },
+          sound: { name: "done", when: "always" },
+        },
+      ])
+    }))
 
-  test("notifies when an active session becomes idle and suppresses no-op idle", async () => {
-    const harness = await setup()
+  test("uses sound-only notifications and subagent_done sound for subagent sessions", () =>
+    withHarness((harness) => {
+      harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1", "subagent") })
+      harness.emit({
+        id: "event-2",
+        type: "session.status",
+        properties: { sessionID: "subagent", status: { type: "busy" } },
+      })
+      harness.emit({
+        id: "event-3",
+        type: "session.status",
+        properties: { sessionID: "subagent", status: { type: "idle" } },
+      })
 
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
-    harness.emit({
-      id: "event-2",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
+      expect(harness.notifications).toEqual([
+        {
+          title: "Subagent session",
+          message: "Question needs input",
+          notification: false,
+          sound: { name: "question", when: "always" },
+        },
+        {
+          title: "Subagent session",
+          message: "Session done",
+          notification: false,
+          sound: { name: "subagent_done", when: "always" },
+        },
+      ])
+    }))
 
-    expect(harness.notifications).toEqual([
-      {
-        title: "Demo session",
-        message: "Session done",
-        notification: { when: "blurred" },
-        sound: { name: "done", when: "always" },
-      },
-    ])
-  })
+  test("notifies session errors once and suppresses the following idle done notification", () =>
+    withHarness((harness) => {
+      harness.emit({
+        id: "event-1",
+        type: "session.status",
+        properties: { sessionID: "session", status: { type: "busy" } },
+      })
+      harness.emit({
+        id: "event-2",
+        type: "session.error",
+        properties: { sessionID: "session", error: { name: "UnknownError", data: { message: "boom" } } },
+      })
+      harness.emit({
+        id: "event-3",
+        type: "session.status",
+        properties: { sessionID: "session", status: { type: "idle" } },
+      })
 
-  test("uses sound-only notifications and subagent_done sound for subagent sessions", async () => {
-    const harness = await setup()
+      expect(harness.notifications).toEqual([
+        {
+          title: "Demo session",
+          message: "Session error",
+          notification: { when: "blurred" },
+          sound: { name: "error", when: "always" },
+        },
+      ])
+    }))
 
-    harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1", "subagent") })
-    harness.emit({
-      id: "event-2",
-      type: "session.status",
-      properties: { sessionID: "subagent", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "subagent", status: { type: "idle" } },
-    })
+  test("special-cases aborts and model response timeouts", () =>
+    withHarness((harness) => {
+      harness.emit({
+        id: "event-1",
+        type: "session.status",
+        properties: { sessionID: "abort", status: { type: "busy" } },
+      })
+      harness.emit({
+        id: "event-2",
+        type: "session.error",
+        properties: { sessionID: "abort", error: { name: "MessageAbortedError", data: { message: "Aborted" } } },
+      })
+      harness.emit({
+        id: "event-3",
+        type: "session.status",
+        properties: { sessionID: "timeout", status: { type: "busy" } },
+      })
+      harness.emit({
+        id: "event-4",
+        type: "session.error",
+        properties: { sessionID: "timeout", error: { name: "UnknownError", data: { message: "SSE read timed out" } } },
+      })
 
-    expect(harness.notifications).toEqual([
-      {
-        title: "Subagent session",
-        message: "Question needs input",
-        notification: false,
-        sound: { name: "question", when: "always" },
-      },
-      {
-        title: "Subagent session",
-        message: "Session done",
-        notification: false,
-        sound: { name: "subagent_done", when: "always" },
-      },
-    ])
-  })
-
-  test("notifies session errors once and suppresses the following idle done notification", async () => {
-    const harness = await setup()
-
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-2",
-      type: "session.error",
-      properties: { sessionID: "session", error: { name: "UnknownError", data: { message: "boom" } } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
-
-    expect(harness.notifications).toEqual([
-      {
-        title: "Demo session",
-        message: "Session error",
-        notification: { when: "blurred" },
-        sound: { name: "error", when: "always" },
-      },
-    ])
-  })
-
-  test("special-cases aborts and model response timeouts", async () => {
-    const harness = await setup()
-
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "abort", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-2",
-      type: "session.error",
-      properties: { sessionID: "abort", error: { name: "MessageAbortedError", data: { message: "Aborted" } } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "timeout", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-4",
-      type: "session.error",
-      properties: { sessionID: "timeout", error: { name: "UnknownError", data: { message: "SSE read timed out" } } },
-    })
-
-    expect(harness.notifications).toEqual([
-      {
-        title: "Abort session",
-        message: "Session aborted",
-        notification: { when: "blurred" },
-        sound: { name: "error", when: "always" },
-      },
-      {
-        title: "Timeout session",
-        message: "Model stopped responding",
-        notification: { when: "blurred" },
-        sound: { name: "error", when: "always" },
-      },
-    ])
-  })
+      expect(harness.notifications).toEqual([
+        {
+          title: "Abort session",
+          message: "Session aborted",
+          notification: { when: "blurred" },
+          sound: { name: "error", when: "always" },
+        },
+        {
+          title: "Timeout session",
+          message: "Model stopped responding",
+          notification: { when: "blurred" },
+          sound: { name: "error", when: "always" },
+        },
+      ])
+    }))
 })

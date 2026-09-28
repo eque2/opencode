@@ -1,12 +1,18 @@
 import { batch, createMemo, startTransition } from "solid-js"
 import { useModels } from "@/context/models"
 import type { ModelKey, ModelSelection } from "@/context/local"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "@/context/model-variant"
+import {
+  cycleModelVariant,
+  decodeVariantSelection,
+  getConfiguredAgentVariant,
+  resolveModelVariant,
+} from "@/context/model-variant"
 import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useProviders } from "@/hooks/use-providers"
 import { resolveDefaultModel } from "@/hooks/provider-catalog"
+import { HashMap, HashSet, Option } from "effect"
 
 export function createPromptModelSelection(input: { agent: () => { model?: ModelKey; variant?: string } | undefined }) {
   const sdk = useSDK()
@@ -14,17 +20,16 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
   const models = useModels()
   const prompt = usePrompt()
   const providers = useProviders(() => sdk().directory)
-  const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
+  const connected = createMemo(() => HashSet.fromIterable(providers.connected().map((item) => item.id)))
 
-  const valid = (model: ModelKey) => {
-    const provider = providers.all().get(model.providerID)
-    return !!provider?.models[model.modelID] && connected().has(model.providerID)
-  }
+  const valid = (model: ModelKey) =>
+    Option.exists(HashMap.get(providers.all(), model.providerID), (provider) => !!provider.models[model.modelID]) &&
+    HashSet.has(connected(), model.providerID)
 
   const configured = () => {
     const model = resolveDefaultModel(providers.defaultModel(), sync().data.config.model)
-    if (!model) return
-    if (valid(model)) return model
+    if (model && valid(model)) return model
+    return undefined
   }
 
   const recent = () => models.recent.list().find(valid)
@@ -40,7 +45,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
     const key = [prompt.model.current(), input.agent()?.model, configured(), recent(), fallback()].find(
       (item): item is ModelKey => !!item && valid(item),
     )
-    if (!key) return
+    if (!key) return undefined
     return models.find(key)
   }
   const recentModels = createMemo(() =>
@@ -65,12 +70,17 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       if (next) selection.set({ providerID: next.provider.id, modelID: next.id })
     },
     set(item: ModelKey | undefined, options?: { recent?: boolean }) {
-      startTransition(() =>
+      void startTransition(() =>
         batch(() => {
-          prompt.model.set(item ? { ...item, variant: prompt.model.current()?.variant } : undefined)
-          if (!item) return
-          models.setVisibility(item, true)
-          if (options?.recent) models.recent.push(item)
+          const selected = Option.fromNullishOr(item)
+          prompt.model.set(
+            Option.getOrUndefined(
+              Option.map(selected, (key) => ({ ...key, variant: prompt.model.current()?.variant })),
+            ),
+          )
+          if (Option.isNone(selected)) return
+          models.setVisibility(selected.value, true)
+          if (options?.recent) models.recent.push(selected.value)
         }),
       )
     },
@@ -80,7 +90,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       configured() {
         const item = input.agent()
         const model = current()
-        if (!item || !model) return
+        if (!item || !model) return undefined
         return getConfiguredAgentVariant({
           agent: { model: item.model, variant: item.variant },
           model: { providerID: model.provider.id, modelID: model.id, variants: model.variants },
@@ -92,24 +102,29 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       current() {
         const resolved = resolveModelVariant({
           variants: this.list(),
-          selected: this.selected(),
+          selected: decodeVariantSelection(this.selected()),
           configured: this.configured(),
         })
         if (resolved) return resolved
         const model = current()
-        if (!model) return
+        if (!model) return undefined
         const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
         if (saved && this.list().includes(saved)) return saved
+        return undefined
       },
       list() {
         return Object.keys(current()?.variants ?? {})
       },
       set(value: string | undefined) {
-        startTransition(() =>
+        void startTransition(() =>
           batch(() => {
             const model = current()
             if (!model) return
-            prompt.model.set({ providerID: model.provider.id, modelID: model.id, variant: value ?? null })
+            prompt.model.set({
+              providerID: model.provider.id,
+              modelID: model.id,
+              variant: Option.getOrNull(Option.fromNullishOr(value)),
+            })
             models.variant.set({ providerID: model.provider.id, modelID: model.id }, value)
           }),
         )
@@ -120,7 +135,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
         this.set(
           cycleModelVariant({
             variants,
-            selected: this.selected(),
+            selected: decodeVariantSelection(this.selected()),
             configured: this.configured(),
           }),
         )

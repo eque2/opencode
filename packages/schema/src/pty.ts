@@ -37,13 +37,15 @@ const Exited = define({ type: "pty.exited", schema: { id: ID, exitCode: NonNegat
 const Deleted = define({ type: "pty.deleted", schema: { id: ID } })
 export const Event = { Created, Updated, Exited, Deleted, Definitions: inventory(Created, Updated, Exited, Deleted) }
 
+// The HTTP payload schemas carry a description, not an identifier: an identified payload becomes a
+// $ref, and the legacy SDK generator then stops flattening the body fields into call parameters.
 export const CreateInput = Schema.Struct({
   command: optional(Schema.String),
   args: optional(Schema.Array(Schema.String)),
   cwd: optional(Schema.String),
   title: optional(Schema.String),
   env: optional(Schema.Record(Schema.String, Schema.String)),
-})
+}).annotate({ description: "Options for a new PTY session" })
 export interface CreateInput extends Schema.Schema.Type<typeof CreateInput> {}
 
 export const UpdateInput = Schema.Struct({
@@ -54,5 +56,5 @@ export const UpdateInput = Schema.Struct({
       cols: PositiveInt,
     }),
   ),
-})
+}).annotate({ description: "Changes to an existing PTY session" })
 export interface UpdateInput extends Schema.Schema.Type<typeof UpdateInput> {}

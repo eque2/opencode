@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import * as path from "node:path"
 import * as prompts from "@clack/prompts"
 import { AwsV4Signer } from "aws4fetch"
-import { Config, ConfigProvider, Effect, FileSystem, PlatformError, Redacted } from "effect"
+import { Config, ConfigProvider, Effect, FileSystem, Layer, PlatformError, Redacted } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/unstable/http"
 import * as ProviderShared from "../src/protocols/shared"
 import * as Cloudflare from "../src/providers/cloudflare"
@@ -231,7 +231,7 @@ const option = (name: string) => {
 const envPath = path.resolve(process.cwd(), option("--env") ?? ".env.local")
 const checkOnly = hasFlag("--check")
 const providerOption = option("--providers")
-const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+const interactive = process.stdin.isTTY && process.stdout.isTTY
 
 const envNames = Array.from(new Set(PROVIDERS.flatMap((provider) => provider.vars.map((item) => item.name))))
 
@@ -307,9 +307,9 @@ const printStatus = (providers: ReadonlyArray<Provider>, fileEnv: Env) => {
 }
 
 const exitIfCancel = <A>(value: A | symbol): A => {
-  if (!prompts.isCancel(value)) return value as A
+  if (!prompts.isCancel(value)) return value
   prompts.cancel("Cancelled")
-  process.exit(130)
+  return process.exit(130)
 }
 
 const upsertEnv = (contents: string, values: Env) => {
@@ -369,7 +369,7 @@ const executeRequest = Effect.fn("RecordingEnv.executeRequest")(function* (
   return yield* http.execute(request).pipe(Effect.flatMap(responseError))
 })
 
-const validateBearer = (url: string, token: Redacted.Redacted<string>, headers: Record<string, string> = {}) =>
+const validateBearer = (url: string, token: Redacted.Redacted, headers: Record<string, string> = {}) =>
   HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeaders({ ...headers, authorization: `Bearer ${Redacted.value(token)}` }),
     executeRequest,
@@ -377,7 +377,7 @@ const validateBearer = (url: string, token: Redacted.Redacted<string>, headers: 
 
 const validateChat = (input: {
   readonly url: string
-  readonly token: Redacted.Redacted<string>
+  readonly token: Redacted.Redacted
   readonly tokenHeader?: string
   readonly model: string
   readonly headers?: Record<string, string>
@@ -539,4 +539,4 @@ const main = Effect.fn("RecordingEnv.main")(function* () {
   prompts.outro("Keep .env.local local. Store shared team credentials in a password manager or vault.")
 })
 
-await Effect.runPromise(main().pipe(Effect.provide(NodeFileSystem.layer), Effect.provide(FetchHttpClient.layer)))
+await Effect.runPromise(main().pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, FetchHttpClient.layer))))

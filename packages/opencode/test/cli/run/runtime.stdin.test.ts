@@ -1,22 +1,25 @@
 import { describe, expect, test } from "bun:test"
+import { Result } from "effect"
 import { Readable } from "node:stream"
-import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "@/cli/cmd/run/runtime.stdin"
+import { INTERACTIVE_INPUT_ERROR, resolveTerminalInput } from "@/cli/cmd/run/runtime.stdin"
 
 function stream(isTTY: boolean) {
-  return Object.assign(new Readable({ read() {} }), { isTTY }) as NodeJS.ReadStream
+  return Object.assign(new Readable({ read() {} }), { isTTY })
 }
 
 describe("run interactive stdin", () => {
   test("reuses stdin when it is already a tty", () => {
     const stdin = stream(true)
     const seen: string[] = []
-    const result = resolveInteractiveStdin(
-      stdin,
-      (path) => {
-        seen.push(path)
-        return stream(true)
-      },
-      "linux",
+    const result = Result.getOrThrow(
+      resolveTerminalInput(
+        stdin,
+        (path) => {
+          seen.push(path)
+          return stream(true)
+        },
+        "linux",
+      ),
     )
 
     expect(result.stdin).toBe(stdin)
@@ -27,13 +30,15 @@ describe("run interactive stdin", () => {
   test("opens the controlling terminal when stdin is piped", () => {
     const tty = stream(true)
     const seen: string[] = []
-    const result = resolveInteractiveStdin(
-      stream(false),
-      (path) => {
-        seen.push(path)
-        return tty
-      },
-      "linux",
+    const result = Result.getOrThrow(
+      resolveTerminalInput(
+        stream(false),
+        (path) => {
+          seen.push(path)
+          return tty
+        },
+        "linux",
+      ),
     )
 
     expect(result.stdin).toBe(tty)
@@ -45,13 +50,15 @@ describe("run interactive stdin", () => {
 
   test("uses CONIN$ on windows", () => {
     const seen: string[] = []
-    resolveInteractiveStdin(
-      stream(false),
-      (path) => {
-        seen.push(path)
-        return stream(true)
-      },
-      "win32",
+    Result.getOrThrow(
+      resolveTerminalInput(
+        stream(false),
+        (path) => {
+          seen.push(path)
+          return stream(true)
+        },
+        "win32",
+      ),
     )
 
     expect(seen).toEqual(["CONIN$"])
@@ -59,12 +66,14 @@ describe("run interactive stdin", () => {
 
   test("throws a clear error when no controlling terminal is available", () => {
     expect(() =>
-      resolveInteractiveStdin(
-        stream(false),
-        () => {
-          throw new Error("open failed")
-        },
-        "linux",
+      Result.getOrThrow(
+        resolveTerminalInput(
+          stream(false),
+          () => {
+            throw new Error("open failed")
+          },
+          "linux",
+        ),
       ),
     ).toThrow(INTERACTIVE_INPUT_ERROR)
   })

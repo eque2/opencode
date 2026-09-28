@@ -1,4 +1,5 @@
-import { type ComponentProps, splitProps } from "solid-js"
+import { Predicate } from "effect"
+import { type ComponentProps, Show, splitProps } from "solid-js"
 import { Icon, type IconProps } from "./icon"
 
 type Variant = "normal" | "error" | "warning" | "success" | "info"
@@ -25,14 +26,14 @@ function pick(variant: Variant) {
   if (variant === "warning") return "warning" as const
   if (variant === "success") return "circle-check" as const
   if (variant === "info") return "help" as const
-  return
+  return undefined
 }
 
 function mix(style: ComponentProps<"div">["style"], value?: string) {
   if (!value) return style
   if (!style) return { "--card-accent": value }
   if (typeof style === "string") return `${style};--card-accent:${value};`
-  return { ...(style as Record<string, string | number>), "--card-accent": value }
+  return { ...style, "--card-accent": value }
 }
 
 export function Card(props: CardProps) {
@@ -44,7 +45,7 @@ export function Card(props: CardProps) {
     if (v === "warning") return "var(--icon-warning-active)"
     if (v === "success") return "var(--icon-success-active)"
     if (v === "info") return "var(--icon-info-active)"
-    return
+    return undefined
   }
   return (
     <div
@@ -64,9 +65,9 @@ export function Card(props: CardProps) {
 
 export function CardTitle(props: CardTitleProps) {
   const [split, rest] = splitProps(props, ["variant", "icon", "class", "classList", "children"])
-  const show = () => split.icon !== false && split.icon !== null
+  const show = () => split.icon !== false && !Predicate.isNull(split.icon)
   const name = () => {
-    if (split.icon === false || split.icon === null) return
+    if (split.icon === false || Predicate.isNull(split.icon)) return undefined
     if (typeof split.icon === "string") return split.icon
     return pick(split.variant ?? "normal")
   }
@@ -80,11 +81,11 @@ export function CardTitle(props: CardTitleProps) {
         [split.class ?? ""]: !!split.class,
       }}
     >
-      {show() ? (
-        <span data-slot="card-title-icon" data-placeholder={placeholder() || undefined}>
+      <Show when={show()}>
+        <span data-slot="card-title-icon" bool:data-placeholder={placeholder()}>
           <Icon name={name() ?? "dash"} size="small" />
         </span>
-      ) : null}
+      </Show>
       {split.children}
     </div>
   )

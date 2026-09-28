@@ -1,4 +1,8 @@
+import { Data, Effect } from "effect"
 import type { ClipboardService } from "../context/clipboard"
+
+/** The clipboard rejected a write. `cause` is the rejection reason, which the toast shows. */
+class ClipboardWriteError extends Data.TaggedError("Selection.ClipboardWriteError")<{ readonly cause: unknown }> {}
 
 type Toast = {
   show: (input: { message: string; variant: "info" | "success" | "warning" | "error" }) => void
@@ -34,10 +38,18 @@ export function copy(renderer: Renderer, toast: Toast, clipboard: ClipboardServi
   const clipboardText =
     focus?.getClipboardText && selection.selectedRenderables.includes(focus) ? focus.getClipboardText(text) : text
 
-  clipboard
-    ?.write?.(clipboardText)
-    .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
-    .catch(toast.error)
+  const written = clipboard?.write?.(clipboardText)
+  if (written) {
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () => written,
+        catch: (cause) => new ClipboardWriteError({ cause }),
+      }).pipe(
+        Effect.andThen(Effect.sync(() => toast.show({ message: "Copied to clipboard", variant: "info" }))),
+        Effect.catchTag("Selection.ClipboardWriteError", (error) => Effect.sync(() => toast.error(error.cause))),
+      ),
+    )
+  }
 
   renderer.clearSelection()
   return true

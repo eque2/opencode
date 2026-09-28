@@ -1,24 +1,39 @@
 import { OpenAIResponsesLanguageModel } from "@opencode-ai/core/github-copilot/responses/openai-responses-language-model"
 import { convertToOpenAIResponsesInput } from "@opencode-ai/core/github-copilot/responses/convert-to-openai-responses-input"
 import { describe, test, expect, mock } from "bun:test"
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider"
+import type {
+  LanguageModelV3Content,
+  LanguageModelV3Prompt,
+  LanguageModelV3Reasoning,
+  LanguageModelV3Text,
+  LanguageModelV3ToolCall,
+} from "@ai-sdk/provider"
+import type { FetchFunction } from "@ai-sdk/provider-utils"
+import { Effect } from "effect"
 
 const TEST_PROMPT: LanguageModelV3Prompt = [{ role: "user", content: [{ type: "text", text: "Hello" }] }]
 
-function createMockFetch(body: unknown) {
-  return mock(
-    async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+function createMockFetch(body: unknown): FetchFunction {
+  return Object.assign(
+    mock(
+      async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ),
+    { preconnect: fetch.preconnect },
   )
 }
 
-function createModel(fetchFn: ReturnType<typeof mock>) {
+function createModel(fetchFn: FetchFunction) {
   return new OpenAIResponsesLanguageModel("test-model", {
     provider: "copilot",
     url: () => "https://api.test.com/responses",
     headers: () => ({ Authorization: "Bearer test-token" }),
-    fetch: fetchFn as any,
+    fetch: fetchFn,
   })
 }
+
+const isReasoning = (part: LanguageModelV3Content): part is LanguageModelV3Reasoning => part.type === "reasoning"
+const isText = (part: LanguageModelV3Content): part is LanguageModelV3Text => part.type === "text"
+const isToolCall = (part: LanguageModelV3Content): part is LanguageModelV3ToolCall => part.type === "tool-call"
 
 // GitHub Copilot's Responses model echoes item metadata (itemId, reasoningEncryptedContent,
 // responseId, ...) under the "copilot" providerOptions/providerMetadata namespace, matching the
@@ -59,20 +74,20 @@ describe("doGenerate", () => {
     const { content, providerMetadata } = await model.doGenerate({
       prompt: TEST_PROMPT,
       includeRawChunks: false,
-    } as any)
+    })
 
-    const reasoning = content.find((part: any) => part.type === "reasoning") as any
-    expect(reasoning.providerMetadata?.copilot?.itemId).toBe("rs_1")
-    expect(reasoning.providerMetadata?.copilot?.reasoningEncryptedContent).toBe("enc_1")
-    expect(reasoning.providerMetadata?.openai).toBeUndefined()
+    const reasoning = content.find(isReasoning)
+    expect(reasoning?.providerMetadata?.copilot?.itemId).toBe("rs_1")
+    expect(reasoning?.providerMetadata?.copilot?.reasoningEncryptedContent).toBe("enc_1")
+    expect(reasoning?.providerMetadata?.openai).toBeUndefined()
 
-    const text = content.find((part: any) => part.type === "text") as any
-    expect(text.providerMetadata?.copilot?.itemId).toBe("msg_1")
-    expect(text.providerMetadata?.openai).toBeUndefined()
+    const text = content.find(isText)
+    expect(text?.providerMetadata?.copilot?.itemId).toBe("msg_1")
+    expect(text?.providerMetadata?.openai).toBeUndefined()
 
-    const toolCall = content.find((part: any) => part.type === "tool-call") as any
-    expect(toolCall.providerMetadata?.copilot?.itemId).toBe("fc_1")
-    expect(toolCall.providerMetadata?.openai).toBeUndefined()
+    const toolCall = content.find(isToolCall)
+    expect(toolCall?.providerMetadata?.copilot?.itemId).toBe("fc_1")
+    expect(toolCall?.providerMetadata?.openai).toBeUndefined()
 
     expect(providerMetadata?.copilot?.responseId).toBe("resp_1")
     expect(providerMetadata?.openai).toBeUndefined()
@@ -81,24 +96,26 @@ describe("doGenerate", () => {
 
 describe("convertToOpenAIResponsesInput", () => {
   test("echoes a stale tool-call itemId from the copilot namespace as the function_call id", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "call_1",
-              toolName: "bash",
-              input: { command: "ls" },
-              providerOptions: { copilot: { itemId: "fc_999" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "bash",
+                input: { command: "ls" },
+                providerOptions: { copilot: { itemId: "fc_999" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(input).toEqual([
       {
@@ -112,45 +129,51 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("omits the function_call id once the stale copilot itemId has been stripped", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "call_1",
-              toolName: "bash",
-              input: { command: "ls" },
-              providerOptions: {},
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "bash",
+                input: { command: "ls" },
+                providerOptions: {},
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
-    expect((input[0] as any).id).toBeUndefined()
+    const [item] = input
+    expect(item).toBeDefined()
+    expect(item && "id" in item ? item.id : undefined).toBeUndefined()
   })
 
   test("preserves reasoning items keyed by the copilot namespace instead of dropping them", async () => {
-    const { input, warnings } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "reasoning",
-              text: "thinking...",
-              providerOptions: { copilot: { itemId: "rs_1", reasoningEncryptedContent: "enc_1" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input, warnings } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "thinking...",
+                providerOptions: { copilot: { itemId: "rs_1", reasoningEncryptedContent: "enc_1" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(warnings).toEqual([])
     expect(input).toEqual([
@@ -164,16 +187,18 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("drops reasoning items with no copilot itemId and warns, as before", async () => {
-    const { input, warnings } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [{ type: "reasoning", text: "thinking...", providerOptions: {} }],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input, warnings } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [{ type: "reasoning", text: "thinking...", providerOptions: {} }],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(input).toEqual([])
     expect(warnings).toHaveLength(1)
@@ -183,24 +208,26 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("reads imageDetail from the copilot namespace on user file parts", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "file",
-              mediaType: "image/png",
-              data: "aGVsbG8=",
-              providerOptions: { copilot: { imageDetail: "high" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                mediaType: "image/png",
+                data: "aGVsbG8=",
+                providerOptions: { copilot: { imageDetail: "high" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
-    expect((input[0] as any).content[0].detail).toBe("high")
+    expect(input[0]).toMatchObject({ content: [{ detail: "high" }] })
   })
 })

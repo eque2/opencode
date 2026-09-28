@@ -1,14 +1,14 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { test, expect } from "bun:test"
 import os from "os"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Layer, Schema } from "effect"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Permission } from "../../src/permission"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance, tmpdirScoped } from "../fixture/fixture"
-import { testEffect } from "../lib/effect"
+import { awaitWithTimeout, testEffect } from "../lib/effect"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -35,17 +35,16 @@ const rejectAll = (message?: string) =>
 const waitForPending = (count: number) =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
-    return yield* Effect.gen(function* () {
-      while (true) {
-        const list = yield* permission.list()
-        if (list.length === count) return list
-        yield* Effect.sleep("10 millis")
-      }
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: "1 second",
-        orElse: () => Effect.fail(new Error(`timed out waiting for ${count} pending permission request(s)`)),
+    return yield* awaitWithTimeout(
+      Effect.gen(function* () {
+        while (true) {
+          const list = yield* permission.list()
+          if (list.length === count) return list
+          yield* Effect.sleep("10 millis")
+        }
       }),
+      `timed out waiting for ${count} pending permission request(s)`,
+      "1 second",
     )
   })
 
@@ -451,7 +450,7 @@ test("evaluate - merges multiple rulesets", () => {
 
 test("disabled - returns empty set when all tools allowed", () => {
   const result = Permission.disabled(["bash", "edit", "read"], [{ permission: "*", pattern: "*", action: "allow" }])
-  expect(result.size).toBe(0)
+  expect(HashSet.size(result)).toBe(0)
 })
 
 test("disabled - disables tool when denied", () => {
@@ -462,9 +461,9 @@ test("disabled - disables tool when denied", () => {
       { permission: "bash", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(false)
-  expect(result.has("read")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(false)
+  expect(HashSet.has(result, "read")).toBe(false)
 })
 
 test("disabled - disables edit/write/apply_patch when edit denied", () => {
@@ -475,10 +474,10 @@ test("disabled - disables edit/write/apply_patch when edit denied", () => {
       { permission: "edit", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("write")).toBe(true)
-  expect(result.has("apply_patch")).toBe(true)
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "write")).toBe(true)
+  expect(HashSet.has(result, "apply_patch")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when partially denied", () => {
@@ -489,12 +488,12 @@ test("disabled - does not disable when partially denied", () => {
       { permission: "bash", pattern: "rm *", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when action is ask", () => {
   const result = Permission.disabled(["bash", "edit"], [{ permission: "*", pattern: "*", action: "ask" }])
-  expect(result.size).toBe(0)
+  expect(HashSet.size(result)).toBe(0)
 })
 
 test("disabled - does not disable when specific allow after wildcard deny", () => {
@@ -505,7 +504,7 @@ test("disabled - does not disable when specific allow after wildcard deny", () =
       { permission: "bash", pattern: "echo *", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when wildcard allow after deny", () => {
@@ -516,7 +515,7 @@ test("disabled - does not disable when wildcard allow after deny", () => {
       { permission: "bash", pattern: "*", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - disables multiple tools", () => {
@@ -528,16 +527,16 @@ test("disabled - disables multiple tools", () => {
       { permission: "webfetch", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("webfetch")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "webfetch")).toBe(true)
 })
 
 test("disabled - wildcard permission denies all tools", () => {
   const result = Permission.disabled(["bash", "edit", "read"], [{ permission: "*", pattern: "*", action: "deny" }])
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("read")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "read")).toBe(true)
 })
 
 test("disabled - specific allow overrides wildcard deny", () => {
@@ -548,9 +547,9 @@ test("disabled - specific allow overrides wildcard deny", () => {
       { permission: "bash", pattern: "*", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("read")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(false)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "read")).toBe(true)
 })
 
 // ask tests
@@ -655,8 +654,8 @@ it.instance(
       const events = yield* EventV2Bridge.Service
       const seen = yield* Deferred.make<PermissionV1.Request>()
       const unsub = yield* events.listen((event) => {
-        if (event.type === Permission.Event.Asked.type)
-          Deferred.doneUnsafe(seen, Effect.succeed(event.data as PermissionV1.Request))
+        if (event.type === Permission.Event.Asked.type && Schema.is(Permission.Event.Asked.data)(event.data))
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
@@ -676,12 +675,7 @@ it.instance(
 
       expect(yield* waitForPending(1)).toHaveLength(1)
       expect(
-        yield* Deferred.await(seen).pipe(
-          Effect.timeoutOrElse({
-            duration: "1 second",
-            orElse: () => Effect.fail(new Error("timed out waiting for permission asked event")),
-          }),
-        ),
+        yield* awaitWithTimeout(Deferred.await(seen), "timed out waiting for permission asked event", "1 second"),
       ).toMatchObject({
         sessionID: SessionID.make("session_test"),
         permission: "bash",
@@ -934,13 +928,8 @@ it.instance(
       yield* waitForPending(1)
 
       const unsub = yield* events.listen((event) => {
-        if (event.type === Permission.Event.Replied.type)
-          Deferred.doneUnsafe(
-            seen,
-            Effect.succeed(
-              event.data as { sessionID: SessionID; requestID: PermissionV1.ID; reply: PermissionV1.Reply },
-            ),
-          )
+        if (event.type === Permission.Event.Replied.type && Schema.is(Permission.Event.Replied.data)(event.data))
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
@@ -948,12 +937,7 @@ it.instance(
       yield* reply({ requestID: PermissionV1.ID.make("per_test7"), reply: "once" })
       yield* Fiber.join(fiber)
       expect(
-        yield* Deferred.await(seen).pipe(
-          Effect.timeoutOrElse({
-            duration: "1 second",
-            orElse: () => Effect.fail(new Error("timed out waiting for permission replied event")),
-          }),
-        ),
+        yield* awaitWithTimeout(Deferred.await(seen), "timed out waiting for permission replied event", "1 second"),
       ).toEqual({
         sessionID: SessionID.make("session_test"),
         requestID: PermissionV1.ID.make("per_test7"),

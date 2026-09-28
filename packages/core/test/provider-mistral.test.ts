@@ -5,7 +5,7 @@ test("Mistral sends promptCacheKey as prompt_cache_key", async () => {
   let body: Record<string, unknown> | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "response-1",
         created: 0,
@@ -31,7 +31,7 @@ test("Mistral passes through unknown reasoning effort", async () => {
   let body: Record<string, unknown> | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "response-1",
         created: 0,
@@ -57,7 +57,7 @@ test("Mistral round-trips native reasoning in assistant history", async () => {
   let body: { messages?: unknown[] } | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "response-1",
         created: 0,

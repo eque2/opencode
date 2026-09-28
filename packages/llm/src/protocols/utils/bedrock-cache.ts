@@ -10,7 +10,7 @@ export const CachePointBlock = Schema.Struct({
     type: Schema.tag("default"),
     ttl: Schema.optional(Schema.Literals(["5m", "1h"])),
   }),
-})
+}).annotate({ identifier: "BedrockCache.CachePointBlock" })
 export type CachePointBlock = Schema.Schema.Type<typeof CachePointBlock>
 
 // Bedrock-Claude enforces the same 4-breakpoint cap as the Anthropic Messages

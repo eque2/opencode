@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { asc, eq, sql } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -182,7 +182,7 @@ describe("SessionProjector", () => {
         sessionID,
         limit: 1,
         order: "asc",
-        cursor: { id: firstPage[0]!.id, direction: "next" },
+        cursor: { id: firstPage[0].id, direction: "next" },
       })
       expect(secondPage.map((message) => (message.type === "user" ? message.text : message.type))).toEqual(["second"])
       expect(
@@ -190,7 +190,7 @@ describe("SessionProjector", () => {
           sessionID,
           limit: 1,
           order: "asc",
-          cursor: { id: secondPage[0]!.id, direction: "previous" },
+          cursor: { id: secondPage[0].id, direction: "previous" },
         })).map((message) => (message.type === "user" ? message.text : message.type)),
       ).toEqual(["first"])
       expect(
@@ -227,7 +227,7 @@ describe("SessionProjector", () => {
         prompt: Prompt.make({ text: "promote me" }),
         delivery: "steer",
       })
-      if (!admitted) return yield* Effect.die("Prompt admission failed")
+      expect(admitted).toMatchObject({ id, sessionID, delivery: "steer" })
 
       const event = yield* events.publish(SessionEvent.Prompted, {
         sessionID,
@@ -430,9 +430,9 @@ describe("SessionProjector", () => {
         time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
       })
 
-      expect(
-        yield* SessionMessageUpdater.memory({ messages: [stale, completed] }).getCurrentAssistant(),
-      ).toBeUndefined()
+      expect(yield* SessionMessageUpdater.memory({ messages: [stale, completed] }).getCurrentAssistant()).toEqual(
+        Option.none(),
+      )
     }),
   )
 
@@ -531,7 +531,7 @@ describe("SessionProjector", () => {
         sessionID,
         assistantMessageID: SessionMessage.ID.make("msg_assistant_completed"),
         timestamp: DateTime.makeUnsafe(3),
-        textID: "text-stale",
+        textID: SessionMessage.TextID.make("text-stale"),
       })
 
       const rows = yield* db
@@ -550,7 +550,9 @@ describe("SessionProjector", () => {
           type: "assistant",
           agent: "build",
           model,
-          content: [SessionMessage.AssistantText.make({ type: "text", id: "text-stale", text: "" })],
+          content: [
+            SessionMessage.AssistantText.make({ type: "text", id: SessionMessage.TextID.make("text-stale"), text: "" }),
+          ],
           time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
         }),
         SessionMessage.Assistant.make({

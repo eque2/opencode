@@ -6,9 +6,6 @@ import path from "path"
 import { Agent } from "../../src/agent/agent"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Global } from "@opencode-ai/core/global"
-import { Config } from "@/config/config"
-import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { LSP } from "@/lsp/lsp"
 import { Permission } from "../../src/permission"
@@ -17,7 +14,6 @@ import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "@/tool/truncate"
 import { Tool } from "@/tool/tool"
-import { Filesystem } from "@/util/filesystem"
 import {
   disposeAllInstances,
   provideInstance,
@@ -44,7 +40,7 @@ const ctx = {
   ask: () => Effect.void,
 }
 
-const readLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
+const readLayer = () =>
   LayerNode.compile(
     LayerNode.group([
       Agent.node,
@@ -93,39 +89,9 @@ const fail = Effect.fn("ReadToolTest.fail")(function* (
   throw new Error("expected read to fail")
 })
 
-const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
+const full = (p: string) => (process.platform === "win32" ? FSUtil.use.normalizePath(p) : Effect.succeed(p))
 const glob = (p: string) =>
-  process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
-const githubBase = <A, E, R>(url: string, self: Effect.Effect<A, E, R>) =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = url
-      return previous
-    }),
-    () => self,
-    (previous) =>
-      Effect.sync(() => {
-        if (previous) process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = previous
-        else delete process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      }),
-  )
-const git = Effect.fn("ReadToolTest.git")(function* (cwd: string, args: string[]) {
-  return yield* Effect.promise(async () => {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    if (code !== 0) throw new Error(stderr.trim() || stdout.trim() || `git ${args.join(" ")} failed`)
-    return stdout.trim()
-  })
-})
+  process.platform === "win32" ? FSUtil.use.normalizePathPattern(p) : Effect.succeed(p.replaceAll("\\", "/"))
 const put = Effect.fn("ReadToolTest.put")(function* (p: string, content: string | Buffer | Uint8Array) {
   const fs = yield* FSUtil.Service
   yield* fs.writeWithDirs(p, content)
@@ -180,7 +146,7 @@ describe("tool.read external_directory permission", () => {
       yield* exec(dir, { filePath: path.join(outer, "secret.txt") }, next)
       const ext = items.find((item) => item.permission === "external_directory")
       expect(ext).toBeDefined()
-      expect(ext!.patterns).toContain(glob(path.join(outer, "*")))
+      expect(ext!.patterns).toContain(yield* glob(path.join(outer, "*")))
     }),
   )
 
@@ -200,7 +166,7 @@ describe("tool.read external_directory permission", () => {
         yield* exec(dir, { filePath: alt }, next)
         const read = items.find((item) => item.permission === "read")
         expect(read).toBeDefined()
-        expect(read!.patterns).toEqual([path.relative(dir, full(target))])
+        expect(read!.patterns).toEqual([path.relative(dir, yield* full(target))])
       }),
     )
   }
@@ -229,7 +195,7 @@ describe("tool.read external_directory permission", () => {
       yield* exec(dir, { filePath: path.join(outer, "external") }, next)
       const ext = items.find((item) => item.permission === "external_directory")
       expect(ext).toBeDefined()
-      expect(ext!.patterns).toContain(glob(path.join(outer, "external", "*")))
+      expect(ext!.patterns).toContain(yield* glob(path.join(outer, "external", "*")))
     }),
   )
 

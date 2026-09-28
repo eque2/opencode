@@ -1,7 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { provideTmpdirInstance, testInstanceStoreLayer, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -154,20 +154,22 @@ describe("Format", () => {
           Effect.sync(() => {
             Formatter.gofmt.extensions = [".parallel"]
             Formatter.mix.extensions = [".parallel"]
-            Formatter.gofmt.enabled = async () => {
-              active++
-              max = Math.max(max, active)
-              await Promise.resolve()
-              active--
-              return ["sh", "-c", "true"]
-            }
-            Formatter.mix.enabled = async () => {
-              active++
-              max = Math.max(max, active)
-              await Promise.resolve()
-              active--
-              return ["sh", "-c", "true"]
-            }
+            Formatter.gofmt.enabled = () =>
+              Effect.gen(function* () {
+                active++
+                max = Math.max(max, active)
+                yield* Effect.yieldNow
+                active--
+                return Option.some(["sh", "-c", "true"])
+              })
+            Formatter.mix.enabled = () =>
+              Effect.gen(function* () {
+                active++
+                max = Math.max(max, active)
+                yield* Effect.yieldNow
+                active--
+                return Option.some(["sh", "-c", "true"])
+              })
           }),
           () =>
             Format.Service.use((fmt) =>

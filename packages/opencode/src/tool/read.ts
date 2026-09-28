@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Scope, Stream } from "effect"
+import { Effect, HashSet, Option, Schema, Scope, Stream } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import * as path from "path"
 import * as Tool from "./tool"
@@ -16,9 +16,14 @@ const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
 const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
-const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const SUPPORTED_IMAGE_MIMES = HashSet.make("image/jpeg", "image/png", "image/gif", "image/webp")
 
 class ReadStop extends Schema.TaggedError<ReadStop>()("ReadStop", {}) {}
+
+/** A read the tool cannot serve: its message tells the model why. */
+export class ReadError extends Schema.TaggedError<ReadError>()("ReadTool.ReadError", {
+  message: Schema.String,
+}) {}
 
 // `offset` and `limit` were originally `z.coerce.number()` — the runtime
 // coercion was useful when the tool was called from a shell but serves no
@@ -90,12 +95,12 @@ export const ReadTool = Tool.define<
       )
 
       if (items.length > 0) {
-        return yield* Effect.fail(
-          new Error(`File not found: ${filepath}\n\nDid you mean one of these?\n${items.join("\n")}`),
-        )
+        return yield* new ReadError({
+          message: `File not found: ${filepath}\n\nDid you mean one of these?\n${items.join("\n")}`,
+        })
       }
 
-      return yield* Effect.fail(new Error(`File not found: ${filepath}`))
+      return yield* new ReadError({ message: `File not found: ${filepath}` })
     })
 
     const list = Effect.fn("ReadTool.list")(function* (filepath: string) {
@@ -149,14 +154,14 @@ export const ReadTool = Tool.define<
         Stream.map((bytes) => decoder.decode(bytes, { stream: true })),
         Stream.splitLines,
         Stream.runForEach((text) =>
-          Effect.gen(function* () {
-            if (flags.done) return yield* new ReadStop()
+          Effect.suspend(() => {
+            if (flags.done) return Effect.fail(new ReadStop())
             flags.count += 1
-            if (flags.count <= start) return
+            if (flags.count <= start) return Effect.void
 
             if (raw.length >= opts.limit) {
               flags.more = true
-              return
+              return Effect.void
             }
 
             const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
@@ -164,13 +169,13 @@ export const ReadTool = Tool.define<
             if (flags.bytes + size <= MAX_BYTES) {
               raw.push(line)
               flags.bytes += size
-              return
+              return Effect.void
             }
 
             flags.cut = true
             flags.more = true
             flags.done = true
-            return yield* new ReadStop()
+            return Effect.fail(new ReadStop())
           }),
         ),
         Effect.catchTag("ReadStop", () => Effect.void),
@@ -231,25 +236,20 @@ export const ReadTool = Tool.define<
       ctx: Tool.Context<Metadata>,
     ) {
       const instance = yield* InstanceState.context
-      let filepath = params.filePath
-      if (!path.isAbsolute(filepath)) {
-        filepath = path.resolve(instance.directory, filepath)
-      }
-      if (process.platform === "win32") {
-        filepath = FSUtil.normalizePath(filepath)
-      }
+      // normalizePath canonicalizes a Windows path and returns any other path unchanged.
+      const filepath = yield* fs.normalizePath(
+        path.isAbsolute(params.filePath) ? params.filePath : path.resolve(instance.directory, params.filePath),
+      )
       const title = path.relative(instance.worktree, filepath)
 
-      const stat = yield* fs.stat(filepath).pipe(
-        Effect.catchIf(
-          (err) => "reason" in err && err.reason._tag === "NotFound",
-          () => Effect.succeed(undefined),
-        ),
+      const found = yield* fs.stat(filepath).pipe(
+        Effect.map(Option.some),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
       )
 
       yield* assertExternalDirectoryEffect(ctx, filepath, {
         bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
-        kind: stat?.type === "Directory" ? "directory" : "file",
+        kind: Option.exists(found, (info) => info.type === "Directory") ? "directory" : "file",
       })
 
       yield* ctx.ask({
@@ -259,7 +259,8 @@ export const ReadTool = Tool.define<
         metadata: {},
       })
 
-      if (!stat) return yield* miss(filepath)
+      if (Option.isNone(found)) return yield* miss(filepath)
+      const stat = found.value
 
       if (stat.type === "Directory") {
         const items = yield* list(filepath)
@@ -301,7 +302,7 @@ export const ReadTool = Tool.define<
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
-      const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
+      const isImage = HashSet.has(SUPPORTED_IMAGE_MIMES, mime)
 
       if (isImage || isPdfAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
@@ -325,14 +326,14 @@ export const ReadTool = Tool.define<
       }
 
       if (isBinaryFile(filepath, sample)) {
-        return yield* Effect.fail(new Error(`Cannot read binary file: ${filepath}`))
+        return yield* new ReadError({ message: `Cannot read binary file: ${filepath}` })
       }
 
       const file = yield* lines(filepath, { limit: params.limit ?? DEFAULT_READ_LIMIT, offset: params.offset || 1 })
       if (file.count < file.offset && !(file.count === 0 && file.offset === 1)) {
-        return yield* Effect.fail(
-          new Error(`Offset ${file.offset} is out of range for this file (${file.count} lines)`),
-        )
+        return yield* new ReadError({
+          message: `Offset ${file.offset} is out of range for this file (${file.count} lines)`,
+        })
       }
 
       let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>\n"].join("\n")
@@ -380,7 +381,7 @@ export const ReadTool = Tool.define<
       description: DESCRIPTION,
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
-        run(params, ctx).pipe(Effect.orDie),
+        run(params, ctx).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

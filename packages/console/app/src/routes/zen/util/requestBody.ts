@@ -67,6 +67,7 @@ export async function prepareRequestBody(body: ReadableStream<Uint8Array>) {
       else if (phase === "value" && !/\s/.test(char)) phase = "comma"
       index++
     }
+    return found
   }
 
   while (!done && !found) {
@@ -76,11 +77,11 @@ export async function prepareRequestBody(body: ReadableStream<Uint8Array>) {
     if (!chunks.length && next.value[0] === 0xef && next.value[1] === 0xbb && next.value[2] === 0xbf) bom = 3
     chunks.push(next.value)
     text += decoder.decode(next.value, { stream: true })
-    scan()
+    found = scan()
   }
   if (done) {
     text += decoder.decode()
-    scan()
+    found = scan()
   }
 
   const preview = text.substring(0, 300)

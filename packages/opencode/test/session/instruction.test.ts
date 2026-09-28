@@ -5,7 +5,6 @@ import { Effect, FileSystem, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 
 import { Instruction } from "../../src/session/instruction"
-import type { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { Global } from "@opencode-ai/core/global"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
@@ -117,7 +116,7 @@ describe("Instruction.resolve", () => {
       Effect.gen(function* () {
         const svc = yield* Instruction.Service
         const system = yield* svc.systemPaths()
-        expect(system.has(path.join(dir, "AGENTS.md"))).toBe(true)
+        expect(system.includes(path.join(dir, "AGENTS.md"))).toBe(true)
 
         const results = yield* svc.resolve([], path.join(dir, "src", "file.ts"), MessageID.make("msg_message-test-1"))
         expect(results).toEqual([])
@@ -130,7 +129,7 @@ describe("Instruction.resolve", () => {
       Effect.gen(function* () {
         const svc = yield* Instruction.Service
         const system = yield* svc.systemPaths()
-        expect(system.has(path.join(dir, "subdir", "AGENTS.md"))).toBe(false)
+        expect(system.includes(path.join(dir, "subdir", "AGENTS.md"))).toBe(false)
 
         const results = yield* svc.resolve(
           [],
@@ -149,7 +148,7 @@ describe("Instruction.resolve", () => {
         const svc = yield* Instruction.Service
         const filepath = path.join(dir, "subdir", "AGENTS.md")
         const system = yield* svc.systemPaths()
-        expect(system.has(filepath)).toBe(false)
+        expect(system.includes(filepath)).toBe(false)
 
         const results = yield* svc.resolve([], filepath, MessageID.make("msg_message-test-3"))
         expect(results).toEqual([])
@@ -218,8 +217,8 @@ describe("Instruction.system", () => {
       yield* Effect.gen(function* () {
         const svc = yield* Instruction.Service
         const paths = yield* svc.systemPaths()
-        expect(paths.has(path.join(projectTmp, "AGENTS.md"))).toBe(true)
-        expect(paths.has(path.join(globalTmp, "AGENTS.md"))).toBe(true)
+        expect(paths.includes(path.join(projectTmp, "AGENTS.md"))).toBe(true)
+        expect(paths.includes(path.join(globalTmp, "AGENTS.md"))).toBe(true)
 
         const rules = yield* svc.system()
         expect(rules).toHaveLength(2)
@@ -237,8 +236,8 @@ describe("Instruction.system", () => {
       yield* Effect.gen(function* () {
         const svc = yield* Instruction.Service
         const paths = yield* svc.systemPaths()
-        expect(paths.has(path.join(globalTmp, ".claude", "CLAUDE.md"))).toBe(false)
-        expect(paths.has(path.join(projectTmp, "CLAUDE.md"))).toBe(false)
+        expect(paths.includes(path.join(globalTmp, ".claude", "CLAUDE.md"))).toBe(false)
+        expect(paths.includes(path.join(projectTmp, "CLAUDE.md"))).toBe(false)
         expect(yield* svc.system()).toEqual([])
       }).pipe(
         provideInstance(projectTmp),
@@ -257,7 +256,7 @@ describe("Instruction.systemPaths global config", () => {
       yield* Effect.gen(function* () {
         const svc = yield* Instruction.Service
         const paths = yield* svc.systemPaths()
-        expect(paths.has(path.join(globalTmp, "AGENTS.md"))).toBe(true)
+        expect(paths.includes(path.join(globalTmp, "AGENTS.md"))).toBe(true)
       }).pipe(provideInstance(projectTmp), provideInstruction({ home: globalTmp, config: globalTmp }))
     }),
   )

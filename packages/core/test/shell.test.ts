@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import { Effect, Option } from "effect"
 import { Shell } from "@opencode-ai/core/shell"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { which } from "@opencode-ai/core/util/which"
+
+const run = <A>(effect: Effect.Effect<A>) => Effect.runPromise(effect)
 
 const withShell = async (shell: string | undefined, fn: () => void | Promise<void>) => {
   const prev = process.env.SHELL
@@ -42,16 +45,16 @@ describe("shell", () => {
 
   test("falls back when configured shell cannot be resolved", async () => {
     await withShell(undefined, async () => {
-      const preferred = Shell.preferred()
-      const acceptable = Shell.acceptable()
-      expect(Shell.preferred("opencode-missing-shell")).toBe(preferred)
-      expect(Shell.acceptable("opencode-missing-shell")).toBe(acceptable)
+      const preferred = await run(Shell.preferred())
+      const acceptable = await run(Shell.acceptable())
+      expect(await run(Shell.preferred("opencode-missing-shell"))).toBe(preferred)
+      expect(await run(Shell.acceptable("opencode-missing-shell"))).toBe(acceptable)
     })
   })
 
-  test("falls back for terminal-only acceptable shells", () => {
-    expect(Shell.name(Shell.acceptable("fish"))).not.toBe("fish")
-    expect(Shell.name(Shell.acceptable("nu"))).not.toBe("nu")
+  test("falls back for terminal-only acceptable shells", async () => {
+    expect(Shell.name(await run(Shell.acceptable("fish")))).not.toBe("fish")
+    expect(Shell.name(await run(Shell.acceptable("nu")))).not.toBe("nu")
   })
 
   test("builds command args per shell family", () => {
@@ -66,42 +69,46 @@ describe("shell", () => {
   if (process.platform === "win32") {
     test("rejects blacklisted shells case-insensitively", async () => {
       await withShell("NU.EXE", async () => {
-        expect(Shell.name(Shell.acceptable())).not.toBe("nu")
+        expect(Shell.name(await run(Shell.acceptable()))).not.toBe("nu")
       })
     })
 
     test("normalizes Git Bash shell paths from env", async () => {
       const shell = "/cygdrive/c/Program Files/Git/bin/bash.exe"
       await withShell(shell, async () => {
-        expect(Shell.preferred()).toBe(FSUtil.windowsPath(shell))
+        expect(await run(Shell.preferred())).toBe(FSUtil.windowsPath(shell))
       })
     })
 
     test("resolves /usr/bin/bash from env to Git Bash", async () => {
-      const bash = Shell.gitbash()
-      if (!bash) return
+      const found = await run(Shell.gitbash())
+      if (Option.isNone(found)) return
+      const bash = found.value
       await withShell("/usr/bin/bash", async () => {
-        expect(Shell.acceptable()).toBe(bash)
-        expect(Shell.preferred()).toBe(bash)
+        expect(await run(Shell.acceptable())).toBe(bash)
+        expect(await run(Shell.preferred())).toBe(bash)
       })
     })
 
     test("resolves bare bash to Git Bash before PATH", async () => {
-      const bash = Shell.gitbash()
-      if (!bash) return
-      expect(Shell.acceptable("bash")).toBe(bash)
-      expect(Shell.preferred("bash")).toBe(bash)
+      const found = await run(Shell.gitbash())
+      if (Option.isNone(found)) return
+      const bash = found.value
+      expect(await run(Shell.acceptable("bash"))).toBe(bash)
+      expect(await run(Shell.preferred("bash"))).toBe(bash)
       await withShell("bash", async () => {
-        expect(Shell.acceptable()).toBe(bash)
-        expect(Shell.preferred()).toBe(bash)
+        expect(await run(Shell.acceptable())).toBe(bash)
+        expect(await run(Shell.preferred())).toBe(bash)
       })
     })
 
     test("resolves bare PowerShell shells", async () => {
-      const shell = which("pwsh") || which("powershell")
-      if (!shell) return
+      const pwsh = await run(which("pwsh"))
+      const found = Option.isSome(pwsh) ? pwsh : await run(which("powershell"))
+      if (Option.isNone(found)) return
+      const shell = found.value
       await withShell(path.win32.basename(shell), async () => {
-        expect(Shell.preferred()).toBe(shell)
+        expect(await run(Shell.preferred())).toBe(shell)
       })
     })
   }

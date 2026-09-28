@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import { Schema } from "effect"
 
 // Bun applies a patch only to the exact `name@version` named in
 // `patchedDependencies`. Bumping the dependency without regenerating the patch
@@ -8,7 +9,11 @@ import path from "path"
 // packages that ship in the CLI.
 const root = path.resolve(import.meta.dir, "../../..")
 const workspaces = ["packages/opencode", "packages/core"]
-const patched = (await Bun.file(path.join(root, "package.json")).json()).patchedDependencies as Record<string, string>
+const decodeRoot = Schema.decodeUnknownSync(
+  Schema.Struct({ patchedDependencies: Schema.Record(Schema.String, Schema.String) }),
+)
+const decodeInstalled = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))
+const patched = decodeRoot(await Bun.file(path.join(root, "package.json")).json()).patchedDependencies
 
 describe("patched dependencies", () => {
   for (const key of Object.keys(patched)) {
@@ -21,7 +26,7 @@ describe("patched dependencies", () => {
       for (const workspace of workspaces) {
         const file = Bun.file(path.join(root, workspace, "node_modules", name, "package.json"))
         if (!(await file.exists())) continue
-        const installed = (await file.json()).version as string
+        const installed = decodeInstalled(await file.json()).version
         expect(installed, `${workspace} resolves ${name}@${installed}; patch is for ${version}`).toBe(version)
       }
     })

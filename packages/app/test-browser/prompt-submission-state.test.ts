@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { createPromptState } from "@/context/prompt"
 import { createPromptSubmissionState } from "@/components/prompt-input/submission-state"
 
@@ -11,11 +12,13 @@ describe("prompt submission state", () => {
       context: [{ key: "file:src/index.ts:undefined:undefined", type: "file", path: "src/index.ts" }],
     })
 
-    expect(submission.restore()).toEqual({
-      target,
-      prompt: [{ type: "text", content: "prompt-A", start: 0, end: 8 }],
-      context: [{ key: "file:src/index.ts:undefined:undefined", type: "file", path: "src/index.ts" }],
-    })
+    expect(submission.restore()).toEqual(
+      Option.some({
+        target,
+        prompt: [{ type: "text", content: "prompt-A", start: 0, end: 8 }],
+        context: [{ key: "file:src/index.ts:undefined:undefined", type: "file", path: "src/index.ts" }],
+      }),
+    )
   })
 
   test("moves first-submit restoration and context to the promoted session", () => {
@@ -29,11 +32,13 @@ describe("prompt submission state", () => {
 
     submission.retarget(session)
 
-    expect(submission.restore()).toEqual({
-      target: session,
-      prompt: [{ type: "text", content: "first prompt", start: 0, end: 12 }],
-      context: [{ key: "file:src/index.ts:undefined:undefined", type: "file", path: "src/index.ts" }],
-    })
+    expect(submission.restore()).toEqual(
+      Option.some({
+        target: session,
+        prompt: [{ type: "text", content: "first prompt", start: 0, end: 12 }],
+        context: [{ key: "file:src/index.ts:undefined:undefined", type: "file", path: "src/index.ts" }],
+      }),
+    )
     expect(session.context.items()).toHaveLength(1)
     expect(session.context.items()[0]).toMatchObject({ type: "file", path: "src/index.ts" })
   })
@@ -67,7 +72,7 @@ describe("prompt submission state", () => {
     submission.clear()
     target.set([{ type: "text", content: "new draft", start: 0, end: 9 }])
 
-    expect(submission.restore()).toBeUndefined()
+    expect(submission.restore()).toEqual(Option.none())
     expect(target.current()[0]).toMatchObject({ type: "text", content: "new draft" })
   })
 })

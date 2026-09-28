@@ -18,6 +18,7 @@ import {
 import type { UpdaterState } from "@opencode-ai/app/updater"
 import * as Sentry from "@sentry/solid"
 import type { AsyncStorage } from "@solid-primitives/storage"
+import { Clock, Data, Effect, MutableHashMap, Option, Result } from "effect"
 import { createMemoryHistory, MemoryRouter, type BaseRouterProps } from "@solidjs/router"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, Show } from "solid-js"
 import { render } from "solid-js/web"
@@ -32,10 +33,17 @@ import "./styles.css"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 
-const root = document.getElementById("root")
-if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
-  throw new Error(t("desktop.error.dev.rootNotFound"))
-}
+/** The page has no #root element to mount the desktop renderer into. */
+class RootNotFoundError extends Data.TaggedError("Desktop.RootNotFoundError")<{ readonly message: string }> {}
+
+/** The #root element that index.html provides. None when it is missing or not an HTML element. */
+const root = Option.liftPredicate(
+  document.getElementById("root"),
+  (element): element is HTMLElement => element instanceof HTMLElement,
+)
+// A dev build stops at module load with a readable error when #root is missing.
+if (import.meta.env.DEV)
+  Option.getOrThrowWith(root, () => new RootNotFoundError({ message: t("desktop.error.dev.rootNotFound") }))
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -88,18 +96,19 @@ function windowLastActiveUrlKey(windowID: string) {
 
 function getLastActiveUrl(windowID: string) {
   if (typeof localStorage !== "object") return "/"
-  try {
-    const value = localStorage.getItem(windowLastActiveUrlKey(windowID))
-    if (value?.startsWith("/") && !value.startsWith("//")) return value
-  } catch {}
-  return "/"
+  // getItem can throw when the browser blocks storage; that counts as no stored URL.
+  return Result.try(() => localStorage.getItem(windowLastActiveUrlKey(windowID))).pipe(
+    Result.getSuccess,
+    Option.flatMap(Option.fromNullishOr),
+    Option.filter((value) => value.startsWith("/") && !value.startsWith("//")),
+    Option.getOrElse(() => "/"),
+  )
 }
 
 function setLastActiveUrl(windowID: string, value: string) {
   if (typeof localStorage !== "object") return
-  try {
-    localStorage.setItem(windowLastActiveUrlKey(windowID), value)
-  } catch {}
+  // setItem can throw when storage is full or blocked; the URL is then not remembered.
+  Result.try(() => localStorage.setItem(windowLastActiveUrlKey(windowID), value))
 }
 
 function DesktopMemoryRouter(props: BaseRouterProps & { windowID: string }) {
@@ -110,7 +119,10 @@ function DesktopMemoryRouter(props: BaseRouterProps & { windowID: string }) {
   return <MemoryRouter {...props} history={history} />
 }
 
-const createPlatform = (windowState: DesktopWindowState): Platform => {
+/** The desktop Platform. Its storage is always present and always asynchronous. */
+type DesktopPlatform = { storage: (name?: string) => AsyncStorage } & Platform
+
+const createPlatform = (windowState: DesktopWindowState): DesktopPlatform => {
   const attachmentPaths = new WeakMap<File, string>()
   const os = (() => {
     const ua = navigator.userAgent
@@ -120,24 +132,27 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     return undefined
   })()
 
-  const runDesktopMenuAction: Platform["runDesktopMenuAction"] = (action) => {
-    switch (action) {
-      case "view.resetZoom":
-        resetZoom()
-        return
-      case "view.zoomIn":
-        zoomIn()
-        return
-      case "view.zoomOut":
-        zoomOut()
-        return
-    }
+  const runDesktopMenuAction: Platform["runDesktopMenuAction"] = (action) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        switch (action) {
+          case "view.resetZoom":
+            resetZoom()
+            return
+          case "view.zoomIn":
+            zoomIn()
+            return
+          case "view.zoomOut":
+            zoomOut()
+            return
+        }
 
-    return window.api.runDesktopMenuAction(action)
-  }
+        yield* Effect.promise(() => window.api.runDesktopMenuAction(action))
+      }),
+    )
 
   const storage = (() => {
-    const cache = new Map<string, AsyncStorage>()
+    const cache = MutableHashMap.empty<string, AsyncStorage>()
 
     const createStorage = (name: string) => {
       const api: AsyncStorage = {
@@ -145,7 +160,13 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
         setItem: (key: string, value: string) => window.api.storeSet(name, key, value),
         removeItem: (key: string) => window.api.storeDelete(name, key),
         clear: () => window.api.storeClear(name),
-        key: async (index: number) => (await window.api.storeKeys(name))[index],
+        key: (index: number) =>
+          Effect.runPromise(
+            Effect.map(
+              Effect.promise(() => window.api.storeKeys(name)),
+              (keys) => keys[index],
+            ),
+          ),
         getLength: () => window.api.storeLength(name),
         get length() {
           return api.getLength()
@@ -154,16 +175,13 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
       return api
     }
 
-    return (name = "default.dat") => {
-      const cached = cache.get(name)
-      if (cached) return cached
-      const api = createStorage(name)
-      cache.set(name, api)
-      return api
-    }
+    return (name = "default.dat") =>
+      Option.getOrElse(MutableHashMap.get(cache, name), () => {
+        const api = createStorage(name)
+        MutableHashMap.set(cache, name, api)
+        return api
+      })
   })()
-
-  const wslServersApi = os === "windows" ? window.api.wslServers : undefined
 
   return {
     platform: "desktop",
@@ -171,37 +189,46 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     version: pkg.version,
     windowID: windowState.id,
 
-    async openDirectoryPickerDialog(opts) {
+    openDirectoryPickerDialog(opts) {
       return window.api.openDirectoryPicker({
         multiple: opts?.multiple ?? false,
         title: opts?.title,
       })
     },
 
-    async openAttachmentPickerDialog(opts, onFile) {
-      const result = await window.api.openFilePicker({
-        multiple: opts?.multiple ?? false,
-        title: opts?.title,
-        defaultPath: opts?.defaultPath,
-        extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
-      })
-      if (!result) return
-      try {
-        for (const file of result.files) {
-          const selected = new File([await window.api.readPickedFile(result.token, file.path)], file.name)
-          attachmentPaths.set(selected, file.path)
-          await onFile(selected)
-        }
-      } finally {
-        await window.api.releasePickedFiles(result.token)
-      }
+    openAttachmentPickerDialog(opts, onFile) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const result = yield* Effect.promise(() =>
+            window.api.openFilePicker({
+              multiple: opts?.multiple ?? false,
+              title: opts?.title,
+              defaultPath: opts?.defaultPath,
+              extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
+            }),
+          )
+          if (!result) return
+          // Files are read and handed over one at a time; the picked files are released even when one fails.
+          yield* Effect.forEach(
+            result.files,
+            (file) =>
+              Effect.gen(function* () {
+                const data = yield* Effect.promise(() => window.api.readPickedFile(result.token, file.path))
+                const selected = new File([data], file.name)
+                attachmentPaths.set(selected, file.path)
+                yield* Effect.promise(() => onFile(selected))
+              }),
+            { discard: true },
+          ).pipe(Effect.ensuring(Effect.promise(() => window.api.releasePickedFiles(result.token))))
+        }),
+      )
     },
 
     getPathForFile(file) {
       return attachmentPaths.get(file) ?? window.api.getPathForFile(file)
     },
 
-    async saveFilePickerDialog(opts) {
+    saveFilePickerDialog(opts) {
       return window.api.saveFilePicker({
         title: opts?.title,
         defaultPath: opts?.defaultPath,
@@ -214,14 +241,22 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     openLocalFile(url: string) {
       window.api.openLocalFile(url)
     },
-    async openPath(path: string, app?: string) {
-      if (os === "windows") {
-        const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
-        return window.api.openPath(path, resolvedApp ?? undefined)
-      }
-      return window.api.openPath(path, app)
+    openPath(path: string, app?: string) {
+      if (os !== "windows") return window.api.openPath(path, app)
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          // A failed or empty resolution opens the path with the default app.
+          const resolvedApp = app
+            ? yield* Effect.tryPromise(() => window.api.resolveAppPath(app)).pipe(
+                Effect.option,
+                Effect.map(Option.flatMap(Option.fromNullishOr)),
+              )
+            : Option.none<string>()
+          yield* Effect.promise(() => window.api.openPath(path, Option.getOrUndefined(resolvedApp)))
+        }),
+      )
     },
-    async revealPath(path: string) {
+    revealPath(path: string) {
       return window.api.revealPath(path)
     },
 
@@ -230,7 +265,13 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
       get: window.api.draftGet,
       set: window.api.draftSet,
       remove: window.api.draftDelete,
-      putBlob: (blob) => blob.arrayBuffer().then(window.api.draftBlobPut),
+      putBlob: (blob) =>
+        Effect.runPromise(
+          Effect.flatMap(
+            Effect.promise(() => blob.arrayBuffer()),
+            (data) => Effect.promise(() => window.api.draftBlobPut(data)),
+          ),
+        ),
       getBlob: (id) => window.api.draftBlobGet(id).then((data) => data && new Blob([data])),
     }),
 
@@ -246,51 +287,71 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
 
     recordFatalRendererError: (error) => window.api.recordFatalRendererError(error),
 
-    restart: async () => {
-      await window.api.killSidecar().catch(() => undefined)
-      window.api.relaunch()
-    },
+    restart: () =>
+      Effect.runPromise(
+        Effect.tryPromise(() => window.api.killSidecar()).pipe(
+          // Relaunch even when the sidecar did not stop cleanly.
+          Effect.ignore,
+          Effect.andThen(Effect.sync(() => window.api.relaunch())),
+        ),
+      ),
 
-    notify: async (title, description, onClick) => {
-      const focused = await window.api.getWindowFocused().catch(() => document.hasFocus())
-      if (focused) return
+    notify: (title, description, onClick) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const focused = yield* Effect.tryPromise(() => window.api.getWindowFocused()).pipe(
+            Effect.orElseSucceed(() => document.hasFocus()),
+          )
+          if (focused) return
 
-      const notification = new Notification(title, {
-        body: description ?? "",
-        icon: "https://opencode.ai/favicon-96x96-v3.png",
-      })
-      notification.onclick = () => {
-        void window.api.showWindow()
-        void window.api.setWindowFocus()
-        onClick?.()
-        notification.close()
-      }
-    },
+          const notification = new Notification(title, {
+            body: description ?? "",
+            icon: "https://opencode.ai/favicon-96x96-v3.png",
+          })
+          notification.onclick = () => {
+            void window.api.showWindow()
+            void window.api.setWindowFocus()
+            onClick?.()
+            notification.close()
+          }
+        }),
+      ),
 
     fetch: (input, init) => {
       if (input instanceof Request) return fetch(input)
       return fetch(input, init)
     },
 
-    getDefaultServer: async () => {
-      const url = await window.api.getDefaultServerUrl().catch(() => null)
-      if (!url) return null
-      return ServerConnection.Key.make(url)
-    },
+    // The Platform contract resolves to null for "no default server"; a failed read or an empty URL counts as none.
+    getDefaultServer: () =>
+      Effect.runPromise(
+        Effect.tryPromise(() => window.api.getDefaultServerUrl()).pipe(
+          Effect.option,
+          Effect.map((url) =>
+            url.pipe(
+              Option.flatMap(Option.fromNullishOr),
+              Option.filter((value) => value !== ""),
+              Option.map(ServerConnection.Key.make),
+              Option.getOrNull,
+            ),
+          ),
+        ),
+      ),
 
-    setDefaultServer: async (url: string | null) => {
-      await window.api.setDefaultServerUrl(url)
-    },
+    setDefaultServer: (url: string | null) => window.api.setDefaultServerUrl(url),
 
-    wslServers: wslServersApi,
+    ...(os === "windows" ? { wslServers: window.api.wslServers } : {}),
 
-    getDisplayBackend: async () => {
-      return window.api.getDisplayBackend().catch(() => null)
-    },
+    // The Platform contract resolves to null for "no preference"; a failed read counts as none.
+    getDisplayBackend: () =>
+      Effect.runPromise(
+        Effect.tryPromise(() => window.api.getDisplayBackend()).pipe(
+          Effect.option,
+          Effect.map((backend) => Option.getOrNull(Option.flatMap(backend, Option.fromNullishOr))),
+        ),
+      ),
 
-    setDisplayBackend: async (backend) => {
-      await window.api.setDisplayBackend(backend)
-    },
+    setDisplayBackend: (backend) => window.api.setDisplayBackend(backend),
 
     webviewZoom,
 
@@ -302,24 +363,33 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
 
     runDesktopMenuAction,
 
-    checkAppExists: async (appName: string) => {
-      return window.api.checkAppExists(appName)
-    },
+    checkAppExists: (appName: string) => window.api.checkAppExists(appName),
 
-    async readClipboardImage() {
-      const image = await window.api.readClipboardImage().catch(() => null)
-      if (!image) return null
-      const blob = new Blob([image.buffer], { type: "image/png" })
-      return new File([blob], `pasted-image-${Date.now()}.png`, {
-        type: "image/png",
-      })
+    // The Platform contract resolves to null when the clipboard holds no image; a failed read counts as none.
+    readClipboardImage() {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const image = yield* Effect.tryPromise(() => window.api.readClipboardImage()).pipe(
+            Effect.option,
+            Effect.map(Option.flatMap(Option.fromNullishOr)),
+          )
+          if (Option.isNone(image)) return Option.none<File>()
+          const now = yield* Clock.currentTimeMillis
+          const blob = new Blob([image.value.buffer], { type: "image/png" })
+          return Option.some(
+            new File([blob], `pasted-image-${now}.png`, {
+              type: "image/png",
+            }),
+          )
+        }).pipe(Effect.map(Option.getOrNull)),
+      )
     },
   }
 }
 
-let menuTrigger = null as null | ((id: string) => void)
+let menuTrigger = Option.none<(id: string) => void>()
 window.api.onMenuCommand((id) => {
-  menuTrigger?.(id)
+  if (Option.isSome(menuTrigger)) menuTrigger.value(id)
 })
 listenForDeepLinks()
 
@@ -333,17 +403,20 @@ function LoadingSplash() {
 
 function DesktopRoot(props: { windowState: DesktopWindowState }) {
   const platform = createPlatform(props.windowState)
-  const loadLocale = async () => {
-    const current = await platform.storage?.("opencode.global.dat").getItem("language")
-    const legacy = current ? undefined : await platform.storage?.().getItem("language.v1")
-    const raw = current ?? legacy
-    if (!raw) return
-    const locale = raw.match(/"locale"\s*:\s*"([^"]+)"/)?.[1]
-    if (!locale) return
-    const next = normalizeLocale(locale)
-    if (next !== "en") await loadLocaleDict(next)
-    return next satisfies Locale
-  }
+  // The resource resolves to the stored locale, or to no value (AppBaseProviders then keeps its default).
+  const loadLocale = () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const current = yield* Effect.promise(() => platform.storage("opencode.global.dat").getItem("language"))
+        const raw = current ?? (yield* Effect.promise(() => platform.storage().getItem("language.v1")))
+        if (!raw) return Option.none<Locale>()
+        const locale = raw.match(/"locale"\s*:\s*"([^"]+)"/)?.[1]
+        if (!locale) return Option.none<Locale>()
+        const next = normalizeLocale(locale)
+        if (next !== "en") yield* Effect.promise(() => loadLocaleDict(next))
+        return Option.some(next)
+      }).pipe(Effect.map(Option.getOrUndefined)),
+    )
 
   // Fetch sidecar credentials (available immediately, before health check)
   const [sidecar] = createResource(() => window.api.awaitInitialization())
@@ -357,7 +430,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
 
   function Inner() {
     const cmd = useCommand()
-    menuTrigger = (id) => cmd.trigger(id)
+    menuTrigger = Option.some((id: string) => cmd.trigger(id))
 
     const theme = useTheme()
 
@@ -370,6 +443,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
       }
     })
 
+    // eslint-disable-next-line effect/no-null-use-option -- (a) a Solid component returns null to render nothing; Inner only wires the menu and the theme background
     return null
   }
 
@@ -381,21 +455,21 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     )
     const servers = createMemo(() => {
       const data = initializationData(sidecar)
-      const list: ServerConnection.Any[] = []
-      if (data) {
-        list.push({
-          displayName: language.t("desktop.server.local"),
-          type: "sidecar",
-          variant: "base",
-          http: {
-            url: data.url,
-            username: data.username ?? undefined,
-            password: data.password ?? undefined,
-          },
-        })
-      }
-      list.push(...readyWslConnections(wslServers.data, language.t("wsl.server.label")))
-      return list
+      const local: ServerConnection.Any[] = data
+        ? [
+            {
+              displayName: language.t("desktop.server.local"),
+              type: "sidecar",
+              variant: "base",
+              http: {
+                url: data.url,
+                username: Option.getOrUndefined(Option.fromNullishOr(data.username)),
+                password: Option.getOrUndefined(Option.fromNullishOr(data.password)),
+              },
+            },
+          ]
+        : []
+      return [...local, ...readyWslConnections(wslServers.data, language.t("wsl.server.label"))]
     })
     const effectiveDefaultServer = createMemo(() =>
       ServerConnection.Key.make(availableStartupServer(defaultServer.latest, wslServers.data)),
@@ -428,7 +502,10 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     <PlatformProvider value={platform}>
       <AppBaseProviders
         locale={locale.latest}
-        onNativeTranslations={(bundle) => void window.api.setNativeTranslations(bundle).catch(() => undefined)}
+        onNativeTranslations={(bundle) => {
+          // A failed hand-over leaves the native menus in their current language.
+          Effect.runFork(Effect.tryPromise(() => window.api.setNativeTranslations(bundle)).pipe(Effect.ignore))
+        }}
       >
         <Show when={true}>{(_) => <App />}</Show>
       </AppBaseProviders>
@@ -436,17 +513,28 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
   )
 }
 
-render(() => {
-  const [windowState] = createResource(async () => {
-    const api = window.api as typeof window.api & {
-      getWindowID?: () => Promise<string>
-    }
-    return { id: await api.getWindowID?.() }
-  })
+if (Option.isSome(root)) {
+  render(() => {
+    const [windowState] = createResource(() => {
+      const api = window.api as typeof window.api & {
+        getWindowID?: () => Promise<string>
+      }
+      return Effect.runPromise(
+        Option.match(Option.fromNullishOr(api.getWindowID?.()), {
+          onNone: () => Effect.succeed<DesktopWindowState>({}),
+          onSome: (windowID) =>
+            Effect.map(
+              Effect.promise(() => windowID),
+              (id): DesktopWindowState => ({ id }),
+            ),
+        }),
+      )
+    })
 
-  return (
-    <Show when={windowState.latest} fallback={<LoadingSplash />} keyed>
-      {(state) => <DesktopRoot windowState={state} />}
-    </Show>
-  )
-}, root!)
+    return (
+      <Show when={windowState.latest} fallback={<LoadingSplash />} keyed>
+        {(state) => <DesktopRoot windowState={state} />}
+      </Show>
+    )
+  }, root.value)
+}

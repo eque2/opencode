@@ -1,10 +1,11 @@
 // Legacy `api.command` bridge for v1 plugins; remove in v2.
 import type { TuiCommand, TuiPluginApi } from "@opencode-ai/plugin/tui"
+import { Effect, MutableHashSet } from "effect"
 import { TuiKeybind } from "../config/keybind"
 import type { DialogContext } from "../ui/dialog"
 
 const COMMAND_PALETTE_SHOW = "command.palette.show"
-const warned = new Set<string>()
+const warned = MutableHashSet.empty<string>()
 
 type Warn = (api: string, replacement: string) => void
 type LegacyDialog = TuiPluginApi["ui"]["dialog"]
@@ -13,7 +14,7 @@ type LegacyKeybinds = TuiPluginApi["tuiConfig"]["keybinds"]
 
 function warnCommandShim(api: string, replacement: string) {
   // Warn v1 plugins about deprecated `api.command`; remove this shim path in v2.
-  console.warn("[tui.plugin] deprecated TUI plugin API", { api, replacement })
+  Effect.runFork(Effect.logWarning("[tui.plugin] deprecated TUI plugin API", { api, replacement }))
 }
 
 function createCommandShimDialog(dialog: CommandShimDialog): LegacyDialog {
@@ -41,8 +42,8 @@ function createCommandShimDialog(dialog: CommandShimDialog): LegacyDialog {
 }
 
 function warnOnce(api: string, replacement: string, warn: Warn) {
-  if (warned.has(api)) return
-  warned.add(api)
+  if (MutableHashSet.has(warned, api)) return
+  MutableHashSet.add(warned, api)
   warn(api, replacement)
 }
 
@@ -64,12 +65,21 @@ function toCommand(item: TuiCommand, dialog: LegacyDialog) {
   }
 }
 
+function isLegacyKeybindName(name: string): name is keyof typeof TuiKeybind.CommandMap {
+  return Object.hasOwn(TuiKeybind.CommandMap, name)
+}
+
+// Map a v1 keybind name (for example `app_exit`) to its command name; other names pass through.
+function keybindCommand(name: string) {
+  return isLegacyKeybindName(name) ? TuiKeybind.CommandMap[name] : name
+}
+
 function toBindings(commands: TuiCommand[], keybinds: LegacyKeybinds) {
   return commands.flatMap((item) =>
     item.keybind
-      ? keybinds.has(TuiKeybind.CommandMap[item.keybind as keyof typeof TuiKeybind.CommandMap] ?? item.keybind)
+      ? keybinds.has(keybindCommand(item.keybind))
         ? keybinds
-            .get(TuiKeybind.CommandMap[item.keybind as keyof typeof TuiKeybind.CommandMap] ?? item.keybind)
+            .get(keybindCommand(item.keybind))
             .map((binding) => ({ ...binding, cmd: item.value, desc: binding.desc ?? item.title }))
         : [
             {

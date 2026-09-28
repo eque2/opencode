@@ -5,6 +5,7 @@ import { List } from "@opencode-ai/ui/list"
 import { Switch } from "@opencode-ai/ui/switch"
 import { useLanguage } from "@/context/language"
 import { useMcpToggle } from "@/context/mcp"
+import { Option } from "effect"
 
 const statusLabels = {
   connected: "mcp.status.connected",
@@ -13,6 +14,9 @@ const statusLabels = {
   needs_client_registration: "mcp.status.needs_client_registration",
   disabled: "mcp.status.disabled",
 } as const
+
+/** True for a status that has a label. The "pending" status has none. */
+const isLabelledStatus = (status: string): status is keyof typeof statusLabels => Object.hasOwn(statusLabels, status)
 
 export const DialogSelectMcp: Component = () => {
   const sync = useSync()
@@ -50,14 +54,15 @@ export const DialogSelectMcp: Component = () => {
         {(i) => {
           const mcpStatus = () => sync().data.mcp[i.name]
           const status = () => mcpStatus()?.status
-          const statusLabel = () => {
-            const key = status() ? statusLabels[status() as keyof typeof statusLabels] : undefined
-            if (!key) return
-            return language.t(key)
-          }
+          const statusLabel = () =>
+            Option.fromNullishOr(status()).pipe(
+              Option.filter(isLabelledStatus),
+              Option.map((key) => language.t(statusLabels[key])),
+            )
           const error = () => {
             const s = mcpStatus()
             if (s?.status === "failed" || s?.status === "needs_client_registration") return s.error
+            return undefined
           }
           const enabled = () => status() === "connected"
           return (
@@ -65,8 +70,8 @@ export const DialogSelectMcp: Component = () => {
               <div class="flex flex-col gap-0.5 min-w-0">
                 <div class="flex items-center gap-2">
                   <span class="truncate">{i.name}</span>
-                  <Show when={statusLabel()}>
-                    <span class="text-11-regular text-text-weaker">{statusLabel()}</span>
+                  <Show when={Option.getOrUndefined(statusLabel())}>
+                    {(label) => <span class="text-11-regular text-text-weaker">{label()}</span>}
                   </Show>
                 </div>
                 <Show when={error()}>

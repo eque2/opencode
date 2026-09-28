@@ -15,7 +15,6 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* CerebrasPlugin.effect(host)
 })
@@ -60,7 +59,6 @@ describe("CerebrasPlugin", () => {
   it.effect("creates a bundled Cerebras SDK with the model provider ID as the SDK name", () =>
     Effect.gen(function* () {
       cerebrasOptions.length = 0
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
@@ -86,7 +84,6 @@ describe("CerebrasPlugin", () => {
   it.effect("preserves an explicit bundled Cerebras SDK name option", () =>
     Effect.gen(function* () {
       cerebrasOptions.length = 0
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       yield* aisdk.runSDK({
@@ -111,7 +108,6 @@ describe("CerebrasPlugin", () => {
   it.effect("ignores non-Cerebras SDK packages", () =>
     Effect.gen(function* () {
       cerebrasOptions.length = 0
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({

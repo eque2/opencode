@@ -1,39 +1,71 @@
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
-import { Effect } from "effect"
+import { Effect, PubSub, Schema } from "effect"
 
-export function waitEvent(input: { timeout: number; signal?: AbortSignal; fn: (event: GlobalEvent) => boolean }) {
-  if (input.signal?.aborted) return Effect.fail(input.signal.reason ?? new Error("Request aborted"))
+export class WaitEventAbortedError extends Schema.TaggedError<WaitEventAbortedError>()("WaitEventAbortedError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-  return Effect.callback<void, unknown>((resume) => {
-    const abort = () => {
-      cleanup()
-      resume(Effect.fail(input.signal?.reason ?? new Error("Request aborted")))
-    }
+export class WaitEventTimeoutError extends Schema.TaggedError<WaitEventTimeoutError>()("WaitEventTimeoutError", {
+  message: Schema.String,
+  timeout: Schema.Number,
+}) {}
 
-    const handler = (event: GlobalEvent) => {
-      try {
-        if (!input.fn(event)) return
-        cleanup()
-        resume(Effect.void)
-      } catch (error) {
-        cleanup()
-        resume(Effect.fail(error))
-      }
-    }
+export class WaitEventPredicateError extends Schema.TaggedError<WaitEventPredicateError>()("WaitEventPredicateError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-    const cleanup = () => {
-      clearTimeout(timeout)
-      GlobalBus.off("event", handler)
-      input.signal?.removeEventListener("abort", abort)
-    }
+export type WaitEventError = WaitEventAbortedError | WaitEventTimeoutError | WaitEventPredicateError
 
-    const timeout = setTimeout(() => {
-      cleanup()
-      resume(Effect.fail(new Error("Timed out waiting for global event")))
-    }, input.timeout)
-
-    GlobalBus.on("event", handler)
-    input.signal?.addEventListener("abort", abort, { once: true })
-    return Effect.sync(cleanup)
+// The abort reason is caller data of any shape, so it is kept as the cause.
+const aborted = (signal: AbortSignal | undefined) =>
+  new WaitEventAbortedError({
+    message: signal?.reason instanceof Error ? signal.reason.message : "Request aborted",
+    cause: signal?.reason,
   })
+
+export function waitEvent(input: {
+  timeout: number
+  signal?: AbortSignal
+  fn: (event: GlobalEvent) => boolean
+}): Effect.Effect<void, WaitEventError> {
+  if (input.signal?.aborted) return Effect.fail(aborted(input.signal))
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      // Subscribe before the first take, so no event published after this point is lost.
+      const subscription = yield* GlobalBus.subscribe
+      const matched = PubSub.take(subscription).pipe(
+        Effect.flatMap((event) =>
+          Effect.try({
+            try: () => input.fn(event),
+            catch: (cause) => new WaitEventPredicateError({ message: "Global event predicate failed", cause }),
+          }),
+        ),
+        Effect.repeat({ until: (done) => done }),
+        Effect.asVoid,
+      )
+      const signal = input.signal
+      return yield* signal ? Effect.raceFirst(matched, abortion(signal)) : matched
+    }),
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: input.timeout,
+      orElse: () =>
+        Effect.fail(
+          new WaitEventTimeoutError({ message: "Timed out waiting for global event", timeout: input.timeout }),
+        ),
+    }),
+  )
 }
+
+// Fails with the abort reason when the caller aborts the wait.
+const abortion = (signal: AbortSignal) =>
+  Effect.callback<never, WaitEventAbortedError>((resume) => {
+    const abort = () => resume(Effect.fail(aborted(signal)))
+    // The signal can abort between the eager check and the start of this fiber.
+    if (signal.aborted) return abort()
+    signal.addEventListener("abort", abort, { once: true })
+    return Effect.sync(() => signal.removeEventListener("abort", abort))
+  })

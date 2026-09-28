@@ -35,7 +35,7 @@ describe("resolveServerList", () => {
       password: "secret",
     })
     expect(list[0]?.type === "http" ? list[0].authToken : false).toBe(true)
-    expect(ServerConnection.key(list[0]!) as string).toBe("https://server.example.test")
+    expect(ServerConnection.key(list[0]) as string).toBe("https://server.example.test")
   })
 
   test("keeps persisted credentials when startup has no auth_token", () => {
@@ -96,18 +96,20 @@ test("active server removal falls back across built-in and persisted servers", (
 })
 
 describe("createServerProjects", () => {
+  const debianScope = () => ServerScope.fromServerKey(ServerConnection.Key.make("https://debian.example"))
+
   test("keeps active and explicit server buckets in one reactive store", () => {
     createRoot((dispose) => {
       const [scope] = createSignal(ServerScope.local)
       const [store, setStore] = createStore({ projects: {}, lastProject: {}, recentlyClosed: {} })
       const active = createServerProjects({ scope, store, setStore })
-      const remote = createServerProjects({ scope: () => "https://debian.example" as ServerScope, store, setStore })
+      const remote = createServerProjects({ scope: debianScope, store, setStore })
 
       remote.open("/repo")
       expect(remote.list()).toEqual([{ worktree: "/repo", expanded: true }])
       expect(active.list()).toEqual([])
 
-      const adopted = createServerProjects({ scope: () => "https://debian.example" as ServerScope, store, setStore })
+      const adopted = createServerProjects({ scope: debianScope, store, setStore })
       expect(adopted.list()).toEqual([{ worktree: "/repo", expanded: true }])
 
       adopted.close("/repo")

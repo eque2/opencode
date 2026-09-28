@@ -1,41 +1,46 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { Effect, HashSet, MutableHashSet, Option } from "effect"
 
 let shouldListRoot: typeof import("./file-tree").shouldListRoot
 let shouldListExpanded: typeof import("./file-tree").shouldListExpanded
 let dirsToExpand: typeof import("./file-tree").dirsToExpand
 
-beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
-    useNavigate: () => () => undefined,
-    useParams: () => ({}),
-    useLocation: () => ({}),
-    useSearchParams: () => [{}, () => undefined],
-  }))
-  mock.module("@/context/file", () => ({
-    useFile: () => ({
-      tree: {
-        state: () => undefined,
-        list: () => Promise.resolve(),
-        children: () => [],
-        expand: () => {},
-        collapse: () => {},
-      },
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@solidjs/router", () => ({
+        useNavigate: () => () => {},
+        useParams: () => ({}),
+        useLocation: () => ({}),
+        useSearchParams: () => [{}, () => {}],
+      }))
+      mock.module("@/context/file", () => ({
+        useFile: () => ({
+          tree: {
+            state: () => {},
+            list: () => Effect.runPromise(Effect.void),
+            children: () => [],
+            expand: () => {},
+            collapse: () => {},
+          },
+        }),
+      }))
+      mock.module("@opencode-ai/ui/collapsible", () => ({
+        Collapsible: {
+          Trigger: (props: { children?: unknown }) => props.children,
+          Content: (props: { children?: unknown }) => props.children,
+        },
+      }))
+      mock.module("@opencode-ai/ui/file-icon", () => ({ FileIcon: () => [] }))
+      mock.module("@opencode-ai/ui/icon", () => ({ Icon: () => [] }))
+      mock.module("@opencode-ai/ui/tooltip", () => ({ Tooltip: (props: { children?: unknown }) => props.children }))
+      const mod = yield* Effect.promise(() => import("./file-tree"))
+      shouldListRoot = mod.shouldListRoot
+      shouldListExpanded = mod.shouldListExpanded
+      dirsToExpand = mod.dirsToExpand
     }),
-  }))
-  mock.module("@opencode-ai/ui/collapsible", () => ({
-    Collapsible: {
-      Trigger: (props: { children?: unknown }) => props.children,
-      Content: (props: { children?: unknown }) => props.children,
-    },
-  }))
-  mock.module("@opencode-ai/ui/file-icon", () => ({ FileIcon: () => null }))
-  mock.module("@opencode-ai/ui/icon", () => ({ Icon: () => null }))
-  mock.module("@opencode-ai/ui/tooltip", () => ({ Tooltip: (props: { children?: unknown }) => props.children }))
-  const mod = await import("./file-tree")
-  shouldListRoot = mod.shouldListRoot
-  shouldListExpanded = mod.shouldListExpanded
-  dirsToExpand = mod.dirsToExpand
-})
+  ),
+)
 
 describe("file tree fetch discipline", () => {
   test("root lists on mount unless already loaded or loading", () => {
@@ -55,23 +60,23 @@ describe("file tree fetch discipline", () => {
   })
 
   test("allowed auto-expand picks only collapsed dirs", () => {
-    const expanded = new Set<string>()
-    const filter = { dirs: new Set(["src", "src/components"]) }
+    const expanded = MutableHashSet.empty<string>()
+    const filter = Option.some({ dirs: HashSet.make("src", "src/components") })
 
     const first = dirsToExpand({
       level: 0,
       filter,
-      expanded: (dir) => expanded.has(dir),
+      expanded: (dir) => MutableHashSet.has(expanded, dir),
     })
 
     expect(first).toEqual(["src", "src/components"])
 
-    for (const dir of first) expanded.add(dir)
+    for (const dir of first) MutableHashSet.add(expanded, dir)
 
     const second = dirsToExpand({
       level: 0,
       filter,
-      expanded: (dir) => expanded.has(dir),
+      expanded: (dir) => MutableHashSet.has(expanded, dir),
     })
 
     expect(second).toEqual([])

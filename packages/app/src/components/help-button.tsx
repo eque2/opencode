@@ -10,9 +10,6 @@ import introducingTabsVideo from "@/assets/help/introducing-tabs.mp4"
 import homeImage from "@/assets/help/home.png"
 import tabsImage from "@/assets/help/tabs.png"
 
-// TODO: wire to changelog / seen-state when available
-const showPopover = () => true
-
 // can remove this after the tabs rollout has been out for a while
 export function TabsInfoPopup() {
   const settings = useSettings()
@@ -33,7 +30,7 @@ export function TabsInfoPopup() {
             type="button"
             aria-label={language.t("help.tabs.toast.dismiss")}
             class="absolute top-3 end-3 z-10 size-5 flex items-center justify-center rounded-[4px] bg-[rgba(0,0,0,0.4)]"
-            onClick={settings.general.dismissTabsToast}
+            onClick={() => settings.general.dismissTabsToast()}
           >
             <svg
               width="16"
@@ -87,7 +84,7 @@ export function TabsInfoPopup() {
                 "max-width": "100vw",
                 "border-radius": "0",
               }
-            : undefined
+            : {}
         }
       >
         <Show when={windows()}>

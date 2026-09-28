@@ -20,6 +20,24 @@ import { showToast } from "@/utils/toast"
 import { canStartTabDrag, isTabCloseTarget } from "./titlebar-tab-gesture"
 import { adjacentTabKey, mergeVisibleTabOrder } from "./titlebar-tab-order"
 import type { Session } from "@opencode-ai/sdk/v2"
+import { Data, Effect, Equivalence, Option } from "effect"
+
+/** A session rename request that rejected. `cause` is the original rejection. */
+class TabRenameError extends Data.TaggedError("App.TabRenameError")<{ readonly cause: unknown }> {}
+
+/** A session prefetch for a tab that threw or rejected. `cause` is the original error. */
+class TabPrefetchError extends Data.TaggedError("App.TabPrefetchError")<{ readonly cause: unknown }> {}
+
+/** A session lookup for a tab that rejected. `cause` is the original rejection. */
+class TabSessionError extends Data.TaggedError("App.TabSessionError")<{ readonly cause: unknown }> {}
+
+/** Compares two Options by the identity of their values, as a memo compares plain values. */
+const sameOption = Option.makeEquivalence(Equivalence.strictEqual<unknown>())
+
+/** Runs tab strip work in the background. A defect goes to the Effect logger. */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -27,8 +45,8 @@ function SessionTabSlot(props: {
   index: () => number
   active: () => boolean
   forceTruncate: boolean
-  session: () => Session | undefined
-  fallbackTitle?: string
+  session: () => Option.Option<Session>
+  fallbackTitle: Option.Option<string>
   onRename: (title: string) => Promise<void>
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -83,69 +101,109 @@ function SessionTabEntry(props: {
 }) {
   const tabs = useTabs()
   const language = useLanguage()
-  const sdk = createMemo(() => props.serverCtx()?.sdk ?? null)
+  const sdk = createMemo(() => props.serverCtx()?.sdk)
   const cachedSession = createMemo(() => props.serverCtx()?.sync.session.peek(props.tab.sessionId))
   const persisted = createMemo(() => tabs.info[props.id])
   const [loadedSession] = createResource(
     () => {
       const ctx = props.serverCtx()
-      return ctx ? { id: props.tab.sessionId, ctx } : null
+      if (!ctx) return undefined
+      return { id: props.tab.sessionId, ctx }
     },
-    ({ id, ctx }) => ctx.sync.session.resolve(id).catch(() => undefined),
+    // A lookup that fails reads as no session, as the `.catch` did before.
+    ({ id, ctx }) =>
+      Effect.runPromise(
+        Effect.tryPromise({
+          try: () => ctx.sync.session.resolve(id),
+          catch: (cause) => new TabSessionError({ cause }),
+        }).pipe(
+          Effect.map((value) => Option.fromNullishOr(value)),
+          Effect.catch(() => Effect.succeed(Option.none())),
+        ),
+      ),
   )
-  const session = createMemo(() => cachedSession() ?? loadedSession())
-  const missingSession = createMemo(() => !!props.serverCtx() && !loadedSession.loading && !session())
-  const visible = createMemo(() => !!session() || missingSession() || !!persisted()?.title)
+  const session = createMemo(
+    () => Option.orElse(Option.fromNullishOr(cachedSession()), () => loadedSession() ?? Option.none()),
+    Option.none(),
+    { equals: sameOption },
+  )
+  const missingSession = createMemo(() => !!props.serverCtx() && !loadedSession.loading && Option.isNone(session()))
+  const visible = createMemo(() => Option.isSome(session()) || missingSession() || !!persisted()?.title)
+  // The remembered title, else the unknown-session label once the lookup found nothing.
+  const fallbackTitle = () =>
+    Option.orElse(Option.fromNullishOr(persisted()?.title), () =>
+      missingSession() ? Option.some(language.t("session.tab.unknown")) : Option.none(),
+    )
   let prefetched = false
 
-  const rename = async (title: string) => {
-    const value = session()
-    const ctx = props.serverCtx()
-    if (!value || !ctx) return
+  // Shows the new title at once. A failed request restores the old title and shows a toast, so the Promise never rejects.
+  const rename = (title: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const value = session()
+        const ctx = props.serverCtx()
+        if (Option.isNone(value) || !ctx) return
+        const info = value.value
 
-    ctx.sync.session.remember({ ...value, title })
-    try {
-      await ctx.sdk.api.session.rename({ sessionID: value.id, title })
-    } catch (err) {
-      const current = session()
-      const currentCtx = props.serverCtx()
-      if (current && currentCtx) currentCtx.sync.session.remember({ ...current, title: value.title })
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: err instanceof Error ? err.message : undefined,
-      })
-    }
-  }
+        ctx.sync.session.remember({ ...info, title })
+        yield* Effect.tryPromise({
+          try: () => ctx.sdk.api.session.rename({ sessionID: info.id, title }),
+          catch: (cause) => new TabRenameError({ cause }),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              const current = session()
+              const currentCtx = props.serverCtx()
+              if (Option.isSome(current) && currentCtx) {
+                currentCtx.sync.session.remember({ ...current.value, title: info.title })
+              }
+              showToast({
+                title: language.t("common.requestFailed"),
+                ...(error.cause instanceof Error ? { description: error.cause.message } : {}),
+              })
+            }),
+          ),
+        )
+      }),
+    )
 
   createEffect(() => props.onVisibleChange(visible()))
 
   createEffect(() => {
     const ctx = props.serverCtx()
     const value = session()
-    if (!ctx || !value || prefetched) return
+    if (!ctx || Option.isNone(value) || prefetched) return
+    const info = value.value
     prefetched = true
+    // The directory sync context is created synchronously under this root. A failed prefetch is ignored.
     createRoot((dispose) => {
-      try {
-        void ctx.sync
-          .ensureDirSyncContext(value.directory)
-          .session.sync(value.id)
-          .catch(() => {})
-          .finally(dispose)
-      } catch {
-        dispose()
-      }
+      runDetached(
+        Effect.try({
+          try: () => ctx.sync.ensureDirSyncContext(info.directory),
+          catch: (cause) => new TabPrefetchError({ cause }),
+        }).pipe(
+          Effect.flatMap((dir) =>
+            Effect.tryPromise({
+              try: () => dir.session.sync(info.id),
+              catch: (cause) => new TabPrefetchError({ cause }),
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(Effect.sync(dispose)),
+        ),
+      )
     })
   })
 
   createEffect(() => {
     const value = session()
-    if (!value) return
-    tabs.rememberSessionInfo(props.tab, value)
+    if (Option.isNone(value)) return
+    tabs.rememberSessionInfo(props.tab, value.value)
     const current = sdk()
     if (!current) return
     createTabPromptState(tabs, props.tab, current.scope, {
-      dir: base64Encode(value.directory),
-      id: value.id,
+      dir: base64Encode(value.value.directory),
+      id: value.value.id,
     })
   })
 
@@ -158,7 +216,7 @@ function SessionTabEntry(props: {
         active={props.active}
         forceTruncate={props.forceTruncate}
         session={session}
-        fallbackTitle={persisted()?.title ?? (missingSession() ? language.t("session.tab.unknown") : undefined)}
+        fallbackTitle={fallbackTitle()}
         onRename={rename}
         onNavigate={props.onNavigate}
         onClose={props.onClose}
@@ -213,7 +271,8 @@ export function TitlebarTabStrip(props: {
   tabs: Tab[]
   currentTab: () => Tab | undefined
   forceTruncate: boolean
-  onNavigate: (tab: Tab, el?: HTMLDivElement) => void
+  /** Selects `tab`. `el` is the tab element to scroll into view, when the strip knows it. */
+  onNavigate: (tab: Tab, el: Option.Option<HTMLDivElement>) => void
   onClose: (tab: Tab) => void
   onReorder: (keys: string[]) => void
   onOverflowChange: (overflowing: boolean) => void
@@ -223,7 +282,7 @@ export function TitlebarTabStrip(props: {
   const command = useCommand()
   let scrollRef!: HTMLDivElement
   let listRef!: HTMLDivElement
-  let resizeFrame: number | undefined
+  let resizeFrame = Option.none<number>()
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
   const visibleTabs = createMemo(() => props.tabs.filter((tab) => tab.type === "draft" || visibility[tabKey(tab)]))
   const visibleTabIds = () => visibleTabs().map(tabKey)
@@ -249,9 +308,9 @@ export function TitlebarTabStrip(props: {
 
   function selectAdjacentTab(offset: -1 | 1) {
     const current = props.currentTab()
-    const key = adjacentTabKey(visibleTabIds(), current ? tabKey(current) : undefined, offset)
+    const key = adjacentTabKey(visibleTabIds(), current && tabKey(current), offset)
     const next = props.tabs.find((tab) => tabKey(tab) === key)
-    if (next) props.onNavigate(next)
+    if (next) props.onNavigate(next, Option.none())
   }
 
   function refreshOverflow() {
@@ -262,11 +321,13 @@ export function TitlebarTabStrip(props: {
   createResizeObserver(
     () => [scrollRef, listRef],
     () => {
-      if (resizeFrame !== undefined) return
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = undefined
-        refreshOverflow()
-      })
+      if (Option.isSome(resizeFrame)) return
+      resizeFrame = Option.some(
+        requestAnimationFrame(() => {
+          resizeFrame = Option.none()
+          refreshOverflow()
+        }),
+      )
     },
   )
 
@@ -275,7 +336,7 @@ export function TitlebarTabStrip(props: {
   })
 
   onCleanup(() => {
-    if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+    if (Option.isSome(resizeFrame)) cancelAnimationFrame(resizeFrame.value)
   })
 
   createEffect(() => {
@@ -305,6 +366,7 @@ export function TitlebarTabStrip(props: {
           plugins={(defaults) => [
             ...defaults.filter((plugin) => plugin !== Accessibility),
             AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+            // eslint-disable-next-line effect/no-null-use-option -- (a) @dnd-kit/dom FeedbackOptions.dropAnimation takes null to turn off the drop animation; undefined keeps the default animation
             Feedback.configure({ dropAnimation: null }),
           ]}
           onDragStart={(event) => {
@@ -312,8 +374,10 @@ export function TitlebarTabStrip(props: {
             if (!source) return
             const tab = props.tabs.find((item) => tabKey(item) === source.id.toString())
             if (!tab) return
-            const tabEl = source.element?.querySelector<HTMLDivElement>("[data-titlebar-tab]")
-            props.onNavigate(tab, tabEl ?? undefined)
+            props.onNavigate(
+              tab,
+              Option.fromNullishOr(source.element?.querySelector<HTMLDivElement>("[data-titlebar-tab]")),
+            )
           }}
           onDragEnd={(event) => {
             const current = visibleTabIds()
@@ -336,13 +400,15 @@ export function TitlebarTabStrip(props: {
             <For each={props.tabs}>
               {(tab) => {
                 const id = tabKey(tab)
-                let ref!: HTMLDivElement
+                // The tab element, known once the tab has been navigated from its own element.
+                let ref = Option.none<HTMLDivElement>()
                 const visibleIndex = () => visibleTabs().findIndex((item) => tabKey(item) === id)
                 useTabShortcut(visibleIndex, () => props.onNavigate(tab, ref))
                 const serverCtx = createMemo(() => {
-                  if (tab.type !== "session") return
+                  if (tab.type !== "session") return undefined
                   const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
                   if (conn) return global.ensureServerCtx(conn)
+                  return undefined
                 })
 
                 if (tab.type === "session") {
@@ -356,8 +422,8 @@ export function TitlebarTabStrip(props: {
                       serverCtx={serverCtx}
                       onVisibleChange={(visible) => setVisibility(id, visible)}
                       onNavigate={(element) => {
-                        ref = element
-                        props.onNavigate(tab, element)
+                        ref = Option.some(element)
+                        props.onNavigate(tab, ref)
                       }}
                       onClose={() => props.onClose(tab)}
                     />
@@ -372,8 +438,8 @@ export function TitlebarTabStrip(props: {
                     active={() => props.currentTab() === tab}
                     title={language.t("command.session.new")}
                     onNavigate={(element) => {
-                      ref = element
-                      props.onNavigate(tab, element)
+                      ref = Option.some(element)
+                      props.onNavigate(tab, ref)
                     }}
                     onClose={() => props.onClose(tab)}
                   />

@@ -6,6 +6,7 @@ import { useBindings, useKeymapSelector } from "../../keymap"
 import type { ActiveKey } from "@opentui/keymap"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
+import { Array, Effect, Option, Record } from "effect"
 
 const command = {
   toggle: "which-key.toggle",
@@ -38,7 +39,6 @@ const COLUMN_GAP = 4
 const TAB_GAP = 3
 const MIN_TAB_GAP = 1
 const TAB_CONTENT_GAP = 1
-const MIN_COLUMN_WIDTH = 28
 const MAX_COLUMN_WIDTH = 44
 const PANEL_HEIGHT_RATIO = 0.3
 const MIN_PANEL_HEIGHT = 8
@@ -85,10 +85,14 @@ type GroupHeader = {
 
 type Item = Entry | GroupHeader
 
-function text(value: unknown) {
-  if (typeof value !== "string") return undefined
-  const trimmed = value.trim()
-  return trimmed || undefined
+function text(value: unknown): Option.Option<string> {
+  if (typeof value !== "string") return Option.none()
+  return Option.liftPredicate(value.trim(), (trimmed) => trimmed.length > 0)
+}
+
+// The first value that is a non-blank string, trimmed, or UNKNOWN.
+function firstText(...values: ReadonlyArray<unknown>) {
+  return Option.getOrElse(Option.firstSomeOf(values.map(text)), () => UNKNOWN)
 }
 
 function ink(api: TuiPluginApi, name: string, fallback: string): Color {
@@ -112,15 +116,13 @@ function skin(api: TuiPluginApi): Skin {
 }
 
 function activeKeyLabel(active: ActiveKey<Renderable, KeyEvent>) {
-  if (active.continues) return text(active.tokenName) ?? text(active.display) ?? UNKNOWN
-  return (
-    text(active.commandAttrs?.title) ?? text(active.bindingAttrs?.desc) ?? text(active.commandAttrs?.desc) ?? UNKNOWN
-  )
+  if (active.continues) return firstText(active.tokenName, active.display)
+  return firstText(active.commandAttrs?.title, active.bindingAttrs?.desc, active.commandAttrs?.desc)
 }
 
 function activeKeyGroup(active: ActiveKey<Renderable, KeyEvent>) {
   if (active.continues) return "System"
-  return text(active.commandAttrs?.category) ?? text(active.bindingAttrs?.group) ?? UNKNOWN
+  return firstText(active.commandAttrs?.category, active.bindingAttrs?.group)
 }
 
 function activeKeyEntry(api: TuiPluginApi, active: ActiveKey<Renderable, KeyEvent>): Entry {
@@ -142,9 +144,7 @@ function activeKeyEntry(api: TuiPluginApi, active: ActiveKey<Renderable, KeyEven
 }
 
 function grouped(entries: Entry[]): Group[] {
-  const map = new Map<string, Entry[]>()
-  for (const entry of entries) map.set(entry.group, [...(map.get(entry.group) ?? []), entry])
-  return [...map]
+  return Record.toEntries(Array.groupBy(entries, (entry) => entry.group))
     .map(([label, entries]) => ({
       label,
       entries: entries.toSorted(
@@ -232,20 +232,9 @@ function WhichKeyPanel(props: {
     return groups().flatMap((group) => [{ type: "group", label: group.label } satisfies GroupHeader, ...group.entries])
   })
   const maxOffset = createMemo(() => Math.max(0, items().length - pageSize()))
-  const shown = createMemo(() => {
-    const columnsItems: Item[][] = []
-    let index = offset()
-    for (let column = 0; column < columns() && index < items().length; column++) {
-      const list: Item[] = []
-      while (list.length < rows() && index < items().length) {
-        list.push(items()[index]!)
-        index += 1
-      }
-      columnsItems.push(list)
-    }
-    return columnsItems
-  })
-  const rowIndexes = createMemo(() => Array.from({ length: rows() }, (_, index) => index))
+  // Fill up to columns() columns of rows() items each, starting at the scroll offset.
+  const shown = createMemo(() => Array.chunksOf(items().slice(offset(), offset() + columns() * rows()), rows()))
+  const rowIndexes = createMemo(() => Array.makeBy(rows(), (index) => index))
   const trigger = commandShortcut(props.api, command.toggle)
   const modeTrigger = commandShortcut(props.api, command.toggleLayout)
   const upActive = createMemo(() => offset() > 0)
@@ -279,7 +268,7 @@ function WhichKeyPanel(props: {
       0,
       list.findIndex((item) => item.label === currentGroup()?.label),
     )
-    setActiveGroup(list[(index + delta + list.length) % list.length]!.label)
+    setActiveGroup(list[(index + delta + list.length) % list.length].label)
     setOffset(0)
   }
 
@@ -397,7 +386,7 @@ function WhichKeyPanel(props: {
         position={props.layout === "overlay" ? "absolute" : "relative"}
         zIndex={3500}
         left={left}
-        bottom={props.layout === "overlay" ? 0 : undefined}
+        {...(props.layout === "overlay" ? { bottom: 0 } : {})}
         width={dimensions().width}
         height={panelHeight()}
         backgroundColor={look().panel}
@@ -412,7 +401,7 @@ function WhichKeyPanel(props: {
             <For each={headerItems()}>
               {(item) => (
                 <Show
-                  when={item.type === "tab" ? item.group : undefined}
+                  when={item.type === "tab" && item.group}
                   fallback={
                     <box flexShrink={0}>
                       <text wrapMode="none">
@@ -430,7 +419,7 @@ function WhichKeyPanel(props: {
                         paddingLeft={1}
                         paddingRight={1}
                         flexShrink={0}
-                        backgroundColor={selected() ? look().tab : undefined}
+                        backgroundColor={selected() ? look().tab : "transparent"}
                         onMouseDown={() => {
                           setActiveGroup(group().label)
                           setOffset(0)
@@ -438,7 +427,7 @@ function WhichKeyPanel(props: {
                       >
                         <text
                           fg={selected() ? look().tabText : look().muted}
-                          attributes={selected() ? TextAttributes.BOLD : undefined}
+                          attributes={selected() ? TextAttributes.BOLD : TextAttributes.NONE}
                           wrapMode="none"
                         >
                           {group().label}
@@ -529,75 +518,78 @@ function WhichKeyPanel(props: {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  const [pinned, setPinned] = createSignal(false)
-  const [mode, setMode] = createSignal(layout(api.kv.get(KV_LAYOUT, "dock")))
-  const [pendingPreview, setPendingPreview] = createSignal(api.kv.get(KV_PENDING_PREVIEW, false))
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      const [pinned, setPinned] = createSignal(false)
+      const [mode, setMode] = createSignal(layout(api.kv.get(KV_LAYOUT, "dock")))
+      const [pendingPreview, setPendingPreview] = createSignal(api.kv.get(KV_PENDING_PREVIEW, false))
 
-  api.keymap.registerLayer({
-    priority: LAYER_PRIORITY,
-    commands: [
-      {
-        name: command.toggle,
-        title: "Show key bindings",
-        desc: "Toggle which-key overlay",
-        category: "System",
-        run() {
-          setPinned((value) => !value)
-        },
-      },
-      {
-        name: command.toggleLayout,
-        title: "Toggle key bindings layout",
-        desc: "Switch which-key between dock and overlay mode",
-        category: "System",
-        run() {
-          setMode((value) => {
-            const next = value === "dock" ? "overlay" : "dock"
-            api.kv.set(KV_LAYOUT, next)
-            return next
-          })
-        },
-      },
-      {
-        name: command.togglePending,
-        title: "Toggle pending key preview",
-        desc: "Automatically show which-key for pending key sequences in overlay mode",
-        category: "System",
-        run() {
-          setPendingPreview((value) => {
-            api.kv.set(KV_PENDING_PREVIEW, !value)
-            return !value
-          })
-        },
-      },
-    ],
-    bindings: api.tuiConfig.keybinds.gather("which-key.toggle", toggleCommands),
-  })
+      api.keymap.registerLayer({
+        priority: LAYER_PRIORITY,
+        commands: [
+          {
+            name: command.toggle,
+            title: "Show key bindings",
+            desc: "Toggle which-key overlay",
+            category: "System",
+            run() {
+              setPinned((value) => !value)
+            },
+          },
+          {
+            name: command.toggleLayout,
+            title: "Toggle key bindings layout",
+            desc: "Switch which-key between dock and overlay mode",
+            category: "System",
+            run() {
+              setMode((value) => {
+                const next = value === "dock" ? "overlay" : "dock"
+                api.kv.set(KV_LAYOUT, next)
+                return next
+              })
+            },
+          },
+          {
+            name: command.togglePending,
+            title: "Toggle pending key preview",
+            desc: "Automatically show which-key for pending key sequences in overlay mode",
+            category: "System",
+            run() {
+              setPendingPreview((value) => {
+                api.kv.set(KV_PENDING_PREVIEW, !value)
+                return !value
+              })
+            },
+          },
+        ],
+        bindings: api.tuiConfig.keybinds.gather("which-key.toggle", toggleCommands),
+      })
 
-  api.slots.register({
-    order: 200,
-    slots: {
-      home_bottom() {
-        return <HomeHint api={api} />
-      },
-      app() {
-        return (
-          <Show when={mode() === "overlay"}>
-            <WhichKeyPanel api={api} layout="overlay" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
-          </Show>
-        )
-      },
-      app_bottom() {
-        return (
-          <Show when={mode() === "dock"}>
-            <WhichKeyPanel api={api} layout="dock" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
-          </Show>
-        )
-      },
-    },
-  })
-}
+      api.slots.register({
+        order: 200,
+        slots: {
+          home_bottom() {
+            return <HomeHint api={api} />
+          },
+          app() {
+            return (
+              <Show when={mode() === "overlay"}>
+                <WhichKeyPanel api={api} layout="overlay" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
+              </Show>
+            )
+          },
+          app_bottom() {
+            return (
+              <Show when={mode() === "dock"}>
+                <WhichKeyPanel api={api} layout="dock" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
+              </Show>
+            )
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id: "which-key",

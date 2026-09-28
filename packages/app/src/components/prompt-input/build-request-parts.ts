@@ -1,4 +1,5 @@
 import { getFilename } from "@opencode-ai/core/util/path"
+import { MutableHashSet } from "effect"
 import { type AgentPartInput, type FilePartInput, type Part, type TextPartInput } from "@opencode-ai/sdk/v2/client"
 import type { FileSelection } from "@/context/file"
 import { encodeFilePath } from "@/context/file/path"
@@ -89,7 +90,7 @@ const toOptimisticPart = (part: PromptRequestPart, sessionID: string, messageID:
 }
 
 export function buildRequestParts(input: BuildRequestPartsInput) {
-  const requestParts: PromptRequestPart[] = input.text.trim()
+  const textParts: PromptRequestPart[] = input.text.trim()
     ? [
         {
           id: Identifier.ascending("part"),
@@ -142,13 +143,13 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
     } satisfies PromptRequestPart
   })
 
-  const used = new Set(files.map((part) => part.url))
+  const used = MutableHashSet.fromIterable(files.map((part) => part.url))
   const context = input.context.flatMap((item) => {
     const path = absolute(input.sessionDirectory, item.path)
     const url = `file://${encodeFilePath(path)}${fileQuery(item.selection)}`
     const comment = item.comment?.trim()
-    if (!comment && used.has(url)) return []
-    used.add(url)
+    if (!comment && MutableHashSet.has(used, url)) return []
+    MutableHashSet.add(used, url)
 
     const filePart = {
       id: Identifier.ascending("part"),
@@ -162,8 +163,8 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
 
     const mentions = parseCommentMentions(comment).flatMap((path) => {
       const url = `file://${encodeFilePath(absolute(input.sessionDirectory, path))}`
-      if (used.has(url)) return []
-      used.add(url)
+      if (MutableHashSet.has(used, url)) return []
+      MutableHashSet.add(used, url)
       return [
         {
           id: Identifier.ascending("part"),
@@ -204,7 +205,7 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
     } satisfies PromptRequestPart
   })
 
-  requestParts.push(...files, ...context, ...agents, ...images)
+  const requestParts: PromptRequestPart[] = [...textParts, ...files, ...context, ...agents, ...images]
 
   return {
     requestParts,

@@ -1,4 +1,5 @@
 import type { AssistantMessage, Part, Provider, UserMessage } from "@opencode-ai/sdk/v2"
+import { DateTime, HashMap, Schema } from "effect"
 import { Locale } from "./locale"
 import * as Model from "./model"
 
@@ -31,8 +32,8 @@ export function formatTranscript(
   const providers = Model.index(options.providers)
   let transcript = `# ${session.title}\n\n`
   transcript += `**Session ID:** ${session.id}\n`
-  transcript += `**Created:** ${new Date(session.time.created).toLocaleString()}\n`
-  transcript += `**Updated:** ${new Date(session.time.updated).toLocaleString()}\n\n`
+  transcript += `**Created:** ${localeTimestamp(session.time.created)}\n`
+  transcript += `**Updated:** ${localeTimestamp(session.time.updated)}\n\n`
   transcript += `---\n\n`
 
   for (const msg of messages.toSorted(
@@ -45,11 +46,19 @@ export function formatTranscript(
   return transcript
 }
 
+// Tool input is untyped wire JSON; the transcript prints it as indented JSON text.
+const encodeToolInput = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
+// The transcript shows times in the reader's locale, so the DateTime crosses to a Date only for Intl formatting.
+function localeTimestamp(epochMillis: number) {
+  return DateTime.toDate(DateTime.makeUnsafe(epochMillis)).toLocaleString()
+}
+
 export function formatMessage(
   msg: UserMessage | AssistantMessage,
   parts: Part[],
   options: TranscriptOptions,
-  providers?: Provider[] | ReadonlyMap<string, Provider>,
+  providers?: Provider[] | HashMap.HashMap<string, Provider>,
 ): string {
   let result = ""
 
@@ -69,7 +78,7 @@ export function formatMessage(
 export function formatAssistantHeader(
   msg: AssistantMessage,
   includeMetadata: boolean,
-  providers?: Provider[] | ReadonlyMap<string, Provider>,
+  providers?: Provider[] | HashMap.HashMap<string, Provider>,
 ): string {
   if (!includeMetadata) {
     return `## Assistant\n\n`
@@ -98,7 +107,7 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
   if (part.type === "tool") {
     let result = `**Tool: ${part.tool}**\n`
     if (options.toolDetails && part.state.input) {
-      result += `\n**Input:**\n\`\`\`json\n${JSON.stringify(part.state.input, null, 2)}\n\`\`\`\n`
+      result += `\n**Input:**\n\`\`\`json\n${encodeToolInput(part.state.input)}\n\`\`\`\n`
     }
     if (options.toolDetails && part.state.status === "completed" && part.state.output) {
       result += `\n**Output:**\n\`\`\`\n${part.state.output}\n\`\`\`\n`

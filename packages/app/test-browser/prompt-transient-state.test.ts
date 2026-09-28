@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Option } from "effect"
 import { createRoot, createSignal } from "solid-js"
 import { createPromptInputTransientState } from "@/components/prompt-input/transient-state"
 
@@ -7,15 +8,15 @@ test("resets transient prompt input state when the prompt session changes", () =
     const [identity, setIdentity] = createSignal("A")
     const [state, setState] = createPromptInputTransientState(identity, 3)
     setState({
-      popover: "slash",
+      popover: Option.some("slash"),
       slashMenu: true,
       slashMenuQuery: "compact",
       historyIndex: 2,
-      savedPrompt: {
+      savedPrompt: Option.some({
         prompt: [{ type: "text", content: "draft-A", start: 0, end: 7 }],
         comments: [],
-      },
-      draggingType: "image",
+      }),
+      draggingType: Option.some("image"),
       mode: "shell",
       applyingHistory: true,
     })
@@ -23,13 +24,13 @@ test("resets transient prompt input state when the prompt session changes", () =
     setIdentity("B")
 
     expect(state).toMatchObject({
-      popover: null,
+      popover: Option.none(),
       slashMenu: false,
       slashMenuQuery: "",
       historyIndex: -1,
-      savedPrompt: null,
+      savedPrompt: Option.none(),
       placeholder: 3,
-      draggingType: null,
+      draggingType: Option.none(),
       mode: "normal",
       applyingHistory: false,
     })

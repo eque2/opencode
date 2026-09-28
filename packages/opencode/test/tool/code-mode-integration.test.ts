@@ -10,14 +10,14 @@ import * as Truncate from "@/tool/truncate"
 import { MessageID, SessionID } from "@/session/schema"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import {
   CallToolRequestSchema,
-  LATEST_PROTOCOL_VERSION,
   ListToolsRequestSchema,
   type Tool as MCPToolDef,
 } from "@modelcontextprotocol/sdk/types.js"
-import { Cause, Effect, Exit, Layer } from "effect"
+import { Cause, Effect, Exit, Layer, Schema } from "effect"
+import { ProjectV2 } from "@opencode-ai/core/project"
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
@@ -32,48 +32,6 @@ const ctx: Tool.Context = {
   messages: [],
   metadata: () => Effect.void,
   ask: () => Effect.void,
-}
-
-// Avoid the SDK Client here; other MCP tests mock it process-globally.
-class RawJsonRpcClient {
-  private nextId = 1
-  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>()
-
-  constructor(private transport: InMemoryTransport) {}
-
-  async connect() {
-    this.transport.onmessage = (message) => {
-      const msg = message as { id?: number; result?: unknown; error?: { message: string } }
-      if (msg.id === undefined) return
-      const entry = this.pending.get(msg.id)
-      if (!entry) return
-      this.pending.delete(msg.id)
-      if (msg.error) entry.reject(new Error(msg.error.message))
-      else entry.resolve(msg.result)
-    }
-    await this.transport.start()
-    await this.request("initialize", {
-      protocolVersion: LATEST_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: "test-client", version: "1.0.0" },
-    })
-    await this.transport.send({ jsonrpc: "2.0", method: "notifications/initialized" })
-  }
-
-  private request(method: string, params: unknown): Promise<any> {
-    const id = this.nextId++
-    const result = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }))
-    void this.transport.send({ jsonrpc: "2.0", id, method, params } as never)
-    return result
-  }
-
-  listTools() {
-    return this.request("tools/list", {})
-  }
-
-  callTool(params: { name: string; arguments?: Record<string, unknown> }, _schema?: unknown, _options?: unknown) {
-    return this.request("tools/call", params)
-  }
 }
 
 const TOOL_DEFS: MCPToolDef[] = [
@@ -103,9 +61,10 @@ const TOOL_DEFS: MCPToolDef[] = [
 function handleCall(name: string, args: Record<string, unknown>) {
   switch (name) {
     case "get_text":
-      return { content: [{ type: "text", text: `hello ${args.name}` }] }
+      return { content: [{ type: "text", text: `hello ${String(args.name)}` }] }
     case "add": {
-      const sum = (args.a as number) + (args.b as number)
+      const { a, b } = Schema.decodeUnknownSync(Schema.Struct({ a: Schema.Number, b: Schema.Number }))(args)
+      const sum = a + b
       return { content: [{ type: "text", text: String(sum) }], structuredContent: { sum } }
     }
     case "screenshot":
@@ -124,33 +83,43 @@ async function buildTool() {
   const server = new Server({ name: SERVER, version: "1.0.0" }, { capabilities: { tools: {} } })
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFS }))
   server.setRequestHandler(CallToolRequestSchema, async (req) =>
-    handleCall(req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>),
+    handleCall(req.params.name, req.params.arguments ?? {}),
   )
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await server.connect(serverTransport)
-  const client = new RawJsonRpcClient(clientTransport)
-  await client.connect()
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  await client.connect(clientTransport)
 
-  const listed = (await client.listTools()).tools as MCPToolDef[]
+  const listed = (await client.listTools()).tools
   const mcpTools: Record<string, MCP.McpTool> = {}
   for (const def of listed) {
-    mcpTools[McpCatalog.toolName(SERVER, def.name)] = { def, client: client as unknown as Client }
+    mcpTools[McpCatalog.toolName(SERVER, def.name)] = { def, client }
+  }
+  const passthrough: Plugin.Interface["trigger"] = (_name, _input, output) => Effect.succeed(output)
+  const session: Session.Info = {
+    id: SessionID.make("ses_code-mode-int"),
+    slug: "code-mode-int",
+    projectID: ProjectV2.ID.global,
+    directory: "/tmp/opencode",
+    title: "Code mode integration",
+    version: "1.0.0",
+    time: { created: 1, updated: 1 },
+    permission: [],
   }
 
   const layer = Layer.mergeAll(
-    Layer.mock(Plugin.Service, {
-      trigger: ((_name: unknown, _input: unknown, output: unknown) =>
-        Effect.succeed(output)) as Plugin.Interface["trigger"],
-    }),
+    Layer.mock(Plugin.Service, { trigger: passthrough }),
     Layer.mock(Truncate.Service, {
       output: (text: string) => Effect.succeed({ content: text, truncated: false as const }),
     }),
-    Layer.mock(Agent.Service, { get: () => Effect.succeed({ name: "build", permission: [] } as any) }),
-    Layer.mock(Session.Service, { get: () => Effect.succeed({ permission: [] } as any) }),
+    Layer.mock(Agent.Service, {
+      get: () => Effect.succeed({ name: "build", mode: "primary", permission: [], options: {} } satisfies Agent.Info),
+    }),
+    Layer.mock(Session.Service, { get: () => Effect.succeed(session) }),
     Layer.mock(MCP.Service, {
       tools: () => Effect.succeed(mcpTools),
-      clients: () => Effect.succeed({ [SERVER]: {} as any }),
+      clients: () => Effect.succeed({ [SERVER]: client }),
     }),
   )
   return {
@@ -164,7 +133,9 @@ const run = (code: string) => Effect.runPromise(tool.execute({ code }, ctx))
 const runFailed = async (code: string) => {
   const exit = await Effect.runPromise(tool.execute({ code }, ctx).pipe(Effect.exit))
   if (Exit.isSuccess(exit)) throw new Error("expected the tool to fail")
-  return Cause.squash(exit.cause) as Error
+  const error = Cause.squash(exit.cause)
+  if (!(error instanceof Error)) throw new Error(`expected an Error defect, got ${String(error)}`)
+  return error
 }
 
 beforeAll(async () => {

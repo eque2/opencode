@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite"
-import { statSync } from "node:fs"
-import { readFile as readFileAsync } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { Option, Schema } from "effect"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Config, Effect, FileSystem, Option, Predicate, Schema } from "effect"
 import type { EditorSelection } from "./context/editor"
 
 const ZedEditorRowSchema = Schema.Struct({
@@ -13,22 +14,36 @@ const ZedEditorRowSchema = Schema.Struct({
   workspace_paths: Schema.NullOr(Schema.String),
   timestamp: Schema.String,
   buffer_path: Schema.NullOr(Schema.String),
-})
+}).annotate({ identifier: "TuiEditorZed.EditorRow" })
 
 const ZedSelectionRowSchema = Schema.Struct({
   selection_start: Schema.NullOr(Schema.Number),
   selection_end: Schema.NullOr(Schema.Number),
-})
+}).annotate({ identifier: "TuiEditorZed.SelectionRow" })
 
 const ZedEditorContentsSchema = Schema.Struct({
   contents: Schema.NullOr(Schema.String),
-})
+}).annotate({ identifier: "TuiEditorZed.EditorContents" })
 
 const decodeZedEditorRow = Schema.decodeUnknownOption(ZedEditorRowSchema)
 const decodeZedSelectionRow = Schema.decodeUnknownOption(ZedSelectionRowSchema)
 const decodeZedEditorContents = Schema.decodeUnknownOption(ZedEditorContentsSchema)
+// Zed stores the workspace paths as a JSON array. A value that is not a JSON array holds one path per line.
+const decodeZedWorkspacePathList = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.Json)))
 
 const utf8 = new TextEncoder()
+const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
+
+const ZedTerminalEnv = Config.all({
+  zedTerm: Config.option(Config.String("ZED_TERM")),
+  termProgram: Config.option(Config.String("TERM_PROGRAM")),
+})
+const ZedDbEnv = Config.option(Config.String("OPENCODE_ZED_DB"))
+
+class ZedDatabaseError extends Schema.TaggedError<ZedDatabaseError>()("TuiEditorZed.DatabaseError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 type ZedEditorRow = Schema.Schema.Type<typeof ZedEditorRowSchema>
 type ZedActiveEditorRow = ZedEditorRow & { item_kind: "Editor"; editor_id: number }
@@ -38,18 +53,39 @@ export type ZedSelectionResult =
   | { type: "empty" }
   | { type: "unavailable" }
 
-export async function resolveZedSelection(dbPath: string, cwd = process.cwd()): Promise<ZedSelectionResult> {
-  const active = queryZedActiveEditor(dbPath, cwd)
+/** Reads the active Zed editor selection for `cwd` from the Zed database at `dbPath`. */
+export function resolveZedSelection(dbPath: string, cwd = process.cwd()): Promise<ZedSelectionResult> {
+  return Effect.runPromise(readZedSelection(dbPath, cwd))
+}
+
+/**
+ * Reads the active Zed editor selection for `directory` from the database that resolveZedDbPath finds.
+ * With no Zed database, the selection is unavailable.
+ */
+export const resolveActiveZedSelection = Effect.fn("TuiEditorZed.resolveActiveZedSelection")(function* (
+  directory: string,
+) {
+  const dbPath = yield* resolveZedDbPath()
+  if (Option.isNone(dbPath)) return { type: "unavailable" as const }
+  return yield* readZedSelection(dbPath.value, directory)
+})
+
+const readZedSelection = Effect.fn("TuiEditorZed.readZedSelection")(function* (
+  dbPath: string,
+  cwd: string,
+): Effect.fn.Return<ZedSelectionResult, never, FileSystem.FileSystem> {
+  const active = yield* queryZedActiveEditor(dbPath, cwd)
   if (active.type !== "row") return active
 
   const row = active.row
-  if (!row.buffer_path) return { type: "empty" }
+  const filePath = row.buffer_path
+  if (!filePath) return { type: "empty" }
 
-  const selections = queryZedEditorSelections(dbPath, row)
+  const selections = yield* queryZedEditorSelections(dbPath, row)
   if (selections.type !== "selections") return selections
   const byteRanges = selections.selections
     .flatMap((selection) => {
-      if (selection.selection_start == null || selection.selection_end == null) return []
+      if (Predicate.isNullish(selection.selection_start) || Predicate.isNullish(selection.selection_end)) return []
       return [
         {
           start: Math.min(selection.selection_start, selection.selection_end),
@@ -60,37 +96,53 @@ export async function resolveZedSelection(dbPath: string, cwd = process.cwd()): 
     .sort((left, right) => left.start - right.start || left.end - right.end)
   if (byteRanges.length === 0) return { type: "unavailable" }
 
-  const contents = queryZedEditorContents(dbPath, row)
+  // Zed keeps the buffer text of an editor in its database. Without it, the file on disk holds the text.
+  const contents = yield* queryZedEditorContents(dbPath, row)
+  const fs = yield* FileSystem.FileSystem
   const text =
-    contents.type === "contents" && contents.contents != null
-      ? contents.contents
-      : await readFileAsync(row.buffer_path, "utf8").catch(() => undefined)
-  if (text == null) return { type: "unavailable" }
+    contents.type === "contents" && Predicate.isNotNull(contents.contents)
+      ? Option.some(contents.contents)
+      : yield* fs.readFileString(filePath).pipe(Effect.option)
+  if (Option.isNone(text)) return { type: "unavailable" }
 
   const ranges = byteRanges.map((range) => {
-    const startOffset = utf8ByteOffsetToStringIndex(text, range.start)
-    const endOffset = utf8ByteOffsetToStringIndex(text, range.end)
+    const startOffset = utf8ByteOffsetToStringIndex(text.value, range.start)
+    const endOffset = utf8ByteOffsetToStringIndex(text.value, range.end)
     return {
-      text: text.slice(startOffset, endOffset),
-      selection: offsetsToSelection(text, startOffset, endOffset),
+      text: text.value.slice(startOffset, endOffset),
+      selection: offsetsToSelection(text.value, startOffset, endOffset),
     }
   })
 
   return {
     type: "selection",
     selection: {
-      filePath: row.buffer_path,
+      filePath,
       source: "zed",
       ranges,
     },
   }
+}, Effect.provide(filesystem))
+
+// Opens the Zed database read-only for one query and closes it after the query.
+function queryZedDatabase<A>(dbPath: string, query: (db: Database) => A) {
+  return Effect.acquireUseRelease(
+    Effect.try({
+      try: () => new Database(dbPath, { readonly: true }),
+      catch: (cause) => new ZedDatabaseError({ message: `Cannot open the Zed database ${dbPath}`, cause }),
+    }),
+    (db) =>
+      Effect.try({
+        try: () => query(db),
+        catch: (cause) => new ZedDatabaseError({ message: `Cannot query the Zed database ${dbPath}`, cause }),
+      }),
+    (db) => Effect.sync(() => db.close()),
+  )
 }
 
 function queryZedActiveEditor(dbPath: string, cwd: string) {
-  let db: Database | undefined
-  try {
-    db = new Database(dbPath, { readonly: true })
-    const raw = db
+  return queryZedDatabase(dbPath, (db) =>
+    db
       .query(
         `select
           i.kind as item_kind,
@@ -106,35 +158,32 @@ function queryZedActiveEditor(dbPath: string, cwd: string) {
         where i.active = 1 and p.active = 1
         order by w.timestamp desc`,
       )
-      .all()
+      .all(),
+  ).pipe(
+    Effect.map((raw) => {
+      const rows = raw.flatMap((row) => {
+        const parsed = decodeZedEditorRow(row)
+        return Option.isSome(parsed) ? [parsed.value] : []
+      })
 
-    const rows = raw.flatMap((row) => {
-      const parsed = decodeZedEditorRow(row)
-      return Option.isSome(parsed) ? [parsed.value] : []
-    })
+      if (raw.length > 0 && rows.length === 0) return { type: "unavailable" as const }
 
-    if (raw.length > 0 && rows.length === 0) return { type: "unavailable" as const }
-
-    const row = rows
-      .map((row) => ({ row, score: scoreZedWorkspace(row.workspace_paths, cwd) }))
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score || right.row.timestamp.localeCompare(left.row.timestamp))[0]?.row
-    if (!row) return { type: "empty" as const }
-    if (row.item_kind !== "Editor") return { type: "unavailable" as const }
-    if (!isZedActiveEditorRow(row)) return { type: "empty" as const }
-    return { type: "row" as const, row }
-  } catch {
-    return { type: "unavailable" as const }
-  } finally {
-    db?.close()
-  }
+      const row = rows
+        .map((row) => ({ row, score: scoreZedWorkspace(row.workspace_paths, cwd) }))
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => right.score - left.score || right.row.timestamp.localeCompare(left.row.timestamp))[0]?.row
+      if (!row) return { type: "empty" as const }
+      if (row.item_kind !== "Editor") return { type: "unavailable" as const }
+      if (!isZedActiveEditorRow(row)) return { type: "empty" as const }
+      return { type: "row" as const, row }
+    }),
+    Effect.orElseSucceed(() => ({ type: "unavailable" as const })),
+  )
 }
 
 function queryZedEditorSelections(dbPath: string, row: ZedActiveEditorRow) {
-  let db: Database | undefined
-  try {
-    db = new Database(dbPath, { readonly: true })
-    const raw = db
+  return queryZedDatabase(dbPath, (db) =>
+    db
       .query(
         `select
           start as selection_start,
@@ -142,69 +191,75 @@ function queryZedEditorSelections(dbPath: string, row: ZedActiveEditorRow) {
         from editor_selections
         where editor_id = $editorID and workspace_id = $workspaceID`,
       )
-      .all({ $editorID: row.editor_id, $workspaceID: row.workspace_id })
+      .all({ $editorID: row.editor_id, $workspaceID: row.workspace_id }),
+  ).pipe(
+    Effect.map((raw) => {
+      const selections = raw.flatMap((selection) => {
+        const parsed = decodeZedSelectionRow(selection)
+        return Option.isSome(parsed) ? [parsed.value] : []
+      })
 
-    const selections = raw.flatMap((selection) => {
-      const parsed = decodeZedSelectionRow(selection)
-      return Option.isSome(parsed) ? [parsed.value] : []
-    })
-
-    if (raw.length > 0 && selections.length === 0) return { type: "unavailable" as const }
-    return { type: "selections" as const, selections }
-  } catch {
-    return { type: "unavailable" as const }
-  } finally {
-    db?.close()
-  }
+      if (raw.length > 0 && selections.length === 0) return { type: "unavailable" as const }
+      return { type: "selections" as const, selections }
+    }),
+    Effect.orElseSucceed(() => ({ type: "unavailable" as const })),
+  )
 }
 
 function queryZedEditorContents(dbPath: string, row: ZedActiveEditorRow) {
-  let db: Database | undefined
-  try {
-    db = new Database(dbPath, { readonly: true })
-    const parsed = decodeZedEditorContents(
-      db
-        .query(
-          `select contents
+  return queryZedDatabase(dbPath, (db) =>
+    db
+      .query(
+        `select contents
         from editors
         where item_id = $editorID and workspace_id = $workspaceID`,
-        )
-        .get({ $editorID: row.editor_id, $workspaceID: row.workspace_id }),
-    )
-    if (Option.isNone(parsed)) return { type: "unavailable" as const }
-    return { type: "contents" as const, contents: parsed.value.contents }
-  } catch {
-    return { type: "unavailable" as const }
-  } finally {
-    db?.close()
-  }
+      )
+      .get({ $editorID: row.editor_id, $workspaceID: row.workspace_id }),
+  ).pipe(
+    Effect.map((value) => {
+      const parsed = decodeZedEditorContents(value)
+      if (Option.isNone(parsed)) return { type: "unavailable" as const }
+      return { type: "contents" as const, contents: parsed.value.contents }
+    }),
+    Effect.orElseSucceed(() => ({ type: "unavailable" as const })),
+  )
 }
 
 function isZedActiveEditorRow(row: ZedEditorRow): row is ZedActiveEditorRow {
-  return row.item_kind === "Editor" && row.editor_id != null
+  return row.item_kind === "Editor" && Predicate.isNotNull(row.editor_id)
 }
 
-export function resolveZedDbPath() {
+/**
+ * Finds the Zed database: OPENCODE_ZED_DB when it names a file, then the stable macOS and Linux locations.
+ * A candidate that cannot be stated is skipped.
+ */
+export const resolveZedDbPath = Effect.fn("TuiEditorZed.resolveZedDbPath")(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const configured = Option.filter(yield* readEnvSnapshot(ZedDbEnv), (item) => item.length > 0)
   const candidates = [
-    process.env.OPENCODE_ZED_DB,
+    ...Option.toArray(configured),
     path.join(os.homedir(), "Library", "Application Support", "Zed", "db", "0-stable", "db.sqlite"),
     path.join(os.homedir(), ".local", "share", "zed", "db", "0-stable", "db.sqlite"),
-  ].filter((item): item is string => Boolean(item))
+  ]
 
-  return candidates.find((item) => isFile(item))
-}
-
-export function isZedTerminal() {
-  return process.env.ZED_TERM === "true" || process.env.TERM_PROGRAM?.toLowerCase() === "zed"
-}
-
-function isFile(item: string) {
-  try {
-    return statSync(item).isFile()
-  } catch {
-    return false
+  for (const item of candidates) {
+    const file = yield* fs.stat(item).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    )
+    if (file) return Option.some(item)
   }
-}
+  return Option.none<string>()
+}, Effect.provide(filesystem))
+
+/** Reports whether opencode runs in a Zed terminal: ZED_TERM is "true", or TERM_PROGRAM is "zed" in any case. */
+export const isZedTerminal = Effect.fn("TuiEditorZed.isZedTerminal")(function* () {
+  const env = yield* readEnvSnapshot(ZedTerminalEnv)
+  return (
+    Option.exists(env.zedTerm, (value) => value === "true") ||
+    Option.exists(env.termProgram, (value) => value.toLowerCase() === "zed")
+  )
+})
 
 function scoreZedWorkspace(workspacePaths: string | null, cwd: string) {
   return zedWorkspacePaths(workspacePaths).reduce((score, item) => {
@@ -215,9 +270,10 @@ function scoreZedWorkspace(workspacePaths: string | null, cwd: string) {
 
 function zedWorkspacePaths(value: string | null) {
   if (!value) return []
-  const parsed = parseJson(value)
-  if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === "string")
-  return value.split(/\r?\n/).filter(Boolean)
+  return Option.match(decodeZedWorkspacePathList(value), {
+    onSome: (items) => items.filter(Predicate.isString),
+    onNone: () => value.split(/\r?\n/).filter(Boolean),
+  })
 }
 
 export function offsetToPosition(text: string, offset: number) {
@@ -275,12 +331,4 @@ function position(line: number, lineStart: number, offset: number) {
 function pathContains(parent: string, child: string) {
   const relative = path.relative(path.resolve(parent), path.resolve(child))
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
-}
-
-function parseJson(value: string) {
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return
-  }
 }

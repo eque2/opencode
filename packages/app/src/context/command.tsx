@@ -3,6 +3,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { type Accessor, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { Effect, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { dict as en } from "@/i18n/en"
@@ -13,7 +14,7 @@ const IS_MAC = typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(na
 const PALETTE_ID = "command.palette"
 export const DEFAULT_PALETTE_KEYBIND = "mod+k,mod+shift+p"
 const SUGGESTED_PREFIX = "suggested."
-const EDITABLE_KEYBIND_IDS = new Set(["terminal.toggle", "terminal.new", "file.attach"])
+const EDITABLE_KEYBIND_IDS = HashSet.make("terminal.toggle", "terminal.new", "file.attach")
 
 type KeyLabel =
   | "common.key.ctrl"
@@ -59,7 +60,7 @@ function signatureFromEvent(event: KeyboardEvent) {
 
 function isAllowedEditableKeybind(id: string | undefined) {
   if (!id) return false
-  return EDITABLE_KEYBIND_IDS.has(actionId(id))
+  return HashSet.has(EDITABLE_KEYBIND_IDS, actionId(id))
 }
 
 export type KeybindConfig = string
@@ -119,11 +120,11 @@ export function addCommandRegistration(registrations: CommandRegistration[], ent
 }
 
 export function activeCommandRegistrations(registrations: CommandRegistration[]) {
-  const keys = new Set<string>()
+  const keys = MutableHashSet.empty<string>()
   return registrations.filter((entry) => {
     if (entry.key === undefined) return true
-    if (keys.has(entry.key)) return false
-    keys.add(entry.key)
+    if (MutableHashSet.has(keys, entry.key)) return false
+    MutableHashSet.add(keys, entry.key)
     return true
   })
 }
@@ -192,12 +193,15 @@ export function matchKeybind(keybinds: Keybind[], event: KeyboardEvent): boolean
 }
 
 function displayKeybindParts(kb: Keybind, t?: (key: KeyLabel) => string) {
-  const parts: string[] = []
-
-  if (kb.ctrl) parts.push(IS_MAC ? "⌃" : keyText("common.key.ctrl", t))
-  if (kb.alt) parts.push(IS_MAC ? "⌥" : keyText("common.key.alt", t))
-  if (kb.shift) parts.push(IS_MAC ? "⇧" : keyText("common.key.shift", t))
-  if (kb.meta) parts.push(IS_MAC ? "⌘" : keyText("common.key.meta", t))
+  const modifiers = [
+    { on: kb.ctrl, mac: "⌃", label: "common.key.ctrl" },
+    { on: kb.alt, mac: "⌥", label: "common.key.alt" },
+    { on: kb.shift, mac: "⇧", label: "common.key.shift" },
+    { on: kb.meta, mac: "⌘", label: "common.key.meta" },
+  ] satisfies { on: boolean; mac: string; label: KeyLabel }[]
+  const parts = modifiers.flatMap((modifier) =>
+    modifier.on ? [IS_MAC ? modifier.mac : keyText(modifier.label, t)] : [],
+  )
 
   if (!kb.key) return parts
 
@@ -231,9 +235,8 @@ function displayKeybindParts(kb: Keybind, t?: (key: KeyLabel) => string) {
       : key.length === 1
         ? key.toUpperCase()
         : key.charAt(0).toUpperCase() + key.slice(1))
-  parts.push(displayKey)
 
-  return parts
+  return [...parts, displayKey]
 }
 
 export function formatKeybindParts(config: string, t?: (key: KeyLabel) => string): string[] {
@@ -271,7 +274,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
       registrations: [] as CommandRegistration[],
       suspendCount: 0,
     })
-    const warnedDuplicates = new Set<string>()
+    const warnedDuplicates = MutableHashSet.empty<string>()
 
     type CommandCatalog = Record<string, CommandCatalogItem>
     const [catalog, setCatalog, _, catalogReady] = persisted(
@@ -282,24 +285,26 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     const bind = (id: string, def: KeybindConfig | undefined) => {
       const custom = settings.keybinds.get(actionId(id))
       const config = custom ?? def
-      if (!config || config === "none") return
+      if (!config || config === "none") return undefined
       return config
     }
 
     const registered = createMemo(() => {
-      const seen = new Set<string>()
+      const seen = MutableHashSet.empty<string>()
       const all: CommandOption[] = []
 
       for (const reg of activeCommandRegistrations(store.registrations)) {
         for (const opt of reg.options()) {
-          if (seen.has(opt.id)) {
-            if (import.meta.env.DEV && !warnedDuplicates.has(opt.id)) {
-              warnedDuplicates.add(opt.id)
-              console.warn(`[command] duplicate command id "${opt.id}" registered; keeping first entry`)
+          if (MutableHashSet.has(seen, opt.id)) {
+            if (import.meta.env.DEV && !MutableHashSet.has(warnedDuplicates, opt.id)) {
+              MutableHashSet.add(warnedDuplicates, opt.id)
+              Effect.runFork(
+                Effect.logWarning(`[command] duplicate command id "${opt.id}" registered; keeping first entry`),
+              )
             }
             continue
           }
-          seen.add(opt.id)
+          MutableHashSet.add(seen, opt.id)
           all.push(opt)
         }
       }
@@ -351,11 +356,11 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     const palette = createMemo(() => {
       const config = settings.keybinds.get(PALETTE_ID) ?? DEFAULT_PALETTE_KEYBIND
       const keybinds = parseKeybind(config)
-      return new Set(keybinds.map((kb) => signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)))
+      return HashSet.fromIterable(keybinds.map((kb) => signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)))
     })
 
     const keymap = createMemo(() => {
-      const map = new Map<string, CommandOption[]>()
+      const map = MutableHashMap.empty<string, CommandOption[]>()
       for (const option of options()) {
         if (option.id.startsWith(SUGGESTED_PREFIX)) continue
         if (option.disabled) continue
@@ -365,29 +370,25 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
         for (const kb of keybinds) {
           if (!kb.key) continue
           const sig = signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)
-          const existing = map.get(sig)
-          if (existing) {
-            existing.push(option)
-            continue
-          }
-          map.set(sig, [option])
+          const existing = MutableHashMap.get(map, sig)
+          MutableHashMap.set(map, sig, Option.isSome(existing) ? [...existing.value, option] : [option])
         }
       }
       return map
     })
 
     const optionMap = createMemo(() => {
-      const map = new Map<string, CommandOption>()
+      const map = MutableHashMap.empty<string, CommandOption>()
       for (const option of options()) {
-        map.set(option.id, option)
-        map.set(actionId(option.id), option)
+        MutableHashMap.set(map, option.id, option)
+        MutableHashMap.set(map, actionId(option.id), option)
       }
       return map
     })
 
     const run = (id: string, source?: CommandSource) => {
-      const option = optionMap().get(id)
-      option?.onSelect?.(source)
+      const option = MutableHashMap.get(optionMap(), id)
+      if (Option.isSome(option)) option.value.onSelect?.(source)
     }
 
     const showPalette = () => {
@@ -398,8 +399,11 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
       if (suspended() || dialog.active) return
 
       const sig = signatureFromEvent(event)
-      const isPalette = palette().has(sig)
-      const option = resolveKeybindOption(keymap().get(sig), event)
+      const isPalette = HashSet.has(palette(), sig)
+      const option = resolveKeybindOption(
+        Option.getOrElse(MutableHashMap.get(keymap(), sig), () => []),
+        event,
+      )
       const modified = event.ctrlKey || event.metaKey || event.altKey
       const isTab = event.key === "Tab"
 
@@ -426,12 +430,12 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     function register(cb: () => CommandOption[]): void
     function register(key: string, cb: () => CommandOption[]): void
     function register(key: string | (() => CommandOption[]), cb?: () => CommandOption[]) {
-      const id = typeof key === "string" ? key : undefined
       const next = typeof key === "function" ? key : cb
       if (!next) return
       const options = createMemo(next)
+      // An unkeyed registration leaves out `key`, so activeCommandRegistrations never dedupes it.
       const entry: CommandRegistration = {
-        key: id,
+        ...(typeof key === "string" ? { key } : {}),
         options,
       }
       setStore("registrations", (arr) => addCommandRegistration(arr, entry))

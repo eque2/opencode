@@ -165,7 +165,7 @@ export function statPeriodKey(row: StatBaseRow) {
 }
 
 export function statRowScope(rows: StatBaseRow[]) {
-  if (rows.length === 0) return
+  if (rows.length === 0) return undefined
   return {
     grains: unique(rows.map((row) => row.grain)),
     periodKeys: unique(rows.map((row) => row.period_key)),
@@ -258,7 +258,7 @@ export function inserted(column: string) {
 function errorText(cause: unknown): string {
   if (cause instanceof Error) return `${cause.message} ${errorText((cause as { cause?: unknown }).cause)}`
   if (typeof cause === "object" && cause)
-    return Object.values(cause as Record<string, unknown>)
+    return Object.values(cause)
       .map(errorText)
       .join(" ")
   return String(cause)

@@ -1,37 +1,40 @@
 import path from "path"
 import { fileURLToPath } from "url"
 
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { Clock, Effect, Option, Schema } from "effect"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
+import { Plugin } from "@opencode-ai/schema/plugin"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Flock } from "@opencode-ai/core/util/flock"
 
 import { parsePluginSpecifier, pluginSource } from "./shared"
 
-type Source = "file" | "npm"
+export const Theme = Schema.Struct({
+  src: Schema.String,
+  dest: Schema.String,
+  mtime: Schema.optional(Schema.Number),
+  size: Schema.optional(Schema.Number),
+}).annotate({ identifier: "PluginMeta.Theme" })
+export type Theme = typeof Theme.Type
 
-export type Theme = {
-  src: string
-  dest: string
-  mtime?: number
-  size?: number
-}
-
-export type Entry = {
-  id: string
-  source: Source
-  spec: string
-  target: string
-  requested?: string
-  version?: string
-  modified?: number
-  first_time: number
-  last_time: number
-  time_changed: number
-  load_count: number
-  fingerprint: string
-  themes?: Record<string, Theme>
-}
+export const Entry = Schema.Struct({
+  id: Plugin.ID,
+  source: Schema.Literals(["file", "npm"]),
+  spec: Schema.String,
+  target: Schema.String,
+  requested: Schema.optional(Schema.String),
+  version: Schema.optional(Schema.String),
+  modified: Schema.optional(Schema.Number),
+  first_time: Schema.Number,
+  last_time: Schema.Number,
+  time_changed: Schema.Number,
+  load_count: Schema.Number,
+  fingerprint: Schema.String,
+  themes: Schema.optional(Schema.Record(Schema.String, Theme)),
+}).annotate({ identifier: "PluginMeta.Entry" })
+export type Entry = typeof Entry.Type
 
 export type State = "first" | "updated" | "same"
 
@@ -41,148 +44,199 @@ export type Touch = {
   id: string
 }
 
-type Store = Record<string, Entry>
+export type Hit = { state: State; entry: Entry }
+
+export class TouchError extends Schema.TaggedError<TouchError>()("PluginMeta.TouchError", {
+  message: Schema.String,
+}) {}
+
+const Store = Schema.Record(Schema.String, Entry).annotate({ identifier: "PluginMeta.Store" })
+type Store = typeof Store.Type
 type Core = Omit<Entry, "first_time" | "last_time" | "time_changed" | "load_count" | "fingerprint" | "themes">
 type Row = Touch & { core: Core }
 
-function storePath() {
-  return Flag.OPENCODE_PLUGIN_META_FILE ?? path.join(Global.Path.state, "plugin-meta.json")
-}
+const StoreText = Schema.fromJsonString(Store, { space: 2 })
+const decodeStore = Schema.decodeUnknownEffect(StoreText)
+const encodeStore = Schema.encodeEffect(StoreText)
+
+const PackageVersion = Schema.Struct({ version: Schema.optional(Schema.String) }).annotate({
+  identifier: "PluginMeta.PackageVersion",
+})
+const decodePackageVersion = Schema.decodeUnknownOption(Schema.fromJsonString(PackageVersion))
+
+// The variable is read at each run: tests and worker processes set it after start.
+const storePath = FlagConfig.OPENCODE_PLUGIN_META_FILE.pipe(
+  Effect.map(Option.getOrElse(() => path.join(Global.Path.state, "plugin-meta.json"))),
+  Effect.orDie,
+)
 
 function lock(file: string) {
   return `plugin-meta:${file}`
 }
 
-function fileTarget(spec: string, target: string) {
-  if (spec.startsWith("file://")) return fileURLToPath(spec)
-  if (target.startsWith("file://")) return fileURLToPath(target)
-  return
+function fileTarget(spec: string, target: string): Option.Option<string> {
+  if (spec.startsWith("file://")) return Option.some(fileURLToPath(spec))
+  if (target.startsWith("file://")) return Option.some(fileURLToPath(target))
+  return Option.none()
 }
 
-async function modifiedAt(file: string) {
-  const stat = await Filesystem.statAsync(file)
-  if (!stat) return
-  const mtime = stat.mtimeMs
-  return Math.floor(typeof mtime === "bigint" ? Number(mtime) : mtime)
-}
+// The stat of a path, or None when it is missing. Any other stat failure is a defect, as the rejection was before.
+const statOf = Effect.fnUntraced(function* (file: string) {
+  const fsu = yield* FSUtil.Service
+  return yield* fsu.stat(file).pipe(
+    Effect.map(Option.some),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    Effect.orDie,
+  )
+})
+
+// Node reports sub-millisecond mtimes; the stored value keeps the floor of mtimeMs, which is the Date time.
+// A missing file has no time.
+const modifiedAt = Effect.fnUntraced(function* (file: string) {
+  const stat = yield* statOf(file)
+  return Option.flatMap(stat, (info) => Option.map(info.mtime, (date) => date.getTime()))
+})
 
 function resolvedTarget(target: string) {
   if (target.startsWith("file://")) return fileURLToPath(target)
   return target
 }
 
-async function npmVersion(target: string) {
+const npmVersion = Effect.fnUntraced(function* (target: string) {
+  const fsu = yield* FSUtil.Service
   const resolved = resolvedTarget(target)
-  const stat = await Filesystem.statAsync(resolved)
-  const dir = stat?.isDirectory() ? resolved : path.dirname(resolved)
-  return Filesystem.readJson<{ version?: string }>(path.join(dir, "package.json"))
-    .then((item) => item.version)
-    .catch(() => undefined)
-}
+  const stat = yield* statOf(resolved)
+  const dir = Option.exists(stat, (info) => info.type === "Directory") ? resolved : path.dirname(resolved)
+  const text = yield* Effect.option(fsu.readFileString(path.join(dir, "package.json")))
+  return text.pipe(
+    Option.flatMap(decodePackageVersion),
+    Option.flatMap((pkg) => Option.fromNullishOr(pkg.version)),
+  )
+})
 
-async function entryCore(item: Touch): Promise<Core> {
+const entryCore = Effect.fnUntraced(function* (item: Touch) {
   const spec = item.spec
   const target = item.target
   const source = pluginSource(spec)
   if (source === "file") {
-    const file = fileTarget(spec, target)
-    return {
-      id: item.id,
+    const modified = yield* Option.match(fileTarget(spec, target), {
+      onNone: () => Effect.succeedNone,
+      onSome: modifiedAt,
+    })
+    const core: Core = {
+      id: Plugin.ID.make(item.id),
       source,
       spec,
       target,
-      modified: file ? await modifiedAt(file) : undefined,
+      ...Option.match(modified, { onNone: () => ({}), onSome: (value) => ({ modified: value }) }),
     }
+    return core
   }
 
-  return {
-    id: item.id,
+  const version = yield* npmVersion(target)
+  const core: Core = {
+    id: Plugin.ID.make(item.id),
     source,
     spec,
     target,
     requested: parsePluginSpecifier(spec).version,
-    version: await npmVersion(target),
+    ...Option.match(version, { onNone: () => ({}), onSome: (value) => ({ version: value }) }),
   }
-}
+  return core
+})
 
 function fingerprint(value: Core) {
   if (value.source === "file") return [value.target, value.modified ?? ""].join("|")
   return [value.target, value.requested ?? "", value.version ?? ""].join("|")
 }
 
-async function read(file: string): Promise<Store> {
-  return Filesystem.readJson<Store>(file).catch(() => ({}) as Store)
-}
+// A missing or unreadable store starts empty, as before.
+const read = Effect.fnUntraced(function* (file: string) {
+  const fsu = yield* FSUtil.Service
+  return yield* fsu.readFileString(file).pipe(
+    Effect.flatMap((text) => decodeStore(text)),
+    Effect.orElseSucceed((): Store => ({})),
+  )
+})
 
-async function row(item: Touch): Promise<Row> {
-  return {
-    ...item,
-    core: await entryCore(item),
-  }
-}
+// writeWithDirs creates the parent directory when it is missing. A failed write is a defect, as before.
+const write = Effect.fnUntraced(function* (file: string, store: Store) {
+  const fsu = yield* FSUtil.Service
+  const text = yield* encodeStore(store)
+  yield* fsu.writeWithDirs(file, text).pipe(Effect.orDie)
+})
 
-function next(prev: Entry | undefined, core: Core, now: number): { state: State; entry: Entry } {
+// The exports keep no service requirement: worker processes and tests run them with Effect.runPromise alone.
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+const row = Effect.fnUntraced(function* (item: Touch) {
+  const core = yield* entryCore(item)
+  const value: Row = { ...item, core }
+  return value
+})
+
+function next(prev: Entry | undefined, core: Core, now: number): Hit {
+  const print = fingerprint(core)
+  const state: State = !prev ? "first" : prev.fingerprint === print ? "same" : "updated"
   const entry: Entry = {
     ...core,
     first_time: prev?.first_time ?? now,
     last_time: now,
-    time_changed: prev?.time_changed ?? now,
+    time_changed: state === "updated" ? now : (prev?.time_changed ?? now),
     load_count: (prev?.load_count ?? 0) + 1,
-    fingerprint: fingerprint(core),
-    themes: prev?.themes,
+    fingerprint: print,
+    ...(prev?.themes ? { themes: prev.themes } : {}),
   }
-  const state: State = !prev ? "first" : prev.fingerprint === entry.fingerprint ? "same" : "updated"
-  if (state === "updated") entry.time_changed = now
-  return {
-    state,
-    entry,
-  }
+  return { state, entry }
 }
 
-export async function touchMany(items: Touch[]): Promise<Array<{ state: State; entry: Entry }>> {
+export const touchMany = Effect.fn("PluginMeta.touchMany")(function* (items: ReadonlyArray<Touch>) {
   if (!items.length) return []
-  const file = storePath()
-  const rows = await Promise.all(items.map((item) => row(item)))
+  const file = yield* storePath
+  const rows = yield* Effect.forEach(items, (item) => row(item), { concurrency: "unbounded" })
 
-  return Flock.withLock(lock(file), async () => {
-    const store = await read(file)
-    const now = Date.now()
-    const out: Array<{ state: State; entry: Entry }> = []
-    for (const item of rows) {
-      const hit = next(store[item.id], item.core, now)
-      store[item.id] = hit.entry
-      out.push(hit)
-    }
-    await Filesystem.writeJson(file, store)
-    return out
-  })
-}
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      yield* Flock.effect(lock(file))
+      const store = yield* read(file)
+      const now = yield* Clock.currentTimeMillis
+      // Apply the rows in order, so a repeated id sees the entry of the row before it.
+      const result = rows.reduce(
+        (acc: { store: Store; hits: ReadonlyArray<Hit> }, item) => {
+          const hit = next(acc.store[item.id], item.core, now)
+          return { store: { ...acc.store, [item.id]: hit.entry }, hits: [...acc.hits, hit] }
+        },
+        { store, hits: [] },
+      )
+      yield* write(file, result.store)
+      return result.hits
+    }),
+  )
+}, Effect.provide(fileSystemLayer))
 
-export async function touch(spec: string, target: string, id: string): Promise<{ state: State; entry: Entry }> {
-  return touchMany([{ spec, target, id }]).then((item) => {
-    const hit = item[0]
-    if (hit) return hit
-    throw new Error("Failed to touch plugin metadata.")
-  })
-}
+export const touch = Effect.fn("PluginMeta.touch")(function* (spec: string, target: string, id: string) {
+  const hits = yield* touchMany([{ spec, target, id }])
+  const hit = hits[0]
+  if (hit) return hit
+  return yield* new TouchError({ message: "Failed to touch plugin metadata." })
+})
 
-export async function setTheme(id: string, name: string, theme: Theme): Promise<void> {
-  const file = storePath()
-  await Flock.withLock(lock(file), async () => {
-    const store = await read(file)
-    const entry = store[id]
-    if (!entry) return
-    entry.themes = {
-      ...entry.themes,
-      [name]: theme,
-    }
-    await Filesystem.writeJson(file, store)
-  })
-}
+export const setTheme = Effect.fn("PluginMeta.setTheme")(function* (id: string, name: string, theme: Theme) {
+  const file = yield* storePath
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      yield* Flock.effect(lock(file))
+      const store = yield* read(file)
+      const entry = store[id]
+      if (!entry) return
+      yield* write(file, { ...store, [id]: { ...entry, themes: { ...entry.themes, [name]: theme } } })
+    }),
+  )
+}, Effect.provide(fileSystemLayer))
 
-export async function list(): Promise<Store> {
-  const file = storePath()
-  return Flock.withLock(lock(file), async () => read(file))
-}
+export const list = Effect.fn("PluginMeta.list")(function* () {
+  const file = yield* storePath
+  return yield* Effect.scoped(Flock.effect(lock(file)).pipe(Effect.andThen(read(file))))
+}, Effect.provide(fileSystemLayer))
 
 export * as PluginMeta from "./meta"

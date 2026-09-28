@@ -1,41 +1,43 @@
+import { MutableHashMap, Option } from "effect"
+
 export function createWorkerTransport<T extends { id: number; key: string }>(input: {
   post: (request: T) => void
   supersede: (request: T) => void
 }) {
-  const active = new Map<string, T>()
-  const queued = new Map<string, T>()
+  const active = MutableHashMap.empty<string, T>()
+  const queued = MutableHashMap.empty<string, T>()
 
   return {
     send(request: T) {
-      if (!active.has(request.key)) {
-        active.set(request.key, request)
+      if (!MutableHashMap.has(active, request.key)) {
+        MutableHashMap.set(active, request.key, request)
         input.post(request)
         return
       }
-      const previous = queued.get(request.key)
-      if (previous) input.supersede(previous)
-      queued.set(request.key, request)
+      const previous = MutableHashMap.get(queued, request.key)
+      if (Option.isSome(previous)) input.supersede(previous.value)
+      MutableHashMap.set(queued, request.key, request)
     },
     complete(key: string, id: number) {
-      if (active.get(key)?.id !== id) return
-      active.delete(key)
-      const next = queued.get(key)
-      if (!next) return
-      queued.delete(key)
-      active.set(key, next)
-      input.post(next)
+      if (!Option.exists(MutableHashMap.get(active, key), (request) => request.id === id)) return
+      MutableHashMap.remove(active, key)
+      const next = MutableHashMap.get(queued, key)
+      if (Option.isNone(next)) return
+      MutableHashMap.remove(queued, key)
+      MutableHashMap.set(active, key, next.value)
+      input.post(next.value)
     },
     dispose(key: string) {
-      active.delete(key)
-      const request = queued.get(key)
-      if (request) input.supersede(request)
-      queued.delete(key)
+      MutableHashMap.remove(active, key)
+      const request = MutableHashMap.get(queued, key)
+      if (Option.isSome(request)) input.supersede(request.value)
+      MutableHashMap.remove(queued, key)
     },
     reset() {
-      queued.forEach(input.supersede)
-      queued.clear()
-      active.clear()
+      for (const request of MutableHashMap.values(queued)) input.supersede(request)
+      MutableHashMap.clear(queued)
+      MutableHashMap.clear(active)
     },
-    queued: () => queued.size,
+    queued: () => MutableHashMap.size(queued),
   }
 }

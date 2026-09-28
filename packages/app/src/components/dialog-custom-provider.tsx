@@ -7,15 +7,38 @@ import { useMutation } from "@tanstack/solid-query"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@/utils/toast"
 import { batch, For } from "solid-js"
-import { createStore, produce } from "solid-js/store"
+import { createStore } from "solid-js/store"
 import { ExternalLink } from "@/components/external-link"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
-import { type FormState, headerRow, modelRow, validateCustomProvider } from "./dialog-custom-provider-form"
+import {
+  type FormState,
+  formErr,
+  headerRow,
+  modelRow,
+  textFieldError,
+  validateCustomProvider,
+} from "./dialog-custom-provider-form"
+import { Data, Effect, HashMap, HashSet, Option } from "effect"
 
 type Props = {
   onBack: () => void
+}
+
+/** Saving the custom provider failed. `message` is the text the failure toast shows. */
+class CustomProviderSaveError extends Data.TaggedError("CustomProviderSaveError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+/** Runs one save request. The failure keeps the rejection's own message, which the toast shows. */
+function request<A>(run: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new CustomProviderSaveError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  })
 }
 
 export function DialogCustomProvider(props: Props) {
@@ -53,64 +76,44 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
     apiKey: "",
     models: [modelRow()],
     headers: [headerRow()],
-    err: {},
+    err: formErr(),
   })
 
   const addModel = () => {
-    setForm(
-      "models",
-      produce((rows) => {
-        rows.push(modelRow())
-      }),
-    )
+    setForm("models", (rows) => [...rows, modelRow()])
   }
 
   const removeModel = (index: number) => {
     if (form.models.length <= 1) return
-    setForm(
-      "models",
-      produce((rows) => {
-        rows.splice(index, 1)
-      }),
-    )
+    setForm("models", (rows) => rows.filter((_, i) => i !== index))
   }
 
   const addHeader = () => {
-    setForm(
-      "headers",
-      produce((rows) => {
-        rows.push(headerRow())
-      }),
-    )
+    setForm("headers", (rows) => [...rows, headerRow()])
   }
 
   const removeHeader = (index: number) => {
     if (form.headers.length <= 1) return
-    setForm(
-      "headers",
-      produce((rows) => {
-        rows.splice(index, 1)
-      }),
-    )
+    setForm("headers", (rows) => rows.filter((_, i) => i !== index))
   }
 
   const setField = (key: "providerID" | "name" | "baseURL" | "apiKey", value: string) => {
     setForm(key, value)
     if (key === "apiKey") return
-    setForm("err", key, undefined)
+    setForm("err", key, Option.none())
   }
 
   const setModel = (index: number, key: "id" | "name", value: string) => {
     batch(() => {
       setForm("models", index, key, value)
-      setForm("models", index, "err", key, undefined)
+      setForm("models", index, "err", key, Option.none())
     })
   }
 
   const setHeader = (index: number, key: "key" | "value", value: string) => {
     batch(() => {
       setForm("headers", index, key, value)
-      setForm("headers", index, "err", key, undefined)
+      setForm("headers", index, "err", key, Option.none())
     })
   }
 
@@ -119,7 +122,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
       form,
       t: language.t,
       disabledProviders: serverSync().data.config.disabled_providers ?? [],
-      existingProviderIDs: new Set(serverSync().data.provider.all.keys()),
+      existingProviderIDs: HashSet.fromIterable(HashMap.keys(serverSync().data.provider.all)),
     })
     batch(() => {
       setForm("err", output.err)
@@ -130,27 +133,40 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
   }
 
   const saveMutation = useMutation(() => ({
-    mutationFn: async (result: NonNullable<ReturnType<typeof validate>>) => {
-      if ((await serverSDK().protocol) !== "v1") throw new Error(language.t("provider.custom.unavailable"))
-      const disabledProviders = serverSync().data.config.disabled_providers ?? []
-      const nextDisabled = disabledProviders.filter((id) => id !== result.providerID)
+    mutationFn: (result: NonNullable<ReturnType<typeof validate>>) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const protocol = yield* request(() => serverSDK().protocol)
+          if (protocol !== "v1") {
+            return yield* Effect.fail(
+              new CustomProviderSaveError({ message: language.t("provider.custom.unavailable") }),
+            )
+          }
+          const disabledProviders = serverSync().data.config.disabled_providers ?? []
+          const nextDisabled = disabledProviders.filter((id) => id !== result.providerID)
+          const key = result.key
 
-      if (result.key) {
-        await serverSDK().client.auth.set({
-          providerID: result.providerID,
-          auth: {
-            type: "api",
-            key: result.key,
-          },
-        })
-      }
+          if (Option.isSome(key)) {
+            yield* request(() =>
+              serverSDK().client.auth.set({
+                providerID: result.providerID,
+                auth: {
+                  type: "api",
+                  key: key.value,
+                },
+              }),
+            )
+          }
 
-      await serverSync().updateConfig({
-        provider: { [result.providerID]: result.config },
-        disabled_providers: nextDisabled,
-      })
-      return result
-    },
+          yield* request(() =>
+            serverSync().updateConfig({
+              provider: { [result.providerID]: result.config },
+              disabled_providers: nextDisabled,
+            }),
+          )
+          return result
+        }),
+      ),
     onSuccess: (result) => {
       dialog.close()
       showToast({
@@ -199,24 +215,21 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
             description={language.t("provider.custom.field.providerID.description")}
             value={form.providerID}
             onChange={(v) => setField("providerID", v)}
-            validationState={form.err.providerID ? "invalid" : undefined}
-            error={form.err.providerID}
+            {...textFieldError(form.err.providerID)}
           />
           <TextField
             label={language.t("provider.custom.field.name.label")}
             placeholder={language.t("provider.custom.field.name.placeholder")}
             value={form.name}
             onChange={(v) => setField("name", v)}
-            validationState={form.err.name ? "invalid" : undefined}
-            error={form.err.name}
+            {...textFieldError(form.err.name)}
           />
           <TextField
             label={language.t("provider.custom.field.baseURL.label")}
             placeholder={language.t("provider.custom.field.baseURL.placeholder")}
             value={form.baseURL}
             onChange={(v) => setField("baseURL", v)}
-            validationState={form.err.baseURL ? "invalid" : undefined}
-            error={form.err.baseURL}
+            {...textFieldError(form.err.baseURL)}
           />
           <TextField
             label={language.t("provider.custom.field.apiKey.label")}
@@ -239,8 +252,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
                     placeholder={language.t("provider.custom.models.id.placeholder")}
                     value={m.id}
                     onChange={(v) => setModel(i(), "id", v)}
-                    validationState={m.err.id ? "invalid" : undefined}
-                    error={m.err.id}
+                    {...textFieldError(m.err.id)}
                   />
                 </div>
                 <div class="flex-1">
@@ -250,8 +262,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
                     placeholder={language.t("provider.custom.models.name.placeholder")}
                     value={m.name}
                     onChange={(v) => setModel(i(), "name", v)}
-                    validationState={m.err.name ? "invalid" : undefined}
-                    error={m.err.name}
+                    {...textFieldError(m.err.name)}
                   />
                 </div>
                 <IconButton
@@ -283,8 +294,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
                     placeholder={language.t("provider.custom.headers.key.placeholder")}
                     value={h.key}
                     onChange={(v) => setHeader(i(), "key", v)}
-                    validationState={h.err.key ? "invalid" : undefined}
-                    error={h.err.key}
+                    {...textFieldError(h.err.key)}
                   />
                 </div>
                 <div class="flex-1">
@@ -294,8 +304,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
                     placeholder={language.t("provider.custom.headers.value.placeholder")}
                     value={h.value}
                     onChange={(v) => setHeader(i(), "value", v)}
-                    validationState={h.err.value ? "invalid" : undefined}
-                    error={h.err.value}
+                    {...textFieldError(h.err.value)}
                   />
                 </div>
                 <IconButton

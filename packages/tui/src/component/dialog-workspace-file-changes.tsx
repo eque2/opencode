@@ -1,7 +1,8 @@
-import { TextAttributes } from "@opentui/core"
+import { RGBA, TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import type { VcsFileStatus } from "@opencode-ai/sdk/v2"
-import { createMemo, For } from "solid-js"
+import { Effect, Option } from "effect"
+import { createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Locale } from "../util/locale"
 import { useTheme } from "../context/theme"
@@ -100,8 +101,12 @@ export function DialogWorkspaceFileChanges(props: {
               <box flexDirection="row" gap={1} minWidth={7} flexShrink={0} justifyContent="flex-end">
                 <text>
                   {" "}
-                  {item.additions ? <span style={{ fg: theme.diffAdded }}>+{item.additions}</span> : null}
-                  {item.deletions ? <span style={{ fg: theme.diffRemoved }}> -{item.deletions}</span> : null}
+                  <Show when={item.additions}>
+                    <span style={{ fg: theme.diffAdded }}>+{item.additions}</span>
+                  </Show>
+                  <Show when={item.deletions}>
+                    <span style={{ fg: theme.diffRemoved }}> -{item.deletions}</span>
+                  </Show>
                 </text>
               </box>
             </box>
@@ -114,7 +119,7 @@ export function DialogWorkspaceFileChanges(props: {
             <box
               paddingLeft={2}
               paddingRight={2}
-              backgroundColor={item === store.active ? theme.primary : undefined}
+              backgroundColor={item === store.active ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               onMouseUp={() => {
                 setStore("active", item)
                 props.onSelect(item)
@@ -130,15 +135,29 @@ export function DialogWorkspaceFileChanges(props: {
   )
 }
 
+// Opens the dialog and waits for a choice. Closing the dialog without a choice gives Option.none().
+// A choice also closes the dialog, and Effect.callback ignores that second resume.
+DialogWorkspaceFileChanges.choose = (
+  dialog: DialogContext,
+  files: VcsFileStatus[],
+  options?: { title?: string; message?: string },
+) =>
+  Effect.callback<Option.Option<WorkspaceFileChangesChoice>>((resume) => {
+    dialog.replace(
+      () => (
+        <DialogWorkspaceFileChanges
+          files={files}
+          onSelect={(choice) => resume(Effect.succeed(Option.some(choice)))}
+          {...options}
+        />
+      ),
+      () => resume(Effect.succeed(Option.none())),
+    )
+  })
+
 DialogWorkspaceFileChanges.show = (
   dialog: DialogContext,
   files: VcsFileStatus[],
   options?: { title?: string; message?: string },
-) => {
-  return new Promise<WorkspaceFileChangesChoice | undefined>((resolve) => {
-    dialog.replace(
-      () => <DialogWorkspaceFileChanges files={files} onSelect={resolve} {...options} />,
-      () => resolve(undefined),
-    )
-  })
-}
+): Promise<WorkspaceFileChangesChoice | undefined> =>
+  Effect.runPromise(DialogWorkspaceFileChanges.choose(dialog, files, options).pipe(Effect.map(Option.getOrUndefined)))

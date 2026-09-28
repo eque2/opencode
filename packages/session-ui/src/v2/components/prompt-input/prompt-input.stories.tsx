@@ -1,9 +1,9 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { createStore } from "solid-js/store"
 import { PromptInputV2, type PromptInputV2PersistedState, type PromptInputV2Suggestion } from "."
 import { createPromptInputV2Controller } from "./interaction"
 import { createPromptInputV2Store } from "./store"
-import { createEffect } from "solid-js"
 
 const agents = [
   { id: "build", label: "Build" },
@@ -125,7 +125,7 @@ function ControlledPromptInput() {
       },
     ],
     cursor: 0,
-    model: { providerID: "anthropic", modelID: "claude-sonnet", variant: null },
+    model: { providerID: "anthropic", modelID: "claude-sonnet" },
     context: {
       items: [
         {
@@ -168,17 +168,19 @@ function ControlledPromptInput() {
         onSelect(id) {
           const model = models.find((item) => item.id === id)
           if (!model) return
-          store.setModel({
-            providerID: model.providerID,
-            modelID: model.id,
-            variant: store.state.model?.variant,
-          })
+          store.setModel(
+            Option.some({
+              providerID: model.providerID,
+              modelID: model.id,
+              variant: store.state.model?.variant,
+            }),
+          )
         },
       },
       variant: {
         options: () => variants,
         current: () => store.state.model?.variant ?? "default",
-        onSelect: (variant) => store.setVariant(variant === "default" ? null : variant),
+        onSelect: (variant) => store.setVariant(variant === "default" ? Option.none() : Option.some(variant)),
       },
       submit: {
         stopping: () => runtime.stopping,

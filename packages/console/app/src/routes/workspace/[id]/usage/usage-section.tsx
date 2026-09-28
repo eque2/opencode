@@ -1,6 +1,6 @@
 import { Billing } from "@opencode-ai/console-core/billing.js"
 import { createAsync, query, useParams } from "@solidjs/router"
-import { createMemo, For, Show, Switch, Match, createEffect, createSignal } from "solid-js"
+import { createMemo, For, Show, Switch, Match, createEffect, createSignal, onCleanup } from "solid-js"
 import { formatDateUTC, formatDateForTable } from "../../common"
 import { withActor } from "~/context/auth.withActor"
 import { IconChevronLeft, IconChevronRight, IconBreakdown } from "~/component/icon"
@@ -34,14 +34,12 @@ export function UsageSection() {
     if (!openBreakdownId()) return
 
     const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      if (!target.closest('[data-slot="tokens-with-breakdown"]')) {
-        setOpenBreakdownId(null)
-      }
+      if (e.target instanceof Element && e.target.closest('[data-slot="tokens-with-breakdown"]')) return
+      setOpenBreakdownId(null)
     }
 
     document.addEventListener("click", handleClickOutside)
-    return () => document.removeEventListener("click", handleClickOutside)
+    onCleanup(() => document.removeEventListener("click", handleClickOutside))
   })
 
   const hasResults = createMemo(() => store.usage && store.usage.length > 0)

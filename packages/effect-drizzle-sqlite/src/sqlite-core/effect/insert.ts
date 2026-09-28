@@ -1,6 +1,6 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
@@ -18,11 +18,11 @@ import type { PreparedQueryConfig } from "drizzle-orm/sqlite-core/session"
 import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import type { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, haveSameKeys } from "drizzle-orm/utils"
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
+import { type DrizzleTypeError, getTableColumns, haveSameKeys } from "drizzle-orm/utils"
 import { QueryBuilder } from "drizzle-orm/sqlite-core/query-builders/query-builder"
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core/query-builders/update"
-import { getTableColumnsRuntime, mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
+import { mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectInsertWithout<
@@ -38,6 +38,7 @@ export type SQLiteEffectInsertWithout<
         T["_"]["returning"],
         TDynamic,
         T["_"]["excludedMethods"] | K,
+        // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
         T["_"]["effectHKT"]
       >,
       T["_"]["excludedMethods"] | K
@@ -54,6 +55,7 @@ export type SQLiteEffectInsertReturning<
     SelectResultFields<TSelectedFields>,
     TDynamic,
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -70,6 +72,7 @@ export type SQLiteEffectInsertReturningAll<
     T["_"]["table"]["$inferSelect"],
     TDynamic,
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -80,6 +83,7 @@ export type SQLiteEffectInsertDynamic<T extends AnySQLiteEffectInsert> = SQLiteE
   T["_"]["table"],
   T["_"]["runResult"],
   T["_"]["returning"],
+  // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
   T["_"]["effectHKT"]
 >
 
@@ -96,25 +100,24 @@ export type SQLiteEffectInsertExecute<T extends AnySQLiteEffectInsert> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectInsertPrepareConfig<T extends AnySQLiteEffectInsert> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"]
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectInsertExecute<T>
+}
+
 export type SQLiteEffectInsertPrepare<
   T extends AnySQLiteEffectInsert,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"]
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectInsertExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectInsertPrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectInsert<
   TTable extends SQLiteTable = SQLiteTable,
@@ -150,13 +153,13 @@ export class SQLiteEffectInsertBuilder<
   ): SQLiteEffectInsertBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
     values = Array.isArray(values) ? values : [values]
     if (values.length === 0) {
-      throw new Error("values() must be called with at least one value")
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBuilder.values() declares a synchronous builder return, which this adapter mirrors; the empty-values check throws at build time, as upstream does
+      throw new EffectDrizzleBuilderError({ message: "values() must be called with at least one value" })
     }
     const mappedValues = values.map((entry) => {
       const result: Record<string, Param | SQL> = {}
-      const cols = getTableColumnsRuntime(this.table)
-      for (const colKey of Object.keys(entry)) {
-        const colValue = entry[colKey as keyof typeof entry]
+      const cols = getTableColumns(this.table)
+      for (const [colKey, colValue] of Object.entries(entry)) {
         result[colKey] = is(colValue, SQL) ? colValue : new Param(colValue, cols[colKey])
       }
       return result
@@ -183,40 +186,15 @@ export class SQLiteEffectInsertBuilder<
   ): SQLiteEffectInsertBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
     const select = typeof selectQuery === "function" ? selectQuery(new QueryBuilder()) : selectQuery
 
-    if (!is(select, SQL) && !haveSameKeys(getTableColumnsRuntime(this.table), select._.selectedFields)) {
-      throw new Error(
-        "Insert select error: selected fields are not the same or are in a different order compared to the table definition",
-      )
+    if (!is(select, SQL) && !haveSameKeys(getTableColumns(this.table), select._.selectedFields)) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBuilder.select() declares a synchronous builder return, which this adapter mirrors; the field-order check throws at build time, as upstream does
+      throw new EffectDrizzleBuilderError({
+        message:
+          "Insert select error: selected fields are not the same or are in a different order compared to the table definition",
+      })
     }
 
     return new SQLiteEffectInsertBase(this.table, select, this.session, this.dialect, this.withList, true)
-  }
-}
-
-export interface SQLiteEffectInsertBase<
-  TTable extends SQLiteTable,
-  TRunResult,
-  TReturning = undefined,
-  TDynamic extends boolean = false,
-  _TExcludedMethods extends string = never,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends SQLWrapper,
-    RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">,
-    Effect.Effect<
-      TReturning extends undefined ? TRunResult : TReturning[],
-      TEffectHKT["error"],
-      TEffectHKT["context"]
-    > {
-  readonly _: {
-    readonly dialect: "sqlite"
-    readonly table: TTable
-    readonly resultType: "async"
-    readonly runResult: TRunResult
-    readonly returning: TReturning
-    readonly dynamic: TDynamic
-    readonly excludedMethods: _TExcludedMethods
-    readonly result: TReturning extends undefined ? TRunResult : TReturning[]
-    readonly effectHKT: TEffectHKT
   }
 }
 
@@ -228,22 +206,40 @@ export class SQLiteEffectInsertBase<
     _TExcludedMethods extends string = never,
     TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
   >
+  extends Effectable.Class<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  >
   implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
 {
   static readonly [entityKind]: string = "SQLiteEffectInsert"
+
+  declare readonly _: {
+    readonly dialect: "sqlite"
+    readonly table: TTable
+    readonly resultType: "async"
+    readonly runResult: TRunResult
+    readonly returning: TReturning
+    readonly dynamic: TDynamic
+    readonly excludedMethods: _TExcludedMethods
+    readonly result: TReturning extends undefined ? TRunResult : TReturning[]
+    readonly effectHKT: TEffectHKT
+  }
 
   /** @internal */
   config: SQLiteInsertConfig<TTable>
 
   constructor(
     private table: TTable,
-    values: SQLiteInsertConfig["values"],
+    values: SQLiteInsertConfig<TTable>["values"],
     private effectSession: SQLiteEffectSession<TEffectHKT, TRunResult, any>,
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
     select?: boolean,
   ) {
-    this.config = { table, values: values as any, withList, select }
+    super()
+    this.config = { table, values, withList, select }
   }
 
   returning(): SQLiteEffectInsertReturningAll<this, TDynamic>
@@ -251,10 +247,13 @@ export class SQLiteEffectInsertBase<
     fields: TSelectedFields,
   ): SQLiteEffectInsertReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFieldsFlat = getTableColumnsRuntime(this.config.table),
-  ): SQLiteEffectInsertWithout<AnySQLiteEffectInsert, TDynamic, "returning"> {
-    this.config.returning = orderSelectedFields<SQLiteColumn>(fields)
-    return this as any
+    fields: SelectedFieldsFlat = getTableColumns(this.config.table),
+  ): SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat> | SQLiteEffectInsertReturningAll<this, TDynamic> {
+    this.config.returning = orderSelectedFields(fields)
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state returning() overloads, which this adapter mirrors, return the same builder as their next states; the union is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as
+      | SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat>
+      | SQLiteEffectInsertReturningAll<this, TDynamic>
   }
 
   onConflictDoNothing(config: { target?: IndexColumn | IndexColumn[]; where?: SQL } = {}): this {
@@ -273,21 +272,20 @@ export class SQLiteEffectInsertBase<
 
   onConflictDoUpdate(config: SQLiteEffectInsertOnConflictDoUpdateConfig<this>): this {
     if (config.where && (config.targetWhere || config.setWhere)) {
-      throw new Error(
-        'You cannot use both "where" and "targetWhere"/"setWhere" at the same time - "where" is deprecated, use "targetWhere" or "setWhere" instead.',
-      )
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBase.onConflictDoUpdate() declares a synchronous `this` return, which this adapter mirrors; the where/targetWhere conflict check throws at build time, as upstream does
+      throw new EffectDrizzleBuilderError({
+        message:
+          'You cannot use both "where" and "targetWhere"/"setWhere" at the same time - "where" is deprecated, use "targetWhere" or "setWhere" instead.',
+      })
     }
 
     if (!this.config.onConflict) this.config.onConflict = []
 
-    const whereSql = config.where ? sql` where ${config.where}` : undefined
-    const targetWhereSql = config.targetWhere ? sql` where ${config.targetWhere}` : undefined
-    const setWhereSql = config.setWhere ? sql` where ${config.setWhere}` : undefined
+    const whereSql = config.where ? sql` where ${config.where}` : sql``
+    const targetWhereSql = config.targetWhere ? sql` where ${config.targetWhere}` : sql``
+    const setWhereSql = config.setWhere ? sql` where ${config.setWhere}` : sql``
     const targetSql = Array.isArray(config.target) ? sql`${config.target}` : sql`${[config.target]}`
-    const setSql = this.effectDialect.buildUpdateSet(
-      this.config.table,
-      mapUpdateSet(this.config.table, config.set as SQLiteUpdateSetSource<TTable>),
-    )
+    const setSql = this.effectDialect.buildUpdateSet(this.config.table, mapUpdateSet(this.config.table, config.set))
     this.config.onConflict.push(
       sql` on conflict ${targetSql}${targetWhereSql} do update set ${setSql}${whereSql}${setWhereSql}`,
     )
@@ -304,20 +302,19 @@ export class SQLiteEffectInsertBase<
   }
 
   /** @internal */
-  _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this, TEffectHKT> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
-      this.config.returning ? "all" : "run",
-      undefined,
-      {
+  _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this> {
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectInsertPrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
         type: "insert",
         tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectInsertPrepare<this, TEffectHKT>
+    })
   }
 
-  prepare(): SQLiteEffectInsertPrepare<this, TEffectHKT> {
+  prepare(): SQLiteEffectInsertPrepare<this> {
     return this._prepare(false)
   }
 
@@ -342,8 +339,15 @@ export class SQLiteEffectInsertBase<
   }
 
   $dynamic(): SQLiteEffectInsertDynamic<this> {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm $dynamic() signature, which this adapter mirrors, returns the same builder in its TDynamic = true, excludedMethods = never state; TS2352 rejects the precise cast (_TExcludedMethods is not comparable to never), and a double cast is forbidden, so `as any` stays
     return this as any
   }
-}
 
-applyEffectWrapper(SQLiteEffectInsertBase)
+  asEffect(): Effect.Effect<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  > {
+    return this.execute()
+  }
+}

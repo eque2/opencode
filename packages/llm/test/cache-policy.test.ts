@@ -90,9 +90,8 @@ describe("applyCachePolicy", () => {
         }),
       )
 
-      const body = prepared.body as { messages: Array<{ content: unknown }> }
       // OpenAI doesn't accept cache_control on messages — policy must skip.
-      const flat = JSON.stringify(body)
+      const flat = JSON.stringify(prepared.body)
       expect(flat).not.toContain("cache_control")
       expect(flat).not.toContain("cachePoint")
     }),
@@ -181,7 +180,7 @@ describe("applyCachePolicy", () => {
 
   it.effect("auto policy preserves manual CacheHints on other parts", () =>
     Effect.gen(function* () {
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model: anthropicModel,
           system: [
@@ -193,9 +192,9 @@ describe("applyCachePolicy", () => {
         }),
       )
 
-      const body = prepared.body as { system: Array<{ text: string; cache_control?: unknown }> }
-      expect(body.system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" })
-      expect(body.system[1]?.cache_control).toEqual({ type: "ephemeral" })
+      const body = prepared.body
+      expect(body.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" })
+      expect(body.system?.[1]?.cache_control).toEqual({ type: "ephemeral" })
     }),
   )
 
@@ -218,7 +217,7 @@ describe("applyCachePolicy", () => {
 
   it.effect("messages: { tail: 2 } marks the last 2 message boundaries", () =>
     Effect.gen(function* () {
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model: anthropicModel,
           messages: [Message.user("u1"), Message.assistant("a1"), Message.user("u2"), Message.assistant("a2")],
@@ -226,7 +225,7 @@ describe("applyCachePolicy", () => {
         }),
       )
 
-      const body = prepared.body as { messages: Array<{ content: Array<{ cache_control?: unknown }> }> }
+      const body = prepared.body
       expect(body.messages[0]?.content[0]?.cache_control).toBeUndefined()
       expect(body.messages[1]?.content[0]?.cache_control).toBeUndefined()
       expect(body.messages[2]?.content[0]?.cache_control).toEqual({ type: "ephemeral" })
@@ -236,7 +235,7 @@ describe("applyCachePolicy", () => {
 
   it.effect("'latest-assistant' marks the last assistant message", () =>
     Effect.gen(function* () {
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model: anthropicModel,
           messages: [Message.user("u1"), Message.assistant("a1"), Message.user("u2")],
@@ -244,7 +243,7 @@ describe("applyCachePolicy", () => {
         }),
       )
 
-      const body = prepared.body as { messages: Array<{ content: Array<{ cache_control?: unknown }> }> }
+      const body = prepared.body
       expect(body.messages[0]?.content[0]?.cache_control).toBeUndefined()
       expect(body.messages[1]?.content[0]?.cache_control).toEqual({ type: "ephemeral" })
       expect(body.messages[2]?.content[0]?.cache_control).toBeUndefined()

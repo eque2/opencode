@@ -16,6 +16,7 @@ import { getSessionContext } from "@/components/session/session-context-metrics"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { useSettings } from "@/context/settings"
+import { HashMap, Option } from "effect"
 
 interface SessionContextUsageProps {
   variant?: "button" | "indicator"
@@ -63,7 +64,9 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     fileBrowser: () => settings.general.newLayoutDesigns() && isDesktop() && !!params.id,
   })
   const messages = createMemo(() => (params.id ? (sync().data.message[params.id] ?? []) : []))
-  const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
+  const info = createMemo(() =>
+    Option.fromNullishOr(params.id).pipe(Option.flatMapNullishOr((id) => sync().session.get(id))),
+  )
 
   const usd = createMemo(
     () =>
@@ -73,9 +76,21 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       }),
   )
 
-  const context = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const context = createMemo(() => getSessionContext(messages(), HashMap.toValues(providers.all())))
+  // A session without a known context limit shows 0% usage.
+  const usage = createMemo(() =>
+    Option.getOrElse(
+      Option.flatMap(Option.fromNullishOr(context()), (value) => value.usage),
+      () => 0,
+    ),
+  )
   const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
+    return usd().format(
+      info().pipe(
+        Option.flatMapNullishOr((session) => session.cost),
+        Option.getOrElse(() => 0),
+      ),
+    )
   })
   const contextVisible = createMemo(() => view().reviewPanel.opened() && tabState.activeTab() === "context")
   const hasOtherTabs = createMemo(() =>
@@ -106,29 +121,29 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       <ProgressCircle
         size={16}
         strokeWidth={2}
-        percentage={context()?.usage ?? 0}
-        style={
-          variant() === "indicator"
-            ? {
+        percentage={usage()}
+        {...(variant() === "indicator"
+          ? {
+              style: {
                 "--progress-circle-background": "var(--v2-background-bg-layer-04, var(--border-weak-base))",
                 "--progress-circle-background-overlay": "var(--v2-overlay-simple-overlay-pressed, transparent)",
                 "--progress-circle-progress": "var(--v2-icon-icon-base, var(--icon-base))",
-              }
-            : undefined
-        }
+              },
+            }
+          : {})}
       />
     </div>
   )
   const circleV2 = () => (
     <div class="flex items-center justify-center">
-      <ProgressCircleV2 percentage={context()?.usage ?? 0} />
+      <ProgressCircleV2 percentage={usage()} />
     </div>
   )
 
   const tooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
       <ContextTooltipRow name={language.t("context.usage.cost")} value={cost()} />
-      <ContextTooltipRow name={language.t("context.usage.usage")} value={`${context()?.usage ?? 0}%`} />
+      <ContextTooltipRow name={language.t("context.usage.usage")} value={`${usage()}%`} />
       <ContextTooltipRow
         name={language.t("context.usage.tokens")}
         value={context()?.total.toLocaleString(language.intl()) ?? "0"}

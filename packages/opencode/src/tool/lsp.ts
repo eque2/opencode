@@ -8,6 +8,9 @@ import { pathToFileURL } from "url"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 
+// LSP responses are opaque JSON-RPC data; the tool only pretty-prints them for the model.
+const encodeResult = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 const operations = [
   "goToDefinition",
   "findReferences",
@@ -34,6 +37,11 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+/** An lsp call the tool cannot serve: its message tells the model why. */
+export class LspError extends Schema.TaggedError<LspError>()("LspTool.LspError", {
+  message: Schema.String,
+}) {}
+
 export const LspTool = Tool.define(
   "lsp",
   Effect.gen(function* () {
@@ -47,17 +55,16 @@ export const LspTool = Tool.define(
           const instance = yield* InstanceState.context
           const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(instance.directory, args.filePath)
           yield* assertExternalDirectoryEffect(ctx, file)
-          const meta =
-            args.operation === "workspaceSymbol"
-              ? { operation: args.operation }
-              : args.operation === "documentSymbol"
-                ? { operation: args.operation, filePath: file }
-                : { operation: args.operation, filePath: file, line: args.line, character: args.character }
           yield* ctx.ask({
             permission: "lsp",
             patterns: ["*"],
             always: ["*"],
-            metadata: meta,
+            metadata:
+              args.operation === "workspaceSymbol"
+                ? { operation: args.operation }
+                : args.operation === "documentSymbol"
+                  ? { operation: args.operation, filePath: file }
+                  : { operation: args.operation, filePath: file, line: args.line, character: args.character },
           })
 
           const uri = pathToFileURL(file).href
@@ -72,42 +79,32 @@ export const LspTool = Tool.define(
           const title = detail ? `${args.operation} ${detail}` : args.operation
 
           const exists = yield* fs.existsSafe(file)
-          if (!exists) throw new Error(`File not found: ${file}`)
+          if (!exists) return yield* new LspError({ message: `File not found: ${file}` })
 
           const available = yield* lsp.hasClients(file)
-          if (!available) throw new Error("No LSP server available for this file type.")
+          if (!available) return yield* new LspError({ message: "No LSP server available for this file type." })
 
           yield* lsp.touchFile(file, "document")
 
-          const result: unknown[] = yield* (() => {
-            switch (args.operation) {
-              case "goToDefinition":
-                return lsp.definition(position)
-              case "findReferences":
-                return lsp.references(position)
-              case "hover":
-                return lsp.hover(position)
-              case "documentSymbol":
-                return lsp.documentSymbol(uri)
-              case "workspaceSymbol":
-                return lsp.workspaceSymbol(args.query ?? "")
-              case "goToImplementation":
-                return lsp.implementation(position)
-              case "prepareCallHierarchy":
-                return lsp.prepareCallHierarchy(position)
-              case "incomingCalls":
-                return lsp.incomingCalls(position)
-              case "outgoingCalls":
-                return lsp.outgoingCalls(position)
-            }
-          })()
+          const requests = {
+            goToDefinition: () => lsp.definition(position),
+            findReferences: () => lsp.references(position),
+            hover: () => lsp.hover(position),
+            documentSymbol: () => lsp.documentSymbol(uri),
+            workspaceSymbol: () => lsp.workspaceSymbol(args.query ?? ""),
+            goToImplementation: () => lsp.implementation(position),
+            prepareCallHierarchy: () => lsp.prepareCallHierarchy(position),
+            incomingCalls: () => lsp.incomingCalls(position),
+            outgoingCalls: () => lsp.outgoingCalls(position),
+          } satisfies Record<(typeof operations)[number], () => Effect.Effect<unknown>>
+          const result: unknown[] = yield* requests[args.operation]()
 
           return {
             title,
             metadata: { result },
-            output: result.length === 0 ? `No results found for ${args.operation}` : JSON.stringify(result, null, 2),
+            output: result.length === 0 ? `No results found for ${args.operation}` : yield* encodeResult(result),
           }
-        }).pipe(Effect.orDie),
+        }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

@@ -65,10 +65,10 @@ test("expands and collapses a completed context group without overlap", async ({
     messages: [
       userMessage(),
       assistantMessage([
-        toolPart(ids[0]!, "read", "completed", { filePath: "src/a.ts" }),
-        toolPart(ids[1]!, "glob", "completed", { path: ".", pattern: "**/*.ts" }),
-        toolPart(ids[2]!, "grep", "completed", { path: ".", pattern: "stable" }),
-        toolPart(ids[3]!, "list", "completed", { path: "src" }),
+        toolPart(ids[0], "read", "completed", { filePath: "src/a.ts" }),
+        toolPart(ids[1], "glob", "completed", { path: ".", pattern: "**/*.ts" }),
+        toolPart(ids[2], "grep", "completed", { path: ".", pattern: "stable" }),
+        toolPart(ids[3], "list", "completed", { path: "src" }),
         textPart(followingID, "Following context expansion"),
       ]),
     ],
@@ -201,7 +201,6 @@ test("shows all and expands historical diff summary without overlap", async ({ p
   const scroller = page.locator(".scroll-view__viewport", { has: page.locator("[data-timeline-row]") })
   await scroller.evaluate((element) => (element.scrollTop = 0))
   const diff = page.locator('[data-timeline-row="DiffSummary"]')
-  const following = page.locator(`[data-message-id="${nextUserID}"]`).first()
   await expect(diff).toBeVisible()
   const regions = defineVisualRegions({
     diff: { selector: '[data-timeline-row="DiffSummary"]' },

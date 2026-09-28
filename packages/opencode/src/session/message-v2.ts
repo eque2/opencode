@@ -17,7 +17,15 @@ import {
 } from "@opencode-ai/core/v1/session"
 
 import { NamedError } from "@opencode-ai/core/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  type ModelMessage,
+  type ProviderMetadata,
+  type UIMessage,
+} from "ai"
+import { isJSONObject } from "@ai-sdk/provider"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { NotFoundError } from "@/storage/storage"
@@ -30,17 +38,24 @@ import { or } from "drizzle-orm"
 import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
+import { isRecord } from "@/util/record"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
-import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
-import { Effect, Schema } from "effect"
+import { Array as Arr, Effect, MutableHashSet, Option, Predicate, Record, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
   code: "ZlibError"
-  errno: number
-  path: string
+}
+
+function isFetchDecompressionError(value: unknown): value is FetchDecompressionError {
+  return value instanceof Error && Predicate.hasProperty(value, "code") && value.code === "ZlibError"
+}
+
+// Bun SystemError fields are optional strings; report a missing one as "".
+function stringProperty(value: object, key: string) {
+  return Predicate.hasProperty(value, key) && typeof value[key] === "string" ? value[key] : ""
 }
 
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
@@ -63,21 +78,28 @@ export const Event = {
 const Cursor = Schema.Struct({
   id: MessageID,
   time: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-})
+}).annotate({ identifier: "MessageCursor" })
 type Cursor = typeof Cursor.Type
 
-const decodeCursor = Schema.decodeUnknownSync(Cursor)
+const CursorJson = Schema.fromJsonString(Cursor)
+const encodeCursorJson = Schema.encodeSync(CursorJson)
+const decodeCursorJson = Schema.decodeUnknownSync(CursorJson)
 
 export const cursor = {
   encode(input: Cursor) {
-    return Buffer.from(JSON.stringify(input)).toString("base64url")
+    return Buffer.from(encodeCursorJson(input)).toString("base64url")
   },
   decode(input: string) {
-    return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
+    return decodeCursorJson(Buffer.from(input, "base64url").toString("utf8"))
   },
 }
 
+// JSON text of an arbitrary thrown value. A value that JSON cannot encode
+// (undefined, a bigint, a cycle) falls back to its String() text.
+const encodeUnknownJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 const info = (row: typeof MessageTable.$inferSelect) =>
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
   ({
     ...row.data,
     id: row.id,
@@ -85,6 +107,7 @@ const info = (row: typeof MessageTable.$inferSelect) =>
   }) as Info
 
 const part = (row: typeof PartTable.$inferSelect) =>
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
   ({
     ...row.data,
     id: row.id,
@@ -97,35 +120,53 @@ const older = (row: Cursor) =>
 
 function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$inferSelect)[]) {
   const ids = rows.map((row) => row.id)
-  const partByMessage = new Map<string, Part[]>()
   return Effect.gen(function* () {
-    if (ids.length > 0) {
-      const partRows = yield* db
-        .select()
-        .from(PartTable)
-        .where(inArray(PartTable.message_id, ids))
-        .orderBy(PartTable.message_id, PartTable.id)
-        .all()
-        .pipe(Effect.orDie)
-      for (const row of partRows) {
-        const next = part(row)
-        const list = partByMessage.get(row.message_id)
-        if (list) list.push(next)
-        else partByMessage.set(row.message_id, [next])
-      }
-    }
+    const partRows =
+      ids.length > 0
+        ? yield* db
+            .select()
+            .from(PartTable)
+            .where(inArray(PartTable.message_id, ids))
+            .orderBy(PartTable.message_id, PartTable.id)
+            .all()
+            .pipe(Effect.orDie)
+        : []
+    // Rows arrive ordered by message and part id, so each group keeps part order.
+    const partsByMessage = Arr.groupBy(partRows, (row) => row.message_id)
 
     return rows.map((row) => ({
       info: info(row),
-      parts: partByMessage.get(row.id) ?? [],
+      parts: Option.match(Record.get(partsByMessage, row.id), {
+        onNone: (): Part[] => [],
+        onSome: (group) => group.map(part),
+      }),
     }))
   })
 }
 
-function providerMeta(metadata: Record<string, any> | undefined) {
-  if (!metadata) return undefined
-  const { providerExecuted: _, ...rest } = metadata
-  return Object.keys(rest).length > 0 ? rest : undefined
+// Tool outputs carry media attachments as data URLs; other attachment shapes are not sent to the model.
+function isDataURLAttachment(value: unknown): value is { mime: string; url: string } {
+  return (
+    isRecord(value) &&
+    typeof value.mime === "string" &&
+    typeof value.url === "string" &&
+    value.url.startsWith("data:") &&
+    value.url.includes(",")
+  )
+}
+
+// The AI SDK accepts only JSON objects as provider metadata entries. Session part
+// metadata is open JSON, so keep the entries that have the provider shape.
+function toProviderMetadata(metadata: Record.ReadonlyRecord<string, unknown>): ProviderMetadata {
+  return Record.filter(metadata, isJSONObject)
+}
+
+// Tool parts keep the providerExecuted flag beside the provider entries; the AI SDK
+// reads that flag from its own field, so it is not provider metadata.
+function callProviderMetadata(metadata: Record.ReadonlyRecord<string, unknown> | undefined) {
+  if (!metadata) return {}
+  const entries = toProviderMetadata(Record.remove(metadata, "providerExecuted"))
+  return Record.isEmptyRecord(entries) ? {} : { callProviderMetadata: entries }
 }
 
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
@@ -134,7 +175,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   options?: { stripMedia?: boolean; toolOutputMaxChars?: number },
 ) {
   const result: UIMessage[] = []
-  const toolNames = new Set<string>()
+  const toolNames = MutableHashSet.empty<string>()
   // Track media from tool results that need to be injected as user messages
   // for providers that don't support that media type in tool results.
   //
@@ -168,19 +209,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       return { type: "text", value: output }
     }
 
-    if (typeof output === "object") {
-      const outputObject = output as {
-        text: string
-        attachments?: Array<{ mime: string; url: string }>
-      }
-      const attachments = (outputObject.attachments ?? []).filter((attachment) => {
-        return attachment.url.startsWith("data:") && attachment.url.includes(",")
-      })
+    if (Predicate.isObjectOrArray(output)) {
+      const text = Predicate.hasProperty(output, "text") && typeof output.text === "string" ? output.text : ""
+      const attachments = (
+        Predicate.hasProperty(output, "attachments") && Array.isArray(output.attachments) ? output.attachments : []
+      ).filter(isDataURLAttachment)
 
       return {
         type: "content",
         value: [
-          ...(outputObject.text ? [{ type: "text", text: outputObject.text }] : []),
+          ...(text ? [{ type: "text", text }] : []),
           ...attachments.map((attachment) => ({
             type: "media",
             mediaType: attachment.mime,
@@ -193,7 +231,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
     }
 
-    return { type: "json", value: output as never }
+    return { type: "json", value: output }
   }
 
   for (const msg of input) {
@@ -276,7 +314,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       // the neighboring signed reasoning blocks.
       const hasSignedReasoning = msg.parts.some((part) => {
         if (part.type !== "reasoning") return false
-        return part.metadata?.anthropic?.signature != null
+        const anthropic = part.metadata?.anthropic
+        return Predicate.hasProperty(anthropic, "signature") && Predicate.isNotNullish(anthropic.signature)
       })
       for (const part of msg.parts) {
         if (part.type === "text") {
@@ -284,7 +323,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           assistantMessage.parts.push({
             type: "text",
             text,
-            ...(differentModel ? {} : { providerMetadata: part.metadata }),
+            ...(differentModel || !part.metadata ? {} : { providerMetadata: toProviderMetadata(part.metadata) }),
           })
         }
         if (part.type === "step-start")
@@ -292,7 +331,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             type: "step-start",
           })
         if (part.type === "tool") {
-          toolNames.add(part.tool)
+          MutableHashSet.add(toolNames, part.tool)
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
@@ -317,36 +356,36 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 : outputText
 
             assistantMessage.parts.push({
-              type: ("tool-" + part.tool) as `tool-${string}`,
+              type: `tool-${part.tool}` as const,
               state: "output-available",
               toolCallId: part.callID,
               input: part.state.input,
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : callProviderMetadata(part.metadata)),
             })
           }
           if (part.state.status === "error") {
-            const output = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
-            if (typeof output === "string") {
+            const metadata = part.state.metadata
+            if (metadata?.interrupted === true && typeof metadata.output === "string") {
               assistantMessage.parts.push({
-                type: ("tool-" + part.tool) as `tool-${string}`,
+                type: `tool-${part.tool}` as const,
                 state: "output-available",
                 toolCallId: part.callID,
                 input: part.state.input,
-                output,
+                output: metadata.output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...(differentModel ? {} : callProviderMetadata(part.metadata)),
               })
             } else {
               assistantMessage.parts.push({
-                type: ("tool-" + part.tool) as `tool-${string}`,
+                type: `tool-${part.tool}` as const,
                 state: "output-error",
                 toolCallId: part.callID,
                 input: part.state.input,
                 errorText: part.state.error,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...(differentModel ? {} : callProviderMetadata(part.metadata)),
               })
             }
           }
@@ -354,13 +393,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           // Anthropic/Claude APIs require every tool_use to have a corresponding tool_result
           if (part.state.status === "pending" || part.state.status === "running")
             assistantMessage.parts.push({
-              type: ("tool-" + part.tool) as `tool-${string}`,
+              type: `tool-${part.tool}` as const,
               state: "output-error",
               toolCallId: part.callID,
               input: part.state.input,
               errorText: "[Tool execution was interrupted]",
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : callProviderMetadata(part.metadata)),
             })
         }
         if (part.type === "reasoning") {
@@ -375,7 +414,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           assistantMessage.parts.push({
             type: "reasoning",
             text: part.text,
-            providerMetadata: part.metadata,
+            ...(part.metadata ? { providerMetadata: toProviderMetadata(part.metadata) } : {}),
           })
         }
       }
@@ -426,15 +465,21 @@ export function toModelMessages(
   return Effect.runPromise(toModelMessagesEffect(input, model, options))
 }
 
+/** One page of messages; `cursor` is present when an older page exists. */
+export interface Page {
+  items: WithParts[]
+  more: boolean
+  cursor?: string
+}
+
 export const page = Effect.fn("MessageV2.page")(function* (input: {
   sessionID: SessionID
   limit: number
   before?: string
 }) {
   const { db } = yield* Database.Service
-  const before = input.before ? cursor.decode(input.before) : undefined
-  const where = before
-    ? and(eq(MessageTable.session_id, input.sessionID), older(before))
+  const where = input.before
+    ? and(eq(MessageTable.session_id, input.sessionID), older(cursor.decode(input.before)))
     : eq(MessageTable.session_id, input.sessionID)
   const rows = yield* db
     .select()
@@ -466,7 +511,7 @@ export const page = Effect.fn("MessageV2.page")(function* (input: {
   return {
     items,
     more,
-    cursor: more && tail ? cursor.encode({ id: tail.id, time: tail.time_created }) : undefined,
+    ...(more && tail ? { cursor: cursor.encode({ id: tail.id, time: tail.time_created }) } : {}),
   }
 })
 
@@ -476,10 +521,8 @@ export function stream(sessionID: SessionID) {
     const result = [] as WithParts[]
     let before: string | undefined
     while (true) {
-      const next = yield* page({ sessionID, limit: size, before }).pipe(
-        Effect.catchIf(NotFoundError.isInstance, () =>
-          Effect.succeed({ items: [] as WithParts[], more: false, cursor: undefined }),
-        ),
+      const next: Page = yield* page({ sessionID, limit: size, before }).pipe(
+        Effect.catchTag("NotFoundError", () => Effect.succeed({ items: [], more: false })),
       )
       if (next.items.length === 0) break
       for (let i = next.items.length - 1; i >= 0; i--) {
@@ -524,7 +567,7 @@ export const get = Effect.fn("MessageV2.get")(function* (input: { sessionID: Ses
 
 export function filterCompacted(msgs: Iterable<WithParts>) {
   const result = [] as WithParts[]
-  const completed = new Set<string>()
+  const completed = MutableHashSet.empty<string>()
   let retain: MessageID | undefined
   for (const msg of msgs) {
     result.push(msg)
@@ -532,7 +575,7 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
       if (msg.info.id === retain) break
       continue
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id)) {
+    if (msg.info.role === "user" && MutableHashSet.has(completed, msg.info.id)) {
       const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
       if (!part) continue
       if (!part.tail_start_id) break
@@ -540,10 +583,14 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
       if (msg.info.id === retain) break
       continue
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id) && msg.parts.some((part) => part.type === "compaction"))
+    if (
+      msg.info.role === "user" &&
+      MutableHashSet.has(completed, msg.info.id) &&
+      msg.parts.some((part) => part.type === "compaction")
+    )
       break
     if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
-      completed.add(msg.info.parentID)
+      MutableHashSet.add(completed, msg.info.parentID)
   }
   result.reverse()
   const compactionIndex = result.findLastIndex(
@@ -629,20 +676,20 @@ export function fromError(
         },
         { cause: e },
       ).toObject()
-    case (e as SystemError)?.code === "ECONNRESET":
+    case Predicate.hasProperty(e, "code") && e.code === "ECONNRESET":
       return new APIError(
         {
           message: "Connection reset by server",
           isRetryable: true,
           metadata: {
-            code: (e as SystemError).code ?? "",
-            syscall: (e as SystemError).syscall ?? "",
-            message: (e as SystemError).message ?? "",
+            code: e.code,
+            syscall: stringProperty(e, "syscall"),
+            message: stringProperty(e, "message"),
           },
         },
         { cause: e },
       ).toObject()
-    case e instanceof Error && (e as FetchDecompressionError).code === "ZlibError":
+    case isFetchDecompressionError(e):
       if (ctx.aborted) {
         return new AbortedError({ message: e.message }, { cause: e }).toObject()
       }
@@ -651,7 +698,7 @@ export function fromError(
           message: "Response decompression failed",
           isRetryable: true,
           metadata: {
-            code: (e as FetchDecompressionError).code,
+            code: e.code,
             message: e.message,
           },
         },
@@ -708,32 +755,34 @@ export function fromError(
       ).toObject()
     case e instanceof Error:
       return new NamedError.Unknown({ message: errorMessage(e) }, { cause: e }).toObject()
-    default:
-      try {
-        const parsed = ProviderError.parseStreamError(e)
-        if (parsed) {
-          if (parsed.type === "context_overflow") {
-            return new ContextOverflowError(
-              {
-                message: parsed.message,
-                responseBody: parsed.responseBody,
-              },
-              { cause: e },
-            ).toObject()
-          }
-          return new APIError(
-            {
-              message: parsed.message,
-              isRetryable: parsed.isRetryable,
-              responseBody: parsed.responseBody,
-            },
-            {
-              cause: e,
-            },
-          ).toObject()
-        }
-      } catch {}
-      return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e }).toObject()
+    default: {
+      // A stream error that cannot be parsed, or whose parser throws, is reported as unknown.
+      const parsed = Option.liftThrowable(ProviderError.parseStreamError)(e).pipe(Option.flatMap(Option.fromNullishOr))
+      if (Option.isNone(parsed)) {
+        const message = Option.getOrElse(encodeUnknownJson(e), () => String(e))
+        return new NamedError.Unknown({ message }, { cause: e }).toObject()
+      }
+      const stream = parsed.value
+      if (stream.type === "context_overflow") {
+        return new ContextOverflowError(
+          {
+            message: stream.message,
+            responseBody: stream.responseBody,
+          },
+          { cause: e },
+        ).toObject()
+      }
+      return new APIError(
+        {
+          message: stream.message,
+          isRetryable: stream.isRetryable,
+          responseBody: stream.responseBody,
+        },
+        {
+          cause: e,
+        },
+      ).toObject()
+    }
   }
 }
 

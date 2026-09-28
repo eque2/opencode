@@ -1,45 +1,48 @@
 import { createConnection } from "net"
-import { createServer } from "http"
+import { createServer, type IncomingMessage, type ServerResponse } from "http"
+import { Array as Arr, Deferred, Duration, Effect, MutableHashMap, Option, Schema } from "effect"
 import { OauthCallbackPage } from "@opencode-ai/core/oauth/page"
 import { OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH, parseRedirectUri } from "./oauth-provider"
 
 const OAUTH_CALLBACK_HOST = "127.0.0.1"
 
+export class McpOAuthCallbackError extends Schema.TaggedError<McpOAuthCallbackError>()("McpOAuthCallbackError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 // Current callback server configuration (may differ from defaults if custom redirectUri is used)
 let currentPort = OAUTH_CALLBACK_PORT
 let currentPath = OAUTH_CALLBACK_PATH
 
-interface PendingAuth {
-  resolve: (code: string) => void
-  reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
-}
+type Server = ReturnType<typeof createServer>
 
-let server: ReturnType<typeof createServer> | undefined
-const pendingAuths = new Map<string, PendingAuth>()
+let server = Option.none<Server>()
+// Keyed by oauthState. Each entry settles the matching waitForCallback.
+const pendingAuths = MutableHashMap.empty<string, Deferred.Deferred<string, McpOAuthCallbackError>>()
 // Reverse index: mcpName → oauthState, so cancelPending(mcpName) can
 // find the right entry in pendingAuths (which is keyed by oauthState).
-const mcpNameToState = new Map<string, string>()
+const mcpNameToState = MutableHashMap.empty<string, string>()
 
-const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const CALLBACK_TIMEOUT = Duration.minutes(5)
 
 function cleanupStateIndex(oauthState: string) {
-  for (const [name, state] of mcpNameToState) {
-    if (state === oauthState) {
-      mcpNameToState.delete(name)
-      break
-    }
-  }
+  const found = Arr.findFirst(mcpNameToState, ([, state]) => state === oauthState)
+  if (Option.isSome(found)) MutableHashMap.remove(mcpNameToState, found.value[0])
 }
 
 function stopIfIdle() {
-  if (pendingAuths.size > 0 || !server) return
+  if (MutableHashMap.size(pendingAuths) > 0 || Option.isNone(server)) return
 
-  server.close()
-  server = undefined
+  server.value.close()
+  server = Option.none()
 }
 
-function handleRequest(req: import("http").IncomingMessage, res: import("http").ServerResponse) {
+function rejectPending(pending: Deferred.Deferred<string, McpOAuthCallbackError>, message: string) {
+  Deferred.doneUnsafe(pending, Effect.fail(new McpOAuthCallbackError({ message })))
+}
+
+function handleRequest(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url || "/", `http://localhost:${currentPort}`)
 
   if (url.pathname !== currentPath) {
@@ -61,14 +64,14 @@ function handleRequest(req: import("http").IncomingMessage, res: import("http").
     return
   }
 
+  const pending = MutableHashMap.get(pendingAuths, state)
+
   if (error) {
     const errorMsg = errorDescription || error
-    if (pendingAuths.has(state)) {
-      const pending = pendingAuths.get(state)!
-      clearTimeout(pending.timeout)
-      pendingAuths.delete(state)
+    if (Option.isSome(pending)) {
+      MutableHashMap.remove(pendingAuths, state)
       cleanupStateIndex(state)
-      pending.reject(new Error(errorMsg))
+      rejectPending(pending.value, errorMsg)
     }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
     res.end(OauthCallbackPage.error(errorMsg, { provider: "MCP" }))
@@ -83,112 +86,137 @@ function handleRequest(req: import("http").IncomingMessage, res: import("http").
   }
 
   // Validate state parameter
-  if (!pendingAuths.has(state)) {
+  if (Option.isNone(pending)) {
     const errorMsg = "Invalid or expired state parameter - potential CSRF attack"
     res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" })
     res.end(OauthCallbackPage.error(errorMsg, { provider: "MCP" }))
     return
   }
 
-  const pending = pendingAuths.get(state)!
-
-  clearTimeout(pending.timeout)
-  pendingAuths.delete(state)
+  MutableHashMap.remove(pendingAuths, state)
   cleanupStateIndex(state)
-  pending.resolve(code)
+  Deferred.doneUnsafe(pending.value, Effect.succeed(code))
 
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
   res.end(OauthCallbackPage.success({ provider: "MCP" }))
   stopIfIdle()
 }
 
-export async function ensureRunning(redirectUri?: string): Promise<void> {
+const listen = (next: Server, port: number) =>
+  Effect.callback<void, McpOAuthCallbackError>((resume) => {
+    next.listen(port, OAUTH_CALLBACK_HOST, () => resume(Effect.void))
+    next.on("error", (cause) =>
+      resume(Effect.fail(new McpOAuthCallbackError({ message: "OAuth callback server failed to listen", cause }))),
+    )
+  })
+
+const ensureRunningEffect = Effect.fn("McpOAuthCallback.ensureRunning")(function* (redirectUri?: string) {
   // Parse the redirect URI to get port and path (uses defaults if not provided)
   const { port, path } = parseRedirectUri(redirectUri)
 
   // If server is running on a different port/path, stop it first
-  if (server && (currentPort !== port || currentPath !== path)) {
-    await stop()
+  if (Option.isSome(server) && (currentPort !== port || currentPath !== path)) {
+    yield* stopEffect()
   }
 
-  if (server) return
+  if (Option.isSome(server)) return
 
-  const running = await isPortInUse(port)
-  if (running) {
-    return
-  }
+  if (yield* portInUse(port)) return
 
   currentPort = port
   currentPath = path
 
-  server = createServer(handleRequest)
-  await new Promise<void>((resolve, reject) => {
-    server!.listen(currentPort, OAUTH_CALLBACK_HOST, () => {
-      resolve()
+  const next = createServer(handleRequest)
+  server = Option.some(next)
+  yield* listen(next, currentPort)
+})
+
+const waitForCallbackEffect = Effect.fn("McpOAuthCallback.waitForCallback")(function* (
+  oauthState: string,
+  mcpName?: string,
+) {
+  if (mcpName) MutableHashMap.set(mcpNameToState, mcpName, oauthState)
+  const pending = Deferred.makeUnsafe<string, McpOAuthCallbackError>()
+  MutableHashMap.set(pendingAuths, oauthState, pending)
+
+  return yield* Deferred.await(pending).pipe(
+    Effect.timeoutOrElse({
+      duration: CALLBACK_TIMEOUT,
+      orElse: () =>
+        Effect.suspend(() => {
+          if (Option.contains(MutableHashMap.get(pendingAuths, oauthState), pending)) {
+            MutableHashMap.remove(pendingAuths, oauthState)
+            if (mcpName) MutableHashMap.remove(mcpNameToState, mcpName)
+            stopIfIdle()
+          }
+          return Effect.fail(
+            new McpOAuthCallbackError({ message: "OAuth callback timeout - authorization took too long" }),
+          )
+        }),
+    }),
+  )
+})
+
+const portInUse = (port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const socket = createConnection(port, "127.0.0.1")
+    socket.on("connect", () => {
+      socket.destroy()
+      resume(Effect.succeed(true))
     })
-    server!.on("error", reject)
+    socket.on("error", () => {
+      resume(Effect.succeed(false))
+    })
   })
+
+const stopEffect = Effect.fn("McpOAuthCallback.stop")(function* () {
+  if (Option.isSome(server)) {
+    const running = server.value
+    yield* Effect.callback<void>((resume) => {
+      running.close(() => resume(Effect.void))
+    })
+    server = Option.none()
+  }
+
+  for (const pending of MutableHashMap.values(pendingAuths)) {
+    rejectPending(pending, "OAuth callback server stopped")
+  }
+  MutableHashMap.clear(pendingAuths)
+  MutableHashMap.clear(mcpNameToState)
+})
+
+// The exports below keep the Promise-based module contract that src/mcp/index.ts and the MCP
+// tests call. Each one runs its Effect at this boundary.
+
+export function ensureRunning(redirectUri?: string): Promise<void> {
+  return Effect.runPromise(ensureRunningEffect(redirectUri))
 }
 
 export function waitForCallback(oauthState: string, mcpName?: string): Promise<string> {
-  if (mcpName) mcpNameToState.set(mcpName, oauthState)
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      if (pendingAuths.has(oauthState)) {
-        pendingAuths.delete(oauthState)
-        if (mcpName) mcpNameToState.delete(mcpName)
-        reject(new Error("OAuth callback timeout - authorization took too long"))
-        stopIfIdle()
-      }
-    }, CALLBACK_TIMEOUT_MS)
-
-    pendingAuths.set(oauthState, { resolve, reject, timeout })
-  })
+  return Effect.runPromise(waitForCallbackEffect(oauthState, mcpName))
 }
 
 export function cancelPending(mcpName: string): void {
   // Look up the oauthState for this mcpName via the reverse index
-  const oauthState = mcpNameToState.get(mcpName)
-  const key = oauthState ?? mcpName
-  const pending = pendingAuths.get(key)
-  if (pending) {
-    clearTimeout(pending.timeout)
-    pendingAuths.delete(key)
-    mcpNameToState.delete(mcpName)
-    pending.reject(new Error("Authorization cancelled"))
-    stopIfIdle()
-  }
+  const key = Option.getOrElse(MutableHashMap.get(mcpNameToState, mcpName), () => mcpName)
+  const pending = MutableHashMap.get(pendingAuths, key)
+  if (Option.isNone(pending)) return
+  MutableHashMap.remove(pendingAuths, key)
+  MutableHashMap.remove(mcpNameToState, mcpName)
+  rejectPending(pending.value, "Authorization cancelled")
+  stopIfIdle()
 }
 
-export async function isPortInUse(port: number = OAUTH_CALLBACK_PORT): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection(port, "127.0.0.1")
-    socket.on("connect", () => {
-      socket.destroy()
-      resolve(true)
-    })
-    socket.on("error", () => {
-      resolve(false)
-    })
-  })
+export function isPortInUse(port: number = OAUTH_CALLBACK_PORT): Promise<boolean> {
+  return Effect.runPromise(portInUse(port))
 }
 
-export async function stop(): Promise<void> {
-  if (server) {
-    await new Promise<void>((resolve) => server!.close(() => resolve()))
-    server = undefined
-  }
-
-  for (const [_name, pending] of pendingAuths) {
-    clearTimeout(pending.timeout)
-    pending.reject(new Error("OAuth callback server stopped"))
-  }
-  pendingAuths.clear()
-  mcpNameToState.clear()
+export function stop(): Promise<void> {
+  return Effect.runPromise(stopEffect())
 }
 
 export function isRunning(): boolean {
-  return server !== undefined
+  return Option.isSome(server)
 }
 
 export * as McpOAuthCallback from "./oauth-callback"

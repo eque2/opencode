@@ -1,16 +1,21 @@
+import { HashSet, Option } from "effect"
+
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 const OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
 
 type Translator = (key: string, vars?: Record<string, string | number | boolean>) => string
 
+/** The error message of one field. Option.none() means that the field has no error. */
+export type FieldErr = Option.Option<string>
+
 export type ModelErr = {
-  id?: string
-  name?: string
+  id: FieldErr
+  name: FieldErr
 }
 
 export type HeaderErr = {
-  key?: string
-  value?: string
+  key: FieldErr
+  value: FieldErr
 }
 
 export type ModelRow = {
@@ -35,9 +40,9 @@ export type FormState = {
   models: ModelRow[]
   headers: HeaderRow[]
   err: {
-    providerID?: string
-    name?: string
-    baseURL?: string
+    providerID: FieldErr
+    name: FieldErr
+    baseURL: FieldErr
   }
 }
 
@@ -45,73 +50,69 @@ type ValidateArgs = {
   form: FormState
   t: Translator
   disabledProviders: string[]
-  existingProviderIDs: Set<string>
+  existingProviderIDs: HashSet.HashSet<string>
 }
 
 export function validateCustomProvider(input: ValidateArgs) {
+  const error = (key: string): FieldErr => Option.some(input.t(key))
+  const valid: FieldErr = Option.none()
+
   const providerID = input.form.providerID.trim()
   const name = input.form.name.trim()
   const baseURL = input.form.baseURL.trim()
   const apiKey = input.form.apiKey.trim()
 
   const env = apiKey.match(/^\{env:([^}]+)\}$/)?.[1]?.trim()
-  const key = apiKey && !env ? apiKey : undefined
+  const key = apiKey && !env ? Option.some(apiKey) : Option.none<string>()
 
   const idError = !providerID
-    ? input.t("provider.custom.error.providerID.required")
+    ? error("provider.custom.error.providerID.required")
     : !PROVIDER_ID.test(providerID)
-      ? input.t("provider.custom.error.providerID.format")
-      : undefined
+      ? error("provider.custom.error.providerID.format")
+      : valid
 
-  const nameError = !name ? input.t("provider.custom.error.name.required") : undefined
+  const nameError = !name ? error("provider.custom.error.name.required") : valid
   const urlError = !baseURL
-    ? input.t("provider.custom.error.baseURL.required")
+    ? error("provider.custom.error.baseURL.required")
     : !/^https?:\/\//.test(baseURL)
-      ? input.t("provider.custom.error.baseURL.format")
-      : undefined
+      ? error("provider.custom.error.baseURL.format")
+      : valid
 
   const disabled = input.disabledProviders.includes(providerID)
-  const existsError = idError
-    ? undefined
-    : input.existingProviderIDs.has(providerID) && !disabled
-      ? input.t("provider.custom.error.providerID.exists")
-      : undefined
+  const existsError = Option.isSome(idError)
+    ? valid
+    : HashSet.has(input.existingProviderIDs, providerID) && !disabled
+      ? error("provider.custom.error.providerID.exists")
+      : valid
 
-  const seenModels = new Set<string>()
-  const models = input.form.models.map((m) => {
+  const models = input.form.models.map((m, index): ModelErr => {
     const id = m.id.trim()
+    // A row repeats an ID when an earlier row has the same trimmed ID.
     const idError = !id
-      ? input.t("provider.custom.error.required")
-      : seenModels.has(id)
-        ? input.t("provider.custom.error.duplicate")
-        : (() => {
-            seenModels.add(id)
-            return undefined
-          })()
-    const nameError = !m.name.trim() ? input.t("provider.custom.error.required") : undefined
+      ? error("provider.custom.error.required")
+      : input.form.models.findIndex((other) => other.id.trim() === id) < index
+        ? error("provider.custom.error.duplicate")
+        : valid
+    const nameError = !m.name.trim() ? error("provider.custom.error.required") : valid
     return { id: idError, name: nameError }
   })
-  const modelsValid = models.every((m) => !m.id && !m.name)
   const modelConfig = Object.fromEntries(input.form.models.map((m) => [m.id.trim(), { name: m.name.trim() }]))
 
-  const seenHeaders = new Set<string>()
-  const headers = input.form.headers.map((h) => {
+  const headers = input.form.headers.map((h, index): Partial<HeaderErr> => {
     const key = h.key.trim()
     const value = h.value.trim()
 
+    // A blank row sets no error, so the store keeps the errors that the row shows.
     if (!key && !value) return {}
+    // Header names are case-insensitive, so a row repeats a name when an earlier row has it in any case.
     const keyError = !key
-      ? input.t("provider.custom.error.required")
-      : seenHeaders.has(key.toLowerCase())
-        ? input.t("provider.custom.error.duplicate")
-        : (() => {
-            seenHeaders.add(key.toLowerCase())
-            return undefined
-          })()
-    const valueError = !value ? input.t("provider.custom.error.required") : undefined
+      ? error("provider.custom.error.required")
+      : input.form.headers.findIndex((other) => other.key.trim().toLowerCase() === key.toLowerCase()) < index
+        ? error("provider.custom.error.duplicate")
+        : valid
+    const valueError = !value ? error("provider.custom.error.required") : valid
     return { key: keyError, value: valueError }
   })
-  const headersValid = headers.every((h) => !h.key && !h.value)
   const headerConfig = Object.fromEntries(
     input.form.headers
       .map((h) => ({ key: h.key.trim(), value: h.value.trim() }))
@@ -119,13 +120,13 @@ export function validateCustomProvider(input: ValidateArgs) {
       .map((h) => [h.key, h.value]),
   )
 
-  const err = {
-    providerID: idError ?? existsError,
+  const err: FormState["err"] = {
+    providerID: Option.orElse(idError, () => existsError),
     name: nameError,
     baseURL: urlError,
   }
 
-  const ok = !idError && !existsError && !nameError && !urlError && modelsValid && headersValid
+  const ok = !hasError(err) && !models.some(hasError) && !headers.some(hasError)
   if (!ok) return { err, models, headers }
 
   return {
@@ -150,9 +151,37 @@ export function validateCustomProvider(input: ValidateArgs) {
   }
 }
 
+/** True when a record holds at least one field error. A key that is left out holds no error. */
+const hasError = (err: Partial<Record<string, FieldErr>>) =>
+  Object.values(err).some((value) => value !== undefined && Option.isSome(value))
+
+/** The TextField props for a field error: the invalid state and the message, or no props for a valid field. */
+export const textFieldError = (err: FieldErr) =>
+  Option.match(err, {
+    onNone: () => ({}),
+    onSome: (error) => ({ validationState: "invalid" as const, error }),
+  })
+
+/** The form errors with no field in error. */
+export const formErr = (): FormState["err"] => ({
+  providerID: Option.none(),
+  name: Option.none(),
+  baseURL: Option.none(),
+})
+
 let row = 0
 
 const nextRow = () => `row-${row++}`
 
-export const modelRow = (): ModelRow => ({ row: nextRow(), id: "", name: "", err: {} })
-export const headerRow = (): HeaderRow => ({ row: nextRow(), key: "", value: "", err: {} })
+export const modelRow = (): ModelRow => ({
+  row: nextRow(),
+  id: "",
+  name: "",
+  err: { id: Option.none(), name: Option.none() },
+})
+export const headerRow = (): HeaderRow => ({
+  row: nextRow(),
+  key: "",
+  value: "",
+  err: { key: Option.none(), value: Option.none() },
+})

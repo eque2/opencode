@@ -1,5 +1,17 @@
 export * as Patch from "./patch"
 
+import { Result, Schema } from "effect"
+
+/** The patch text does not follow the apply_patch grammar. */
+export class ParseError extends Schema.TaggedError<ParseError>()("Patch.ParseError", {
+  message: Schema.String,
+}) {}
+
+/** An update chunk does not match the current file content. */
+export class MatchError extends Schema.TaggedError<MatchError>()("Patch.MatchError", {
+  message: Schema.String,
+}) {}
+
 export type Hunk =
   | { readonly type: "add"; readonly path: string; readonly contents: string }
   | { readonly type: "delete"; readonly path: string }
@@ -22,62 +34,74 @@ export interface FileUpdate {
   readonly bom: boolean
 }
 
-export function parse(patchText: string): ReadonlyArray<Hunk> {
-  const lines = stripHeredoc(patchText.trim()).split("\n")
-  const begin = lines.findIndex((line) => line.trim() === "*** Begin Patch")
-  const end = lines.findIndex((line) => line.trim() === "*** End Patch")
-  if (begin === -1 || end === -1 || begin >= end) throw new Error("Invalid patch format: missing Begin/End markers")
+const invalid = (message: string) => Result.fail(new ParseError({ message }))
 
-  const hunks: Hunk[] = []
-  let index = begin + 1
-  while (index < end) {
-    const line = lines[index]!
-    if (line.startsWith("*** Add File:")) {
-      const path = line.slice("*** Add File:".length).trim()
-      if (!path) throw new Error("Invalid add file path")
-      const parsed = parseAdd(lines, index + 1)
-      hunks.push({ type: "add", path, contents: parsed.content })
-      index = parsed.next
-      continue
-    }
-    if (line.startsWith("*** Delete File:")) {
-      const path = line.slice("*** Delete File:".length).trim()
-      if (!path) throw new Error("Invalid delete file path")
-      hunks.push({ type: "delete", path })
-      index++
-      continue
-    }
-    if (line.startsWith("*** Update File:")) {
-      const path = line.slice("*** Update File:".length).trim()
-      if (!path) throw new Error("Invalid update file path")
-      let next = index + 1
-      let movePath: string | undefined
-      if (lines[next]?.startsWith("*** Move to:")) {
-        movePath = lines[next]!.slice("*** Move to:".length).trim()
-        if (!movePath) throw new Error("Invalid move file path")
-        next++
+export function parse(patchText: string): Result.Result<ReadonlyArray<Hunk>, ParseError> {
+  return Result.gen(function* () {
+    const lines = stripHeredoc(patchText.trim()).split("\n")
+    const begin = lines.findIndex((line) => line.trim() === "*** Begin Patch")
+    const end = lines.findIndex((line) => line.trim() === "*** End Patch")
+    if (begin === -1 || end === -1 || begin >= end)
+      return yield* invalid("Invalid patch format: missing Begin/End markers")
+
+    let hunks: ReadonlyArray<Hunk> = []
+    let index = begin + 1
+    while (index < end) {
+      const line = lines[index]
+      if (line.startsWith("*** Add File:")) {
+        const path = line.slice("*** Add File:".length).trim()
+        if (!path) return yield* invalid("Invalid add file path")
+        const parsed = yield* parseAdd(lines, index + 1)
+        hunks = [...hunks, { type: "add", path, contents: parsed.content }]
+        index = parsed.next
+        continue
       }
-      const parsed = parseUpdate(lines, next)
-      if (parsed.chunks.length === 0) throw new Error(`Invalid update hunk for ${path}: expected at least one @@ chunk`)
-      hunks.push({ type: "update", path, movePath, chunks: parsed.chunks })
-      index = parsed.next
-      continue
+      if (line.startsWith("*** Delete File:")) {
+        const path = line.slice("*** Delete File:".length).trim()
+        if (!path) return yield* invalid("Invalid delete file path")
+        hunks = [...hunks, { type: "delete", path }]
+        index++
+        continue
+      }
+      if (line.startsWith("*** Update File:")) {
+        const path = line.slice("*** Update File:".length).trim()
+        if (!path) return yield* invalid("Invalid update file path")
+        let next = index + 1
+        let movePath: string | undefined
+        if (lines[next]?.startsWith("*** Move to:")) {
+          movePath = lines[next].slice("*** Move to:".length).trim()
+          if (!movePath) return yield* invalid("Invalid move file path")
+          next++
+        }
+        const parsed = yield* parseUpdate(lines, next)
+        if (parsed.chunks.length === 0)
+          return yield* invalid(`Invalid update hunk for ${path}: expected at least one @@ chunk`)
+        hunks = [...hunks, { type: "update", path, movePath, chunks: parsed.chunks }]
+        index = parsed.next
+        continue
+      }
+      return yield* invalid(`Invalid patch line: ${line}`)
     }
-    throw new Error(`Invalid patch line: ${line}`)
-  }
-  return hunks
+    return hunks
+  })
 }
 
-export function derive(path: string, chunks: ReadonlyArray<UpdateFileChunk>, original: string): FileUpdate {
-  const source = splitBom(original)
-  const lines = source.text.split("\n")
-  if (lines.at(-1) === "") lines.pop()
-  const replacements = computeReplacements(lines, path, chunks)
-  const updated = [...lines]
-  for (const [start, remove, insert] of replacements.toReversed()) updated.splice(start, remove, ...insert)
-  if (updated.at(-1) !== "") updated.push("")
-  const next = splitBom(updated.join("\n"))
-  return { content: next.text, bom: source.bom || next.bom }
+export function derive(
+  path: string,
+  chunks: ReadonlyArray<UpdateFileChunk>,
+  original: string,
+): Result.Result<FileUpdate, MatchError> {
+  return Result.gen(function* () {
+    const source = splitBom(original)
+    const split = source.text.split("\n")
+    const lines = split.at(-1) === "" ? split.slice(0, -1) : split
+    const replacements = yield* computeReplacements(lines, path, chunks)
+    const updated = replacements
+      .toReversed()
+      .reduce((result, [start, remove, insert]) => result.toSpliced(start, remove, ...insert), lines)
+    const next = splitBom([...updated, ...(updated.at(-1) === "" ? [] : [""])].join("\n"))
+    return { content: next.text, bom: source.bom || next.bom }
+  })
 }
 
 export function joinBom(text: string, bom: boolean) {
@@ -85,76 +109,89 @@ export function joinBom(text: string, bom: boolean) {
   return bom ? `\uFEFF${stripped}` : stripped
 }
 
+/** Returns the first index at or after `start` whose line matches, or the line count. */
+function findFrom(lines: ReadonlyArray<string>, start: number, predicate: (line: string) => boolean) {
+  const offset = lines.slice(start).findIndex(predicate)
+  return offset === -1 ? lines.length : start + offset
+}
+
 function parseAdd(lines: ReadonlyArray<string>, start: number) {
-  const content: string[] = []
-  let index = start
-  while (index < lines.length && !lines[index]!.startsWith("***")) {
-    if (!lines[index]!.startsWith("+")) throw new Error(`Invalid add file line: ${lines[index]}`)
-    content.push(lines[index]!.slice(1))
-    index++
-  }
-  return { content: content.join("\n"), next: index }
+  return Result.gen(function* () {
+    const next = findFrom(lines, start, (line) => line.startsWith("***"))
+    const body = lines.slice(start, next)
+    const bad = body.findIndex((line) => !line.startsWith("+"))
+    if (bad !== -1) return yield* invalid(`Invalid add file line: ${body[bad]}`)
+    return { content: body.map((line) => line.slice(1)).join("\n"), next }
+  })
 }
 
 function parseUpdate(lines: ReadonlyArray<string>, start: number) {
-  const chunks: UpdateFileChunk[] = []
-  let index = start
-  while (index < lines.length && !lines[index]!.startsWith("***")) {
-    if (!lines[index]!.startsWith("@@")) {
-      throw new Error(`Invalid update file line: ${lines[index]}`)
+  return Result.gen(function* () {
+    let chunks: ReadonlyArray<UpdateFileChunk> = []
+    let index = start
+    while (index < lines.length && !lines[index].startsWith("***")) {
+      const parsed = yield* parseChunk(lines, index)
+      chunks = [...chunks, parsed.chunk]
+      index = parsed.next
     }
-    const changeContext = lines[index]!.slice(2).trim() || undefined
-    const oldLines: string[] = []
-    const newLines: string[] = []
-    let endOfFile = false
-    index++
-    while (index < lines.length && !lines[index]!.startsWith("@@")) {
-      const line = lines[index]!
-      if (line === "*** End of File") {
-        endOfFile = true
-        index++
-        break
-      }
-      if (line.startsWith("***")) break
-      if (line.startsWith(" ")) {
-        oldLines.push(line.slice(1))
-        newLines.push(line.slice(1))
-      } else if (line.startsWith("-")) oldLines.push(line.slice(1))
-      else if (line.startsWith("+")) newLines.push(line.slice(1))
-      else throw new Error(`Invalid update chunk line: ${line}`)
-      index++
-    }
-    chunks.push({ oldLines, newLines, changeContext, endOfFile: endOfFile || undefined })
-  }
-  return { chunks, next: index }
+    return { chunks, next: index }
+  })
 }
 
+function parseChunk(lines: ReadonlyArray<string>, index: number) {
+  return Result.gen(function* () {
+    if (!lines[index].startsWith("@@")) {
+      return yield* invalid(`Invalid update file line: ${lines[index]}`)
+    }
+    const changeContext = lines[index].slice(2).trim()
+    const end = findFrom(lines, index + 1, (line) => line.startsWith("@@") || line.startsWith("***"))
+    const body = lines.slice(index + 1, end)
+    const bad = body.findIndex((line) => !line.startsWith(" ") && !line.startsWith("-") && !line.startsWith("+"))
+    if (bad !== -1) return yield* invalid(`Invalid update chunk line: ${body[bad]}`)
+    const endOfFile = lines[end] === "*** End of File"
+    const chunk: UpdateFileChunk = {
+      oldLines: body.filter((line) => line.startsWith(" ") || line.startsWith("-")).map((line) => line.slice(1)),
+      newLines: body.filter((line) => line.startsWith(" ") || line.startsWith("+")).map((line) => line.slice(1)),
+      ...(changeContext ? { changeContext } : {}),
+      ...(endOfFile ? { endOfFile } : {}),
+    }
+    return { chunk, next: endOfFile ? end + 1 : end }
+  })
+}
+
+const mismatch = (message: string) => Result.fail(new MatchError({ message }))
+
+type Replacement = readonly [start: number, remove: number, insert: ReadonlyArray<string>]
+
 function computeReplacements(lines: ReadonlyArray<string>, path: string, chunks: ReadonlyArray<UpdateFileChunk>) {
-  const replacements: Array<readonly [start: number, remove: number, insert: ReadonlyArray<string>]> = []
-  let lineIndex = 0
-  for (const chunk of chunks) {
-    if (chunk.changeContext) {
-      const context = seek(lines, [chunk.changeContext], lineIndex)
-      if (context === -1) throw new Error(`Failed to find context '${chunk.changeContext}' in ${path}`)
-      lineIndex = context + 1
+  return Result.gen(function* () {
+    let replacements: ReadonlyArray<Replacement> = []
+    let lineIndex = 0
+    for (const chunk of chunks) {
+      if (chunk.changeContext) {
+        const context = seek(lines, [chunk.changeContext], lineIndex)
+        if (context === -1) return yield* mismatch(`Failed to find context '${chunk.changeContext}' in ${path}`)
+        lineIndex = context + 1
+      }
+      if (chunk.oldLines.length === 0) {
+        replacements = [...replacements, [lines.length, 0, chunk.newLines]]
+        continue
+      }
+      let oldLines = chunk.oldLines
+      let newLines = chunk.newLines
+      let found = seek(lines, oldLines, lineIndex, chunk.endOfFile)
+      if (found === -1 && oldLines.at(-1) === "") {
+        oldLines = oldLines.slice(0, -1)
+        if (newLines.at(-1) === "") newLines = newLines.slice(0, -1)
+        found = seek(lines, oldLines, lineIndex, chunk.endOfFile)
+      }
+      if (found === -1)
+        return yield* mismatch(`Failed to find expected lines in ${path}:\n${chunk.oldLines.join("\n")}`)
+      replacements = [...replacements, [found, oldLines.length, newLines]]
+      lineIndex = found + oldLines.length
     }
-    if (chunk.oldLines.length === 0) {
-      replacements.push([lines.length, 0, chunk.newLines])
-      continue
-    }
-    let oldLines = chunk.oldLines
-    let newLines = chunk.newLines
-    let found = seek(lines, oldLines, lineIndex, chunk.endOfFile)
-    if (found === -1 && oldLines.at(-1) === "") {
-      oldLines = oldLines.slice(0, -1)
-      if (newLines.at(-1) === "") newLines = newLines.slice(0, -1)
-      found = seek(lines, oldLines, lineIndex, chunk.endOfFile)
-    }
-    if (found === -1) throw new Error(`Failed to find expected lines in ${path}:\n${chunk.oldLines.join("\n")}`)
-    replacements.push([found, oldLines.length, newLines])
-    lineIndex = found + oldLines.length
-  }
-  return replacements.toSorted((left, right) => left[0] - right[0])
+    return replacements.toSorted((left, right) => left[0] - right[0])
+  })
 }
 
 function seek(lines: ReadonlyArray<string>, pattern: ReadonlyArray<string>, start: number, eof = false) {
@@ -177,7 +214,7 @@ function matches(
   offset: number,
   compare: (left: string, right: string) => boolean,
 ) {
-  return pattern.every((line, index) => compare(lines[offset + index]!, line))
+  return pattern.every((line, index) => compare(lines[offset + index], line))
 }
 
 const exact = (left: string, right: string) => left === right

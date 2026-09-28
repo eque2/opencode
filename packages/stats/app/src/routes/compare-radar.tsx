@@ -194,7 +194,7 @@ function buildRadarAxes(catalogModels: readonly ModelCatalogEntry[]): RadarAxis[
       description: "Relative input and output pricing. Lower-cost models score higher.",
       score: (model) => {
         const cost = modelCost(model)
-        if (cost === undefined) return
+        if (cost === undefined) return undefined
         if (cost === 0) return 100
         return percentileScore(cost, costs, "lower")
       },
@@ -204,7 +204,7 @@ function buildRadarAxes(catalogModels: readonly ModelCatalogEntry[]): RadarAxis[
       description: "How much input the model can process at once. Larger context windows score higher.",
       score: (model) => {
         const context = model.limit?.context
-        if (context === undefined) return
+        if (context === undefined) return undefined
         return percentileScore(context, contexts, "higher")
       },
     },
@@ -212,7 +212,7 @@ function buildRadarAxes(catalogModels: readonly ModelCatalogEntry[]): RadarAxis[
       label: "Multimodal",
       description: "Support for non-text input and output, including images, audio, and video.",
       score: (model) => {
-        if (multimodalMaximum === 0) return
+        if (multimodalMaximum === 0) return undefined
         return (multimodalFeatureCount(model) / multimodalMaximum) * 100
       },
     },
@@ -229,18 +229,18 @@ function buildRadarAxes(catalogModels: readonly ModelCatalogEntry[]): RadarAxis[
 }
 
 function benchmarkScoreGroups(catalogModels: readonly ModelCatalogEntry[], includeHarness = false) {
-  return catalogModels.reduce<Map<string, number[]>>((groups, model) => {
+  return catalogModels.reduce((groups, model) => {
     model.benchmarks
-      .reduce<Map<string, number>>((scores, benchmark) => {
+      .reduce((scores, benchmark) => {
         const key = benchmarkKey(benchmark, includeHarness)
         scores.set(key, Math.max(scores.get(key) ?? -Infinity, benchmark.score))
         return scores
-      }, new Map())
+      }, new Map<string, number>())
       .forEach((score, key) => {
         groups.set(key, [...(groups.get(key) ?? []), score])
       })
     return groups
-  }, new Map())
+  }, new Map<string, number[]>())
 }
 
 function benchmarkKey(benchmark: ModelCatalogBenchmark, includeHarness: boolean) {
@@ -270,7 +270,7 @@ function benchmarkPercentile(
     const percentile = values ? percentileScore(score, values, "higher") : undefined
     return percentile === undefined ? [] : [percentile]
   })
-  if (scores.length === 0) return
+  if (scores.length === 0) return undefined
   if (options?.aggregate === "average") return scores.reduce((sum, score) => sum + score, 0) / scores.length
   // Benchmark coverage varies by model, so additional published results should not lower a model's score.
   return Math.max(...scores)
@@ -287,7 +287,7 @@ function normalizeBenchmarkName(value: string) {
 }
 
 function modelCost(model: ModelCatalogEntry) {
-  if (!model.cost) return
+  if (!model.cost) return undefined
   return model.cost.input + model.cost.output
 }
 
@@ -301,7 +301,7 @@ function multimodalFeatureCount(model: ModelCatalogEntry) {
 
 function percentileScore(value: number, values: number[], direction: "higher" | "lower") {
   const finite = values.filter(Number.isFinite)
-  if (!Number.isFinite(value) || finite.length < 2) return
+  if (!Number.isFinite(value) || finite.length < 2) return undefined
   const below = finite.filter((candidate) => candidate < value).length
   const equal = finite.filter((candidate) => candidate === value).length
   const percentile = ((below + (equal - 1) / 2) / (finite.length - 1)) * 100

@@ -32,6 +32,8 @@ import { batch, onMount } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
+import { Cause, Clock, Data, Effect, Exit, Fiber, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { errorMessage } from "../util/error"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -56,6 +58,31 @@ function compareMessage(a: Message, b: Message) {
 }
 
 const messageKey = (message: Message) => message.time.created + message.id
+
+// IDs that live events touched while a session hydrates; hydration keeps their live copies.
+type HydrationTracker = {
+  messages: MutableHashSet.MutableHashSet<string>
+  parts: MutableHashSet.MutableHashSet<string>
+}
+
+/** A failed sync request. `message` is the text that Promise consumers see. */
+class SyncRequestError extends Data.TaggedError("TuiSync.RequestError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+function request<A>(evaluate: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => new SyncRequestError({ message: errorMessage(cause), cause }),
+  })
+}
+
+// The value that made bootstrap fail: the raw rejection of a request, or the defect.
+function failureReason(cause: Cause.Cause<SyncRequestError>): unknown {
+  const failure = Cause.squash(cause)
+  return failure instanceof SyncRequestError ? failure.cause : failure
+}
 
 export const {
   context: SyncContext,
@@ -110,7 +137,7 @@ export const {
         [key: string]: McpResource
       }
       formatter: FormatterStatus[]
-      vcs: VcsInfo | undefined
+      vcs?: VcsInfo
     }>({
       provider_next: {
         all: [],
@@ -140,21 +167,22 @@ export const {
       mcp: {},
       mcp_resource: {},
       formatter: [],
-      vcs: undefined,
     })
 
     const event = useEvent()
     const project = useProject()
     const sdk = useSDK()
 
-    const fullSyncedSessions = new Set<string>()
-    const syncingSessions = new Map<string, Promise<void>>()
-    const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
+    const fullSyncedSessions = MutableHashSet.empty<string>()
+    const syncingSessions = MutableHashMap.empty<string, Promise<void>>()
+    const hydratingSessions = MutableHashMap.empty<string, HydrationTracker>()
     const touchMessage = (sessionID: string, messageID: string) => {
-      hydratingSessions.get(sessionID)?.messages.add(messageID)
+      const tracker = MutableHashMap.get(hydratingSessions, sessionID)
+      if (Option.isSome(tracker)) MutableHashSet.add(tracker.value.messages, messageID)
     }
     const touchPart = (sessionID: string, partID: string) => {
-      hydratingSessions.get(sessionID)?.parts.add(partID)
+      const tracker = MutableHashMap.get(hydratingSessions, sessionID)
+      if (Option.isSome(tracker)) MutableHashSet.add(tracker.value.parts, partID)
     }
 
     function sessionListQuery(): { scope?: "project"; path?: string } {
@@ -167,11 +195,13 @@ export const {
       }
     }
 
-    function listSessions() {
-      return sdk.client.session
-        .list({ start: Date.now() - 30 * 24 * 60 * 60 * 1000, ...sessionListQuery() })
-        .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
-    }
+    const listSessions = Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      const response = yield* request(() =>
+        sdk.client.session.list({ start: now - 30 * 24 * 60 * 60 * 1000, ...sessionListQuery() }),
+      )
+      return (response.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id))
+    })
 
     event.subscribe((event, { directory, workspace }) => {
       switch (event.type) {
@@ -405,10 +435,11 @@ export const {
             "part",
             event.properties.messageID,
             produce((draft) => {
-              const part = draft[result.index]
-              const field = event.properties.field as keyof typeof part
-              const existing = part[field] as string | undefined
-              ;(part[field] as string) = (existing ?? "") + event.properties.delta
+              // The delta names its target field at run time, so the part is
+              // written through its record view.
+              const part: Record<string, unknown> = draft[result.index]
+              const existing = part[event.properties.field]
+              part[event.properties.field] = (typeof existing === "string" ? existing : "") + event.properties.delta
             }),
           )
           break
@@ -448,107 +479,111 @@ export const {
     const exit = useExit()
     const args = useArgs()
 
-    async function bootstrap(input: { fatal?: boolean } = {}) {
-      const fatal = input.fatal ?? true
-      const workspace = project.workspace.current()
-      const projectPromise = project.sync()
-      const sessionListPromise = projectPromise.then(() => listSessions())
+    const bootstrapProgram = (fatal: boolean) =>
+      Effect.gen(function* () {
+        const workspace = project.workspace.current()
+        // Both start now; the session list is awaited in the blocking or the background phase.
+        const projectSync = yield* Effect.forkDetach(
+          request(() => project.sync()),
+          { startImmediately: true },
+        )
+        const sessionList = yield* Effect.forkDetach(Fiber.join(projectSync).pipe(Effect.andThen(listSessions)), {
+          startImmediately: true,
+        })
 
-      // blocking - include session.list when continuing a session
-      const providersPromise = sdk.client.config.providers({ workspace }, { throwOnError: true })
-      const providerListPromise = sdk.client.provider.list({ workspace }, { throwOnError: true })
-      const capabilitiesPromise = sdk.client.experimental.capabilities
-        .get({ workspace }, { throwOnError: true })
-        .then((x) => x.data)
-        .catch(() => undefined)
-      const consoleStatePromise = sdk.client.experimental.console
-        .get({ workspace }, { throwOnError: true })
-        .then((x) => x.data)
-        .catch(() => emptyConsoleState)
-      const agentsPromise = sdk.client.app.agents({ workspace }, { throwOnError: true })
-      const configPromise = sdk.client.config.get({ workspace }, { throwOnError: true })
-      await Promise.all([
-        providersPromise,
-        providerListPromise,
-        capabilitiesPromise,
-        agentsPromise,
-        configPromise,
-        projectPromise,
-        ...(args.continue ? [sessionListPromise] : []),
-      ])
-        .then(async () => {
-          const providersResponse = providersPromise.then((x) => x.data!)
-          const providerListResponse = providerListPromise.then((x) => x.data!)
-          const capabilitiesResponse = capabilitiesPromise
-          const consoleStateResponse = consoleStatePromise
-          const agentsResponse = agentsPromise.then((x) => x.data ?? [])
-          const configResponse = configPromise.then((x) => x.data!)
-          const sessionListResponse = args.continue ? sessionListPromise : undefined
+        // blocking - include session.list when continuing a session
+        const blocking = yield* Effect.all(
+          {
+            providers: request(() => sdk.client.config.providers({ workspace }, { throwOnError: true })),
+            providerList: request(() => sdk.client.provider.list({ workspace }, { throwOnError: true })),
+            capabilities: request(() =>
+              sdk.client.experimental.capabilities.get({ workspace }, { throwOnError: true }),
+            ).pipe(Effect.option),
+            consoleState: request(() =>
+              sdk.client.experimental.console.get({ workspace }, { throwOnError: true }),
+            ).pipe(
+              Effect.map((response) => response.data),
+              Effect.orElseSucceed(() => emptyConsoleState),
+            ),
+            agents: request(() => sdk.client.app.agents({ workspace }, { throwOnError: true })),
+            config: request(() => sdk.client.config.get({ workspace }, { throwOnError: true })),
+            project: Fiber.join(projectSync),
+            sessions: args.continue ? Effect.map(Fiber.join(sessionList), Option.some) : Effect.succeedNone,
+          },
+          { concurrency: "unbounded" },
+        )
 
-          return Promise.all([
-            providersResponse,
-            providerListResponse,
-            capabilitiesResponse,
-            consoleStateResponse,
-            agentsResponse,
-            configResponse,
-            ...(sessionListResponse ? [sessionListResponse] : []),
-          ]).then((responses) => {
-            const providers = responses[0]
-            const providerList = responses[1]
-            const capabilities = responses[2]
-            const consoleState = responses[3]
-            const agents = responses[4]
-            const config = responses[5]
-            const sessions = responses[6]
+        batch(() => {
+          setStore("provider", reconcile(blocking.providers.data.providers))
+          setStore("provider_default", reconcile(blocking.providers.data.default))
+          setStore("provider_next", reconcile(blocking.providerList.data))
+          setStore(
+            "capabilities",
+            "experimentalBackgroundSubagents",
+            Option.exists(blocking.capabilities, (response) => response.data.backgroundSubagents),
+          )
+          setStore("console_state", reconcile(blocking.consoleState))
+          setStore("agent", reconcile(blocking.agents.data ?? []))
+          setStore("config", reconcile(blocking.config.data))
+          if (Option.isSome(blocking.sessions)) setStore("session", reconcile(blocking.sessions.value))
+        })
+        if (store.status !== "complete") setStore("status", "partial")
 
-            batch(() => {
-              setStore("provider", reconcile(providers.providers))
-              setStore("provider_default", reconcile(providers.default))
-              setStore("provider_next", reconcile(providerList))
-              setStore("capabilities", "experimentalBackgroundSubagents", capabilities?.backgroundSubagents === true)
-              setStore("console_state", reconcile(consoleState))
-              setStore("agent", reconcile(agents))
-              setStore("config", reconcile(config))
-              if (sessions !== undefined) setStore("session", reconcile(sessions))
+        // non-blocking - each request settles on its own; a failure is logged
+        const background: ReadonlyArray<Effect.Effect<void, SyncRequestError>> = [
+          ...(args.continue
+            ? []
+            : [Fiber.join(sessionList).pipe(Effect.map((sessions) => setStore("session", reconcile(sessions))))]),
+          Effect.sync(() => setStore("console_state", reconcile(blocking.consoleState))),
+          request(() => sdk.client.command.list({ workspace })).pipe(
+            Effect.map((x) => setStore("command", reconcile(x.data ?? []))),
+          ),
+          request(() => sdk.client.lsp.status({ workspace })).pipe(
+            Effect.map((x) => setStore("lsp", reconcile(x.data ?? []))),
+          ),
+          request(() => sdk.client.mcp.status({ workspace })).pipe(
+            Effect.map((x) => setStore("mcp", reconcile(x.data ?? {}))),
+          ),
+          request(() => sdk.client.experimental.resource.list({ workspace })).pipe(
+            Effect.map((x) => setStore("mcp_resource", reconcile(x.data ?? {}))),
+          ),
+          request(() => sdk.client.formatter.status({ workspace })).pipe(
+            Effect.map((x) => setStore("formatter", reconcile(x.data ?? []))),
+          ),
+          request(() => sdk.client.session.status({ workspace })).pipe(
+            Effect.map((x) => setStore("session_status", reconcile(x.data ?? {}))),
+          ),
+          request(() => sdk.client.provider.auth({ workspace })).pipe(
+            Effect.map((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
+          ),
+          request(() => sdk.client.vcs.get({ workspace })).pipe(Effect.map((x) => setStore("vcs", reconcile(x.data)))),
+          request(() => project.workspace.sync()),
+        ]
+        yield* Effect.forkDetach(
+          Effect.gen(function* () {
+            const exits = yield* Effect.forEach(background, (task) => Effect.exit(task), { concurrency: "unbounded" })
+            const failures = exits.filter(Exit.isFailure)
+            if (failures.length === 0) {
+              setStore("status", "complete")
+              return
+            }
+            yield* Effect.forEach(failures, (failure) => Effect.logError("tui background sync failed", failure.cause), {
+              discard: true,
             })
-          })
-        })
-        .then(() => {
-          if (store.status !== "complete") setStore("status", "partial")
-          // non-blocking
-          void Promise.all([
-            ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
-            consoleStatePromise.then((consoleState) => setStore("console_state", reconcile(consoleState))),
-            sdk.client.command.list({ workspace }).then((x) => setStore("command", reconcile(x.data ?? []))),
-            sdk.client.lsp.status({ workspace }).then((x) => setStore("lsp", reconcile(x.data ?? []))),
-            sdk.client.mcp.status({ workspace }).then((x) => setStore("mcp", reconcile(x.data ?? {}))),
-            sdk.client.experimental.resource
-              .list({ workspace })
-              .then((x) => setStore("mcp_resource", reconcile(x.data ?? {}))),
-            sdk.client.formatter.status({ workspace }).then((x) => setStore("formatter", reconcile(x.data ?? []))),
-            sdk.client.session.status({ workspace }).then((x) => {
-              setStore("session_status", reconcile(x.data ?? {}))
-            }),
-            sdk.client.provider.auth({ workspace }).then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
-            sdk.client.vcs.get({ workspace }).then((x) => setStore("vcs", reconcile(x.data))),
-            project.workspace.sync(),
-          ]).then(() => {
-            setStore("status", "complete")
-          })
-        })
-        .catch(async (e) => {
-          console.error("tui bootstrap failed", {
-            error: e instanceof Error ? e.message : String(e),
-            name: e instanceof Error ? e.name : undefined,
-            stack: e instanceof Error ? e.stack : undefined,
-          })
-          if (fatal) {
-            exit(e)
-          } else {
-            throw e
-          }
-        })
+          }),
+          { startImmediately: true },
+        )
+      }).pipe(
+        // A fatal bootstrap hands the original failure to exit; otherwise the caller gets the typed failure.
+        Effect.catchCause((cause) =>
+          Effect.logError("tui bootstrap failed", cause).pipe(
+            Effect.andThen(fatal ? Effect.sync(() => exit(failureReason(cause))) : Effect.failCause(cause)),
+          ),
+        ),
+      )
+
+    function bootstrap(input: { fatal?: boolean } = {}) {
+      return Effect.runPromise(bootstrapProgram(input.fatal ?? true))
     }
 
     onMount(() => {
@@ -577,9 +612,8 @@ export const {
         query() {
           return sessionListQuery()
         },
-        async refresh() {
-          const list = await listSessions()
-          setStore("session", reconcile(list))
+        refresh() {
+          return Effect.runPromise(listSessions.pipe(Effect.map((list) => setStore("session", reconcile(list)))))
         },
         status(sessionID: string) {
           const session = result.session.get(sessionID)
@@ -591,49 +625,54 @@ export const {
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
-        async sync(sessionID: string) {
-          if (fullSyncedSessions.has(sessionID)) return
-          const syncing = syncingSessions.get(sessionID)
-          if (syncing) return syncing
-          const tracker = { messages: new Set<string>(), parts: new Set<string>() }
-          hydratingSessions.set(sessionID, tracker)
-          const task = (async () => {
-            const [session, messages, todo, diff] = await Promise.all([
-              sdk.client.session.get({ sessionID }, { throwOnError: true }),
-              sdk.client.session.messages({ sessionID, limit: 100 }),
-              sdk.client.session.todo({ sessionID }),
-              sdk.client.session.diff({ sessionID }),
-            ])
+        sync(sessionID: string) {
+          if (MutableHashSet.has(fullSyncedSessions, sessionID)) return Effect.runPromise(Effect.void)
+          const syncing = MutableHashMap.get(syncingSessions, sessionID)
+          if (Option.isSome(syncing)) return syncing.value
+          const tracker: HydrationTracker = { messages: MutableHashSet.empty(), parts: MutableHashSet.empty() }
+          MutableHashMap.set(hydratingSessions, sessionID, tracker)
+          const hydrate = Effect.gen(function* () {
+            const { session, messages, todo, diff } = yield* Effect.all(
+              {
+                session: request(() => sdk.client.session.get({ sessionID }, { throwOnError: true })),
+                messages: request(() => sdk.client.session.messages({ sessionID, limit: 100 })),
+                todo: request(() => sdk.client.session.todo({ sessionID })),
+                diff: request(() => sdk.client.session.diff({ sessionID })),
+              },
+              { concurrency: "unbounded" },
+            )
             setStore(
               produce((draft) => {
                 const match = search(draft.session, sessionID, (s) => s.id)
-                if (match.found) draft.session[match.index] = session.data!
-                if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                if (match.found) draft.session[match.index] = session.data
+                if (!match.found) draft.session.splice(match.index, 0, session.data)
                 draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
-                const infos = (messages.data ?? []).flatMap((message) => {
-                  if (!tracker.messages.has(message.info.id)) return [message.info]
+                const hydrated = (messages.data ?? []).flatMap((message) => {
+                  if (!MutableHashSet.has(tracker.messages, message.info.id)) return [message.info]
                   const current = currentMessages.find((item) => item.id === message.info.id)
                   return current ? [current] : []
                 })
-                infos.push(
+                const infos = [
+                  ...hydrated,
                   ...currentMessages.filter(
-                    (message) => tracker.messages.has(message.id) && !infos.some((item) => item.id === message.id),
+                    (message) =>
+                      MutableHashSet.has(tracker.messages, message.id) &&
+                      !hydrated.some((item) => item.id === message.id),
                   ),
-                )
-                infos.sort(compareMessage)
+                ].toSorted(compareMessage)
                 const removed = infos.slice(0, -100)
                 const visible = infos.slice(-100)
-                const visibleIDs = new Set(visible.map((message) => message.id))
+                const visibleIDs = HashSet.fromIterable(visible.map((message) => message.id))
                 for (const message of messages.data ?? []) {
-                  if (!visibleIDs.has(message.info.id)) {
+                  if (!HashSet.has(visibleIDs, message.info.id)) {
                     delete draft.part[message.info.id]
                     continue
                   }
                   const currentParts = draft.part[message.info.id] ?? []
-                  const parts = message.parts.flatMap((part) => {
+                  const hydratedParts = message.parts.flatMap((part) => {
                     const current = currentParts.find((item) => item.id === part.id)
-                    if (tracker.parts.has(part.id)) return current ? [current] : []
+                    if (MutableHashSet.has(tracker.parts, part.id)) return current ? [current] : []
                     if (
                       current &&
                       (part.type === "text" || part.type === "reasoning") &&
@@ -645,24 +684,33 @@ export const {
                     }
                     return [part]
                   })
-                  parts.push(
+                  draft.part[message.info.id] = [
+                    ...hydratedParts,
                     ...currentParts.filter(
-                      (part) => tracker.parts.has(part.id) && !parts.some((item) => item.id === part.id),
+                      (part) =>
+                        MutableHashSet.has(tracker.parts, part.id) &&
+                        !hydratedParts.some((item) => item.id === part.id),
                     ),
-                  )
-                  draft.part[message.info.id] = parts
+                  ]
                 }
                 for (const message of removed) delete draft.part[message.id]
                 draft.message[sessionID] = visible
                 draft.session_diff[sessionID] = diff.data ?? []
               }),
             )
-            fullSyncedSessions.add(sessionID)
-          })().finally(() => {
-            syncingSessions.delete(sessionID)
-            hydratingSessions.delete(sessionID)
+            MutableHashSet.add(fullSyncedSessions, sessionID)
           })
-          syncingSessions.set(sessionID, task)
+          const task = Effect.runPromise(
+            hydrate.pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  MutableHashMap.remove(syncingSessions, sessionID)
+                  MutableHashMap.remove(hydratingSessions, sessionID)
+                }),
+              ),
+            ),
+          )
+          MutableHashMap.set(syncingSessions, sessionID, task)
           return task
         },
       },

@@ -1,9 +1,12 @@
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
+import { Data, Effect, MutableHashMap, Option } from "effect"
 import type { WslServersController } from "./servers"
 import { requireWslIpcString, requireWslIpcStrings } from "./policy"
 import type { WslServersState } from "../../preload/types"
 import { nativeT } from "../native-translations"
+
+class WslUnavailableError extends Data.TaggedError("WslUnavailableError")<{ readonly message: string }> {}
 
 export function registerWslIpcHandlers(controller: WslServersController) {
   if (process.platform !== "win32") {
@@ -11,23 +14,24 @@ export function registerWslIpcHandlers(controller: WslServersController) {
     return
   }
 
-  const subscriptions = new Map<number, () => void>()
+  const subscriptions = MutableHashMap.empty<number, () => void>()
   const unsubscribe = (id: number) => {
-    const off = subscriptions.get(id)
-    if (!off) return
-    off()
-    subscriptions.delete(id)
+    const off = MutableHashMap.get(subscriptions, id)
+    if (Option.isNone(off)) return
+    off.value()
+    MutableHashMap.remove(subscriptions, id)
   }
 
   app.once("will-quit", () => {
-    subscriptions.forEach((off) => off())
-    subscriptions.clear()
+    MutableHashMap.forEach(subscriptions, (off) => off())
+    MutableHashMap.clear(subscriptions)
   })
 
   ipcMain.handle("wsl-servers-subscribe", (event) => {
     const id = event.sender.id
-    if (subscriptions.has(id)) return
-    subscriptions.set(
+    if (MutableHashMap.has(subscriptions, id)) return
+    MutableHashMap.set(
+      subscriptions,
       id,
       controller.subscribe((payload) => {
         if (event.sender.isDestroyed()) {
@@ -68,12 +72,12 @@ export function registerWslIpcHandlers(controller: WslServersController) {
 }
 
 function registerUnavailableWslIpcHandlers() {
-  const unavailable = () => {
-    throw new Error(nativeT("desktop.wsl.error.windowsOnly"))
-  }
+  const unavailable = () =>
+    Effect.runPromise(Effect.fail(new WslUnavailableError({ message: nativeT("desktop.wsl.error.windowsOnly") })))
   const state = (): WslServersState => ({
     runtime: {
       available: false,
+      // eslint-disable-next-line effect/no-null-use-option -- (a) WslServersState from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types a missing runtime version as null
       version: null,
       error: nativeT("desktop.wsl.error.windowsOnly"),
     },
@@ -83,13 +87,14 @@ function registerUnavailableWslIpcHandlers() {
     opencodeChecks: {},
     pendingRestart: false,
     servers: [],
+    // eslint-disable-next-line effect/no-null-use-option -- (a) WslServersState from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types "no running job" as null
     job: null,
   })
 
   ipcMain.handle("wsl-servers-subscribe", (event) => {
     event.sender.send("wsl-servers-event", { type: "state", state: state() })
   })
-  ipcMain.handle("wsl-servers-unsubscribe", () => undefined)
+  ipcMain.handle("wsl-servers-unsubscribe", () => {})
   ipcMain.handle("wsl-servers-get-state", () => state())
   ipcMain.handle("wsl-servers-probe-runtime", unavailable)
   ipcMain.handle("wsl-servers-refresh-distros", unavailable)

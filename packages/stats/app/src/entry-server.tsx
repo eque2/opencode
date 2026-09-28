@@ -1,8 +1,7 @@
 // @refresh reload
-import type { Asset, PageEvent } from "@solidjs/start"
+import type { Asset } from "@solidjs/start"
 import { createHandler, StartServer } from "@solidjs/start/server"
 import ibmPlexMonoMediumLatin1 from "@ibm/plex/IBM-Plex-Mono/fonts/split/woff2/IBMPlexMono-Medium-Latin1.woff2?url"
-import { getRequestEvent } from "solid-js/web"
 import { dir, localeFromRequest, tag } from "./lib/language"
 import statsStylesheetUrl from "./routes/index.css?url"
 
@@ -18,13 +17,13 @@ const statsThemePreloadScript = `;(function () {
 })()`
 
 export default createHandler(
-  () => (
+  (event) => (
     <StartServer
       document={({ assets, children, scripts }) => {
-        const event = getRequestEvent() as PageEvent | undefined
-        const locale = event ? localeFromRequest(event.request) : "en"
-        const stylesheet = (event?.assets as Asset[] | undefined)?.find(
-          (asset): asset is Extract<Asset, { tag: "link" }> => asset.tag === "link" && asset.attrs.rel === "stylesheet",
+        const locale = localeFromRequest(event.request)
+        const stylesheet = event.assets.find(
+          (asset: Asset): asset is Extract<Asset, { tag: "link" }> =>
+            asset.tag === "link" && asset.attrs.rel === "stylesheet",
         )
         const stylesheetHref = import.meta.env.DEV ? statsStylesheetUrl : stylesheet?.attrs.href
 

@@ -47,7 +47,7 @@ function badRequest<A, R>(effect: Effect.Effect<A, ProjectCopy.Error, R>) {
           name: "ProjectCopyError",
           data: {
             message: message(error),
-            forceRequired: error instanceof Git.WorktreeError ? error.forceRequired : undefined,
+            ...(error instanceof Git.WorktreeError ? { forceRequired: error.forceRequired } : {}),
           },
         }),
     ),

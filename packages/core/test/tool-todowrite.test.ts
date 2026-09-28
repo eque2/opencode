@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Effect, Layer } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -78,7 +79,7 @@ const setup = Effect.gen(function* () {
 const call = (todos: ReadonlyArray<SessionTodo.Info>, id = "call-todowrite") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: TodoWriteTool.name, input: { todos } },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: TodoWriteTool.name, input: { todos } },
 })
 
 describe("TodoWriteTool", () => {

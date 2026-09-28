@@ -2,9 +2,10 @@ import type { Message, Session, Part, SnapshotFileDiff, SessionStatus, Provider 
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
+import type { HashMap } from "effect"
 
 export type NormalizedProviderListResponse = {
-  all: Map<string, Provider>
+  all: HashMap.HashMap<string, Provider>
   defaultModel?: {
     providerID: string
     modelID: string

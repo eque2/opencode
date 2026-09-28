@@ -3,7 +3,6 @@ import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Cache, Clock, Duration, Effect, Layer, Option, Schema, SchemaGetter, Context } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import {
-  FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
@@ -120,26 +119,28 @@ class User extends Schema.Class<User>("User")({
   email: Schema.String,
 }) {}
 
-class ClientId extends Schema.Class<ClientId>("ClientId")({ client_id: Schema.String }) {}
+const OAuthClientID = Schema.String.pipe(Schema.brand("AccountOAuthClientID"))
+
+class ClientId extends Schema.Class<ClientId>("ClientId")({ client_id: OAuthClientID }) {}
 
 class DeviceTokenRequest extends Schema.Class<DeviceTokenRequest>("DeviceTokenRequest")({
   grant_type: Schema.String,
   device_code: DeviceCode,
-  client_id: Schema.String,
+  client_id: OAuthClientID,
 }) {}
 
 class TokenRefreshRequest extends Schema.Class<TokenRefreshRequest>("TokenRefreshRequest")({
   grant_type: Schema.String,
   refresh_token: RefreshToken,
-  client_id: Schema.String,
+  client_id: OAuthClientID,
 }) {}
 
-const clientId = "opencode-cli"
+const clientId = OAuthClientID.make("opencode-cli")
 const eagerRefreshThreshold = Duration.minutes(5)
 const eagerRefreshThresholdMs = Duration.toMillis(eagerRefreshThreshold)
 
 const isTokenFresh = (tokenExpiry: number | null, now: number) =>
-  tokenExpiry != null && tokenExpiry > now + eagerRefreshThresholdMs
+  Option.fromNullishOr(tokenExpiry).pipe(Option.exists((expiry) => expiry > now + eagerRefreshThresholdMs))
 
 const mapAccountServiceError =
   (message = "Account service operation failed") =>
@@ -397,17 +398,15 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
         mapAccountServiceError("Failed to decode response"),
       )
       const verification = yield* Effect.try({
-        try: () => {
-          const url = new URL(parsed.verification_uri_complete, `${normalizedServer}/`)
-          if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("expected HTTP(S)")
-          return url.href
-        },
+        try: () => new URL(parsed.verification_uri_complete, `${normalizedServer}/`),
         catch: (cause) => new AccountServiceError({ message: "Invalid device verification URL", cause }),
       })
+      if (verification.protocol !== "http:" && verification.protocol !== "https:")
+        return yield* new AccountServiceError({ message: "Invalid device verification URL", cause: "expected HTTP(S)" })
       return new Login({
         code: parsed.device_code,
         user: parsed.user_code,
-        url: verification,
+        url: verification.href,
         server: normalizedServer,
         expiry: parsed.expires_in,
         interval: parsed.interval,

@@ -1,10 +1,11 @@
 export * as ConfigPaths from "./paths"
 
 import path from "path"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
 import { unique } from "remeda"
 import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 
 export const files = Effect.fn("ConfigPaths.projectFiles")(function* (
@@ -20,11 +21,26 @@ export const files = Effect.fn("ConfigPaths.projectFiles")(function* (
   })).toReversed()
 })
 
+/**
+ * OPENCODE_CONFIG_DIR, read live on each run. An empty value counts as not set. The flag is
+ * optional, so a ConfigError is a defect.
+ */
+export const customDirectory = FlagConfig.OPENCODE_CONFIG_DIR.pipe(
+  Effect.orDie,
+  Effect.map(Option.filter((dir) => dir !== "")),
+)
+
+/** OPENCODE_DISABLE_PROJECT_CONFIG, read live on each run. It defaults to false, so a ConfigError is a defect. */
+export const projectConfigDisabled = FlagConfig.OPENCODE_DISABLE_PROJECT_CONFIG.pipe(Effect.orDie)
+
 export const directories = Effect.fn("ConfigPaths.directories")(function* (directory: string, worktree?: string) {
   const afs = yield* FSUtil.Service
+  const global = yield* Global.Service
+  const disableProjectConfig = yield* projectConfigDisabled
+  const configDir = yield* customDirectory
   return unique([
     Global.Path.config,
-    ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+    ...(!disableProjectConfig
       ? yield* afs.up({
           targets: [".opencode"],
           start: directory,
@@ -33,10 +49,10 @@ export const directories = Effect.fn("ConfigPaths.directories")(function* (direc
       : []),
     ...(yield* afs.up({
       targets: [".opencode"],
-      start: Global.Path.home,
-      stop: Global.Path.home,
+      start: global.home,
+      stop: global.home,
     })),
-    ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
+    ...Option.toArray(configDir),
   ])
 })
 

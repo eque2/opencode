@@ -5,6 +5,7 @@ import { fileURLToPath } from "url"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { useBindings } from "../../keymap"
+import { Effect, Option } from "effect"
 
 const id = "internal:plugin-manager"
 
@@ -21,8 +22,13 @@ function state(api: TuiPluginApi, item: TuiPluginStatus) {
 }
 
 function source(spec: string) {
-  if (!spec.startsWith("file://")) return
-  return fileURLToPath(spec)
+  if (!spec.startsWith("file://")) return Option.none<string>()
+  return Option.some(fileURLToPath(spec))
+}
+
+// A defect used to surface as an unhandled rejection of the floating install or toggle Promise.
+function logDefect(defect: unknown) {
+  return Effect.logError(defect)
 }
 
 function meta(item: TuiPluginStatus, width: number) {
@@ -30,9 +36,7 @@ function meta(item: TuiPluginStatus, width: number) {
     if (width >= 120) return "Built-in plugin"
     return "Built-in"
   }
-  const next = source(item.spec)
-  if (next) return next
-  return item.spec
+  return Option.getOrElse(source(item.spec), () => item.spec)
 }
 
 function Install(props: { api: TuiPluginApi }) {
@@ -73,9 +77,9 @@ function Install(props: { api: TuiPluginApi }) {
         }
 
         setBusy(true)
-        void props.api.plugins
-          .install(mod, { global: global() })
-          .then((out) => {
+        Effect.runFork(
+          Effect.gen(function* () {
+            const out = yield* Effect.promise(() => props.api.plugins.install(mod, { global: global() }))
             if (!out.ok) {
               props.api.ui.toast({
                 variant: "error",
@@ -104,26 +108,23 @@ function Install(props: { api: TuiPluginApi }) {
               return
             }
 
-            return props.api.plugins.add(mod).then((ok) => {
-              if (!ok) {
-                props.api.ui.toast({
-                  variant: "warning",
-                  message: "Installed plugin, but runtime load failed. See console/logs; restart TUI to retry.",
-                })
-                show(props.api)
-                return
-              }
-
+            const ok = yield* Effect.promise(() => props.api.plugins.add(mod))
+            if (!ok) {
               props.api.ui.toast({
-                variant: "success",
-                message: `Loaded ${mod} in current session.`,
+                variant: "warning",
+                message: "Installed plugin, but runtime load failed. See console/logs; restart TUI to retry.",
               })
               show(props.api)
+              return
+            }
+
+            props.api.ui.toast({
+              variant: "success",
+              message: `Loaded ${mod} in current session.`,
             })
-          })
-          .finally(() => {
-            setBusy(false)
-          })
+            show(props.api)
+          }).pipe(Effect.ensuring(Effect.sync(() => setBusy(false))), Effect.tapDefect(logDefect)),
+        )
       }}
       onCancel={() => {
         show(props.api)
@@ -182,9 +183,11 @@ function View(props: { api: TuiPluginApi }) {
     const item = list().find((entry) => entry.id === x)
     if (!item) return
     setLock(true)
-    const task = item.active ? props.api.plugins.deactivate(x) : props.api.plugins.activate(x)
-    void task
-      .then((ok) => {
+    Effect.runFork(
+      Effect.gen(function* () {
+        const ok = yield* Effect.promise(() =>
+          item.active ? props.api.plugins.deactivate(x) : props.api.plugins.activate(x),
+        )
         if (!ok) {
           props.api.ui.toast({
             variant: "error",
@@ -192,10 +195,8 @@ function View(props: { api: TuiPluginApi }) {
           })
         }
         setList(props.api.plugins.list())
-      })
-      .finally(() => {
-        setLock(false)
-      })
+      }).pipe(Effect.ensuring(Effect.sync(() => setLock(false))), Effect.tapDefect(logDefect)),
+    )
   }
 
   return (
@@ -235,31 +236,34 @@ function show(api: TuiPluginApi) {
   api.ui.dialog.replace(() => <View api={api} />)
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.keymap.registerLayer({
-    commands: [
-      {
-        name: "plugins.list",
-        title: "Plugins",
-        category: "System",
-        namespace: "palette",
-        run() {
-          show(api)
-        },
-      },
-      {
-        name: "plugins.install",
-        title: "Install plugin",
-        category: "System",
-        namespace: "palette",
-        run() {
-          showInstall(api)
-        },
-      },
-    ],
-    bindings: api.tuiConfig.keybinds.gather("plugins.palette", ["plugins.list", "plugins.install"]),
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.keymap.registerLayer({
+        commands: [
+          {
+            name: "plugins.list",
+            title: "Plugins",
+            category: "System",
+            namespace: "palette",
+            run() {
+              show(api)
+            },
+          },
+          {
+            name: "plugins.install",
+            title: "Install plugin",
+            category: "System",
+            namespace: "palette",
+            run() {
+              showInstall(api)
+            },
+          },
+        ],
+        bindings: api.tuiConfig.keybinds.gather("plugins.palette", ["plugins.list", "plugins.install"]),
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,

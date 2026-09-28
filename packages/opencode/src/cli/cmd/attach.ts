@@ -1,8 +1,34 @@
+import { Effect, Option, Result, Schema } from "effect"
 import { cmd } from "./cmd"
 import { UI } from "@/cli/ui"
 import { errorMessage } from "@opencode-ai/tui/util/error"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { makeRuntime } from "@/effect/run-service"
 import { validateSession } from "../tui/validate-session"
 import { ServerAuth } from "@/server/auth"
+
+/** The session in --session could not be loaded from the server. The cause is the value validateSession rejected with. */
+class SessionValidationError extends Schema.TaggedError<SessionValidationError>()("AttachSessionValidationError", {
+  cause: Schema.Defect(),
+}) {}
+
+// attach talks to a remote server, so it runs without AppRuntime and opens no local database,
+// as the TUI thread does.
+const { runPromise } = makeRuntime(FSUtil.Service, AppNodeBuilder.build(FSUtil.node))
+
+const reportError = (message: string) =>
+  Effect.sync(() => {
+    UI.error(message)
+    process.exitCode = 1
+  })
+
+// test/cli/tui/attach.test.ts pins these lazy imports.
+const loadTui = Effect.gen(function* () {
+  const { run } = yield* Effect.promise(() => import("../tui/layer"))
+  const { createLegacyTuiPluginHost } = yield* Effect.promise(() => import("@/plugin/tui/runtime"))
+  return { run, createLegacyTuiPluginHost }
+})
 
 export const AttachCommand = cmd({
   command: "attach <url>",
@@ -59,90 +85,90 @@ export const AttachCommand = cmd({
         type: "number",
         describe: "cap visible mini replay to the newest N messages",
       }),
-  handler: async (args) => {
-    if (args.replay === true) {
-      UI.error("--replay is not supported; replay is enabled by default")
-      process.exitCode = 1
-      return
-    }
-    const noReplay = args.replay === false || args.noReplay === true
+  handler: (args) =>
+    runPromise(() =>
+      Effect.gen(function* () {
+        if (args.replay === true) {
+          yield* reportError("--replay is not supported; replay is enabled by default")
+          return
+        }
+        const noReplay = args.replay === false || args.noReplay === true
 
-    const directory = (() => {
-      if (!args.dir) return undefined
-      try {
-        process.chdir(args.dir)
-        return process.cwd()
-      } catch {
         // If the directory doesn't exist locally (remote attach), pass it through.
-        return args.dir
-      }
-    })()
+        const dir = Option.fromNullishOr(args.dir).pipe(Option.filter((value) => value !== ""))
+        const directory = Option.isSome(dir)
+          ? Option.some(
+              yield* Effect.try(() => {
+                process.chdir(dir.value)
+                return process.cwd()
+              }).pipe(Effect.orElseSucceed(() => dir.value)),
+            )
+          : Option.none<string>()
 
-    if (args.mini) {
-      const { runMini } = await import("./run")
-      await runMini({
-        attach: args.url,
-        directory,
-        password: args.password,
-        username: args.username,
-        continue: args.continue,
-        session: args.session,
-        fork: args.fork,
-        replay: noReplay ? false : undefined,
-        replayLimit: args.replayLimit,
-      })
-      return
-    }
+        if (args.mini) {
+          const { runMini } = yield* Effect.promise(() => import("./run"))
+          yield* Effect.promise(() =>
+            runMini({
+              attach: args.url,
+              directory: Option.getOrUndefined(directory),
+              password: args.password,
+              username: args.username,
+              continue: args.continue,
+              session: args.session,
+              fork: args.fork,
+              ...(noReplay ? { replay: false } : {}),
+              replayLimit: args.replayLimit,
+            }),
+          )
+          return
+        }
 
-    const unsupported = [
-      ["--no-replay", noReplay],
-      ["--replay-limit", args.replayLimit !== undefined],
-    ].find((entry) => entry[1])?.[0]
-    if (unsupported) {
-      UI.error(`${unsupported} requires --mini`)
-      process.exitCode = 1
-      return
-    }
+        const unsupported = [
+          ["--no-replay", noReplay],
+          ["--replay-limit", args.replayLimit !== undefined],
+        ].find((entry) => entry[1])?.[0]
+        if (unsupported) {
+          yield* reportError(`${unsupported} requires --mini`)
+          return
+        }
 
-    const { TuiConfig } = await import("@/config/tui")
-    if (args.fork && !args.continue && !args.session) {
-      UI.error("--fork requires --continue or --session")
-      process.exitCode = 1
-      return
-    }
+        const { TuiConfig } = yield* Effect.promise(() => import("@/config/tui"))
+        if (args.fork && !args.continue && !args.session) {
+          yield* reportError("--fork requires --continue or --session")
+          return
+        }
 
-    const headers = ServerAuth.headers({ password: args.password, username: args.username })
-    const config = await TuiConfig.get()
+        const headers = yield* ServerAuth.headers({ password: args.password, username: args.username })
+        const config = yield* Effect.promise(() => TuiConfig.get())
 
-    try {
-      await validateSession({
-        url: args.url,
-        sessionID: args.session,
-        directory,
-        headers,
-      })
-    } catch (error) {
-      UI.error(errorMessage(error))
-      process.exitCode = 1
-      return
-    }
+        const validated = yield* Effect.tryPromise({
+          try: () =>
+            validateSession({
+              url: args.url,
+              sessionID: args.session,
+              directory: Option.getOrUndefined(directory),
+              headers,
+            }),
+          catch: (cause) => new SessionValidationError({ cause }),
+        }).pipe(Effect.result)
+        if (Result.isFailure(validated)) {
+          yield* reportError(errorMessage(validated.failure.cause))
+          return
+        }
 
-    const { Effect } = await import("effect")
-    const { run } = await import("../tui/layer")
-    const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
-    await Effect.runPromise(
-      run({
-        url: args.url,
-        config,
-        pluginHost: createLegacyTuiPluginHost(),
-        args: {
-          continue: args.continue,
-          sessionID: args.session,
-          fork: args.fork,
-        },
-        directory,
-        headers,
+        const { run, createLegacyTuiPluginHost } = yield* loadTui
+        yield* run({
+          url: args.url,
+          config,
+          pluginHost: createLegacyTuiPluginHost(),
+          args: {
+            continue: args.continue,
+            sessionID: args.session,
+            fork: args.fork,
+          },
+          directory: Option.getOrUndefined(directory),
+          headers,
+        })
       }),
-    )
-  },
+    ),
 })

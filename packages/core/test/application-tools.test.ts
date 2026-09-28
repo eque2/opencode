@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -53,7 +54,7 @@ describe("ApplicationTools", () => {
           sessionID,
           agent,
           assistantMessageID,
-          call: { type: "tool-call", id: "call-opaque", name: "opaque", input: { query: "once" } },
+          call: { type: "tool-call", id: ToolCallID.make("call-opaque"), name: "opaque", input: { query: "once" } },
         }),
       ).toEqual({
         type: "content",
@@ -98,7 +99,12 @@ describe("ApplicationTools", () => {
           sessionID,
           agent,
           assistantMessageID,
-          call: { type: "tool-call", id: "call-denied", name: "application_context", input: { query: "hello" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-denied"),
+            name: "application_context",
+            input: { query: "hello" },
+          },
         }),
       ).toMatchObject({ result: { type: "content" } })
       expect(contexts).toEqual([{ sessionID, agent, assistantMessageID, toolCallID: "call-denied" }])
@@ -121,7 +127,12 @@ describe("ApplicationTools", () => {
           sessionID,
           agent,
           assistantMessageID,
-          call: { type: "tool-call", id: "call-context", name: "application_context", input: { query: "hello" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-context"),
+            name: "application_context",
+            input: { query: "hello" },
+          },
         }),
       ).toEqual({
         result: {
@@ -171,7 +182,12 @@ describe("ApplicationTools", () => {
           sessionID,
           agent,
           assistantMessageID,
-          call: { type: "tool-call", id: "call-removed", name: "contextual", input: { query: "hello" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-removed"),
+            name: "contextual",
+            input: { query: "hello" },
+          },
         }),
       ).toEqual({ result: { type: "error", value: "Unknown tool: contextual" } })
     }),
@@ -242,14 +258,14 @@ describe("ApplicationTools", () => {
         sessionID,
         agent,
         assistantMessageID,
-        call: { type: "tool-call", id: "call-second", name: "contextual", input: { query: "second" } },
+        call: { type: "tool-call", id: ToolCallID.make("call-second"), name: "contextual", input: { query: "second" } },
       })
       yield* Scope.close(scope, Exit.void)
       yield* settleTool(registry, {
         sessionID,
         agent,
         assistantMessageID,
-        call: { type: "tool-call", id: "call-first", name: "contextual", input: { query: "first" } },
+        call: { type: "tool-call", id: ToolCallID.make("call-first"), name: "contextual", input: { query: "first" } },
       })
 
       expect(secondContexts).toEqual([{ sessionID, agent, assistantMessageID, toolCallID: "call-second" }])
@@ -277,7 +293,7 @@ describe("ApplicationTools", () => {
           sessionID,
           agent,
           assistantMessageID,
-          call: { type: "tool-call", id: "call-shared", name: "shared", input: { query: "location" } },
+          call: { type: "tool-call", id: ToolCallID.make("call-shared"), name: "shared", input: { query: "location" } },
         }),
       ).toMatchObject({ result: { type: "content" } })
       expect(locationContexts).toEqual([{ sessionID, agent, assistantMessageID, toolCallID: "call-shared" }])

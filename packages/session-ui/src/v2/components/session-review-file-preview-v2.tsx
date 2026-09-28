@@ -11,6 +11,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
+import { Option, Predicate } from "effect"
 import { normalize, text, type ViewDiff } from "../../components/session-diff"
 import type {
   SessionReviewComment,
@@ -42,7 +43,7 @@ export type SessionReviewFilePreviewV2Props = {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
 }
 
 function statusLabel(status: ViewDiff["status"]) {
@@ -102,32 +103,34 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   let focusToken = 0
 
   const [store, setStore] = createStore({
-    selection: null as SelectedLineRange | null,
-    commenting: null as SelectedLineRange | null,
-    opened: null as string | null,
+    selection: Option.none<SelectedLineRange>(),
+    commenting: Option.none<SelectedLineRange>(),
+    opened: Option.none<string>(),
   })
 
   const view = createMemo(() => ({
     ...normalize(props.diff),
-    preloaded: "preloaded" in props.diff ? props.diff.preloaded : undefined,
+    ...("preloaded" in props.diff ? { preloaded: props.diff.preloaded } : {}),
   }))
   const diffCanRender = createMemo(() => view().additions !== 0 || view().deletions !== 0)
   const mediaKind = createMemo(() => mediaKindFromPath(props.file))
   const comments = createMemo(() => (props.comments ?? []).filter((comment) => comment.file === props.file))
   const commentedLines = createMemo(() => comments().map((comment) => comment.selection))
-  const lineCommentsEnabled = () => props.onLineComment != null
+  const lineCommentsEnabled = () => Predicate.isNotNullish(props.onLineComment)
 
   const commentsUi = createLineCommentControllerV2<SessionReviewComment>({
     comments,
     label: i18n.t("ui.lineComment.submit"),
     draftKey: () => props.file,
+    // LineCommentStateProps is a nullable contract (packages/app implements it
+    // too); convert at this boundary only.
     state: {
-      opened: () => store.opened,
-      setOpened: (id) => setStore("opened", id),
-      selected: () => store.selection,
-      setSelected: (range) => setStore("selection", range),
-      commenting: () => store.commenting,
-      setCommenting: (range) => setStore("commenting", range),
+      opened: () => Option.getOrNull(store.opened),
+      setOpened: (id) => setStore("opened", Option.fromNullOr(id)),
+      selected: () => Option.getOrNull(store.selection),
+      setSelected: (range) => setStore("selection", Option.fromNullOr(range)),
+      commenting: () => Option.getOrNull(store.commenting),
+      setCommenting: (range) => setStore("commenting", Option.fromNullOr(range)),
     },
     getSide: selectionSide,
     onSubmit: ({ comment, selection }) => {
@@ -154,11 +157,13 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       })
     },
     editSubmitLabel: props.lineCommentActions?.saveLabel,
-    renderCommentActions: props.lineCommentActions
-      ? (comment, controls) => (
-          <ReviewCommentMenuV2 labels={props.lineCommentActions!} onEdit={controls.edit} onDelete={controls.remove} />
-        )
-      : undefined,
+    ...(props.lineCommentActions
+      ? {
+          renderCommentActions: (comment, controls) => (
+            <ReviewCommentMenuV2 labels={props.lineCommentActions!} onEdit={controls.edit} onDelete={controls.remove} />
+          ),
+        }
+      : {}),
   })
 
   onCleanup(() => {
@@ -176,17 +181,17 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         const token = focusToken
         requestAnimationFrame(() => {
           if (token !== focusToken) return
-          props.onFocusedCommentChange?.(null)
+          props.onFocusedCommentChange?.(Option.none())
         })
       })
       return
     }
 
     untrack(() => {
-      setStore("opened", focus.id)
+      setStore("opened", Option.some(focus.id))
 
       const comment = (props.comments ?? []).find((item) => item.file === focus.file && item.id === focus.id)
-      if (comment) setStore("selection", cloneSelectedLineRange(comment.selection))
+      if (comment) setStore("selection", Option.some(cloneSelectedLineRange(comment.selection)))
 
       // The diff renders asynchronously, so poll for the comment anchor before
       // scrolling; clear the focus once handled so revisiting the file does not
@@ -206,7 +211,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       requestAnimationFrame(() => scrollTo(0))
       requestAnimationFrame(() => {
         if (token !== focusToken) return
-        props.onFocusedCommentChange?.(null)
+        props.onFocusedCommentChange?.(Option.none())
       })
     })
   })
@@ -239,14 +244,14 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       onLineNumberSelectionEnd={commentsUi.onLineNumberSelectionEnd}
       annotations={commentsUi.annotations()}
       renderAnnotation={commentsUi.renderAnnotation}
-      renderGutterUtility={lineCommentsEnabled() ? commentsUi.renderGutterUtility : undefined}
-      selectedLines={store.selection}
+      {...(lineCommentsEnabled() ? { renderGutterUtility: commentsUi.renderGutterUtility } : {})}
+      selectedLines={Option.getOrNull(store.selection)}
       commentedLines={commentedLines()}
       media={{
         mode: "auto",
         path: props.file,
         deleted: view().status === "deleted",
-        readFile: view().status === "deleted" ? undefined : props.readFile,
+        ...(view().status === "deleted" ? {} : { readFile: props.readFile }),
       }}
     />
   )
@@ -275,7 +280,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         data-slot="session-review-v2-diff-scroll"
       >
         <Show
-          when={diffCanRender() || mediaKind()}
+          when={diffCanRender() || Option.isSome(mediaKind())}
           fallback={
             <div data-slot="session-review-v2-empty">
               <span class="text-12-regular text-text-weak">{i18n.t("ui.fileMedia.binary.title")}</span>

@@ -1,6 +1,7 @@
 import { TuiConfig } from "@opencode-ai/tui/config"
 import { isRecord } from "@opencode-ai/tui/util/record"
-import { Filesystem } from "@/util/filesystem"
+import path from "path"
+import { fileURLToPath } from "url"
 import { Schema } from "effect"
 
 export function resolveHostAttentionSoundPaths(
@@ -15,7 +16,8 @@ export function resolveHostAttentionSoundPaths(
       if (typeof file !== "string") return []
       const value = options?.trim ? file.trim() : file
       if (!value) return []
-      return [[name, Filesystem.resolveFilePath(root, value)]]
+      const resolved = value.startsWith("file://") ? fileURLToPath(value) : value
+      return [[name, path.isAbsolute(resolved) ? resolved : path.resolve(root, resolved)]]
     }),
   )
 }

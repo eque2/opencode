@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import { $ } from "bun"
 import fs from "fs/promises"
 import path from "path"
-import { Effect } from "effect"
+import { Effect, HashMap } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Git } from "@opencode-ai/core/git"
 import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
@@ -151,7 +151,7 @@ describe("Git trees", () => {
         [RelativePath.make("scope/tracked.txt"), "modified"],
       ])
 
-      const files = new Map([[RelativePath.make("scope/tracked.txt"), before]])
+      const files = HashMap.make([RelativePath.make("scope/tracked.txt"), before])
       const preview = yield* git.tree.preview({ repository, current: after, files, context: 1 })
       expect(preview).toHaveLength(1)
       expect(preview[0]?.path).toBe(RelativePath.make("scope/tracked.txt"))

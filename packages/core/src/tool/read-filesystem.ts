@@ -2,7 +2,7 @@ export * as ReadToolFileSystem from "./read-filesystem"
 
 import path from "path"
 import { pathToFileURL } from "url"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Array, Chunk, Context, Effect, HashSet, Layer, Option, Schema } from "effect"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { makeLocationNode } from "../effect/app-node"
@@ -72,7 +72,7 @@ export type ReadError =
 export const PageInput = Schema.Struct({
   offset: PositiveInt.pipe(Schema.optional),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_READ_LINES)).pipe(Schema.optional),
-})
+}).annotate({ identifier: "ReadTool.PageInput" })
 export type PageInput = typeof PageInput.Type
 
 export class TextPage extends Schema.Class<TextPage>("ReadTool.TextPage")({
@@ -102,7 +102,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ReadToolFileSystem") {}
 
-const extensions = new Set([
+const extensions = HashSet.make(
   ".zip",
   ".tar",
   ".gz",
@@ -131,17 +131,18 @@ const extensions = new Set([
   ".wasm",
   ".pyc",
   ".pyo",
-])
+)
 const startsWith = (bytes: Uint8Array, prefix: number[]) => prefix.every((value, index) => bytes[index] === value)
-const imageMime = (bytes: Uint8Array) => {
-  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png"
-  if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg"
-  if (startsWith(bytes, [0x47, 0x49, 0x46, 0x38])) return "image/gif"
+const imageMime = (bytes: Uint8Array): Option.Option<string> => {
+  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return Option.some("image/png")
+  if (startsWith(bytes, [0xff, 0xd8, 0xff])) return Option.some("image/jpeg")
+  if (startsWith(bytes, [0x47, 0x49, 0x46, 0x38])) return Option.some("image/gif")
   if (startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) && startsWith(bytes.subarray(8), [0x57, 0x45, 0x42, 0x50]))
-    return "image/webp"
+    return Option.some("image/webp")
+  return Option.none()
 }
 const binary = (resource: string, bytes: Uint8Array) => {
-  if (extensions.has(path.extname(resource).toLowerCase())) return true
+  if (HashSet.has(extensions, path.extname(resource).toLowerCase())) return true
   if (bytes.length === 0) return false
   let nonPrintable = 0
   for (const byte of bytes) {
@@ -150,22 +151,25 @@ const binary = (resource: string, bytes: Uint8Array) => {
   }
   return nonPrintable / bytes.length > 0.3
 }
+// A fatal TextDecoder reports malformed UTF-8 with a TypeError; any other throw stays a defect.
 const decodeUtf8 = (resource: string, decoder: TextDecoder, bytes?: Uint8Array) =>
-  Effect.try({
-    try: () => decoder.decode(bytes, { stream: bytes !== undefined }),
-    catch: (error) => {
-      if (error instanceof TypeError) return new MalformedUtf8Error({ resource })
-      throw error
-    },
-  })
+  Effect.sync(() => decoder.decode(bytes, { stream: bytes !== undefined })).pipe(
+    Effect.catchDefect((defect) =>
+      defect instanceof TypeError ? Effect.fail(new MalformedUtf8Error({ resource })) : Effect.die(defect),
+    ),
+  )
 const decodeChunk = (resource: string, decoder: TextDecoder, bytes: Uint8Array) =>
   bytes.includes(0) ? Effect.fail(new BinaryFileError({ resource })) : decodeUtf8(resource, decoder, bytes)
 
+const entryType = (type: string): Option.Option<FileSystem.Entry["type"]> =>
+  type === "File" ? Option.some("file") : type === "Directory" ? Option.some("directory") : Option.none()
+
 export const inspect = Effect.fn("ReadTool.inspect")(function* (fs: FSUtil.Interface, input: string) {
   const info = yield* fs.stat(input)
-  const type = info.type === "File" ? "file" : info.type === "Directory" ? "directory" : undefined
-  if (!type) return yield* Effect.fail(new PathKindError({ resource: input, expected: "a file or directory" }))
-  return type
+  const type = entryType(info.type)
+  if (Option.isNone(type))
+    return yield* Effect.fail(new PathKindError({ resource: input, expected: "a file or directory" }))
+  return type.value
 })
 
 export const read = Effect.fn("ReadTool.read")(function* (
@@ -185,15 +189,15 @@ export const read = Effect.fn("ReadTool.read")(function* (
         () => new Uint8Array(),
       )
       const mime = imageMime(first)
-      if (mime) {
+      if (Option.isSome(mime)) {
         if (info.size > MAX_MEDIA_INGEST_BYTES)
           return yield* Effect.fail(new MediaIngestLimitError({ resource, maximumBytes: MAX_MEDIA_INGEST_BYTES }))
-        const chunks = [first]
+        let chunks: Chunk.Chunk<Uint8Array> = Chunk.of(first)
         let total = first.length
         while (total <= MAX_MEDIA_INGEST_BYTES) {
           const chunk = yield* file.readAlloc(Math.min(64 * 1024, MAX_MEDIA_INGEST_BYTES + 1 - total))
           if (Option.isNone(chunk)) break
-          chunks.push(chunk.value)
+          chunks = Chunk.append(chunks, chunk.value)
           total += chunk.value.length
         }
         if (total > MAX_MEDIA_INGEST_BYTES)
@@ -202,14 +206,14 @@ export const read = Effect.fn("ReadTool.read")(function* (
           uri: pathToFileURL(real).href,
           name: path.basename(real),
           content: Buffer.concat(
-            chunks.map((chunk) => Buffer.from(chunk)),
+            Chunk.toReadonlyArray(chunks).map((chunk) => Buffer.from(chunk)),
             total,
           ).toString("base64"),
           encoding: "base64" as const,
-          mime,
+          mime: mime.value,
         }
       }
-      if (startsWith(first, [0x25, 0x50, 0x44, 0x46]) || extensions.has(path.extname(resource).toLowerCase()))
+      if (startsWith(first, [0x25, 0x50, 0x44, 0x46]) || HashSet.has(extensions, path.extname(resource).toLowerCase()))
         return yield* Effect.fail(new BinaryFileError({ resource }))
       const paged = info.size > MAX_READ_BYTES || page.offset !== undefined || page.limit !== undefined
       if (!paged) {
@@ -232,7 +236,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
       }
       const offset = page.offset ?? 1
       const limit = Math.min(page.limit ?? MAX_READ_LINES, MAX_READ_LINES)
-      const lines: string[] = []
+      let lines = Chunk.empty<string>()
       const decoder = new TextDecoder("utf-8", { fatal: true })
       let pending = ""
       let discard = false
@@ -244,17 +248,17 @@ export const read = Effect.fn("ReadTool.read")(function* (
           line++
           return true
         }
-        if (lines.length >= limit || bytes >= MAX_READ_BYTES) {
+        if (Chunk.size(lines) >= limit || bytes >= MAX_READ_BYTES) {
           next = line
           return false
         }
         const text = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : input
-        const size = Buffer.byteLength(text, "utf-8") + (lines.length > 0 ? 1 : 0)
+        const size = Buffer.byteLength(text, "utf-8") + (Chunk.isEmpty(lines) ? 0 : 1)
         if (bytes + size > MAX_READ_BYTES) {
           next = line
           return false
         }
-        lines.push(text)
+        lines = Chunk.append(lines, text)
         bytes += size
         line++
         return true
@@ -284,7 +288,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
       const consumeChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
         let start = 0
         while (start < chunk.length) {
-          if (lines.length >= limit || bytes >= MAX_READ_BYTES) {
+          if (Chunk.size(lines) >= limit || bytes >= MAX_READ_BYTES) {
             next = line
             return false
           }
@@ -308,10 +312,10 @@ export const read = Effect.fn("ReadTool.read")(function* (
         if (!discard) pending += tail
         if (pending) append(pending.endsWith("\r") ? pending.slice(0, -1) : pending)
       }
-      if (lines.length === 0 && offset !== 1) return yield* Effect.fail(new OffsetOutOfRangeError({ offset }))
+      if (Chunk.isEmpty(lines) && offset !== 1) return yield* Effect.fail(new OffsetOutOfRangeError({ offset }))
       return new TextPage({
         type: "text-page",
-        content: lines.join("\n"),
+        content: Chunk.join(lines, "\n"),
         mime: FSUtil.mimeType(real),
         offset,
         truncated: next !== undefined,
@@ -331,21 +335,24 @@ export const list = Effect.fn("ReadTool.list")(function* (fs: FSUtil.Interface, 
     (item) =>
       Effect.gen(function* () {
         const absolute = path.join(real, item.name)
-        const target = yield* fs.realPath(absolute).pipe(Effect.catch(() => Effect.void))
-        if (!target || !FSUtil.contains(real, target)) return
-        const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.void))
-        const type = info?.type === "Directory" ? "directory" : info?.type === "File" ? "file" : undefined
-        if (!type) return
-        return FileSystem.Entry.make({
-          path: RelativePath.make(item.name + (type === "directory" ? path.sep : "")),
-          type,
-        })
+        const target = yield* fs.realPath(absolute).pipe(Effect.option)
+        if (Option.isNone(target) || !target.value || !FSUtil.contains(real, target.value))
+          return Option.none<FileSystem.Entry>()
+        const info = yield* fs.stat(target.value).pipe(Effect.option)
+        return Option.flatMap(info, (stat) => entryType(stat.type)).pipe(
+          Option.map((type) =>
+            FileSystem.Entry.make({
+              path: RelativePath.make(item.name + (type === "directory" ? path.sep : "")),
+              type,
+            }),
+          ),
+        )
       }),
     { concurrency: 16 },
   )
-  const visible = entries
-    .filter((item): item is FileSystem.Entry => item !== undefined)
-    .sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1))
+  const visible = Array.getSomes(entries).sort((a, b) =>
+    a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1,
+  )
   const selected = visible.slice(offset - 1, offset - 1 + limit)
   const truncated = offset - 1 + selected.length < visible.length
   return new ListPage({ entries: selected, truncated, ...(truncated ? { next: offset + selected.length } : {}) })

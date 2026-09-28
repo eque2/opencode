@@ -1,8 +1,9 @@
 export * as ConfigAgentV1 from "./agent"
 
-import { Schema, SchemaGetter } from "effect"
+import { HashSet, Schema, SchemaGetter } from "effect"
 import { PositiveInt } from "../../schema"
 import { ConfigPermissionV1 } from "./permission"
+import { ConfigProviderV1 } from "./provider"
 
 const Color = Schema.Union([
   Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
@@ -27,7 +28,7 @@ const AgentSchema = Schema.StructWithRest(
     hidden: Schema.optional(Schema.Boolean).annotate({
       description: "Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)",
     }),
-    options: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+    options: Schema.optional(ConfigProviderV1.Options),
     color: Schema.optional(Color).annotate({
       description: "Hex color code (e.g., #FF5733) or theme color (e.g., primary)",
     }),
@@ -37,10 +38,11 @@ const AgentSchema = Schema.StructWithRest(
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
     permission: Schema.optional(ConfigPermissionV1.Info),
   }),
-  [Schema.Record(Schema.String, Schema.Any)],
+  // Unknown agent keys are provider options too: normalize moves them into `options`.
+  [ConfigProviderV1.Options],
 )
 
-const KNOWN_KEYS = new Set([
+const KNOWN_KEYS = HashSet.make(
   "name",
   "model",
   "variant",
@@ -57,12 +59,12 @@ const KNOWN_KEYS = new Set([
   "permission",
   "disable",
   "tools",
-])
+)
 
 const normalize = (agent: Schema.Schema.Type<typeof AgentSchema>): Schema.Schema.Type<typeof AgentSchema> => {
   const options: Record<string, unknown> = { ...agent.options }
   for (const [key, value] of Object.entries(agent)) {
-    if (!KNOWN_KEYS.has(key)) options[key] = value
+    if (!HashSet.has(KNOWN_KEYS, key)) options[key] = value
   }
 
   const permission: ConfigPermissionV1.Info = {}

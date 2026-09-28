@@ -4,7 +4,7 @@ import * as Tool from "./tool"
 export const Parameters = Schema.Struct({
   tool: Schema.String,
   error: Schema.String,
-})
+}).annotate({ identifier: "InvalidTool.Parameters" })
 
 export const InvalidTool = Tool.define(
   "invalid",

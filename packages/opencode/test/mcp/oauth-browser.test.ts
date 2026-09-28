@@ -3,7 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Layer, Option } from "effect"
+import { Deferred, Effect, Layer, Option, Schema } from "effect"
 import { Config } from "../../src/config/config"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { McpAuth } from "../../src/mcp/auth"
@@ -20,12 +20,13 @@ const browserLayer = Layer.succeed(
     open: (url) =>
       Effect.gen(function* () {
         const browser = browsers.get(new URL(url).origin)
-        if (!browser) return yield* Effect.fail(new Error(`Unexpected browser URL: ${url}`))
+        if (!browser) return yield* new McpBrowser.OpenError({ message: `Unexpected browser URL: ${url}` })
         Deferred.doneUnsafe(browser.opened, Effect.succeed(url))
-        if (browser.fail) return yield* Effect.fail(new Error("spawn xdg-open ENOENT"))
-        yield* Effect.tryPromise({
+        if (browser.fail) return yield* new McpBrowser.OpenError({ message: "spawn xdg-open ENOENT" })
+        return yield* Effect.tryPromise({
           try: () => fetch(url).then((response) => response.body?.cancel()),
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          catch: (cause) =>
+            new McpBrowser.OpenError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
         })
       }),
   }),
@@ -134,12 +135,14 @@ const trackBrowserOpen = (url: string, fail = false) =>
     return opened
   })
 
+const decodeBrowserOpenFailed = Schema.decodeUnknownSync(MCP.BrowserOpenFailed.data)
+
 const trackBrowserOpenFailed = Effect.gen(function* () {
   const events = yield* EventV2Bridge.Service
   const event = yield* Deferred.make<{ mcpName: string; url: string }>()
   const unsubscribe = yield* events.listen((evt) => {
     if (evt.type === MCP.BrowserOpenFailed.type)
-      Deferred.doneUnsafe(event, Effect.succeed(evt.data as { mcpName: string; url: string }))
+      Deferred.doneUnsafe(event, Effect.succeed(decodeBrowserOpenFailed(evt.data)))
     return Effect.void
   })
   yield* Effect.addFinalizer(() => unsubscribe)

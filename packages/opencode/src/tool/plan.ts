@@ -1,10 +1,9 @@
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Effect, Schema } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Question } from "../question"
 import { Session } from "@/session/session"
-import { MessageV2 } from "../session/message-v2"
 import { Provider } from "@/provider/provider"
 import { InstanceState } from "@/effect/instance-state"
 import { MessageID, PartID } from "../session/schema"
@@ -40,10 +39,10 @@ export const PlanExitTool = Tool.define(
                 ],
               },
             ],
-            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+            ...(ctx.callID ? { tool: { messageID: ctx.messageID, callID: ctx.callID } } : {}),
           })
 
-          if (answers[0]?.[0] === "No") yield* new Question.RejectedError()
+          if (answers[0]?.[0] === "No") return yield* new Question.RejectedError()
 
           const messages = yield* session.messages({ sessionID: ctx.sessionID }).pipe(Effect.orDie)
           const lastUser = messages.findLast((item) => item.info.role === "user" && item.info.model)
@@ -54,7 +53,7 @@ export const PlanExitTool = Tool.define(
             id: MessageID.ascending(),
             sessionID: ctx.sessionID,
             role: "user",
-            time: { created: Date.now() },
+            time: { created: yield* Clock.currentTimeMillis },
             agent: "build",
             model,
           }

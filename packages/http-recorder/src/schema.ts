@@ -22,22 +22,22 @@ export const RequestSnapshotSchema = Schema.Struct({
   url: Schema.String,
   headers: Schema.Record(Schema.String, Schema.String),
   body: Schema.String,
-})
+}).annotate({ identifier: "RequestSnapshot" })
 
 export const ResponseSnapshotSchema = Schema.Struct({
   status: Schema.Number,
   headers: Schema.Record(Schema.String, Schema.String),
   body: Schema.String,
   bodyEncoding: Schema.optional(Schema.Literals(["text", "base64"])),
-})
+}).annotate({ identifier: "ResponseSnapshot" })
 
-export const CassetteMetadataSchema = Schema.Record(Schema.String, Schema.Unknown)
+export const CassetteMetadataSchema = Schema.Record(Schema.String, Schema.Json)
 
 export const HttpInteractionSchema = Schema.Struct({
   transport: Schema.tag("http"),
   request: RequestSnapshotSchema,
   response: ResponseSnapshotSchema,
-})
+}).annotate({ identifier: "HttpInteraction" })
 
 export const WebSocketEventSchema = Schema.Union([
   Schema.Struct({
@@ -60,7 +60,7 @@ export const WebSocketInteractionSchema = Schema.Struct({
     headers: Schema.Record(Schema.String, Schema.String),
   }),
   events: Schema.Array(WebSocketEventSchema),
-})
+}).annotate({ identifier: "WebSocketInteraction" })
 
 export const InteractionSchema = Schema.Union([HttpInteractionSchema, WebSocketInteractionSchema]).pipe(
   Schema.toTaggedUnion("transport"),
@@ -80,7 +80,7 @@ export const CassetteSchema = Schema.Struct({
   version: Schema.Literal(1),
   metadata: Schema.optional(CassetteMetadataSchema),
   interactions: Schema.Array(InteractionSchema),
-})
+}).annotate({ identifier: "Cassette" })
 export type Cassette = Schema.Schema.Type<typeof CassetteSchema>
 
 export const decodeCassette = Schema.decodeUnknownSync(CassetteSchema)

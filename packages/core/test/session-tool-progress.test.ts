@@ -65,7 +65,7 @@ describe("Tool.Progress", () => {
         if (!row) return yield* Effect.die("Missing projected assistant")
         return Schema.decodeUnknownSync(SessionMessage.Assistant)({ ...row.data, id: row.id, type: row.type })
       })
-      const start = (callID: string) =>
+      const start = (callID: SessionMessage.ToolCallID) =>
         Effect.gen(function* () {
           yield* service.publish(SessionEvent.Tool.Input.Started, {
             sessionID,
@@ -85,7 +85,7 @@ describe("Tool.Progress", () => {
           })
         })
 
-      yield* start("call-success")
+      yield* start(SessionMessage.ToolCallID.make("call-success"))
       expect((yield* readAssistant).content[0]).toMatchObject({
         state: { status: "running", structured: {}, content: [] },
       })
@@ -94,7 +94,7 @@ describe("Tool.Progress", () => {
         sessionID,
         timestamp,
         assistantMessageID,
-        callID: "call-success",
+        callID: SessionMessage.ToolCallID.make("call-success"),
         structured: { phase: "checkpoint" },
         content: content("saved"),
       })
@@ -106,7 +106,7 @@ describe("Tool.Progress", () => {
         sessionID,
         timestamp,
         assistantMessageID,
-        callID: "call-success",
+        callID: SessionMessage.ToolCallID.make("call-success"),
         structured: { phase: "done" },
         content: content("complete"),
         provider: { executed: false },
@@ -115,12 +115,12 @@ describe("Tool.Progress", () => {
         state: { status: "completed", structured: { phase: "done" }, content: content("complete") },
       })
 
-      yield* start("call-failed")
+      yield* start(SessionMessage.ToolCallID.make("call-failed"))
       yield* service.publish(SessionEvent.Tool.Progress, {
         sessionID,
         timestamp,
         assistantMessageID,
-        callID: "call-failed",
+        callID: SessionMessage.ToolCallID.make("call-failed"),
         structured: { phase: "checkpoint" },
         content: content("before failure"),
       })
@@ -128,7 +128,7 @@ describe("Tool.Progress", () => {
         sessionID,
         timestamp,
         assistantMessageID,
-        callID: "call-failed",
+        callID: SessionMessage.ToolCallID.make("call-failed"),
         error: { type: "unknown", message: "boom" },
         provider: { executed: false },
       })

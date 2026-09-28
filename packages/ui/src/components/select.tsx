@@ -1,6 +1,6 @@
 import { Select as Kobalte } from "@kobalte/core/select"
 import { createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
-import { pipe, groupBy, entries, map } from "remeda"
+import { Array, Option, Record } from "effect"
 import { Button, ButtonProps } from "./button"
 import { Icon } from "./icon"
 
@@ -42,18 +42,23 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     "triggerProps",
   ])
 
-  const state = {
-    key: undefined as string | undefined,
-    cleanup: undefined as (() => void) | void,
+  // The highlighted option key, and the cleanup that its onHighlight call returned.
+  const state: { key: Option.Option<string | T>; cleanup: Option.Option<() => void> } = {
+    key: Option.none(),
+    cleanup: Option.none(),
+  }
+
+  const runCleanup = () => {
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
   }
 
   const stop = () => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    state.key = undefined
+    runCleanup()
+    state.cleanup = Option.none()
+    state.key = Option.none()
   }
 
-  const keyFor = (item: T) => (local.value ? local.value(item) : (item as string))
+  const keyFor = (item: T): string | T => (local.value ? local.value(item) : item)
 
   const move = (item: T | undefined) => {
     if (!local.onHighlight) return
@@ -63,24 +68,21 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     }
 
     const key = keyFor(item)
-    if (state.key === key) return
-    state.cleanup?.()
-    state.cleanup = local.onHighlight(item)
-    state.key = key
+    if (Option.exists(state.key, (current) => current === key)) return
+    runCleanup()
+    const cleanup = local.onHighlight(item)
+    state.cleanup = typeof cleanup === "function" ? Option.some(cleanup) : Option.none()
+    state.key = Option.some(key)
   }
 
   onCleanup(stop)
 
-  const grouped = createMemo(() => {
-    const result = pipe(
-      local.options,
-      groupBy((x) => (local.groupBy ? local.groupBy(x) : "")),
-      // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
-      entries(),
-      map(([k, v]) => ({ category: k, options: v })),
-    )
-    return result
-  })
+  const grouped = createMemo(() =>
+    Array.map(
+      Record.toEntries(Array.groupBy(local.options, (x) => (local.groupBy ? local.groupBy(x) : ""))),
+      ([k, v]) => ({ category: k, options: v }),
+    ),
+  )
 
   return (
     // @ts-ignore
@@ -92,8 +94,8 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
       gutter={4}
       value={local.current}
       options={grouped()}
-      optionValue={(x) => (local.value ? local.value(x) : (x as string))}
-      optionTextValue={(x) => (local.label ? local.label(x) : (x as string))}
+      optionValue={(x) => (local.value ? local.value(x) : String(x))}
+      optionTextValue={(x) => (local.label ? local.label(x) : String(x))}
       optionGroupChildren="options"
       placeholder={local.placeholder}
       sectionComponent={(local) => (
@@ -116,7 +118,7 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
               ? local.children(itemProps.item.rawValue)
               : local.label
                 ? local.label(itemProps.item.rawValue)
-                : (itemProps.item.rawValue as string)}
+                : String(itemProps.item.rawValue)}
           </Kobalte.ItemLabel>
           <Kobalte.ItemIndicator data-slot="select-select-item-indicator">
             <Icon name="check-small" size="small" />
@@ -124,7 +126,7 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
         </Kobalte.Item>
       )}
       onChange={(v) => {
-        local.onSelect?.(v ?? undefined)
+        local.onSelect?.(Option.getOrUndefined(Option.fromNullishOr(v)))
         stop()
       }}
       onOpenChange={(open) => {
@@ -150,7 +152,7 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
             const selected = state.selectedOption() ?? local.current
             if (!selected) return local.placeholder || ""
             if (local.label) return local.label(selected)
-            return selected as string
+            return String(selected)
           }}
         </Kobalte.Value>
         <Kobalte.Icon data-slot="select-select-trigger-icon">

@@ -1,20 +1,14 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
+import { Chunk, Effect, Option, Predicate, Schema, type SchemaAST } from "effect"
 import { codeInterpreterArgsSchema } from "./tool/code-interpreter"
 import { fileSearchArgsSchema } from "./tool/file-search"
 import { webSearchArgsSchema } from "./tool/web-search"
 import { webSearchPreviewArgsSchema } from "./tool/web-search-preview"
 import { imageGenerationArgsSchema } from "./tool/image-generation"
 import type { OpenAIResponsesTool } from "./openai-responses-api-types"
+import { ResponsesCallError } from "./openai-error"
 
-export function prepareResponsesTools({
-  tools,
-  toolChoice,
-  strictJsonSchema,
-}: {
-  tools: LanguageModelV3CallOptions["tools"]
-  toolChoice?: LanguageModelV3CallOptions["toolChoice"]
-  strictJsonSchema: boolean
-}): {
+export type PreparedResponsesTools = {
   tools?: Array<OpenAIResponsesTool>
   toolChoice?:
     | "auto"
@@ -27,22 +21,29 @@ export function prepareResponsesTools({
     | { type: "code_interpreter" }
     | { type: "image_generation" }
   toolWarnings: SharedV3Warning[]
-} {
-  // when the tools array is empty, change it to undefined to prevent errors:
-  tools = tools?.length ? tools : undefined
+}
 
-  const toolWarnings: SharedV3Warning[] = []
-
-  if (tools == null) {
-    return { tools: undefined, toolChoice: undefined, toolWarnings }
+export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponsesTools")(function* ({
+  tools,
+  toolChoice,
+  strictJsonSchema,
+}: {
+  tools: LanguageModelV3CallOptions["tools"]
+  toolChoice?: LanguageModelV3CallOptions["toolChoice"]
+  strictJsonSchema: boolean
+}): Effect.fn.Return<PreparedResponsesTools, ResponsesCallError> {
+  // an empty tools array counts as no tools, to prevent errors:
+  if (Predicate.isNullish(tools) || tools.length === 0) {
+    return { toolWarnings: [] }
   }
 
-  const openaiTools: Array<OpenAIResponsesTool> = []
+  let openaiTools = Chunk.empty<OpenAIResponsesTool>()
+  let toolWarnings = Chunk.empty<SharedV3Warning>()
 
   for (const tool of tools) {
     switch (tool.type) {
       case "function":
-        openaiTools.push({
+        openaiTools = Chunk.append(openaiTools, {
           type: "function",
           name: tool.name,
           description: tool.description,
@@ -53,32 +54,32 @@ export function prepareResponsesTools({
       case "provider": {
         switch (tool.id) {
           case "openai.file_search": {
-            const args = fileSearchArgsSchema.parse(tool.args)
+            const args = yield* decodeToolArgs(fileSearchArgsSchema, tool.args)
 
-            openaiTools.push({
+            openaiTools = Chunk.append(openaiTools, {
               type: "file_search",
               vector_store_ids: args.vectorStoreIds,
               max_num_results: args.maxNumResults,
-              ranking_options: args.ranking
-                ? {
-                    ranker: args.ranking.ranker,
-                    score_threshold: args.ranking.scoreThreshold,
-                  }
-                : undefined,
+              ranking_options: Option.getOrUndefined(
+                Option.map(Option.fromUndefinedOr(args.ranking), (ranking) => ({
+                  ranker: ranking.ranker,
+                  score_threshold: ranking.scoreThreshold,
+                })),
+              ),
               filters: args.filters,
             })
 
             break
           }
           case "openai.local_shell": {
-            openaiTools.push({
+            openaiTools = Chunk.append(openaiTools, {
               type: "local_shell",
             })
             break
           }
           case "openai.web_search_preview": {
-            const args = webSearchPreviewArgsSchema.parse(tool.args)
-            openaiTools.push({
+            const args = yield* decodeToolArgs(webSearchPreviewArgsSchema, tool.args)
+            openaiTools = Chunk.append(openaiTools, {
               type: "web_search_preview",
               search_context_size: args.searchContextSize,
               user_location: args.userLocation,
@@ -86,40 +87,43 @@ export function prepareResponsesTools({
             break
           }
           case "openai.web_search": {
-            const args = webSearchArgsSchema.parse(tool.args)
-            openaiTools.push({
+            const args = yield* decodeToolArgs(webSearchArgsSchema, tool.args)
+            openaiTools = Chunk.append(openaiTools, {
               type: "web_search",
-              filters: args.filters != null ? { allowed_domains: args.filters.allowedDomains } : undefined,
+              filters: Option.getOrUndefined(
+                Option.map(Option.fromNullishOr(args.filters), (filters) => ({
+                  allowed_domains: filters.allowedDomains,
+                })),
+              ),
               search_context_size: args.searchContextSize,
               user_location: args.userLocation,
             })
             break
           }
           case "openai.code_interpreter": {
-            const args = codeInterpreterArgsSchema.parse(tool.args)
-            openaiTools.push({
+            const args = yield* decodeToolArgs(codeInterpreterArgsSchema, tool.args)
+            openaiTools = Chunk.append(openaiTools, {
               type: "code_interpreter",
               container:
-                args.container == null
-                  ? { type: "auto", file_ids: undefined }
-                  : typeof args.container === "string"
-                    ? args.container
-                    : { type: "auto", file_ids: args.container.fileIds },
+                typeof args.container === "string"
+                  ? args.container
+                  : { type: "auto", file_ids: args.container?.fileIds },
             })
             break
           }
           case "openai.image_generation": {
-            const args = imageGenerationArgsSchema.parse(tool.args)
-            openaiTools.push({
+            // Unknown image generation options are an error.
+            const args = yield* decodeToolArgs(imageGenerationArgsSchema, tool.args, { onExcessProperty: "error" })
+            openaiTools = Chunk.append(openaiTools, {
               type: "image_generation",
               background: args.background,
               input_fidelity: args.inputFidelity,
-              input_image_mask: args.inputImageMask
-                ? {
-                    file_id: args.inputImageMask.fileId,
-                    image_url: args.inputImageMask.imageUrl,
-                  }
-                : undefined,
+              input_image_mask: Option.getOrUndefined(
+                Option.map(Option.fromUndefinedOr(args.inputImageMask), (inputImageMask) => ({
+                  file_id: inputImageMask.fileId,
+                  image_url: inputImageMask.imageUrl,
+                })),
+              ),
               model: args.model,
               moderation: args.moderation,
               partial_images: args.partialImages,
@@ -134,13 +138,15 @@ export function prepareResponsesTools({
         break
       }
       default:
-        toolWarnings.push({ type: "unsupported", feature: "tool type" })
+        toolWarnings = Chunk.append(toolWarnings, { type: "unsupported", feature: "tool type" })
         break
     }
   }
 
-  if (toolChoice == null) {
-    return { tools: openaiTools, toolChoice: undefined, toolWarnings }
+  const prepared = { tools: Chunk.toArray(openaiTools), toolWarnings: Chunk.toArray(toolWarnings) }
+
+  if (Predicate.isNullish(toolChoice)) {
+    return prepared
   }
 
   const type = toolChoice.type
@@ -149,10 +155,10 @@ export function prepareResponsesTools({
     case "auto":
     case "none":
     case "required":
-      return { tools: openaiTools, toolChoice: type, toolWarnings }
+      return { ...prepared, toolChoice: type }
     case "tool":
       return {
-        tools: openaiTools,
+        ...prepared,
         toolChoice:
           toolChoice.toolName === "code_interpreter" ||
           toolChoice.toolName === "file_search" ||
@@ -161,13 +167,18 @@ export function prepareResponsesTools({
           toolChoice.toolName === "web_search"
             ? { type: toolChoice.toolName }
             : { type: "function", name: toolChoice.toolName },
-        toolWarnings,
       }
     default: {
       const _exhaustiveCheck: never = type
-      throw new UnsupportedFunctionalityError({
-        functionality: `tool choice type: ${_exhaustiveCheck}`,
+      return yield* new ResponsesCallError({
+        cause: new UnsupportedFunctionalityError({
+          functionality: `tool choice type: ${String(_exhaustiveCheck)}`,
+        }),
       })
     }
   }
-}
+})
+
+// Provider tool args that do not match their schema fail the call.
+const decodeToolArgs = <S extends Schema.Constraint>(schema: S, args: unknown, options?: SchemaAST.ParseOptions) =>
+  Schema.decodeUnknownEffect(schema)(args, options).pipe(Effect.mapError((cause) => new ResponsesCallError({ cause })))

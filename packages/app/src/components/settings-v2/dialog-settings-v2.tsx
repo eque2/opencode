@@ -31,7 +31,8 @@ export const DialogSettings: Component<{
     if (route.type === "dir-new-sesssion") return route.dir
     if (route.type === "draft") {
       const draft = tabs.store.find((item) => item.type === "draft" && item.draftID === route.draftID)
-      return draft?.type === "draft" ? draft.directory : undefined
+      if (draft?.type === "draft") return draft.directory
+      return undefined
     }
     if (route.type === "session") return serverSync().session.get(route.sessionId)?.directory
     return undefined

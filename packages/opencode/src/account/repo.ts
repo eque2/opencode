@@ -18,21 +18,25 @@ export interface Interface {
   readonly remove: (accountID: AccountID) => Effect.Effect<void, AccountRepoError>
   readonly use: (accountID: AccountID, orgID: Option.Option<OrgID>) => Effect.Effect<void, AccountRepoError>
   readonly getRow: (accountID: AccountID) => Effect.Effect<Option.Option<AccountRow>, AccountRepoError>
-  readonly persistToken: (input: {
-    accountID: AccountID
-    accessToken: AccessToken
-    refreshToken: RefreshToken
-    expiry: Option.Option<number>
-  }) => Effect.Effect<void, AccountRepoError>
-  readonly persistAccount: (input: {
-    id: AccountID
-    email: string
-    url: string
-    accessToken: AccessToken
-    refreshToken: RefreshToken
-    expiry: number
-    orgID: Option.Option<OrgID>
-  }) => Effect.Effect<void, AccountRepoError>
+  readonly persistToken: (input: PersistTokenInput) => Effect.Effect<void, AccountRepoError>
+  readonly persistAccount: (input: PersistAccountInput) => Effect.Effect<void, AccountRepoError>
+}
+
+export interface PersistTokenInput {
+  accountID: AccountID
+  accessToken: AccessToken
+  refreshToken: RefreshToken
+  expiry: Option.Option<number>
+}
+
+export interface PersistAccountInput {
+  id: AccountID
+  email: string
+  url: string
+  accessToken: AccessToken
+  refreshToken: RefreshToken
+  expiry: number
+  orgID: Option.Option<OrgID>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AccountRepo") {}
@@ -50,10 +54,10 @@ const layer = Layer.effect(
 
     const current = Effect.fnUntraced(function* () {
       const state = yield* db.select().from(AccountStateTable).where(eq(AccountStateTable.id, ACCOUNT_STATE_ID)).get()
-      if (!state?.active_account_id) return
+      if (!state?.active_account_id) return Option.none()
       const account = yield* db.select().from(AccountTable).where(eq(AccountTable.id, state.active_account_id)).get()
-      if (!account) return
-      return { ...account, active_org_id: state.active_org_id ?? null }
+      if (!account) return Option.none()
+      return Option.some({ ...account, active_org_id: state.active_org_id })
     })
 
     const state = (accountID: AccountID, orgID: Option.Option<OrgID>) => {
@@ -69,7 +73,7 @@ const layer = Layer.effect(
     }
 
     const active = Effect.fn("AccountRepo.active")(() =>
-      query(current()).pipe(Effect.map((row) => (row ? Option.some(decode(row)) : Option.none()))),
+      query(current()).pipe(Effect.map(Option.map(decode))),
     )
 
     const list = Effect.fn("AccountRepo.list")(() =>
@@ -78,7 +82,12 @@ const layer = Layer.effect(
           .select()
           .from(AccountTable)
           .all()
-          .pipe(Effect.map((rows) => rows.map((row: AccountRow) => decode({ ...row, active_org_id: null })))),
+          .pipe(
+            Effect.map((rows) =>
+              // eslint-disable-next-line effect/no-null-use-option -- (b) the decode input is the Encoded form of Info, whose active_org_id is Schema.NullOr(OrgID) to mirror the nullable SQL column
+              rows.map((row: AccountRow) => decode({ ...row, active_org_id: null })),
+            ),
+          ),
       ),
     )
 
@@ -88,6 +97,7 @@ const layer = Layer.effect(
           Effect.gen(function* () {
             yield* tx
               .update(AccountStateTable)
+              // eslint-disable-next-line effect/no-null-use-option -- (a) Drizzle update().set() writes SQL NULL only from a null value; undefined skips the column
               .set({ active_account_id: null, active_org_id: null })
               .where(eq(AccountStateTable.active_account_id, accountID))
               .run()
@@ -107,7 +117,7 @@ const layer = Layer.effect(
       ),
     )
 
-    const persistToken = Effect.fn("AccountRepo.persistToken")((input) =>
+    const persistToken = Effect.fn("AccountRepo.persistToken")((input: PersistTokenInput) =>
       query(
         db
           .update(AccountTable)
@@ -121,7 +131,7 @@ const layer = Layer.effect(
       ).pipe(Effect.asVoid),
     )
 
-    const persistAccount = Effect.fn("AccountRepo.persistAccount")((input) =>
+    const persistAccount = Effect.fn("AccountRepo.persistAccount")((input: PersistAccountInput) =>
       query(
         db.transaction((tx) =>
           Effect.gen(function* () {

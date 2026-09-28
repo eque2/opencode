@@ -2,7 +2,7 @@ export * as Pty from "./pty"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { Disp, Proc } from "#pty"
-import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Schema, Types } from "effect"
 import { Pty } from "@opencode-ai/schema/pty"
 import { Config } from "./config"
 import { EventV2 } from "./event"
@@ -17,13 +17,20 @@ const BUFFER_LIMIT = 1024 * 1024 * 2
 const EXITED_LIMIT = 25
 const pty = lazy(() => import("#pty"))
 
+// Subscriber callbacks and the native kill run on the synchronous PTY path. A throwing
+// callback must not break delivery to the others, so each call reports success as an
+// Option instead of throwing.
+const attempt = <A extends ReadonlyArray<unknown>>(callback: (...args: A) => void, ...args: A) =>
+  Option.isSome(Option.liftThrowable(callback)(...args))
+
 type Subscriber = {
   readonly onData: (chunk: string) => void
   readonly onEnd: (event: { exitCode?: number }) => void
   active: boolean
   detached: boolean
   pending: string[]
-  end?: { exitCode?: number }
+  // The end event that arrived before activate(), delivered when the subscriber activates.
+  end: Option.Option<{ exitCode?: number }>
 }
 
 type Active = {
@@ -32,7 +39,8 @@ type Active = {
   buffer: string
   bufferCursor: number
   cursor: number
-  subscribers: Map<object, Subscriber>
+  // Keyed by a per-service attach counter, so every attachment has its own entry.
+  subscribers: MutableHashMap.MutableHashMap<number, Subscriber>
   listeners: Disp[]
 }
 
@@ -97,51 +105,47 @@ const layer = Layer.effect(
     const config = yield* Config.Service
     const context = yield* Effect.context()
     const runFork = Effect.runForkWith(context)
-    const sessions = new Map<PtyID, Active>()
+    const sessions = MutableHashMap.empty<PtyID, Active>()
     const exitOrder: PtyID[] = []
+    let nextSubscriber = 0
 
     function notifyEnd(session: Active, event: { exitCode?: number }) {
-      for (const subscriber of session.subscribers.values()) {
+      for (const subscriber of MutableHashMap.values(session.subscribers)) {
         if (!subscriber.active) {
-          subscriber.end = event
+          subscriber.end = Option.some(event)
           continue
         }
-        try {
-          subscriber.onEnd(event)
-        } catch {}
+        attempt(subscriber.onEnd, event)
       }
-      session.subscribers.clear()
+      MutableHashMap.clear(session.subscribers)
     }
 
     function teardown(session: Active) {
       for (const listener of session.listeners) listener.dispose()
       session.listeners.length = 0
-      if (session.info.status === "running") {
-        try {
-          session.process.kill()
-        } catch {}
-      }
+      if (session.info.status === "running") attempt(() => session.process.kill())
       notifyEnd(session, {})
     }
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        for (const session of sessions.values()) teardown(session)
-        sessions.clear()
+        for (const session of MutableHashMap.values(sessions)) teardown(session)
+        MutableHashMap.clear(sessions)
         exitOrder.length = 0
       }),
     )
 
     const requireSession = Effect.fn("Pty.requireSession")(function* (id: PtyID) {
-      const session = sessions.get(id)
-      if (!session) return yield* new NotFoundError({ ptyID: id })
-      return session
+      const session = MutableHashMap.get(sessions, id)
+      if (Option.isNone(session)) return yield* new NotFoundError({ ptyID: id })
+      return session.value
     })
 
     const removeSession = Effect.fnUntraced(function* (id: PtyID) {
-      const session = sessions.get(id)
-      if (!session) return
-      sessions.delete(id)
+      const found = MutableHashMap.get(sessions, id)
+      if (Option.isNone(found)) return
+      const session = found.value
+      MutableHashMap.remove(sessions, id)
       const index = exitOrder.indexOf(id)
       if (index !== -1) exitOrder.splice(index, 1)
       yield* Effect.logInfo("removing session", { id })
@@ -155,7 +159,7 @@ const layer = Layer.effect(
     })
 
     const list = Effect.fn("Pty.list")(function* () {
-      return Array.from(sessions.values()).map((session) => session.info)
+      return Array.from(MutableHashMap.values(sessions), (session) => session.info)
     })
 
     const get = Effect.fn("Pty.get")(function* (id: PtyID) {
@@ -164,7 +168,7 @@ const layer = Layer.effect(
 
     const create = Effect.fn("Pty.create")(function* (input: CreateInput) {
       const id = PtyID.ascending()
-      const command = input.command || Shell.preferred(Config.latest(yield* config.entries(), "shell"))
+      const command = input.command || (yield* Shell.preferred(Config.latest(yield* config.entries(), "shell")))
       const args = Shell.login(command) ? [...(input.args ?? []), "-l"] : [...(input.args ?? [])]
       const cwd = input.cwd || location.directory
       const env = {
@@ -196,23 +200,19 @@ const layer = Layer.effect(
         buffer: "",
         bufferCursor: 0,
         cursor: 0,
-        subscribers: new Map(),
+        subscribers: MutableHashMap.empty(),
         listeners: [],
       }
-      sessions.set(id, session)
+      MutableHashMap.set(sessions, id, session)
       session.listeners.push(
         proc.onData((chunk) => {
           session.cursor += chunk.length
-          for (const [token, subscriber] of session.subscribers.entries()) {
+          for (const [token, subscriber] of session.subscribers) {
             if (!subscriber.active) {
               subscriber.pending.push(chunk)
               continue
             }
-            try {
-              subscriber.onData(chunk)
-            } catch {
-              session.subscribers.delete(token)
-            }
+            if (!attempt(subscriber.onData, chunk)) MutableHashMap.remove(session.subscribers, token)
           }
           session.buffer += chunk
           if (session.buffer.length <= BUFFER_LIMIT) return
@@ -260,15 +260,16 @@ const layer = Layer.effect(
       const session = yield* requireSession(id)
       if (session.info.status !== "running") return yield* new ExitedError({ ptyID: id })
       yield* Effect.logInfo("client attached to session", { id, directory: location.directory })
-      const token = {}
+      const token = nextSubscriber++
       const subscriber: Subscriber = {
         onData: input.onData,
         onEnd: input.onEnd,
         active: false,
         detached: false,
         pending: [],
+        end: Option.none(),
       }
-      session.subscribers.set(token, subscriber)
+      MutableHashMap.set(session.subscribers, token, subscriber)
       const start = session.bufferCursor
       const end = session.cursor
       const from =
@@ -292,19 +293,18 @@ const layer = Layer.effect(
         activate: () => {
           if (subscriber.active || subscriber.detached) return
           subscriber.active = true
-          try {
+          const flushed = attempt(() => {
             for (const chunk of subscriber.pending) subscriber.onData(chunk)
             subscriber.pending.length = 0
-            if (subscriber.end) subscriber.onEnd(subscriber.end)
-          } catch {
-            session.subscribers.delete(token)
-          }
+            if (Option.isSome(subscriber.end)) subscriber.onEnd(subscriber.end.value)
+          })
+          if (!flushed) MutableHashMap.remove(session.subscribers, token)
         },
         detach: () => {
           subscriber.detached = true
           subscriber.pending.length = 0
-          subscriber.end = undefined
-          session.subscribers.delete(token)
+          subscriber.end = Option.none()
+          MutableHashMap.remove(session.subscribers, token)
         },
       }
     })

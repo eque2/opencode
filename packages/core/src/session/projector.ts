@@ -1,7 +1,7 @@
 export * as SessionProjector from "./projector"
 
 import { and, desc, eq, gt, or, sql } from "drizzle-orm"
-import { DateTime, Effect, Layer, Schema } from "effect"
+import { DateTime, Effect, Layer, Option, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { makeGlobalNode } from "../effect/app-node"
@@ -13,38 +13,33 @@ import { SessionMessageUpdater } from "./message-updater"
 import { SessionInput } from "./input"
 import { WorkspaceV2 } from "../workspace"
 import { MessageTable, PartTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
-import type { DeepMutable } from "../schema"
 
 type DatabaseService = Database.Interface["db"]
 
 const decodeMessage = Schema.decodeUnknownSync(SessionMessage.Message)
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
+const isAssistant = (message: SessionMessage.Message): message is SessionMessage.Assistant =>
+  message.type === "assistant"
 
-export class SessionAlreadyProjected extends Error {}
+// A concurrent creation already projected this Session; V2Session.create catches this defect.
+export class SessionAlreadyProjected extends Schema.TaggedError<SessionAlreadyProjected>()(
+  "SessionProjector.SessionAlreadyProjected",
+  {},
+) {}
 
-type Usage = {
-  cost: number
-  tokens: {
-    input: number
-    output: number
-    reasoning: number
-    cache: { read: number; write: number }
-  }
-}
-
-function usage(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"] | unknown): Usage | undefined {
-  if (typeof part !== "object" || part === null) return undefined
-  const value = part as Record<string, unknown>
-  if (value.type !== "step-finish") return undefined
-  if (!("cost" in value) || !("tokens" in value)) return undefined
-  return { cost: value.cost as Usage["cost"], tokens: value.tokens as Usage["tokens"] }
-}
+// The cost and token usage of a V1 step-finish part, read from an event part or a stored part row.
+const StepFinishUsage = Schema.Struct({
+  type: SessionV1.StepFinishPart.fields.type,
+  cost: SessionV1.StepFinishPart.fields.cost,
+  tokens: SessionV1.StepFinishPart.fields.tokens,
+}).annotate({ identifier: "SessionProjector.StepFinishUsage" })
+const decodeUsage = Schema.decodeUnknownOption(StepFinishUsage)
 
 function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInsert {
   return {
     id: info.id,
     project_id: info.projectID,
-    workspace_id: info.workspaceID ?? null,
+    workspace_id: Option.getOrNull(Option.fromNullishOr(info.workspaceID)),
     parent_id: info.parentID,
     slug: info.slug,
     directory: info.directory,
@@ -57,7 +52,7 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     summary_additions: info.summary?.additions,
     summary_deletions: info.summary?.deletions,
     summary_files: info.summary?.files,
-    summary_diffs: info.summary?.diffs ? [...info.summary.diffs] : undefined,
+    ...(info.summary?.diffs ? { summary_diffs: [...info.summary.diffs] } : {}),
     metadata: info.metadata,
     cost: info.cost ?? 0,
     tokens_input: (info.tokens ?? { input: 0 }).input,
@@ -65,8 +60,13 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     tokens_reasoning: (info.tokens ?? { reasoning: 0 }).reasoning,
     tokens_cache_read: (info.tokens ?? { cache: { read: 0 } }).cache.read,
     tokens_cache_write: (info.tokens ?? { cache: { write: 0 } }).cache.write,
-    revert: info.revert ? { ...info.revert, messageID: SessionMessage.ID.make(info.revert.messageID) } : null,
-    permission: info.permission ? [...info.permission] : undefined,
+    revert: Option.getOrNull(
+      Option.map(Option.fromNullishOr(info.revert), (revert) => ({
+        ...revert,
+        messageID: SessionMessage.ID.make(revert.messageID),
+      })),
+    ),
+    ...(info.permission ? { permission: [...info.permission] } : {}),
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -78,34 +78,54 @@ function messageData(
   info: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["info"],
 ): typeof MessageTable.$inferInsert.data {
   const { id: _, sessionID: __, ...rest } = info
-  return rest as DeepMutable<typeof rest>
+  return rest
 }
 
 function partData(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"]): typeof PartTable.$inferInsert.data {
   const { id: _, messageID: __, sessionID: ___, ...rest } = part
-  return rest as DeepMutable<typeof rest>
+  return rest
 }
 
+// Add (sign 1) or remove (sign -1) the usage of a step-finish part in the session totals; other parts add nothing.
 function applyUsage(
   db: DatabaseService,
   sessionID: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["sessionID"],
-  value: Usage,
+  part: unknown,
   sign = 1,
+) {
+  return Option.match(decodeUsage(part), {
+    onNone: () => Effect.void,
+    onSome: (value) =>
+      db
+        .update(SessionTable)
+        .set({
+          cost: sql`${SessionTable.cost} + ${value.cost * sign}`,
+          tokens_input: sql`${SessionTable.tokens_input} + ${value.tokens.input * sign}`,
+          tokens_output: sql`${SessionTable.tokens_output} + ${value.tokens.output * sign}`,
+          tokens_reasoning: sql`${SessionTable.tokens_reasoning} + ${value.tokens.reasoning * sign}`,
+          tokens_cache_read: sql`${SessionTable.tokens_cache_read} + ${value.tokens.cache.read * sign}`,
+          tokens_cache_write: sql`${SessionTable.tokens_cache_write} + ${value.tokens.cache.write * sign}`,
+          time_updated: sql`${SessionTable.time_updated}`,
+        })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie, Effect.asVoid),
+  })
+}
+
+// session.revert holds the staged revert, or SQL NULL while no revert is staged.
+function writeRevert(
+  db: DatabaseService,
+  sessionID: SessionEvent.Event["data"]["sessionID"],
+  revert: Option.Option<NonNullable<(typeof SessionTable.$inferInsert)["revert"]>>,
+  timestamp: DateTime.Utc,
 ) {
   return db
     .update(SessionTable)
-    .set({
-      cost: sql`${SessionTable.cost} + ${value.cost * sign}`,
-      tokens_input: sql`${SessionTable.tokens_input} + ${value.tokens.input * sign}`,
-      tokens_output: sql`${SessionTable.tokens_output} + ${value.tokens.output * sign}`,
-      tokens_reasoning: sql`${SessionTable.tokens_reasoning} + ${value.tokens.reasoning * sign}`,
-      tokens_cache_read: sql`${SessionTable.tokens_cache_read} + ${value.tokens.cache.read * sign}`,
-      tokens_cache_write: sql`${SessionTable.tokens_cache_write} + ${value.tokens.cache.write * sign}`,
-      time_updated: sql`${SessionTable.time_updated}`,
-    })
+    .set({ revert: Option.getOrNull(revert), time_updated: DateTime.toEpochMillis(timestamp) })
     .where(eq(SessionTable.id, sessionID))
     .run()
-    .pipe(Effect.orDie)
+    .pipe(Effect.orDie, Effect.asVoid)
 }
 
 function run(db: DatabaseService, event: SessionEvent.Event) {
@@ -143,9 +163,11 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             .limit(1)
             .get()
             .pipe(Effect.orDie)
-          if (!row) return
-          const message = decodeRow(row)
-          return message.type === "assistant" && !message.time.completed ? message : undefined
+          return Option.fromUndefinedOr(row).pipe(
+            Option.map(decodeRow),
+            Option.filter(isAssistant),
+            Option.filter((message) => !message.time.completed),
+          )
         })
       },
       getAssistant(messageID) {
@@ -162,9 +184,7 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             )
             .get()
             .pipe(Effect.orDie)
-          if (!row) return
-          const message = decodeRow(row)
-          return message.type === "assistant" ? message : undefined
+          return Option.fromUndefinedOr(row).pipe(Option.map(decodeRow), Option.filter(isAssistant))
         })
       },
       getCurrentShell(callID) {
@@ -176,9 +196,13 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             .orderBy(desc(SessionMessageTable.seq))
             .all()
             .pipe(Effect.orDie)
-          return rows
-            .map(decodeRow)
-            .find((message): message is SessionMessage.Shell => message.type === "shell" && message.callID === callID)
+          return Option.fromUndefinedOr(
+            rows
+              .map(decodeRow)
+              .find(
+                (message): message is SessionMessage.Shell => message.type === "shell" && message.callID === callID,
+              ),
+          )
         })
       },
       updateAssistant: updateMessage,
@@ -221,14 +245,15 @@ const layer = Layer.effectDiscard(
           .get()
           .pipe(Effect.orDie)
         if (!stored) return yield* Effect.die(new SessionAlreadyProjected())
-        if (event.data.info.workspaceID) {
-          yield* db
-            .update(WorkspaceTable)
-            .set({ time_used: Date.now() })
-            .where(eq(WorkspaceTable.id, event.data.info.workspaceID))
-            .run()
-            .pipe(Effect.orDie)
-        }
+        const workspaceID = event.data.info.workspaceID
+        return yield* workspaceID
+          ? db
+              .update(WorkspaceTable)
+              .set({ time_used: DateTime.toEpochMillis(yield* DateTime.now) })
+              .where(eq(WorkspaceTable.id, workspaceID))
+              .run()
+              .pipe(Effect.orDie, Effect.asVoid)
+          : Effect.void
       }),
     )
     yield* events.project(SessionV1.Event.Updated, (event) =>
@@ -246,7 +271,11 @@ const layer = Layer.effectDiscard(
           .set({
             directory: event.data.location.directory,
             path: event.data.subdirectory,
-            workspace_id: event.data.location.workspaceID ? WorkspaceV2.ID.make(event.data.location.workspaceID) : null,
+            workspace_id: Option.getOrNull(
+              Option.map(Option.fromNullishOr(event.data.location.workspaceID), (workspaceID) =>
+                WorkspaceV2.ID.make(workspaceID),
+              ),
+            ),
             time_updated: DateTime.toEpochMillis(event.data.timestamp),
           })
           .where(eq(SessionTable.id, event.data.sessionID))
@@ -280,8 +309,7 @@ const layer = Layer.effectDiscard(
           .all()
           .pipe(Effect.orDie)
         for (const row of rows) {
-          const previous = usage(row.data)
-          if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
+          yield* applyUsage(db, event.data.sessionID, row.data, -1)
         }
         yield* db
           .delete(MessageTable)
@@ -298,8 +326,7 @@ const layer = Layer.effectDiscard(
           .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
           .get()
           .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
+        if (row) yield* applyUsage(db, event.data.sessionID, row.data, -1)
         yield* db
           .delete(PartTable)
           .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
@@ -320,10 +347,8 @@ const layer = Layer.effectDiscard(
           .onConflictDoUpdate({ target: PartTable.id, set: { data } })
           .run()
           .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        const next = usage(event.data.part)
-        if (previous) yield* applyUsage(db, row.session_id, previous, -1)
-        if (next) yield* applyUsage(db, sessionID, next)
+        if (row) yield* applyUsage(db, row.session_id, row.data, -1)
+        yield* applyUsage(db, sessionID, event.data.part)
       }),
     )
     yield* events.project(SessionEvent.AgentSwitched, (event) =>
@@ -356,13 +381,13 @@ const layer = Layer.effectDiscard(
           timeCreated: event.data.timestamp,
           promotedSeq: event.durable.seq,
         })
-        yield* run(db, event)
+        return yield* run(db, event)
       }),
     )
     yield* events.project(SessionEvent.PromptAdmitted, (event) =>
       Effect.gen(function* () {
         if (event.durable === undefined) return yield* Effect.die("Durable Session event is missing aggregate sequence")
-        yield* SessionInput.projectAdmitted(db, {
+        return yield* SessionInput.projectAdmitted(db, {
           admittedSeq: event.durable.seq,
           id: event.data.messageID,
           sessionID: event.data.sessionID,
@@ -392,23 +417,18 @@ const layer = Layer.effectDiscard(
     // yield* events.project(SessionEvent.Retried, (event) => run(db, event))
     yield* events.project(SessionEvent.Compaction.Ended, (event) => run(db, event))
     yield* events.project(SessionEvent.RevertEvent.Staged, (event) =>
-      db
-        .update(SessionTable)
-        .set({
-          revert: { ...event.data.revert, files: event.data.revert.files ? [...event.data.revert.files] : undefined },
-          time_updated: DateTime.toEpochMillis(event.data.timestamp),
-        })
-        .where(eq(SessionTable.id, event.data.sessionID))
-        .run()
-        .pipe(Effect.orDie, Effect.asVoid),
+      writeRevert(
+        db,
+        event.data.sessionID,
+        Option.some({
+          ...event.data.revert,
+          ...(event.data.revert.files ? { files: [...event.data.revert.files] } : {}),
+        }),
+        event.data.timestamp,
+      ),
     )
     yield* events.project(SessionEvent.RevertEvent.Cleared, (event) =>
-      db
-        .update(SessionTable)
-        .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
-        .where(eq(SessionTable.id, event.data.sessionID))
-        .run()
-        .pipe(Effect.orDie, Effect.asVoid),
+      writeRevert(db, event.data.sessionID, Option.none(), event.data.timestamp),
     )
     yield* events.project(SessionEvent.RevertEvent.Committed, (event) =>
       Effect.gen(function* () {
@@ -441,12 +461,7 @@ const layer = Layer.effectDiscard(
           )
           .run()
           .pipe(Effect.orDie)
-        yield* db
-          .update(SessionTable)
-          .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
-          .where(eq(SessionTable.id, event.data.sessionID))
-          .run()
-          .pipe(Effect.orDie)
+        return yield* writeRevert(db, event.data.sessionID, Option.none(), event.data.timestamp)
       }),
     )
   }),

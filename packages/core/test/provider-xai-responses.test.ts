@@ -5,7 +5,7 @@ test("xAI Responses sends promptCacheKey as prompt_cache_key", async () => {
   let body: Record<string, unknown> | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "response-1",
         created_at: 0,
@@ -35,7 +35,7 @@ test("xAI Responses passes through xhigh reasoning effort", async () => {
   let body: Record<string, unknown> | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "response-1",
         created_at: 0,
@@ -62,7 +62,7 @@ test("xAI Chat passes through xhigh reasoning effort", async () => {
   let body: Record<string, unknown> | undefined
   const mockFetch = Object.assign(
     async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      body = JSON.parse(String(init?.body))
+      body = JSON.parse(await new Response(init?.body).text())
       return Response.json({
         id: "chat-1",
         created: 0,

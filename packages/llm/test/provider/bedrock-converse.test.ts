@@ -2,7 +2,7 @@ import { EventStreamCodec } from "@smithy/eventstream-codec"
 import { fromUtf8, toUtf8 } from "@smithy/util-utf8"
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { CacheHint, LLM, Message, ToolCallPart, ToolChoice } from "../../src"
+import { CacheHint, LLM, Message, ToolCallID, ToolCallPart, ToolChoice } from "../../src"
 import { LLMClient } from "../../src/route"
 import { AmazonBedrock } from "../../src/providers"
 import * as BedrockConverse from "../../src/protocols/bedrock-converse"
@@ -292,12 +292,12 @@ describe("Bedrock Converse route", () => {
       ).pipe(Effect.provide(fixedBytes(body)))
 
       expect(response.toolCalls).toEqual([
-        { type: "tool-call", id: "tool_1", name: "lookup", input: { query: "weather" } },
+        { type: "tool-call", id: ToolCallID.make("tool_1"), name: "lookup", input: { query: "weather" } },
       ])
       const events = response.events.filter((event) => event.type === "tool-input-delta")
       expect(events).toEqual([
-        { type: "tool-input-delta", id: "tool_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "tool_1", name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-delta", id: ToolCallID.make("tool_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("tool_1"), name: "lookup", text: ':"weather"}' },
       ])
       expect(response.events.at(-1)).toMatchObject({ type: "finish", reason: "tool-calls" })
     }),
@@ -632,7 +632,7 @@ describe("Bedrock Converse route", () => {
   it.effect("drops cachePoint markers past the 4-per-request cap", () =>
     Effect.gen(function* () {
       const cache = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<BedrockConverse.BedrockConverseBody>(
         LLM.request({
           model,
           system: [
@@ -647,7 +647,7 @@ describe("Bedrock Converse route", () => {
         }),
       )
 
-      const system = (prepared.body as { system: Array<{ cachePoint?: unknown }> }).system
+      const system = prepared.body.system ?? []
       expect(system.filter((part) => "cachePoint" in part)).toHaveLength(4)
     }),
   )

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect } from "bun:test"
-import { Effect, Exit, Layer, Option } from "effect"
+import { Effect, Exit, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
@@ -157,7 +157,7 @@ describe("ShareNext", () => {
 
           const result = yield* (yield* ShareNext.Service).create(session.id)
 
-          expect(result.id).toBe("shr_abc")
+          expect<string>(result.id).toBe("shr_abc")
           expect(result.url).toBe("https://legacy-share.example.com/share/abc")
           expect(result.secret).toBe("sec_123")
 
@@ -290,19 +290,15 @@ describe("ShareNext", () => {
           expect(seen).toHaveLength(1)
           expect(seen[0].url).toBe("https://legacy-share.example.com/api/share/shr_abc/sync")
 
-          const body = JSON.parse(seen[0].body) as {
-            secret: string
-            data: Array<{
-              type: string
-              data: Array<{
-                file: string
-                patch: string
-                additions: number
-                deletions: number
-                status?: string
-              }>
-            }>
-          }
+          // The diff items stay as sent, so the exact toEqual below still sees every field.
+          const body = Schema.decodeUnknownSync(
+            Schema.fromJsonString(
+              Schema.Struct({
+                secret: Schema.String,
+                data: Schema.Array(Schema.Struct({ type: Schema.String, data: Schema.Unknown })),
+              }),
+            ),
+          )(seen[0].body)
           expect(body.secret).toBe("sec_123")
           expect(body.data).toHaveLength(1)
           expect(body.data[0].type).toBe("session_diff")

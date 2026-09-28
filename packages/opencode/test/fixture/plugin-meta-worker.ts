@@ -14,6 +14,7 @@ if (typeof msg.id !== "string") throw new Error("Invalid worker payload")
 
 process.env.OPENCODE_PLUGIN_META_FILE = msg.file
 
+const { Effect } = await import("effect")
 const { PluginMeta } = await import("../../src/plugin/meta")
 
-await PluginMeta.touch(msg.spec, msg.target, msg.id)
+await Effect.runPromise(PluginMeta.touch(msg.spec, msg.target, msg.id))

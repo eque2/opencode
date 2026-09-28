@@ -6,22 +6,23 @@ import { Billing } from "@opencode-ai/console-core/billing.js"
 import styles from "./monthly-limit-section.module.css"
 import { queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const setMonthlyLimit = action(async (form: FormData) => {
   "use server"
-  const limit = form.get("limit") as string | null
+  const limit = formText(form, "limit")
   if (!limit) return { error: formError.limitRequired }
   const numericLimit = parseInt(limit)
   if (numericLimit < 0) return { error: formError.monthlyLimitInvalid }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(
     await withActor(
       () =>
         Billing.setMonthlyLimit(numericLimit)
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: queryBillingInfo.key },

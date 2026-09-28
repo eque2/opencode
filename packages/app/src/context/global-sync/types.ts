@@ -17,6 +17,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { CommandInfo, McpResource, McpServer, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Accessor } from "solid-js"
+import type { HashSet, MutableHashMap } from "effect"
 import type { SetStoreFunction, Store } from "solid-js/store"
 
 export type ProjectMeta = {
@@ -86,20 +87,20 @@ export type State = {
 }
 
 export type VcsCache = {
-  store: Store<{ value: VcsInfo | undefined }>
-  setStore: SetStoreFunction<{ value: VcsInfo | undefined }>
+  store: Store<{ value?: VcsInfo }>
+  setStore: SetStoreFunction<{ value?: VcsInfo }>
   ready: Accessor<boolean>
 }
 
 export type MetaCache = {
-  store: Store<{ value: ProjectMeta | undefined }>
-  setStore: SetStoreFunction<{ value: ProjectMeta | undefined }>
+  store: Store<{ value?: ProjectMeta }>
+  setStore: SetStoreFunction<{ value?: ProjectMeta }>
   ready: Accessor<boolean>
 }
 
 export type IconCache = {
-  store: Store<{ value: string | undefined }>
-  setStore: SetStoreFunction<{ value: string | undefined }>
+  store: Store<{ value?: string }>
+  setStore: SetStoreFunction<{ value?: string }>
   ready: Accessor<boolean>
 }
 
@@ -114,8 +115,8 @@ export type DirState = {
 
 export type EvictPlan = {
   stores: string[]
-  state: Map<string, DirState>
-  pins: Set<string>
+  state: MutableHashMap.MutableHashMap<string, DirState>
+  pins: HashSet.HashSet<string>
   max: number
   ttl: number
   now: number

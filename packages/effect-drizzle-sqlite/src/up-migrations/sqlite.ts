@@ -1,5 +1,10 @@
-/* oxlint-disable */
+import * as Arr from "effect/Array"
+import * as Effect from "effect/Effect"
+import * as HashMap from "effect/HashMap"
+import * as Option from "effect/Option"
+import * as Predicate from "effect/Predicate"
 import type { TablesRelationalConfig } from "drizzle-orm/_relations"
+import { EffectDrizzleError } from "drizzle-orm/effect-core/errors"
 import type { MigrationMeta } from "drizzle-orm/migrator"
 import type { AnyRelations } from "drizzle-orm/relations"
 import { type SQL, sql } from "drizzle-orm/sql/sql"
@@ -25,33 +30,40 @@ type SQLiteMigrationBackfillEntry = {
     | { column: "hash"; value: string }
 }
 
+const migrationUpgradeError = (cause: unknown) =>
+  new EffectDrizzleError({
+    message: Predicate.hasProperty(cause, "message") && Predicate.isString(cause.message) ? cause.message : String(cause),
+    cause,
+  })
+
 function unmatchedMigrationError(unmatched: SQLiteMigrationTableRow[]) {
-  return new Error(
-    `While upgrading your database migrations table we found ${unmatched.length} (${unmatched
+  return new EffectDrizzleError({
+    message: `While upgrading your database migrations table we found ${unmatched.length} (${unmatched
       .map((it) => `[id: ${it.id}, created_at: ${it.created_at}]`)
       .join(
         ", ",
       )}) migrations in the database that do not match any local migration. This means that some migrations were applied to the database but are missing from the local environment`,
-  )
+    cause: { unmatched },
+  })
 }
 
 /** @internal */
-export function prepareSQLiteMigrationBackfill(
+export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationBackfill")(function* (
   dbRows: SQLiteMigrationTableRow[],
   localMigrations: MigrationMeta[],
-): SQLiteMigrationBackfillEntry[] {
+) {
   const sortedLocalMigrations = [...localMigrations].sort((a, b) =>
     a.folderMillis !== b.folderMillis ? a.folderMillis - b.folderMillis : (a.name ?? "").localeCompare(b.name ?? ""),
   )
-  const byMillis = new Map<number, MigrationMeta[]>()
-  const byHash = new Map<string, MigrationMeta>()
-  for (const migration of sortedLocalMigrations) {
-    if (!byMillis.has(migration.folderMillis)) {
-      byMillis.set(migration.folderMillis, [])
-    }
-    byMillis.get(migration.folderMillis)!.push(migration)
-    byHash.set(migration.hash, migration)
-  }
+  // Each folderMillis group keeps the sorted order; for a repeated hash the last migration wins.
+  const byMillis = HashMap.fromIterable(
+    Object.values(Arr.groupBy(sortedLocalMigrations, (migration) => String(migration.folderMillis))).map(
+      (group): readonly [number, Arr.NonEmptyArray<MigrationMeta>] => [group[0].folderMillis, group],
+    ),
+  )
+  const byHash = HashMap.fromIterable(
+    sortedLocalMigrations.map((migration): readonly [string, MigrationMeta] => [migration.hash, migration]),
+  )
 
   const toApply: SQLiteMigrationBackfillEntry[] = []
   const unmatched: SQLiteMigrationTableRow[] = []
@@ -59,23 +71,34 @@ export function prepareSQLiteMigrationBackfill(
   for (const dbRow of dbRows) {
     const stringified = String(dbRow.created_at)
     const millis = Number(stringified.substring(0, stringified.length - 3) + "000")
-    const candidates = byMillis.get(millis)
+    const candidates = HashMap.get(byMillis, millis)
 
-    const matchedByMillis = candidates?.length === 1 ? candidates[0] : undefined
-    const matchedByCandidateHash =
-      candidates && candidates.length > 1
-        ? candidates.find((candidate) => candidate.hash && dbRow.hash && candidate.hash === dbRow.hash)
-        : undefined
-    const matchedByHash = matchedByMillis || matchedByCandidateHash ? undefined : byHash.get(dbRow.hash)
-    const matched = matchedByMillis ?? matchedByCandidateHash ?? matchedByHash
+    const matchedByMillis = candidates.pipe(
+      Option.filter((group) => group.length === 1),
+      Option.map((group) => group[0]),
+    )
+    const matchedByCandidateHash = candidates.pipe(
+      Option.filter((group) => group.length > 1),
+      Option.flatMap((group) =>
+        Arr.findFirst(
+          group,
+          (candidate) =>
+            Predicate.isTruthy(candidate.hash) && Predicate.isTruthy(dbRow.hash) && candidate.hash === dbRow.hash,
+        ),
+      ),
+    )
+    const matched = matchedByMillis.pipe(
+      Option.orElse(() => matchedByCandidateHash),
+      Option.orElse(() => HashMap.get(byHash, dbRow.hash)),
+    )
 
-    if (matched) {
+    if (Option.isSome(matched)) {
       toApply.push({
-        name: matched.name,
+        name: matched.value.name,
         selector:
-          dbRow.id !== null
+          Predicate.isNotNull(dbRow.id)
             ? { column: "id", value: dbRow.id }
-            : matchedByMillis
+            : Option.isSome(matchedByMillis)
               ? { column: "created_at", value: dbRow.created_at }
               : { column: "hash", value: dbRow.hash },
       })
@@ -86,34 +109,32 @@ export function prepareSQLiteMigrationBackfill(
   }
 
   if (unmatched.length > 0) {
-    throw unmatchedMigrationError(unmatched)
+    return yield* unmatchedMigrationError(unmatched)
   }
 
   return toApply
-}
+})
 
 /** @internal */
 export function buildSQLiteMigrationBackfillStatements(
   migrationsTable: string,
   backfillEntries: SQLiteMigrationBackfillEntry[],
-) {
+): SQL[] {
   const table = sql`${sql.identifier(migrationsTable)}`
-  const statements: SQL[] = [
+
+  return [
     sql`ALTER TABLE ${table} ADD COLUMN ${sql.identifier("name")} text`,
     sql`ALTER TABLE ${table} ADD COLUMN ${sql.identifier("applied_at")} TEXT`,
+    ...backfillEntries.map((backfillEntry) => {
+      const updateQuery = sql`UPDATE ${table} SET ${sql.identifier("name")} = ${backfillEntry.name}, ${sql.identifier(
+        "applied_at",
+      )} = NULL WHERE`
+
+      updateQuery.append(sql` ${sql.identifier(backfillEntry.selector.column)} = ${backfillEntry.selector.value}`)
+
+      return updateQuery
+    }),
   ]
-
-  for (const backfillEntry of backfillEntries) {
-    const updateQuery = sql`UPDATE ${table} SET ${sql.identifier("name")} = ${backfillEntry.name}, ${sql.identifier(
-      "applied_at",
-    )} = NULL WHERE`
-
-    updateQuery.append(sql` ${sql.identifier(backfillEntry.selector.column)} = ${backfillEntry.selector.value}`)
-
-    statements.push(updateQuery)
-  }
-
-  return statements
 }
 
 /**
@@ -122,34 +143,42 @@ export function buildSQLiteMigrationBackfillStatements(
  * Version 0: Original schema (id, hash, created_at)
  * Version 1: Extended schema (id, hash, created_at, name, applied_at)
  */
-export function upgradeSyncIfNeeded(
+export const upgradeSyncIfNeeded = Effect.fn("upgradeSyncIfNeeded")(function* (
   migrationsTable: string,
   session: SQLiteSession<"sync", unknown, Record<string, unknown>, AnyRelations, TablesRelationalConfig>,
   localMigrations: MigrationMeta[],
-): UpgradeResult {
-  const tableExists = session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`)
+) {
+  const tableExists = yield* Effect.try({
+    try: () => session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`),
+    catch: migrationUpgradeError,
+  })
 
   if (tableExists.length === 0) {
-    return { newDb: true }
+    return { newDb: true } satisfies UpgradeResult
   }
 
   // Table exists, check table shape
-  const rows = session.all<{ column_name: string }>(
-    sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`,
-  )
+  const rows = yield* Effect.try({
+    try: () =>
+      session.all<{ column_name: string }>(sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`),
+    catch: migrationUpgradeError,
+  })
 
   const version = GET_VERSION_FOR.sqlite(rows.map((r) => r.column_name))
 
   for (let v = version; v < MIGRATIONS_TABLE_VERSIONS.sqlite; v++) {
     const upgradeFn = upgradeSyncFunctions[v]
     if (!upgradeFn) {
-      throw new Error(`No upgrade path from migration table version ${v} to ${v + 1}`)
+      return yield* new EffectDrizzleError({
+        message: `No upgrade path from migration table version ${v} to ${v + 1}`,
+        cause: { version: v },
+      })
     }
-    upgradeFn(migrationsTable, session, localMigrations)
+    yield* upgradeFn(migrationsTable, session, localMigrations)
   }
 
-  return { newDb: false }
-}
+  return { newDb: false } satisfies UpgradeResult
+})
 
 const upgradeSyncFunctions: Record<
   number,
@@ -157,7 +186,7 @@ const upgradeSyncFunctions: Record<
     migrationsTable: string,
     session: SQLiteSession<"sync", unknown, Record<string, unknown>, AnyRelations, TablesRelationalConfig>,
     localMigrations: MigrationMeta[],
-  ) => void
+  ) => Effect.Effect<void, EffectDrizzleError>
 > = {
   /**
    * Upgrade from version 0 to version 1:
@@ -168,20 +197,28 @@ const upgradeSyncFunctions: Record<
    * Not implemented for now -> If hash matching fails, fall back to serial id ordering
    * 5. Create extra column and backfill names for matched migrations
    */
-  0: (migrationsTable, session, localMigrations) => {
-    const table = sql`${sql.identifier(migrationsTable)}`
-    const dbRows = session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`)
-    const statements = buildSQLiteMigrationBackfillStatements(
-      migrationsTable,
-      prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-    )
+  0: (migrationsTable, session, localMigrations) =>
+    Effect.gen(function* () {
+      const table = sql`${sql.identifier(migrationsTable)}`
+      const dbRows = yield* Effect.try({
+        try: () => session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
+        catch: migrationUpgradeError,
+      })
+      const statements = buildSQLiteMigrationBackfillStatements(
+        migrationsTable,
+        yield* prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+      )
 
-    session.transaction((tx) => {
-      for (const statement of statements) {
-        tx.run(statement)
-      }
-    })
-  },
+      yield* Effect.try({
+        try: () =>
+          session.transaction((tx) => {
+            for (const statement of statements) {
+              tx.run(statement)
+            }
+          }),
+        catch: migrationUpgradeError,
+      })
+    }),
 }
 
 /**
@@ -190,40 +227,50 @@ const upgradeSyncFunctions: Record<
  * Version 0: Original schema (id, hash, created_at)
  * Version 1: Extended schema (id, hash, created_at, name, applied_at)
  */
-export async function upgradeAsyncIfNeeded(
+export const upgradeAsyncIfNeeded = Effect.fn("upgradeAsyncIfNeeded")(function* (
   migrationsTable: string,
   db: AsyncSQLiteDatabaseWithSession,
   localMigrations: MigrationMeta[],
-): Promise<UpgradeResult> {
+) {
   // Check if the table exists at all
-  const tableExists = await db.session.all(
-    sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`,
-  )
+  const tableExists = yield* Effect.tryPromise({
+    try: () => db.session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`),
+    catch: migrationUpgradeError,
+  })
 
   if (tableExists.length === 0) {
-    return { newDb: true }
+    return { newDb: true } satisfies UpgradeResult
   }
 
-  const rows = await db.session.all<{ column_name: string }>(
-    sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`,
-  )
+  const rows = yield* Effect.tryPromise({
+    try: () =>
+      db.session.all<{ column_name: string }>(sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`),
+    catch: migrationUpgradeError,
+  })
 
   const version = GET_VERSION_FOR.sqlite(rows.map((r) => r.column_name))
 
   for (let v = version; v < MIGRATIONS_TABLE_VERSIONS.sqlite; v++) {
     const upgradeFn = upgradeAsyncFunctions[v]
     if (!upgradeFn) {
-      throw new Error(`No upgrade path from migration table version ${v} to ${v + 1}`)
+      return yield* new EffectDrizzleError({
+        message: `No upgrade path from migration table version ${v} to ${v + 1}`,
+        cause: { version: v },
+      })
     }
-    await upgradeFn(migrationsTable, db, localMigrations)
+    yield* upgradeFn(migrationsTable, db, localMigrations)
   }
 
-  return { newDb: false }
-}
+  return { newDb: false } satisfies UpgradeResult
+})
 
 const upgradeAsyncFunctions: Record<
   number,
-  (migrationsTable: string, db: AsyncSQLiteDatabaseWithSession, localMigrations: MigrationMeta[]) => Promise<void>
+  (
+    migrationsTable: string,
+    db: AsyncSQLiteDatabaseWithSession,
+    localMigrations: MigrationMeta[],
+  ) => Effect.Effect<void, EffectDrizzleError>
 > = {
   /**
    * Upgrade from version 0 to version 1:
@@ -234,20 +281,33 @@ const upgradeAsyncFunctions: Record<
    * Not implemented for now -> If hash matching fails, fall back to serial id ordering
    * 5. Create extra column and backfill names for matched migrations
    */
-  0: async (migrationsTable, db, localMigrations) => {
-    const table = sql`${sql.identifier(migrationsTable)}`
-    const dbRows = await db.session.all<SQLiteMigrationTableRow>(
-      sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`,
-    )
-    const statements = buildSQLiteMigrationBackfillStatements(
-      migrationsTable,
-      prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-    )
+  0: (migrationsTable, db, localMigrations) =>
+    Effect.gen(function* () {
+      const table = sql`${sql.identifier(migrationsTable)}`
+      const dbRows = yield* Effect.tryPromise({
+        try: () =>
+          db.session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
+        catch: migrationUpgradeError,
+      })
+      const statements = buildSQLiteMigrationBackfillStatements(
+        migrationsTable,
+        yield* prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+      )
 
-    await db.transaction(async (tx) => {
-      for (const statement of statements) {
-        await tx.run(statement)
-      }
-    })
-  },
+      // drizzle-orm's async transaction takes a Promise-returning callback, so the
+      // statements run as one Effect that is bridged into that Promise.
+      yield* Effect.tryPromise({
+        try: () =>
+          db.transaction((tx) =>
+            Effect.runPromise(
+              Effect.forEach(
+                statements,
+                (statement) => Effect.tryPromise({ try: () => tx.run(statement), catch: migrationUpgradeError }),
+                { discard: true },
+              ),
+            ),
+          ),
+        catch: migrationUpgradeError,
+      })
+    }),
 }

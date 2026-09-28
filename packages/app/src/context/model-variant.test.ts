@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { Option } from "effect"
+import {
+  cycleModelVariant,
+  decodeVariantSelection,
+  getConfiguredAgentVariant,
+  resolveModelVariant,
+} from "./model-variant"
 
 describe("model variant", () => {
   test("resolves configured agent variant when model matches", () => {
@@ -37,7 +43,7 @@ describe("model variant", () => {
   test("prefers selected variant over configured variant", () => {
     const value = resolveModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: "high",
+      selected: Option.some(Option.some("high")),
       configured: "xhigh",
     })
 
@@ -47,7 +53,7 @@ describe("model variant", () => {
   test("lets an explicit default override the configured variant", () => {
     const value = resolveModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: null,
+      selected: Option.some(Option.none()),
       configured: "xhigh",
     })
 
@@ -57,7 +63,7 @@ describe("model variant", () => {
   test("cycles from configured variant to next", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: undefined,
+      selected: Option.none(),
       configured: "high",
     })
 
@@ -67,7 +73,7 @@ describe("model variant", () => {
   test("wraps from configured last variant to first", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: undefined,
+      selected: Option.none(),
       configured: "xhigh",
     })
 
@@ -77,10 +83,14 @@ describe("model variant", () => {
   test("cycles from an explicit default to the first variant", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: null,
+      selected: Option.some(Option.none()),
       configured: "xhigh",
     })
 
     expect(value).toBe("low")
+  })
+
+  test("decodes a saved variant name as a chosen variant", () => {
+    expect(decodeVariantSelection("high")).toEqual(Option.some(Option.some("high")))
   })
 })

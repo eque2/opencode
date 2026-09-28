@@ -5,12 +5,14 @@ import type {
   TuiPluginStatus,
 } from "@opencode-ai/plugin/tui"
 import type { TuiConfig } from "../config"
+import { MissingProviderError } from "../context/errors"
+import { Effect } from "effect"
 import { createContext, createSignal, useContext, type JSX, type ParentProps } from "solid-js"
 import { createPluginRoutes } from "./api"
 import { createSlots, type HostSlots } from "./slots"
 
 export function createPluginRuntime() {
-  const [commands, setCommands] = createSignal<PluginRuntimeCommands>(emptyCommands)
+  const [commands, setCommands] = createSignal(emptyCommands)
   const [status, setStatus] = createSignal<ReadonlyArray<TuiPluginStatus>>([])
   const slots = createSlots()
 
@@ -42,17 +44,17 @@ export type PluginRuntimeCommands = {
 }
 
 const emptyCommands: PluginRuntimeCommands = {
-  async activate() {
-    return false
+  activate() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async deactivate() {
-    return false
+  deactivate() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async add() {
-    return false
+  add() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async install() {
-    return { ok: false, message: "Plugin runtime is not available." }
+  install() {
+    return Effect.runPromise(Effect.succeed({ ok: false, message: "Plugin runtime is not available." }))
   },
 }
 
@@ -76,6 +78,9 @@ export function PluginRuntimeProvider(props: ParentProps<{ value: PluginRuntime 
 
 export function usePluginRuntime() {
   const runtime = useContext(Context)
-  if (!runtime) throw new Error("usePluginRuntime must be used within PluginRuntimeProvider")
+  if (!runtime) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "usePluginRuntime must be used within PluginRuntimeProvider" })
+  }
   return runtime
 }

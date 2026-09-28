@@ -11,7 +11,7 @@ import { Slug } from "@opencode-ai/core/util/slug"
 import { errorMessage } from "../util/error"
 import { GlobalBus } from "@/bus/global"
 import { Git } from "@/git"
-import { Effect, Layer, Path, Schema, Scope, Context } from "effect"
+import { Effect, Layer, Option, Path, Schedule, Schema, Scope, Context } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -166,7 +166,7 @@ const layer: Layer.Layer<
         Effect.succeed({
           code: 1,
           text: "",
-          stderr: e instanceof Error ? e.message : String(e),
+          stderr: e.message,
         } satisfies GitResult),
       ),
     )
@@ -179,19 +179,19 @@ const layer: Layer.Layer<
     }) {
       const ctx = yield* InstanceState.context
       for (const attempt of Array.from({ length: MAX_NAME_ATTEMPTS }, (_, i) => i)) {
-        const name = input.name ? (attempt === 0 ? input.name : `${input.name}-${Slug.create()}`) : Slug.create()
-        const branch = input.detached ? undefined : `opencode/${name}`
+        const name = input.name ? (attempt === 0 ? input.name : `${input.name}-${yield* Slug.make}`) : yield* Slug.make
+        const branch = input.detached ? Option.none() : Option.some(`opencode/${name}`)
         const directory = pathSvc.join(input.root, name)
 
         if (yield* fs.exists(directory).pipe(Effect.orDie)) continue
 
-        if (branch) {
-          const ref = `refs/heads/${branch}`
+        if (Option.isSome(branch)) {
+          const ref = `refs/heads/${branch.value}`
           const branchCheck = yield* git(["show-ref", "--verify", "--quiet", ref], { cwd: ctx.worktree })
           if (branchCheck.code === 0) continue
         }
 
-        return { name, directory, ...(branch ? { branch } : {}) }
+        return { name, directory, ...(Option.isSome(branch) ? { branch: branch.value } : {}) }
       }
       return yield* new NameGenerationFailedError({ message: "Failed to generate a unique worktree name" })
     })
@@ -225,7 +225,7 @@ const layer: Layer.Layer<
         })
       }
 
-      yield* project.addSandbox(ctx.project.id, info.directory).pipe(Effect.catch(() => Effect.void))
+      return yield* project.addSandbox(ctx.project.id, info.directory).pipe(Effect.catch(() => Effect.void))
     })
 
     const boot = Effect.fnUntraced(function* (info: Info, startCommand?: string) {
@@ -238,7 +238,7 @@ const layer: Layer.Layer<
       if (populated.code !== 0) {
         const message = populated.stderr || populated.text || "Failed to populate worktree"
         yield* Effect.logError("worktree checkout failed", { directory: info.directory, message })
-        GlobalBus.emit("event", {
+        yield* GlobalBus.publish({
           directory: info.directory,
           project: ctx.project.id,
           workspace: workspaceID,
@@ -253,7 +253,7 @@ const layer: Layer.Layer<
           Effect.gen(function* () {
             const message = errorMessage(error)
             yield* Effect.logError("worktree bootstrap failed", { directory: info.directory, message })
-            GlobalBus.emit("event", {
+            yield* GlobalBus.publish({
               directory: info.directory,
               project: ctx.project.id,
               workspace: workspaceID,
@@ -265,7 +265,7 @@ const layer: Layer.Layer<
       )
       if (!booted) return
 
-      GlobalBus.emit("event", {
+      yield* GlobalBus.publish({
         directory: info.directory,
         project: ctx.project.id,
         workspace: workspaceID,
@@ -366,23 +366,14 @@ const layer: Layer.Layer<
     }
 
     function cleanDirectory(target: string) {
-      return Effect.tryPromise({
-        try: async () => {
-          const fsp = await import("fs/promises")
-          const attempts = process.platform === "win32" ? 50 : 5
-          for (const attempt of Array.from({ length: attempts }, (_, i) => i)) {
-            try {
-              await fsp.rm(target, { recursive: true, force: true })
-              return
-            } catch (error) {
-              if (attempt === attempts - 1) throw error
-              await new Promise((resolve) => setTimeout(resolve, 100))
-            }
-          }
-        },
-        catch: (error) =>
-          new RemoveFailedError({ message: errorMessage(error) || "Failed to remove git worktree directory" }),
-      })
+      const attempts = process.platform === "win32" ? 50 : 5
+      return fs.remove(target, { recursive: true, force: true }).pipe(
+        Effect.retry({ times: attempts - 1, schedule: Schedule.spaced("100 millis") }),
+        Effect.mapError(
+          (error) =>
+            new RemoveFailedError({ message: errorMessage(error) || "Failed to remove git worktree directory" }),
+        ),
+      )
     }
 
     const remove = Effect.fn("Worktree.remove")(function* (input: RemoveInput) {
@@ -462,7 +453,7 @@ const layer: Layer.Layer<
       function* (directory: string, cmd: string) {
         const [shell, args] = process.platform === "win32" ? ["cmd", ["/c", cmd]] : ["bash", ["-lc", cmd]]
         const result = yield* appProcess.run(
-          ChildProcess.make(shell, args as string[], { cwd: directory, extendEnv: true, stdin: "ignore" }),
+          ChildProcess.make(shell, args, { cwd: directory, extendEnv: true, stdin: "ignore" }),
         )
         return { code: result.exitCode, stderr: result.stderr.toString("utf8") }
       },
@@ -488,8 +479,7 @@ const layer: Layer.Layer<
         .where(eq(ProjectTable.id, input.projectID))
         .get()
         .pipe(Effect.orDie)
-      const project = row ? Project.fromRow(row) : undefined
-      const startup = project?.commands?.start?.trim() ?? ""
+      const startup = row ? (Project.fromRow(row).commands?.start?.trim() ?? "") : ""
       const ok = yield* runStartScript(directory, startup, "project")
       if (!ok) return false
       yield* runStartScript(directory, input.extra ?? "", "worktree")

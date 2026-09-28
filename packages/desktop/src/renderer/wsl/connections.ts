@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { WslServersState } from "@opencode-ai/app/wsl/types"
 
 export function readyWslConnections(state?: WslServersState, label = "WSL") {
@@ -12,8 +13,8 @@ export function readyWslConnections(state?: WslServersState, label = "WSL") {
         distro: item.config.distro,
         http: {
           url: item.runtime.url,
-          username: item.runtime.username ?? undefined,
-          password: item.runtime.password ?? undefined,
+          username: Option.getOrUndefined(Option.fromNullishOr(item.runtime.username)),
+          password: Option.getOrUndefined(Option.fromNullishOr(item.runtime.password)),
         },
       },
     ]

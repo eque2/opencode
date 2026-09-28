@@ -9,7 +9,7 @@ const Summary = Schema.Struct({
   name: Schema.String,
   path: Schema.String,
   description: Schema.String.pipe(Schema.optional),
-})
+}).annotate({ identifier: "ReferenceGuidance.Summary" })
 
 const render = (references: ReadonlyArray<typeof Summary.Type>) =>
   [

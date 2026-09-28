@@ -9,7 +9,7 @@
 
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Deferred, Effect, Layer, Schema, Scope } from "effect"
+import { Deferred, Effect, Layer, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
@@ -84,7 +84,10 @@ type Capture = { directory?: string; workspaceID?: string }
 const captureInstance = Effect.gen(function* () {
   const instance = yield* InstanceRef
   const workspaceID = yield* WorkspaceRef
-  return { directory: instance?.directory, workspaceID } satisfies Capture
+  return {
+    directory: Option.getOrUndefined(Option.map(instance, (ctx) => ctx.directory)),
+    workspaceID: Option.getOrUndefined(workspaceID),
+  } satisfies Capture
 })
 
 const ProbeApi = HttpApi.make("handler-context-probe").add(

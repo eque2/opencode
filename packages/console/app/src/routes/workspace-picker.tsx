@@ -9,6 +9,7 @@ import { Workspace } from "@opencode-ai/console-core/workspace.js"
 import { Dropdown, DropdownItem } from "~/component/dropdown"
 import { Modal } from "~/component/modal"
 import { useI18n } from "~/context/i18n"
+import { formText } from "~/lib/form-data"
 import "./workspace-picker.css"
 
 const getWorkspaces = query(async () => {
@@ -36,13 +37,12 @@ const getWorkspaces = query(async () => {
 
 const createWorkspace = action(async (form: FormData) => {
   "use server"
-  const name = form.get("workspaceName") as string
-  if (name?.trim()) {
-    return withActor(async () => {
-      const workspaceID = await Workspace.create({ name: name.trim() })
-      return redirect(`/workspace/${workspaceID}`)
-    })
-  }
+  const name = formText(form, "workspaceName")
+  if (!name?.trim()) return undefined
+  return withActor(async () => {
+    const workspaceID = await Workspace.create({ name: name.trim() })
+    return redirect(`/workspace/${workspaceID}`)
+  })
 }, "createWorkspace")
 
 export function WorkspacePicker() {

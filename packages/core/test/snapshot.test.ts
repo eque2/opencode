@@ -2,7 +2,7 @@ import { $ } from "bun"
 import { describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Effect, Layer } from "effect"
+import { Effect, HashMap, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
@@ -53,7 +53,7 @@ describe("Snapshot", () => {
               RelativePath.make("scope/added.txt"),
               RelativePath.make("scope/tracked.txt"),
             ])
-            const plan = new Map([[RelativePath.make("scope/tracked.txt"), before]])
+            const plan = HashMap.make([RelativePath.make("scope/tracked.txt"), before])
             const preview = yield* snapshot.preview({ files: plan, context: 1 })
             expect(preview).toHaveLength(1)
             expect(preview[0]?.path).toBe(RelativePath.make("scope/tracked.txt"))

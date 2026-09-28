@@ -1,10 +1,27 @@
 import { parse } from "acorn"
-import { Cause, Effect, Exit, Fiber, Semaphore } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Chunk,
+  Clock,
+  DateTime,
+  Effect,
+  Exit,
+  Fiber,
+  HashSet,
+  MutableHashMap,
+  Option,
+  Predicate,
+  Result,
+  Schema,
+  Semaphore,
+} from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
   copyOut,
   isBlockedMember,
+  makeSafeObject,
   ToolReference,
   ToolRuntime,
   ToolRuntimeError,
@@ -13,13 +30,13 @@ import {
   type Services,
 } from "../tool-runtime.js"
 import { ToolError } from "../tool-error.js"
+import { quoteJsonString } from "../tool-schema.js"
 import type {
   DataValue,
   Diagnostic,
-  DiagnosticKind,
   ExecuteOptions,
   ResolvedExecutionLimits,
-  Result,
+  Result as ExecutionResult,
 } from "../codemode.js"
 import {
   type AstNode,
@@ -31,7 +48,6 @@ import {
   ErrorConstructorReference,
   GlobalMethodReference,
   GlobalNamespace,
-  type GlobalNamespaceName,
   formatLocation,
   getArray,
   getBoolean,
@@ -40,14 +56,16 @@ import {
   getString,
   IntrinsicReference,
   InterpreterRuntimeError,
+  isAstNode,
   isRecord,
   type MemberReference,
   OptionalShortCircuit,
   PromiseMethodReference,
-  type PromiseMethodName,
   PromiseNamespace,
+  promiseNamespace,
   ProgramThrow,
   type ProgramNode,
+  type Scope,
   type StatementResult,
   sourceLocation,
   supportedSyntaxMessage,
@@ -56,35 +74,34 @@ import {
 } from "./model.js"
 import { arrayMethods, mapMethods, setMethods, spreadItems } from "../stdlib/collections.js"
 import { consoleMethods, MAX_CONSOLE_DEPTH } from "../stdlib/console.js"
-import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic } from "../stdlib/date.js"
-import { invokeJsonMethod } from "../stdlib/json.js"
-import { invokeMathMethod, mathConstants } from "../stdlib/math.js"
+import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic, parseTime } from "../stdlib/date.js"
+import { encodeJsonText, invokeJsonMethod, toJsonValue } from "../stdlib/json.js"
+import { invokeMathMethod, isMathConstant } from "../stdlib/math.js"
 import {
   invokeNumberMethod,
   invokeNumberStatic,
-  numberConstants,
+  isNumberConstant,
   numberMethods,
   numberStatics,
 } from "../stdlib/number.js"
 import { invokeObjectMethod } from "../stdlib/object.js"
-import { promiseStatics, TOOL_CALL_CONCURRENCY } from "../stdlib/promise.js"
+import { isPromiseMethodName, TOOL_CALL_CONCURRENCY } from "../stdlib/promise.js"
 import {
   escapeRegexHint,
   invokeRegExpMethod,
+  isRegExpProperty,
   matchToValue,
   regexpMethods,
-  regexpProperties,
   regexFailureReason,
   toHostRegex,
 } from "../stdlib/regexp.js"
 import { invokeStringStatic, stringMethods, stringStatics } from "../stdlib/string.js"
 import {
   urlMethods,
-  urlProperties,
   urlSearchParamsMethods,
-  urlStatics,
-  urlWritableProperties,
   invokeUriFunction,
+  isUrlProperty,
+  isWritableUrlProperty,
   invokeURLMethod,
   invokeURLStatic,
   uriArgument,
@@ -112,41 +129,59 @@ import {
   SandboxURLSearchParams,
 } from "../values.js"
 
-const parseProgram = (code: string): ProgramNode => {
-  const transpiled = transpileModule(`async function __codemode__() {\n${code}\n}`, {
-    reportDiagnostics: true,
-    compilerOptions: {
-      target: ScriptTarget.ESNext,
-      module: ModuleKind.ESNext,
-    },
+const isProgramNode = (value: unknown): value is ProgramNode =>
+  isRecord(value) && value.type === "Program" && Array.isArray(value.body)
+
+const parseProgram = (code: string): Effect.Effect<ProgramNode, unknown> =>
+  Effect.gen(function* () {
+    const transpiled = transpileModule(`async function __codemode__() {\n${code}\n}`, {
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ScriptTarget.ESNext,
+        module: ModuleKind.ESNext,
+      },
+    })
+    const diagnostic = transpiled.diagnostics?.find((item) => item.category === DiagnosticCategory.Error)
+
+    if (diagnostic) {
+      return yield* InterpreterRuntimeError.make({
+        message: `Failed to parse TypeScript: ${flattenDiagnosticMessageText(diagnostic.messageText, "\n")}`,
+        kind: "ParseError",
+      })
+    }
+
+    const bodyStart = transpiled.outputText.indexOf("{") + 1
+    const bodyEnd = transpiled.outputText.lastIndexOf("}")
+    const executableCode = transpiled.outputText.slice(bodyStart, bodyEnd)
+    // acorn reports a syntax error by throwing. The failure carries the diagnostic that
+    // normalizeError gives the thrown value (a SyntaxError becomes a ParseError).
+    const parsed = yield* Effect.try({
+      try: () =>
+        parse(executableCode, {
+          ecmaVersion: "latest",
+          sourceType: "script",
+          allowReturnOutsideFunction: true,
+          allowAwaitOutsideFunction: true,
+          locations: true,
+        }),
+      catch: (error) => {
+        const diagnostic = normalizeError(error)
+        return InterpreterRuntimeError.make({ message: diagnostic.message, kind: diagnostic.kind })
+      },
+    })
+
+    if (!isProgramNode(parsed)) {
+      return yield* new InterpreterRuntimeError("Failed to parse script as a Program node.")
+    }
+
+    return parsed
   })
-  const diagnostic = transpiled.diagnostics?.find((item) => item.category === DiagnosticCategory.Error)
 
-  if (diagnostic) {
-    throw new InterpreterRuntimeError(
-      `Failed to parse TypeScript: ${flattenDiagnosticMessageText(diagnostic.messageText, "\n")}`,
-      undefined,
-      "ParseError",
-    )
-  }
+const isJson = Schema.is(Schema.Json)
 
-  const bodyStart = transpiled.outputText.indexOf("{") + 1
-  const bodyEnd = transpiled.outputText.lastIndexOf("}")
-  const executableCode = transpiled.outputText.slice(bodyStart, bodyEnd)
-  const parsed = parse(executableCode, {
-    ecmaVersion: "latest",
-    sourceType: "script",
-    allowReturnOutsideFunction: true,
-    allowAwaitOutsideFunction: true,
-    locations: true,
-  }) as unknown
-
-  if (!isRecord(parsed) || parsed.type !== "Program" || !Array.isArray(parsed.body)) {
-    throw new InterpreterRuntimeError("Failed to parse script as a Program node.")
-  }
-
-  return parsed as ProgramNode
-}
+// A data object with a numeric `length` is array-like, as Array.from reads it.
+const isArrayLike = (value: unknown): value is ArrayLike<unknown> =>
+  Predicate.isObjectOrArray(value) && typeof value.length === "number"
 
 const publicErrorMessage = (message: string): string =>
   message.replace(/\/(?:Users|home|private|tmp|var\/folders)\/[^\s"'`]+/g, "<redacted-path>")
@@ -181,18 +216,16 @@ const normalizeError = (error: unknown): Diagnostic => {
       message = "a non-data value"
     } else if (typeof value === "string") {
       message = value
-    } else if (
-      value !== null &&
-      typeof value === "object" &&
-      typeof (value as { message?: unknown }).message === "string"
-    ) {
-      message = (value as { message: string }).message
+    } else if (Predicate.hasProperty(value, "message") && typeof value.message === "string") {
+      message = value.message
     } else {
-      try {
-        message = JSON.stringify(copyOut(value)) ?? String(value)
-      } catch {
-        message = String(value)
-      }
+      // copyOut rejects values that cannot cross the data boundary; those render with String().
+      message = Result.getOrElse(
+        Result.try(() =>
+          Option.getOrElse(Option.map(toJsonValue(copyOut(value)), encodeJsonText), () => String(value)),
+        ),
+        () => String(value),
+      )
     }
     return { kind: "ExecutionFailure", message: `Uncaught: ${message}` }
   }
@@ -223,7 +256,7 @@ const normalizeError = (error: unknown): Diagnostic => {
 const caughtErrorValue = (thrown: unknown): unknown => {
   if (thrown instanceof ProgramThrow) return thrown.value
   if (thrown instanceof InterpreterRuntimeError) return createErrorValue(thrown.errorName, thrown.message)
-  const name = thrown instanceof Error && errorConstructors.has(thrown.name) ? thrown.name : "Error"
+  const name = thrown instanceof Error && HashSet.has(errorConstructors, thrown.name) ? thrown.name : "Error"
   return createErrorValue(name, normalizeError(thrown).message)
 }
 
@@ -241,9 +274,9 @@ const isRuntimeReference = (value: unknown): boolean =>
   value instanceof ErrorConstructorReference ||
   isSandboxValue(value)
 
-const containsRuntimeReference = (value: unknown, seen = new Set<object>()): boolean => {
+const containsRuntimeReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isRuntimeReference(value)) return true
-  if (value === null || typeof value !== "object") return false
+  if (!Predicate.isObjectOrArray(value)) return false
   if (seen.has(value)) return false
   seen.add(value)
   const contains = Array.isArray(value)
@@ -256,10 +289,10 @@ const containsRuntimeReference = (value: unknown, seen = new Set<object>()): boo
 // Like containsRuntimeReference, but sandbox standard-library values count as data:
 // operators and switch treat them as ordinary object operands (identity equality, ToPrimitive
 // coercion) rather than rejecting them as opaque interpreter machinery.
-const containsOpaqueReference = (value: unknown, seen = new Set<object>()): boolean => {
+const containsOpaqueReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isSandboxValue(value)) return false
   if (isRuntimeReference(value)) return true
-  if (value === null || typeof value !== "object") return false
+  if (!Predicate.isObjectOrArray(value)) return false
   if (seen.has(value)) return false
   seen.add(value)
   const contains = Array.isArray(value)
@@ -267,6 +300,42 @@ const containsOpaqueReference = (value: unknown, seen = new Set<object>()): bool
     : Object.values(value).some((item) => containsOpaqueReference(item, seen))
   seen.delete(value)
   return contains
+}
+
+// True when `value` is `container` or (through nested data arrays and objects) contains it:
+// inserting such a value into `container` would create a circular structure. `seen` guards the
+// current path, so shared (non-circular) substructures are still walked from each parent.
+const containsContainer = (container: object, value: unknown, seen: WeakSet<object>): boolean => {
+  if (value === container) return true
+  if (!Predicate.isObjectOrArray(value) || isRuntimeReference(value) || seen.has(value)) return false
+  seen.add(value)
+  const items = Array.isArray(value) ? value : Object.values(value)
+  const found = items.some((item) => containsContainer(container, item, seen))
+  seen.delete(value)
+  return found
+}
+
+// An unknown property of a string, number, array or sandbox value reads as undefined, as in JS.
+// eslint-disable-next-line effect/no-undefined-use-option -- (b) an unknown property read gives the program the JS undefined value, which Option cannot represent inside the sandbox
+const unknownPropertyRead = new ComputedValue(undefined)
+
+// Copies each named binding (as a fresh binding object) from one scope into another: a `for`
+// loop gives every iteration its own copies of the loop variables, then writes them back.
+const copyBindings = (from: Scope, to: Scope, names: ReadonlyArray<string>): void => {
+  for (const name of names) {
+    const binding = MutableHashMap.get(from, name)
+    if (Option.isSome(binding)) MutableHashMap.set(to, name, { ...binding.value })
+  }
+}
+
+// Renders a container with it marked as on the current formatting path, so a nested reference
+// back to it prints "[Circular]"; the mark is cleared once the container has rendered. Console
+// formatting never throws, so no cleanup-on-failure path is needed.
+const renderOnPath = (seen: WeakSet<object>, container: object, render: () => string): string => {
+  seen.add(container)
+  const rendered = render()
+  seen.delete(container)
+  return rendered
 }
 
 // `typeof` never throws in JS; map every interpreter value to its JS-visible category.
@@ -295,261 +364,293 @@ const typeofValue = (value: unknown): string => {
 // left-hand value (opaque references included) without coercing it. Error checks use the
 // error brand: `instanceof Error` accepts every branded error; a specific error type matches
 // its own brand only (as in JS, where TypeError instances are also Error instances).
-const instanceofValue = (lhs: unknown, rhs: unknown, node: AstNode): boolean => {
+const instanceofValue = (
+  lhs: unknown,
+  rhs: unknown,
+  node: AstNode,
+): Effect.Effect<boolean, InterpreterRuntimeError> => {
   if (rhs instanceof ErrorConstructorReference) {
-    const brand = errorBrandName(lhs)
-    return brand !== undefined && (rhs.name === "Error" || brand === rhs.name)
+    return Effect.succeed(Option.exists(errorBrandName(lhs), (brand) => rhs.name === "Error" || brand === rhs.name))
   }
   if (rhs instanceof GlobalNamespace) {
     switch (rhs.name) {
       case "Date":
-        return lhs instanceof SandboxDate
+        return Effect.succeed(lhs instanceof SandboxDate)
       case "RegExp":
-        return lhs instanceof SandboxRegExp
+        return Effect.succeed(lhs instanceof SandboxRegExp)
       case "Map":
-        return lhs instanceof SandboxMap
+        return Effect.succeed(lhs instanceof SandboxMap)
       case "Set":
-        return lhs instanceof SandboxSet
+        return Effect.succeed(lhs instanceof SandboxSet)
       case "URL":
-        return lhs instanceof SandboxURL
+        return Effect.succeed(lhs instanceof SandboxURL)
       case "URLSearchParams":
-        return lhs instanceof SandboxURLSearchParams
+        return Effect.succeed(lhs instanceof SandboxURLSearchParams)
       case "Array":
-        return Array.isArray(lhs)
+        return Effect.succeed(Array.isArray(lhs))
       case "Object":
-        return lhs !== null && (typeof lhs === "object" || typeofValue(lhs) === "function")
+        return Effect.succeed(Predicate.isObjectOrArray(lhs) || typeofValue(lhs) === "function")
     }
   }
-  if (rhs instanceof PromiseNamespace) return lhs instanceof SandboxPromise
+  if (rhs instanceof PromiseNamespace) return Effect.succeed(lhs instanceof SandboxPromise)
   // Number/String/Boolean wrap primitives in JS; no boxed values exist in CodeMode, so
   // `x instanceof Number` is always false - exactly what it is for primitives in JS.
   if (rhs instanceof CoercionFunction && (rhs.name === "Number" || rhs.name === "String" || rhs.name === "Boolean")) {
-    return false
+    return Effect.succeed(false)
   }
-  throw new InterpreterRuntimeError(
-    "The right-hand side of 'instanceof' must be a constructor CodeMode knows: Error (or a specific error type like TypeError), Date, RegExp, Map, Set, URL, URLSearchParams, Array, Object, or Promise.",
-    node,
+  return Effect.fail(
+    new InterpreterRuntimeError(
+      "The right-hand side of 'instanceof' must be a constructor CodeMode knows: Error (or a specific error type like TypeError), Date, RegExp, Map, Set, URL, URLSearchParams, Array, Object, or Promise.",
+      node,
+    ),
   )
 }
 
-const invokeStringMethod = (value: string, name: string, args: Array<unknown>, node: AstNode): unknown => {
-  const str = (index: number): string => {
-    const arg = args[index]
-    if (typeof arg !== "string")
-      throw new InterpreterRuntimeError(`String.${name} expects argument ${index + 1} to be a string.`, node)
-    return arg
-  }
-  const num = (index: number): number => {
-    const arg = args[index]
-    if (typeof arg !== "number")
-      throw new InterpreterRuntimeError(`String.${name} expects argument ${index + 1} to be a number.`, node)
-    return arg
-  }
-  const optNum = (index: number): number | undefined => (args[index] === undefined ? undefined : num(index))
-  const optStr = (index: number): string | undefined => (args[index] === undefined ? undefined : str(index))
+const invokeStringMethod = (
+  value: string,
+  name: string,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> =>
+  Effect.gen(function* () {
+    const str = (index: number): Effect.Effect<string, InterpreterRuntimeError> => {
+      const arg = args[index]
+      return typeof arg === "string"
+        ? Effect.succeed(arg)
+        : Effect.fail(new InterpreterRuntimeError(`String.${name} expects argument ${index + 1} to be a string.`, node))
+    }
+    const num = (index: number): Effect.Effect<number, InterpreterRuntimeError> => {
+      const arg = args[index]
+      return typeof arg === "number"
+        ? Effect.succeed(arg)
+        : Effect.fail(new InterpreterRuntimeError(`String.${name} expects argument ${index + 1} to be a number.`, node))
+    }
+    // An omitted optional argument passes through as undefined, exactly as the host method takes it.
+    const optNum = (index: number): Effect.Effect<number | undefined, InterpreterRuntimeError> => {
+      const arg = args[index]
+      return arg === undefined ? Effect.succeed(arg) : num(index)
+    }
+    const optStr = (index: number): Effect.Effect<string | undefined, InterpreterRuntimeError> => {
+      const arg = args[index]
+      return arg === undefined ? Effect.succeed(arg) : str(index)
+    }
 
-  let result: unknown
-  switch (name) {
-    case "toLowerCase":
-      result = value.toLowerCase()
-      break
-    case "toUpperCase":
-      result = value.toUpperCase()
-      break
-    case "trim":
-      result = value.trim()
-      break
-    // trimLeft/trimRight are the legacy aliases of trimStart/trimEnd, kept because models write them.
-    case "trimStart":
-    case "trimLeft":
-      result = value.trimStart()
-      break
-    case "trimEnd":
-    case "trimRight":
-      result = value.trimEnd()
-      break
-    // Locale/options arguments are ignored: comparison runs with the host default locale, and
-    // the common use is a sort comparator where any consistent order works.
-    case "localeCompare":
-      result = value.localeCompare(str(0))
-      break
-    case "normalize": {
-      const form = optStr(0)
-      try {
-        result = value.normalize(form)
-      } catch {
-        throw new InterpreterRuntimeError(
-          `String.normalize expects the form "NFC", "NFD", "NFKC", or "NFKD" (got ${JSON.stringify(form)}).`,
-          node,
-        ).as("RangeError")
-      }
-      break
-    }
-    case "split": {
-      if (args.length === 0) {
-        result = [value]
+    let result: unknown
+    switch (name) {
+      case "toLowerCase":
+        result = value.toLowerCase()
+        break
+      case "toUpperCase":
+        result = value.toUpperCase()
+        break
+      case "trim":
+        result = value.trim()
+        break
+      // trimLeft/trimRight are the legacy aliases of trimStart/trimEnd, kept because models write them.
+      case "trimStart":
+      case "trimLeft":
+        result = value.trimStart()
+        break
+      case "trimEnd":
+      case "trimRight":
+        result = value.trimEnd()
+        break
+      // Locale/options arguments are ignored: comparison runs with the host default locale, and
+      // the common use is a sort comparator where any consistent order works.
+      case "localeCompare":
+        result = value.localeCompare(yield* str(0))
+        break
+      case "normalize": {
+        const form = yield* optStr(0)
+        // Without a form, normalize uses NFC and cannot fail.
+        if (form === undefined) {
+          result = value.normalize()
+          break
+        }
+        result = yield* Effect.try({
+          try: () => value.normalize(form),
+          catch: () =>
+            new InterpreterRuntimeError(
+              `String.normalize expects the form "NFC", "NFD", "NFKC", or "NFKD" (got ${quoteJsonString(form)}).`,
+              node,
+            ).as("RangeError"),
+        })
         break
       }
-      if (args[0] instanceof SandboxRegExp) {
-        result = value.split((args[0] as SandboxRegExp).regex, optNum(1))
+      case "split": {
+        if (args.length === 0) {
+          result = [value]
+          break
+        }
+        if (args[0] instanceof SandboxRegExp) {
+          result = value.split(args[0].regex, yield* optNum(1))
+          break
+        }
+        const separator = yield* str(0)
+        const requestedLimit = Option.fromUndefinedOr(yield* optNum(1))
+        result = value.split(separator, Option.getOrUndefined(Option.map(requestedLimit, (limit) => limit >>> 0)))
         break
       }
-      const requestedLimit = optNum(1)
-      result = value.split(str(0), requestedLimit === undefined ? undefined : requestedLimit >>> 0)
-      break
-    }
-    case "slice":
-      result = value.slice(optNum(0), optNum(1))
-      break
-    case "includes":
-      result = value.includes(str(0), optNum(1))
-      break
-    case "startsWith":
-      result = value.startsWith(str(0), optNum(1))
-      break
-    case "endsWith":
-      result = value.endsWith(str(0), optNum(1))
-      break
-    case "indexOf":
-      result = value.indexOf(str(0), optNum(1))
-      break
-    case "lastIndexOf":
-      result = value.lastIndexOf(str(0), optNum(1))
-      break
-    case "replace":
-    case "replaceAll": {
-      if (args[0] instanceof SandboxRegExp) {
-        const pattern = (args[0] as SandboxRegExp).regex
-        const replacement = str(1)
-        if (name === "replaceAll" && !pattern.global) {
-          throw new InterpreterRuntimeError(
-            `String.replaceAll requires a regular expression with the global (g) flag: write /${pattern.source}/${pattern.flags}g, or use String.replace to replace only the first match.`,
+      case "slice":
+        result = value.slice(yield* optNum(0), yield* optNum(1))
+        break
+      case "includes":
+        result = value.includes(yield* str(0), yield* optNum(1))
+        break
+      case "startsWith":
+        result = value.startsWith(yield* str(0), yield* optNum(1))
+        break
+      case "endsWith":
+        result = value.endsWith(yield* str(0), yield* optNum(1))
+        break
+      case "indexOf":
+        result = value.indexOf(yield* str(0), yield* optNum(1))
+        break
+      case "lastIndexOf":
+        result = value.lastIndexOf(yield* str(0), yield* optNum(1))
+        break
+      case "replace":
+      case "replaceAll": {
+        if (args[0] instanceof SandboxRegExp) {
+          const pattern = args[0].regex
+          const replacement = yield* str(1)
+          if (name === "replaceAll" && !pattern.global) {
+            return yield* new InterpreterRuntimeError(
+              `String.replaceAll requires a regular expression with the global (g) flag: write /${pattern.source}/${pattern.flags}g, or use String.replace to replace only the first match.`,
+              node,
+            )
+          }
+          result = name === "replace" ? value.replace(pattern, replacement) : value.replaceAll(pattern, replacement)
+          break
+        }
+        if (name === "replace") {
+          result = value.replace(yield* str(0), yield* str(1))
+          break
+        }
+        result = value.replaceAll(yield* str(0), yield* str(1))
+        break
+      }
+      case "match": {
+        const pattern = yield* toHostRegex(args[0], name, node)
+        const matched = value.match(pattern)
+        // No match: String.match's own null result is the program-visible value.
+        if (Predicate.isNull(matched)) return matched
+        // A global match is a plain array of matched strings; a non-global match carries
+        // index/groups own properties, so bypass the copying data checkpoint to keep them.
+        if (pattern.global) return yield* Effect.fromResult(boundedData(matched, "String.match result"))
+        return matchToValue(matched)
+      }
+      case "matchAll": {
+        const pattern = yield* toHostRegex(args[0], name, node, "g")
+        if (!pattern.global) {
+          return yield* new InterpreterRuntimeError(
+            `String.matchAll requires a regular expression with the global (g) flag: write /${pattern.source}/${pattern.flags}g, or use String.match for a single match.`,
             node,
           )
         }
-        result = name === "replace" ? value.replace(pattern, replacement) : value.replaceAll(pattern, replacement)
+        // Materialized as an array (not an iterator); each entry is a match array with
+        // index/groups own properties. Match count is bounded by the subject length.
+        return Array.from(value.matchAll(pattern), matchToValue)
+      }
+      case "search": {
+        result = value.search(yield* toHostRegex(args[0], name, node))
         break
       }
-      if (name === "replace") {
-        result = value.replace(str(0), str(1))
+      case "repeat": {
+        const count = yield* num(0)
+        if (!Number.isFinite(count) || count < 0)
+          return yield* new InterpreterRuntimeError("String.repeat expects a finite non-negative count.", node)
+        result = value.repeat(count)
         break
       }
-      result = value.replaceAll(str(0), str(1))
-      break
+      case "padStart":
+        result = value.padStart(yield* num(0), yield* optStr(1))
+        break
+      case "padEnd":
+        result = value.padEnd(yield* num(0), yield* optStr(1))
+        break
+      case "charAt":
+        result = value.charAt((yield* optNum(0)) ?? 0)
+        break
+      case "at":
+        result = value.at((yield* optNum(0)) ?? 0)
+        break
+      case "substring":
+        result = value.substring((yield* optNum(0)) ?? 0, yield* optNum(1))
+        break
+      case "substr":
+        result = value.substr((yield* optNum(0)) ?? 0, yield* optNum(1))
+        break
+      // JS charCodeAt returns NaN out of range; NaN flows as an ordinary in-sandbox value
+      // (normalized to null only at the data boundary - see copyOut), so return it as-is.
+      case "charCodeAt":
+        result = value.charCodeAt((yield* optNum(0)) ?? 0)
+        break
+      case "codePointAt":
+        result = value.codePointAt((yield* optNum(0)) ?? 0)
+        break
+      case "toString":
+        result = value
+        break
+      case "concat": {
+        result = value.concat(...(yield* Effect.forEach(args, (_, index) => str(index))))
+        break
+      }
+      default:
+        return yield* new InterpreterRuntimeError(`String method '${name}' is not available in CodeMode.`, node)
     }
-    case "match": {
-      const pattern = toHostRegex(args[0], name, node)
-      const matched = value.match(pattern)
-      if (matched === null) return null
-      // A global match is a plain array of matched strings; a non-global match carries
-      // index/groups own properties, so bypass the copying data checkpoint to keep them.
-      if (pattern.global) return boundedData(matched, "String.match result")
-      return matchToValue(matched)
-    }
-    case "matchAll": {
-      const pattern = toHostRegex(args[0], name, node, "g")
-      if (!pattern.global) {
-        throw new InterpreterRuntimeError(
-          `String.matchAll requires a regular expression with the global (g) flag: write /${pattern.source}/${pattern.flags}g, or use String.match for a single match.`,
+    return yield* Effect.fromResult(boundedData(result, `String.${name} result`))
+  })
+
+const invokeArrayStatic = (
+  name: string,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> =>
+  Effect.gen(function* () {
+    switch (name) {
+      case "isArray":
+        return Array.isArray(args[0])
+      case "of":
+        return [...args]
+      case "from": {
+        if (args.length > 1) {
+          return yield* new InterpreterRuntimeError(
+            "Array.from(...) does not support a map function in CodeMode; call .map() on the result instead.",
+            node,
+            "UnsupportedSyntax",
+            [supportedSyntaxMessage],
+          )
+        }
+        // Map/Set materialize directly (the data checkpoint would serialize them to {}).
+        if (args[0] instanceof SandboxMap) return Array.from(args[0].map.entries(), ([key, item]) => [key, item])
+        if (args[0] instanceof SandboxSet) return Array.from(args[0].set.values())
+        if (args[0] instanceof SandboxURLSearchParams) {
+          return Array.from(args[0].params.entries(), ([key, value]) => [key, value])
+        }
+        const source = yield* Effect.fromResult(boundedData(args[0], "Array.from input"))
+        if (typeof source === "string") return Array.from(source)
+        if (Array.isArray(source)) return [...source]
+        if (isArrayLike(source)) return Array.from(source)
+        return yield* new InterpreterRuntimeError(
+          "Array.from expects an array, string, Map, Set, or array-like value.",
           node,
         )
       }
-      // Materialized as an array (not an iterator); each entry is a match array with
-      // index/groups own properties. Match count is bounded by the subject length.
-      return Array.from(value.matchAll(pattern), matchToValue)
+      default:
+        return yield* new InterpreterRuntimeError(`Array.${name} is not available in CodeMode.`, node)
     }
-    case "search": {
-      result = value.search(toHostRegex(args[0], name, node))
-      break
-    }
-    case "repeat": {
-      const count = num(0)
-      if (!Number.isFinite(count) || count < 0)
-        throw new InterpreterRuntimeError("String.repeat expects a finite non-negative count.", node)
-      result = value.repeat(count)
-      break
-    }
-    case "padStart":
-      result = value.padStart(num(0), optStr(1))
-      break
-    case "padEnd":
-      result = value.padEnd(num(0), optStr(1))
-      break
-    case "charAt":
-      result = value.charAt(optNum(0) ?? 0)
-      break
-    case "at":
-      result = value.at(optNum(0) ?? 0)
-      break
-    case "substring":
-      result = value.substring(optNum(0) ?? 0, optNum(1))
-      break
-    case "substr":
-      result = value.substr(optNum(0) ?? 0, optNum(1))
-      break
-    // JS charCodeAt returns NaN out of range; NaN flows as an ordinary in-sandbox value
-    // (normalized to null only at the data boundary - see copyOut), so return it as-is.
-    case "charCodeAt":
-      result = value.charCodeAt(optNum(0) ?? 0)
-      break
-    case "codePointAt":
-      result = value.codePointAt(optNum(0) ?? 0)
-      break
-    case "toString":
-      result = value
-      break
-    case "concat": {
-      result = value.concat(...args.map((_, index) => str(index)))
-      break
-    }
-    default:
-      throw new InterpreterRuntimeError(`String method '${name}' is not available in CodeMode.`, node)
-  }
-  return boundedData(result, `String.${name} result`)
-}
+  })
 
-const invokeArrayStatic = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  switch (name) {
-    case "isArray":
-      return Array.isArray(args[0])
-    case "of":
-      return [...args]
-    case "from": {
-      if (args.length > 1) {
-        throw new InterpreterRuntimeError(
-          "Array.from(...) does not support a map function in CodeMode; call .map() on the result instead.",
-          node,
-          "UnsupportedSyntax",
-          [supportedSyntaxMessage],
-        )
-      }
-      // Map/Set materialize directly (the data checkpoint would serialize them to {}).
-      if (args[0] instanceof SandboxMap)
-        return Array.from((args[0] as SandboxMap).map.entries(), ([key, item]) => [key, item])
-      if (args[0] instanceof SandboxSet) return Array.from((args[0] as SandboxSet).set.values())
-      if (args[0] instanceof SandboxURLSearchParams) {
-        return Array.from(args[0].params.entries(), ([key, value]) => [key, value])
-      }
-      const source = boundedData(args[0], "Array.from input")
-      if (typeof source === "string") return Array.from(source)
-      if (Array.isArray(source)) return [...source]
-      if (
-        source !== null &&
-        typeof source === "object" &&
-        typeof (source as { length?: unknown }).length === "number"
-      ) {
-        return Array.from(source as ArrayLike<unknown>)
-      }
-      throw new InterpreterRuntimeError("Array.from expects an array, string, Map, Set, or array-like value.", node)
-    }
-    default:
-      throw new InterpreterRuntimeError(`Array.${name} is not available in CodeMode.`, node)
-  }
-}
-
-const invokeGlobalMethod = (ref: GlobalMethodReference, args: Array<unknown>, node: AstNode): unknown => {
+// The stdlib invokers return Effects: an invalid call fails with its typed error, and a host
+// method that throws (a RangeError from toFixed, say) stays a defect inside Effect.sync.
+const invokeGlobalMethod = (
+  ref: GlobalMethodReference,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> => {
   if (ref.namespace === "console")
-    throw new InterpreterRuntimeError(`console.${ref.name} is not available in CodeMode.`, node)
+    return Effect.fail(new InterpreterRuntimeError(`console.${ref.name} is not available in CodeMode.`, node))
   if (ref.namespace === "Object") return invokeObjectMethod(ref.name, args, node)
   if (ref.namespace === "Math") return invokeMathMethod(ref.name, args, node)
   if (ref.namespace === "Array") return invokeArrayStatic(ref.name, args, node)
@@ -557,8 +658,8 @@ const invokeGlobalMethod = (ref: GlobalMethodReference, args: Array<unknown>, no
   if (ref.namespace === "String") return invokeStringStatic(ref.name, args, node)
   if (ref.namespace === "URL") return invokeURLStatic(ref.name, args, node)
   if (ref.namespace === "Date") {
-    if (!dateStatics.has(ref.name))
-      throw new InterpreterRuntimeError(`Date.${ref.name} is not available in CodeMode.`, node)
+    if (!HashSet.has(dateStatics, ref.name))
+      return Effect.fail(new InterpreterRuntimeError(`Date.${ref.name} is not available in CodeMode.`, node))
     return invokeDateStatic(ref.name, args, node)
   }
   if (
@@ -567,156 +668,186 @@ const invokeGlobalMethod = (ref: GlobalMethodReference, args: Array<unknown>, no
     ref.namespace === "Set" ||
     ref.namespace === "URLSearchParams"
   ) {
-    throw new InterpreterRuntimeError(`${ref.namespace}.${ref.name} is not available in CodeMode.`, node)
+    return Effect.fail(new InterpreterRuntimeError(`${ref.namespace}.${ref.name} is not available in CodeMode.`, node))
   }
   return invokeJsonMethod(ref.name, args, node)
 }
 
 // Every identifier a parameter pattern binds, used to seed TDZ slots before defaults run.
-const collectPatternNames = (pattern: AstNode, out: Array<string> = []): Array<string> => {
+const collectPatternNames = (pattern: AstNode): Effect.Effect<ReadonlyArray<string>, InterpreterRuntimeError> => {
   switch (pattern.type) {
     case "Identifier":
-      out.push(getString(pattern, "name"))
-      break
+      return Effect.map(getString(pattern, "name"), (name) => [name])
     case "AssignmentPattern":
-      collectPatternNames(getNode(pattern, "left"), out)
-      break
+      return Effect.flatMap(getNode(pattern, "left"), collectPatternNames)
     case "RestElement":
-      collectPatternNames(getNode(pattern, "argument"), out)
-      break
+      return Effect.flatMap(getNode(pattern, "argument"), collectPatternNames)
     case "ArrayPattern":
-      for (const element of getArray(pattern, "elements")) {
-        if (element !== null) collectPatternNames(asNode(element, "elements"), out)
-      }
-      break
+      return Effect.gen(function* () {
+        const elements = yield* getArray(pattern, "elements")
+        const names = yield* Effect.forEach(elements.filter(Predicate.isNotNull), (element) =>
+          Effect.flatMap(asNode(element, "elements"), collectPatternNames),
+        )
+        return names.flat()
+      })
     case "ObjectPattern":
-      for (const property of getArray(pattern, "properties")) {
-        const prop = asNode(property, "properties")
-        collectPatternNames(prop.type === "RestElement" ? getNode(prop, "argument") : getNode(prop, "value"), out)
-      }
-      break
+      return Effect.gen(function* () {
+        const properties = yield* getArray(pattern, "properties")
+        const names = yield* Effect.forEach(properties, (property) =>
+          Effect.gen(function* () {
+            const prop = yield* asNode(property, "properties")
+            const target = yield* getNode(prop, prop.type === "RestElement" ? "argument" : "value")
+            return yield* collectPatternNames(target)
+          }),
+        )
+        return names.flat()
+      })
+    default:
+      return Effect.succeed([])
   }
-  return out
 }
 
 class Interpreter<R> {
-  private scopes: Array<Map<string, Binding>>
+  private scopes: Array<Scope>
   private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   // Enumerable namespace/tool names at a node of the host tool tree, threaded from
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
-  private readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
+  private readonly toolKeys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>
   private readonly logs: Array<string>
-  private lastValue: unknown
+  // The value of the most recent expression statement: a program without `return` completes
+  // with it, as a script does.
+  private lastValue: Option.Option<unknown> = Option.none()
   // Caps how many eagerly forked tool calls run at once (the parallel-call concurrency cap).
   private readonly callPermits: Semaphore.Semaphore
   // Fiber-backed promises whose settlement no program construct has observed yet. Successful
   // program completion drains these (like a runtime waiting on in-flight work at exit) and
   // surfaces a never-awaited failure as an unhandled-rejection diagnostic.
-  private readonly pendingSettlements = new Set<SandboxPromise>()
+  private pendingSettlements: ReadonlyArray<SandboxPromise> = []
 
   constructor(
     invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>,
-    toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
+    toolKeys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>,
     logs: Array<string> = [],
   ) {
-    const globalScope = new Map<string, Binding>()
+    const globalScope = MutableHashMap.empty<string, Binding>()
     this.scopes = [globalScope]
     this.invokeTool = invokeTool
     this.toolKeys = toolKeys
     this.logs = logs
-    this.lastValue = undefined
     this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
-    globalScope.set("tools", { mutable: false, value: new ToolReference([]) })
-    globalScope.set("Promise", { mutable: false, value: new PromiseNamespace() })
-    globalScope.set("undefined", { mutable: false, value: undefined })
-    globalScope.set("Object", { mutable: false, value: new GlobalNamespace("Object") })
-    globalScope.set("Math", { mutable: false, value: new GlobalNamespace("Math") })
-    globalScope.set("JSON", { mutable: false, value: new GlobalNamespace("JSON") })
-    globalScope.set("Number", { mutable: false, value: new CoercionFunction("Number") })
-    globalScope.set("String", { mutable: false, value: new CoercionFunction("String") })
-    globalScope.set("Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
-    globalScope.set("Array", { mutable: false, value: new GlobalNamespace("Array") })
-    globalScope.set("console", { mutable: false, value: new GlobalNamespace("console") })
-    globalScope.set("parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
-    globalScope.set("parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
-    globalScope.set("Date", { mutable: false, value: new GlobalNamespace("Date") })
-    globalScope.set("RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
-    globalScope.set("Map", { mutable: false, value: new GlobalNamespace("Map") })
-    globalScope.set("Set", { mutable: false, value: new GlobalNamespace("Set") })
-    globalScope.set("URL", { mutable: false, value: new GlobalNamespace("URL") })
-    globalScope.set("URLSearchParams", { mutable: false, value: new GlobalNamespace("URLSearchParams") })
-    globalScope.set("encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
-    globalScope.set("encodeURIComponent", { mutable: false, value: new UriFunction("encodeURIComponent") })
-    globalScope.set("decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
-    globalScope.set("decodeURIComponent", { mutable: false, value: new UriFunction("decodeURIComponent") })
+    MutableHashMap.set(globalScope, "tools", { mutable: false, value: new ToolReference([]) })
+    MutableHashMap.set(globalScope, "Promise", { mutable: false, value: promiseNamespace })
+    // eslint-disable-next-line effect/no-undefined-use-option -- (b) the sandbox global binding `undefined` holds the JS undefined value that the program reads
+    MutableHashMap.set(globalScope, "undefined", { mutable: false, value: undefined })
+    MutableHashMap.set(globalScope, "Object", { mutable: false, value: new GlobalNamespace("Object") })
+    MutableHashMap.set(globalScope, "Math", { mutable: false, value: new GlobalNamespace("Math") })
+    MutableHashMap.set(globalScope, "JSON", { mutable: false, value: new GlobalNamespace("JSON") })
+    MutableHashMap.set(globalScope, "Number", { mutable: false, value: new CoercionFunction("Number") })
+    MutableHashMap.set(globalScope, "String", { mutable: false, value: new CoercionFunction("String") })
+    MutableHashMap.set(globalScope, "Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
+    MutableHashMap.set(globalScope, "Array", { mutable: false, value: new GlobalNamespace("Array") })
+    MutableHashMap.set(globalScope, "console", { mutable: false, value: new GlobalNamespace("console") })
+    MutableHashMap.set(globalScope, "parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
+    MutableHashMap.set(globalScope, "parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
+    MutableHashMap.set(globalScope, "Date", { mutable: false, value: new GlobalNamespace("Date") })
+    MutableHashMap.set(globalScope, "RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
+    MutableHashMap.set(globalScope, "Map", { mutable: false, value: new GlobalNamespace("Map") })
+    MutableHashMap.set(globalScope, "Set", { mutable: false, value: new GlobalNamespace("Set") })
+    MutableHashMap.set(globalScope, "URL", { mutable: false, value: new GlobalNamespace("URL") })
+    MutableHashMap.set(globalScope, "URLSearchParams", {
+      mutable: false,
+      value: new GlobalNamespace("URLSearchParams"),
+    })
+    MutableHashMap.set(globalScope, "encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
+    MutableHashMap.set(globalScope, "encodeURIComponent", {
+      mutable: false,
+      value: new UriFunction("encodeURIComponent"),
+    })
+    MutableHashMap.set(globalScope, "decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
+    MutableHashMap.set(globalScope, "decodeURIComponent", {
+      mutable: false,
+      value: new UriFunction("decodeURIComponent"),
+    })
     // Error constructors are real values, so `x instanceof Error` works and `Error("msg")`
     // (with or without `new`) constructs a branded { name, message } error object.
     for (const name of errorConstructors) {
-      globalScope.set(name, { mutable: false, value: new ErrorConstructorReference(name) })
+      MutableHashMap.set(globalScope, name, { mutable: false, value: new ErrorConstructorReference(name) })
     }
     // NaN/Infinity flow as ordinary in-sandbox values (normalized to null only at the data
     // boundary - see copyOut), so their global bindings must exist too, e.g. `reduce(max, -Infinity)`.
-    globalScope.set("NaN", { mutable: false, value: NaN })
-    globalScope.set("Infinity", { mutable: false, value: Infinity })
+    MutableHashMap.set(globalScope, "NaN", { mutable: false, value: NaN })
+    MutableHashMap.set(globalScope, "Infinity", { mutable: false, value: Infinity })
   }
 
   run(program: ProgramNode): Effect.Effect<unknown, unknown, R> {
-    const self = this
     // Run the program body in its own module scope on top of the builtin global scope, so
     // top-level declarations (`let undefined = 5`, `const Object = ...`) shadow builtins like
     // JS module scope, instead of colliding with the seeded globals.
-    this.pushScope()
-    return Effect.gen(function* () {
-      self.hoistFunctions(program.body)
-      let value: unknown = undefined
-      let returned = false
-      for (const statement of program.body) {
-        const result = yield* self.evaluateStatement(statement)
+    return this.withScope(
+      Effect.gen({ self: this }, function* () {
+        yield* this.hoistFunctions(program.body)
+        let returned: Option.Option<unknown> = Option.none()
+        for (const statement of program.body) {
+          const result = yield* this.evaluateStatement(statement)
 
-        if (result.kind === "return") {
-          value = result.value
-          returned = true
-          break
+          if (result.kind === "return") {
+            returned = Option.some(result.value)
+            break
+          }
+
+          if (result.kind === "break" || result.kind === "continue") {
+            return yield* new InterpreterRuntimeError(`Unexpected '${result.kind}' outside of a loop.`, statement)
+          }
+
+          if (result.kind === "value") {
+            this.lastValue = Option.some(result.value)
+          }
         }
+        // The completion value: the returned value, else the last expression statement's value.
+        let value = Option.getOrUndefined(Option.orElse(returned, () => this.lastValue))
 
-        if (result.kind === "break" || result.kind === "continue") {
-          throw new InterpreterRuntimeError(`Unexpected '${result.kind}' outside of a loop.`, statement)
-        }
+        // The program body runs inside an implicit async function, so a returned promise
+        // resolves before crossing the data boundary - `return tools.ns.tool(...)` works
+        // without an explicit await, exactly as in JS.
+        if (value instanceof SandboxPromise) value = yield* this.settlePromise(value)
+        yield* this.drainPendingSettlements()
+        return value
+      }),
+    )
+  }
 
-        if (result.kind === "value") {
-          self.lastValue = result.value
-        }
-      }
-      if (!returned) value = self.lastValue
-
-      // The program body runs inside an implicit async function, so a returned promise
-      // resolves before crossing the data boundary - `return tools.ns.tool(...)` works
-      // without an explicit await, exactly as in JS.
-      if (value instanceof SandboxPromise) value = yield* self.settlePromise(value)
-      yield* self.drainPendingSettlements()
-      return value
-    }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
+  // Runs `effect` in a fresh block scope. The push happens when the effect starts and the
+  // pop is guaranteed by Effect.ensuring, so the scope stack stays balanced on every exit.
+  private withScope<A, E>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+    return Effect.suspend(() => {
+      this.pushScope()
+      return effect.pipe(Effect.ensuring(Effect.sync(() => this.popScope())))
+    })
   }
 
   // Awaits every fiber-backed promise the program abandoned (fire-and-forget tool calls), so
   // their work completes before the execution ends - mirroring a JS runtime waiting on
   // in-flight I/O at exit. A failure nobody could have handled becomes an unhandled-rejection
   // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
-  private drainPendingSettlements(): Effect.Effect<void, unknown, never> {
-    const self = this
-    return Effect.gen(function* () {
-      for (const promise of [...self.pendingSettlements]) {
-        const exit = yield* self.observePromise(promise)
-        if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) continue
-        const failure = normalizeError(Cause.squash(exit.cause))
-        throw new InterpreterRuntimeError(
-          `Unhandled rejection from an un-awaited tool call: ${failure.message}`,
-          undefined,
-          failure.kind,
-          ["Await tool calls - `const result = await tools.ns.tool(...)` - so failures can be caught and handled."],
-        )
-      }
-    })
+  private drainPendingSettlements(): Effect.Effect<void, unknown> {
+    return Effect.forEach(
+      this.pendingSettlements,
+      (promise) =>
+        Effect.flatMap(this.observePromise(promise), (exit) => {
+          if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return Effect.void
+          const failure = normalizeError(Cause.squash(exit.cause))
+          return Effect.fail(
+            InterpreterRuntimeError.make({
+              message: `Unhandled rejection from an un-awaited tool call: ${failure.message}`,
+              kind: failure.kind,
+              suggestions: [
+                "Await tool calls - `const result = await tools.ns.tool(...)` - so failures can be caught and handled.",
+              ],
+            }),
+          )
+        }),
+      { discard: true },
+    )
   }
 
   // Eagerly starts a tool call on a supervised child fiber (so the execution timeout and
@@ -727,14 +858,13 @@ class Interpreter<R> {
     path: ReadonlyArray<string>,
     args: Array<unknown>,
   ): Effect.Effect<SandboxPromise, never, R> {
-    const self = this
     return Effect.map(
-      Effect.forkChild(this.callPermits.withPermit(Effect.suspend(() => self.invokeTool(path, args))), {
+      Effect.forkChild(this.callPermits.withPermit(Effect.suspend(() => this.invokeTool(path, args))), {
         startImmediately: true,
       }),
       (fiber) => {
-        const promise = new SandboxPromise(fiber)
-        self.pendingSettlements.add(promise)
+        const promise = SandboxPromise.fromFiber(fiber)
+        this.pendingSettlements = [...this.pendingSettlements, promise]
         return promise
       },
     )
@@ -744,19 +874,24 @@ class Interpreter<R> {
   // Fiber settlement is idempotent, so observing the same promise repeatedly (await twice,
   // Promise.all([p, p])) never re-runs the underlying call.
   private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
-    this.pendingSettlements.delete(promise)
-    return promise.fiber !== undefined ? Fiber.await(promise.fiber) : Effect.exit(promise.immediate ?? Effect.void)
+    this.pendingSettlements = this.pendingSettlements.filter((pending) => pending !== promise)
+    return Option.match(promise.fiber, {
+      onNone: () => Effect.exit(promise.immediate),
+      onSome: (fiber) => Fiber.await(fiber),
+    })
   }
 
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
   // observes it exactly like a synchronous throw at the await site.
-  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown, never> {
-    const self = this
-    return Effect.flatMap(this.observePromise(promise), (exit) => self.unwrapPromiseExit(promise, exit, node))
+  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown> {
+    return Effect.flatMap(this.observePromise(promise), (exit) =>
+      this.unwrapPromiseExit(Option.some(promise), exit, node),
+    )
   }
 
+  // `promise` is the settled promise, or None for a plain value taking part in Promise.race.
   private unwrapPromiseExit(
-    promise: SandboxPromise | undefined,
+    promise: Option.Option<SandboxPromise>,
     exit: Exit.Exit<unknown, unknown>,
     node?: AstNode,
   ): Effect.Effect<unknown, unknown> {
@@ -764,7 +899,7 @@ class Interpreter<R> {
     // A call Promise.race interrupted after losing settles as a catchable program failure;
     // any other interruption is execution teardown (timeout/host) and must keep propagating
     // as interruption rather than becoming program-visible data.
-    if (promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)) {
+    if (Option.exists(promise, (settled) => settled.interrupted) && Cause.hasInterruptsOnly(exit.cause)) {
       return Effect.fail(
         new InterpreterRuntimeError(
           "This tool call was interrupted because another value settled a Promise.race first.",
@@ -778,15 +913,19 @@ class Interpreter<R> {
   private evaluateStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
     switch (node.type) {
       case "ExpressionStatement":
-        return Effect.map(this.evaluateExpression(getNode(node, "expression")), (value) => ({ kind: "value", value }))
+        return Effect.flatMap(getNode(node, "expression"), (expression) =>
+          Effect.map(this.evaluateExpression(expression), (value): StatementResult => ({ kind: "value", value })),
+        )
       case "VariableDeclaration":
-        return Effect.map(this.evaluateVariableDeclaration(node), () => ({ kind: "none" }))
-      case "ReturnStatement": {
-        const argumentNode = getOptionalNode(node, "argument")
-        return argumentNode
-          ? Effect.map(this.evaluateExpression(argumentNode), (value) => ({ kind: "return", value }))
-          : Effect.succeed({ kind: "return", value: undefined })
-      }
+        return Effect.map(this.evaluateVariableDeclaration(node), (): StatementResult => ({ kind: "none" }))
+      // `return;` returns undefined.
+      case "ReturnStatement":
+        return Effect.flatMap(getOptionalNode(node, "argument"), (argumentNode) =>
+          Effect.map(
+            this.evaluateOptional(argumentNode),
+            (value): StatementResult => ({ kind: "return", value: Option.getOrUndefined(value) }),
+          ),
+        )
       case "BlockStatement":
         return this.evaluateBlock(node)
       case "IfStatement":
@@ -804,9 +943,9 @@ class Interpreter<R> {
       case "ForInStatement":
         return this.evaluateForInStatement(node)
       case "BreakStatement":
-        return Effect.succeed(this.evaluateBreakStatement(node))
+        return this.evaluateBreakStatement(node)
       case "ContinueStatement":
-        return Effect.succeed(this.evaluateContinueStatement(node))
+        return this.evaluateContinueStatement(node)
       case "ThrowStatement":
         return this.evaluateThrowStatement(node)
       case "TryStatement":
@@ -816,131 +955,142 @@ class Interpreter<R> {
       case "FunctionDeclaration":
         return Effect.succeed({ kind: "none" }) // bound ahead of time by hoistFunctions
       default:
-        throw unsupportedSyntax(node.type, node)
+        return Effect.fail(unsupportedSyntax(node.type, node))
     }
   }
 
   private evaluateBlock(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    this.pushScope()
-    const self = this
-    return Effect.gen(function* () {
-      const body = getArray(node, "body")
-      self.hoistFunctions(body)
+    return this.withScope(
+      Effect.gen({ self: this }, function* () {
+        const body = yield* getArray(node, "body")
+        yield* this.hoistFunctions(body)
 
-      for (const statementValue of body) {
-        const statement = asNode(statementValue, "body")
-        const result = yield* self.evaluateStatement(statement)
+        for (const statementValue of body) {
+          const statement = yield* asNode(statementValue, "body")
+          const result = yield* this.evaluateStatement(statement)
 
-        if (result.kind === "value") {
-          self.lastValue = result.value
-          continue
+          if (result.kind === "value") {
+            this.lastValue = Option.some(result.value)
+            continue
+          }
+
+          if (result.kind !== "none") {
+            return result
+          }
         }
 
-        if (result.kind !== "none") {
-          return result
-        }
-      }
-
-      return { kind: "none" } satisfies StatementResult
-    }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
+        return { kind: "none" } satisfies StatementResult
+      }),
+    )
   }
 
-  private createFunction(node: AstNode): CodeModeFunction {
-    if (node.generator === true) {
-      throw new InterpreterRuntimeError(
-        "Generator functions are not supported in CodeMode.",
-        node,
-        "UnsupportedSyntax",
-        [supportedSyntaxMessage],
+  private createFunction(node: AstNode): Effect.Effect<CodeModeFunction, InterpreterRuntimeError> {
+    return Effect.gen({ self: this }, function* () {
+      if (node.generator === true) {
+        return yield* new InterpreterRuntimeError(
+          "Generator functions are not supported in CodeMode.",
+          node,
+          "UnsupportedSyntax",
+          [supportedSyntaxMessage],
+        )
+      }
+      const parameters = yield* Effect.forEach(yield* getArray(node, "params"), (parameter, index) =>
+        asNode(parameter, `params[${index}]`),
       )
-    }
-    return new CodeModeFunction(
-      getArray(node, "params").map((parameter, index) => asNode(parameter, `params[${index}]`)),
-      getNode(node, "body"),
-      this.scopes.slice(),
-    )
+      const body = yield* getNode(node, "body")
+      return new CodeModeFunction(parameters, body, this.scopes.slice())
+    })
   }
 
   // Function declarations are hoisted: bound in their scope before the body runs, so a
   // program can call a helper defined further down (matching JavaScript).
-  private hoistFunctions(statements: Array<unknown>): void {
-    for (const statementValue of statements) {
-      if (!isRecord(statementValue) || statementValue.type !== "FunctionDeclaration") continue
-      const node = statementValue as AstNode
-      this.declare(getString(getNode(node, "id"), "name"), this.createFunction(node), true, node)
-    }
+  private hoistFunctions(statements: Array<unknown>): Effect.Effect<void, InterpreterRuntimeError> {
+    const declarations = statements.filter(
+      (statement): statement is AstNode => isAstNode(statement) && statement.type === "FunctionDeclaration",
+    )
+    if (declarations.length === 0) return Effect.void
+    return Effect.forEach(
+      declarations,
+      (declaration) =>
+        Effect.gen({ self: this }, function* () {
+          const name = yield* getString(yield* getNode(declaration, "id"), "name")
+          return yield* this.declare(name, yield* this.createFunction(declaration), true, declaration)
+        }),
+      { discard: true },
+    )
   }
 
   private evaluateIfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const testNode = getNode(node, "test")
-    const consequentNode = getNode(node, "consequent")
-    const alternateNode = getOptionalNode(node, "alternate")
-
-    return Effect.flatMap(this.evaluateExpression(testNode), (test) =>
-      test
-        ? this.evaluateStatement(consequentNode)
-        : alternateNode
-          ? this.evaluateStatement(alternateNode)
-          : Effect.succeed({ kind: "none" }),
+    return Effect.flatMap(getNode(node, "test"), (testNode) =>
+      Effect.flatMap(getNode(node, "consequent"), (consequentNode) =>
+        Effect.flatMap(getOptionalNode(node, "alternate"), (alternateNode) =>
+          Effect.flatMap(this.evaluateExpression(testNode), (test) => {
+            if (test) return this.evaluateStatement(consequentNode)
+            if (Option.isSome(alternateNode)) return this.evaluateStatement(alternateNode.value)
+            return Effect.succeed<StatementResult>({ kind: "none" })
+          }),
+        ),
+      ),
     )
   }
 
   private evaluateSwitchStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const self = this
-    this.pushScope()
-    return Effect.gen(function* () {
-      const discriminant = yield* self.evaluateExpression(getNode(node, "discriminant"))
-      if (containsOpaqueReference(discriminant)) {
-        throw new InterpreterRuntimeError(
-          "Switch discriminants must be data values in CodeMode.",
-          node,
-          "InvalidDataValue",
-        )
-      }
-      const cases = getArray(node, "cases").map((value, index) => asNode(value, `cases[${index}]`))
-      let defaultIndex: number | undefined
-      let selected: number | undefined
-      for (const [index, branch] of cases.entries()) {
-        const test = getOptionalNode(branch, "test")
-        if (!test) {
-          defaultIndex = index
-          continue
-        }
-        const candidate = yield* self.evaluateExpression(test)
-        if (containsOpaqueReference(candidate)) {
-          throw new InterpreterRuntimeError(
-            "Switch case values must be data values in CodeMode.",
-            test,
+    return this.withScope(
+      Effect.gen({ self: this }, function* () {
+        const discriminant = yield* this.evaluateExpression(yield* getNode(node, "discriminant"))
+        if (containsOpaqueReference(discriminant)) {
+          return yield* new InterpreterRuntimeError(
+            "Switch discriminants must be data values in CodeMode.",
+            node,
             "InvalidDataValue",
           )
         }
-        if (candidate === discriminant) {
-          selected = index
-          break
+        const cases = yield* Effect.forEach(yield* getArray(node, "cases"), (value, index) =>
+          asNode(value, `cases[${index}]`),
+        )
+        let defaultIndex: number | undefined
+        let selected: number | undefined
+        for (const [index, branch] of cases.entries()) {
+          const test = yield* getOptionalNode(branch, "test")
+          if (Option.isNone(test)) {
+            defaultIndex = index
+            continue
+          }
+          const candidate = yield* this.evaluateExpression(test.value)
+          if (containsOpaqueReference(candidate)) {
+            return yield* new InterpreterRuntimeError(
+              "Switch case values must be data values in CodeMode.",
+              test.value,
+              "InvalidDataValue",
+            )
+          }
+          if (candidate === discriminant) {
+            selected = index
+            break
+          }
         }
-      }
-      const start = selected ?? defaultIndex
-      if (start === undefined) return { kind: "none" } satisfies StatementResult
-      for (let index = start; index < cases.length; index += 1) {
-        for (const statementValue of getArray(cases[index]!, "consequent")) {
-          const result = yield* self.evaluateStatement(asNode(statementValue, "consequent"))
-          if (result.kind === "break") return { kind: "none" } satisfies StatementResult
-          if (result.kind === "return" || result.kind === "continue") return result
-          if (result.kind === "value") self.lastValue = result.value
+        const start = selected ?? defaultIndex
+        if (start === undefined) return { kind: "none" } satisfies StatementResult
+        for (let index = start; index < cases.length; index += 1) {
+          for (const statementValue of yield* getArray(cases[index], "consequent")) {
+            const result = yield* this.evaluateStatement(yield* asNode(statementValue, "consequent"))
+            if (result.kind === "break") return { kind: "none" } satisfies StatementResult
+            if (result.kind === "return" || result.kind === "continue") return result
+            if (result.kind === "value") this.lastValue = Option.some(result.value)
+          }
         }
-      }
-      return { kind: "none" } satisfies StatementResult
-    }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
+        return { kind: "none" } satisfies StatementResult
+      }),
+    )
   }
 
   private evaluateWhileStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const testNode = getNode(node, "test")
-    const bodyNode = getNode(node, "body")
+    return Effect.gen({ self: this }, function* () {
+      const testNode = yield* getNode(node, "test")
+      const bodyNode = yield* getNode(node, "body")
 
-    const self = this
-    return Effect.gen(function* () {
-      while (yield* self.evaluateExpression(testNode)) {
-        const result = yield* self.evaluateStatement(bodyNode)
+      while (yield* this.evaluateExpression(testNode)) {
+        const result = yield* this.evaluateStatement(bodyNode)
 
         if (result.kind === "continue") {
           continue
@@ -955,7 +1105,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          self.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
       }
 
@@ -964,13 +1114,12 @@ class Interpreter<R> {
   }
 
   private evaluateDoWhileStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const bodyNode = getNode(node, "body")
-    const testNode = getNode(node, "test")
+    return Effect.gen({ self: this }, function* () {
+      const bodyNode = yield* getNode(node, "body")
+      const testNode = yield* getNode(node, "test")
 
-    const self = this
-    return Effect.gen(function* () {
       do {
-        const result = yield* self.evaluateStatement(bodyNode)
+        const result = yield* this.evaluateStatement(bodyNode)
 
         if (result.kind === "continue") {
           continue
@@ -985,51 +1134,134 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          self.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
-      } while (yield* self.evaluateExpression(testNode))
+      } while (yield* this.evaluateExpression(testNode))
 
       return { kind: "none" } satisfies StatementResult
     })
   }
 
   private evaluateForStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    this.pushScope()
-    const self = this
-    return Effect.gen(function* () {
-      const initNode = getOptionalNode(node, "init")
-      const testNode = getOptionalNode(node, "test")
-      const updateNode = getOptionalNode(node, "update")
-      const bodyNode = getNode(node, "body")
+    return this.withScope(
+      Effect.gen({ self: this }, function* () {
+        const initNode = yield* getOptionalNode(node, "init")
+        const testNode = yield* getOptionalNode(node, "test")
+        const updateNode = yield* getOptionalNode(node, "update")
+        const bodyNode = yield* getNode(node, "body")
 
-      if (initNode) {
-        if (initNode.type === "VariableDeclaration") {
-          yield* self.evaluateVariableDeclaration(initNode)
-        } else {
-          yield* self.evaluateExpression(initNode)
+        if (Option.isSome(initNode)) {
+          if (initNode.value.type === "VariableDeclaration") {
+            yield* this.evaluateVariableDeclaration(initNode.value)
+          } else {
+            yield* this.evaluateExpression(initNode.value)
+          }
         }
+
+        const perIterationBindings =
+          Option.isSome(initNode) &&
+          initNode.value.type === "VariableDeclaration" &&
+          (yield* getString(initNode.value, "kind")) !== "var"
+            ? Array.from(MutableHashMap.keys(yield* this.currentScope()))
+            : []
+
+        while (Option.isSome(testNode) ? yield* this.evaluateExpression(testNode.value) : true) {
+          let iterationScope: Scope | undefined
+          if (perIterationBindings.length > 0) {
+            iterationScope = MutableHashMap.empty<string, Binding>()
+            copyBindings(yield* this.currentScope(), iterationScope, perIterationBindings)
+            this.scopes.push(iterationScope)
+          }
+          const result = yield* this.evaluateStatement(bodyNode).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (iterationScope) this.popScope()
+              }),
+            ),
+          )
+
+          if (result.kind === "return") {
+            return result
+          }
+
+          if (result.kind === "break") {
+            return { kind: "none" } satisfies StatementResult
+          }
+
+          if (result.kind === "value") {
+            this.lastValue = Option.some(result.value)
+          }
+
+          if (iterationScope) {
+            copyBindings(iterationScope, yield* this.currentScope(), perIterationBindings)
+          }
+
+          if (Option.isSome(updateNode)) {
+            yield* this.evaluateExpression(updateNode.value)
+          }
+
+          if (result.kind === "continue") {
+            continue
+          }
+        }
+
+        return { kind: "none" } satisfies StatementResult
+      }),
+    )
+  }
+
+  private evaluateForOfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+    return Effect.gen({ self: this }, function* () {
+      if (yield* getBoolean(node, "await")) {
+        return yield* new InterpreterRuntimeError("for await...of is not supported.", node)
       }
 
-      const perIterationBindings =
-        initNode?.type === "VariableDeclaration" && getString(initNode, "kind") !== "var"
-          ? Array.from(self.currentScope().keys())
-          : []
+      const left = yield* getNode(node, "left")
+      const right = yield* this.evaluateExpression(yield* getNode(node, "right"))
+      const body = yield* getNode(node, "body")
 
-      while (testNode ? yield* self.evaluateExpression(testNode) : true) {
-        let iterationScope: Map<string, Binding> | undefined
-        if (perIterationBindings.length > 0) {
-          iterationScope = new Map(
-            perIterationBindings.map((name) => {
-              const binding = self.currentScope().get(name)!
-              return [name, { ...binding }]
-            }),
-          )
-          self.scopes.push(iterationScope)
+      // Arrays iterate in place; strings iterate code points; Maps iterate [key, value]
+      // pairs and Sets iterate values over a snapshot (mutation during iteration is safe).
+      const iterable = Array.isArray(right) ? right : spreadItems(right)
+      if (iterable === undefined) {
+        return yield* new InterpreterRuntimeError(
+          "for...of requires an array, string, Map, or Set value in CodeMode.",
+          node,
+        )
+      }
+
+      let declaration: { readonly pattern: AstNode; readonly mutable: boolean } | undefined
+      let assignmentName: string | undefined
+
+      if (left.type === "VariableDeclaration") {
+        const declarations = yield* getArray(left, "declarations")
+        if (declarations.length !== 1) {
+          return yield* new InterpreterRuntimeError("for...of supports one declared binding.", left)
         }
-        const result = yield* self.evaluateStatement(bodyNode).pipe(
+
+        const declarator = yield* asNode(declarations[0], "declarations[0]")
+        declaration = {
+          pattern: yield* getNode(declarator, "id"),
+          mutable: (yield* getString(left, "kind")) !== "const",
+        }
+      } else if (left.type === "Identifier") {
+        assignmentName = yield* getString(left, "name")
+      } else {
+        return yield* new InterpreterRuntimeError("Unsupported for...of binding.", left)
+      }
+
+      for (const value of iterable) {
+        if (declaration) {
+          this.pushScope()
+          yield* this.declarePattern(declaration.pattern, value, declaration.mutable, left)
+        } else if (assignmentName) {
+          yield* this.setIdentifierValue(assignmentName, value, left)
+        }
+
+        const result = yield* this.evaluateStatement(body).pipe(
           Effect.ensuring(
             Effect.sync(() => {
-              if (iterationScope) self.popScope()
+              if (declaration) this.popScope()
             }),
           ),
         )
@@ -1043,18 +1275,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          self.lastValue = result.value
-        }
-
-        if (iterationScope) {
-          const loopScope = self.currentScope()
-          for (const name of perIterationBindings) {
-            loopScope.set(name, { ...iterationScope.get(name)! })
-          }
-        }
-
-        if (updateNode) {
-          yield* self.evaluateExpression(updateNode)
+          this.lastValue = Option.some(result.value)
         }
 
         if (result.kind === "continue") {
@@ -1063,78 +1284,6 @@ class Interpreter<R> {
       }
 
       return { kind: "none" } satisfies StatementResult
-    }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
-  }
-
-  private evaluateForOfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    if (getBoolean(node, "await")) {
-      throw new InterpreterRuntimeError("for await...of is not supported.", node)
-    }
-
-    const self = this
-    return Effect.gen(function* () {
-      const left = getNode(node, "left")
-      const right = yield* self.evaluateExpression(getNode(node, "right"))
-      const body = getNode(node, "body")
-
-      // Arrays iterate in place; strings iterate code points; Maps iterate [key, value]
-      // pairs and Sets iterate values over a snapshot (mutation during iteration is safe).
-      const iterable = Array.isArray(right) ? right : spreadItems(right)
-      if (iterable === undefined) {
-        throw new InterpreterRuntimeError("for...of requires an array, string, Map, or Set value in CodeMode.", node)
-      }
-
-      let declaration: { readonly pattern: AstNode; readonly mutable: boolean } | undefined
-      let assignmentName: string | undefined
-
-      if (left.type === "VariableDeclaration") {
-        const declarations = getArray(left, "declarations")
-        if (declarations.length !== 1) {
-          throw new InterpreterRuntimeError("for...of supports one declared binding.", left)
-        }
-
-        const declarator = asNode(declarations[0], "declarations[0]")
-        declaration = { pattern: getNode(declarator, "id"), mutable: getString(left, "kind") !== "const" }
-      } else if (left.type === "Identifier") {
-        assignmentName = getString(left, "name")
-      } else {
-        throw new InterpreterRuntimeError("Unsupported for...of binding.", left)
-      }
-
-      for (const value of iterable) {
-        if (declaration) {
-          self.pushScope()
-          yield* self.declarePattern(declaration.pattern, value, declaration.mutable, left)
-        } else if (assignmentName) {
-          self.setIdentifierValue(assignmentName, value, left)
-        }
-
-        const result = yield* self.evaluateStatement(body).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (declaration) self.popScope()
-            }),
-          ),
-        )
-
-        if (result.kind === "return") {
-          return result
-        }
-
-        if (result.kind === "break") {
-          return { kind: "none" }
-        }
-
-        if (result.kind === "value") {
-          self.lastValue = result.value
-        }
-
-        if (result.kind === "continue") {
-          continue
-        }
-      }
-
-      return { kind: "none" }
     })
   }
 
@@ -1142,26 +1291,25 @@ class Interpreter<R> {
   // references: plain data objects enumerate their own keys, arrays their index strings (plus
   // any own non-index properties, e.g. match results' index/groups - exactly Object.keys in
   // JS), and a tool reference the namespace/tool names at its path in the host tool tree.
-  // Returns undefined for everything else so callers can raise a contextual error.
-  private enumerableKeys(value: unknown): Array<string> | undefined {
+  // Yields None for everything else so callers can raise a contextual error.
+  private enumerableKeys(value: unknown): Effect.Effect<Option.Option<ReadonlyArray<string>>, ToolRuntimeError> {
     if (value instanceof ToolReference) {
-      return [...this.toolKeys(value.path)]
+      return Effect.asSome(this.toolKeys(value.path))
     }
     if (Array.isArray(value)) {
-      return Object.keys(value)
+      return Effect.succeedSome(Object.keys(value))
     }
-    if (value !== null && typeof value === "object" && !isRuntimeReference(value)) {
-      return Object.keys(value)
+    if (Predicate.isObjectOrArray(value) && !isRuntimeReference(value)) {
+      return Effect.succeedSome(Object.keys(value))
     }
-    return undefined
+    return Effect.succeedNone
   }
 
   private evaluateForInStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const self = this
-    return Effect.gen(function* () {
-      const left = getNode(node, "left")
-      const right = yield* self.evaluateExpression(getNode(node, "right"))
-      const body = getNode(node, "body")
+    return Effect.gen({ self: this }, function* () {
+      const left = yield* getNode(node, "left")
+      const right = yield* this.evaluateExpression(yield* getNode(node, "right"))
+      const body = yield* getNode(node, "body")
 
       // Keys are snapshotted up front (mutation during iteration is safe): plain objects
       // enumerate their own keys, arrays their index strings, and tool references the
@@ -1169,9 +1317,9 @@ class Interpreter<R> {
       // Anything else (strings, Maps, Sets, numbers, null, ...) is a deliberate error rather
       // than real JS's surprising behavior (indices for strings, zero iterations for
       // Maps/Sets/null): the hint points at the constructs that do what the program means.
-      const keys = self.enumerableKeys(right)
-      if (keys === undefined) {
-        throw new InterpreterRuntimeError(
+      const enumerated = yield* this.enumerableKeys(right)
+      if (Option.isNone(enumerated)) {
+        return yield* new InterpreterRuntimeError(
           "for...in requires a plain object, array, or tools reference in CodeMode. Use for...of for arrays/strings/Maps/Sets, or Object.keys(value) for a key list.",
           node,
         )
@@ -1181,31 +1329,34 @@ class Interpreter<R> {
       let assignmentName: string | undefined
 
       if (left.type === "VariableDeclaration") {
-        const declarations = getArray(left, "declarations")
+        const declarations = yield* getArray(left, "declarations")
         if (declarations.length !== 1) {
-          throw new InterpreterRuntimeError("for...in supports one declared binding.", left)
+          return yield* new InterpreterRuntimeError("for...in supports one declared binding.", left)
         }
 
-        const declarator = asNode(declarations[0], "declarations[0]")
-        declaration = { pattern: getNode(declarator, "id"), mutable: getString(left, "kind") !== "const" }
+        const declarator = yield* asNode(declarations[0], "declarations[0]")
+        declaration = {
+          pattern: yield* getNode(declarator, "id"),
+          mutable: (yield* getString(left, "kind")) !== "const",
+        }
       } else if (left.type === "Identifier") {
-        assignmentName = getString(left, "name")
+        assignmentName = yield* getString(left, "name")
       } else {
-        throw new InterpreterRuntimeError("Unsupported for...in binding.", left)
+        return yield* new InterpreterRuntimeError("Unsupported for...in binding.", left)
       }
 
-      for (const key of keys) {
+      for (const key of enumerated.value) {
         if (declaration) {
-          self.pushScope()
-          yield* self.declarePattern(declaration.pattern, key, declaration.mutable, left)
+          this.pushScope()
+          yield* this.declarePattern(declaration.pattern, key, declaration.mutable, left)
         } else if (assignmentName) {
-          self.setIdentifierValue(assignmentName, key, left)
+          yield* this.setIdentifierValue(assignmentName, key, left)
         }
 
-        const result = yield* self.evaluateStatement(body).pipe(
+        const result = yield* this.evaluateStatement(body).pipe(
           Effect.ensuring(
             Effect.sync(() => {
-              if (declaration) self.popScope()
+              if (declaration) this.popScope()
             }),
           ),
         )
@@ -1215,11 +1366,11 @@ class Interpreter<R> {
         }
 
         if (result.kind === "break") {
-          return { kind: "none" }
+          return { kind: "none" } satisfies StatementResult
         }
 
         if (result.kind === "value") {
-          self.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
 
         if (result.kind === "continue") {
@@ -1227,95 +1378,100 @@ class Interpreter<R> {
         }
       }
 
-      return { kind: "none" }
+      return { kind: "none" } satisfies StatementResult
     })
   }
 
-  private evaluateBreakStatement(node: AstNode): StatementResult {
-    const labelNode = getOptionalNode(node, "label")
-
-    if (labelNode) {
-      throw new InterpreterRuntimeError("Labeled break is not supported in v1.", node)
-    }
-
-    return { kind: "break" }
+  private evaluateBreakStatement(node: AstNode): Effect.Effect<StatementResult, InterpreterRuntimeError> {
+    return Effect.flatMap(getOptionalNode(node, "label"), (labelNode) =>
+      Option.isSome(labelNode)
+        ? Effect.fail(new InterpreterRuntimeError("Labeled break is not supported in v1.", node))
+        : Effect.succeed<StatementResult>({ kind: "break" }),
+    )
   }
 
-  private evaluateContinueStatement(node: AstNode): StatementResult {
-    const labelNode = getOptionalNode(node, "label")
-
-    if (labelNode) {
-      throw new InterpreterRuntimeError("Labeled continue is not supported in v1.", node)
-    }
-
-    return { kind: "continue" }
+  private evaluateContinueStatement(node: AstNode): Effect.Effect<StatementResult, InterpreterRuntimeError> {
+    return Effect.flatMap(getOptionalNode(node, "label"), (labelNode) =>
+      Option.isSome(labelNode)
+        ? Effect.fail(new InterpreterRuntimeError("Labeled continue is not supported in v1.", node))
+        : Effect.succeed<StatementResult>({ kind: "continue" }),
+    )
   }
 
   private evaluateThrowStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const argument = getNode(node, "argument")
-    return Effect.flatMap(this.evaluateExpression(argument), (value) => Effect.fail(new ProgramThrow(value)))
+    return Effect.flatMap(getNode(node, "argument"), (argument) =>
+      Effect.flatMap(this.evaluateExpression(argument), (value) => Effect.fail(new ProgramThrow(value))),
+    )
   }
 
   private evaluateTryStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    const body = getNode(node, "block")
-    const handler = getOptionalNode(node, "handler")
-    const finalizer = getOptionalNode(node, "finalizer")
-    const self = this
+    return Effect.gen({ self: this }, function* () {
+      const body = yield* getNode(node, "block")
+      const handler = yield* getOptionalNode(node, "handler")
+      const finalizer = yield* getOptionalNode(node, "finalizer")
 
-    const attempted = Effect.matchCauseEffect(this.evaluateStatement(body), {
-      onFailure: (cause) => {
-        if (cause.reasons.some(Cause.isInterruptReason) || !handler) {
-          return Effect.failCause(cause)
-        }
+      const attempted = Effect.matchCauseEffect(this.evaluateStatement(body), {
+        onFailure: (cause) => {
+          if (cause.reasons.some(Cause.isInterruptReason) || Option.isNone(handler)) {
+            return Effect.failCause(cause)
+          }
 
-        // The program sees a plain { message } error (or the thrown value itself) - see
-        // caughtErrorValue, shared with Promise.allSettled rejection reasons.
-        const caught = caughtErrorValue(Cause.squash(cause))
-        const parameter = getOptionalNode(handler, "param")
-        self.pushScope()
-        return Effect.gen(function* () {
-          if (parameter) yield* self.declarePattern(parameter, caught, true, handler)
-          return yield* self.evaluateStatement(getNode(handler, "body"))
-        }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
-      },
-      onSuccess: Effect.succeed,
-    })
+          // The program sees a plain { message } error (or the thrown value itself) - see
+          // caughtErrorValue, shared with Promise.allSettled rejection reasons.
+          const caught = caughtErrorValue(Cause.squash(cause))
+          const handlerNode = handler.value
+          return this.withScope(
+            Effect.gen({ self: this }, function* () {
+              const parameter = yield* getOptionalNode(handlerNode, "param")
+              if (Option.isSome(parameter)) yield* this.declarePattern(parameter.value, caught, true, handlerNode)
+              return yield* this.evaluateStatement(yield* getNode(handlerNode, "body"))
+            }),
+          )
+        },
+        onSuccess: Effect.succeed,
+      })
 
-    if (!finalizer) return attempted
+      if (Option.isNone(finalizer)) return yield* attempted
 
-    const isAbrupt = (result: StatementResult): boolean =>
-      result.kind === "return" || result.kind === "break" || result.kind === "continue"
+      const isAbrupt = (result: StatementResult): boolean =>
+        result.kind === "return" || result.kind === "break" || result.kind === "continue"
 
-    return Effect.matchCauseEffect(attempted, {
-      onFailure: (cause) =>
-        cause.reasons.some(Cause.isInterruptReason)
-          ? Effect.failCause(cause)
-          : Effect.flatMap(this.evaluateStatement(finalizer), (final) =>
-              isAbrupt(final) ? Effect.succeed(final) : Effect.failCause(cause),
-            ),
-      onSuccess: (result) =>
-        Effect.flatMap(this.evaluateStatement(finalizer), (final) =>
-          isAbrupt(final) ? Effect.succeed(final) : Effect.succeed(result),
-        ),
+      return yield* Effect.matchCauseEffect(attempted, {
+        onFailure: (cause) =>
+          cause.reasons.some(Cause.isInterruptReason)
+            ? Effect.failCause(cause)
+            : Effect.flatMap(this.evaluateStatement(finalizer.value), (final) =>
+                isAbrupt(final) ? Effect.succeed(final) : Effect.failCause(cause),
+              ),
+        onSuccess: (result) =>
+          Effect.flatMap(this.evaluateStatement(finalizer.value), (final) =>
+            isAbrupt(final) ? Effect.succeed(final) : Effect.succeed(result),
+          ),
+      })
     })
   }
 
   private evaluateVariableDeclaration(node: AstNode): Effect.Effect<void, unknown, R> {
-    const kind = getString(node, "kind")
-    const declarations = getArray(node, "declarations")
-    const self = this
-    return Effect.gen(function* () {
-      for (const declarationValue of declarations) {
-        const declaration = asNode(declarationValue, "declarations")
+    return Effect.gen({ self: this }, function* () {
+      const kind = yield* getString(node, "kind")
+      const declarations = yield* getArray(node, "declarations")
+      return yield* Effect.forEach(
+        declarations,
+        (declarationValue) =>
+          Effect.gen({ self: this }, function* () {
+            const declaration = yield* asNode(declarationValue, "declarations")
 
-        if (declaration.type !== "VariableDeclarator") {
-          throw new InterpreterRuntimeError("Unsupported variable declaration shape.", declaration)
-        }
+            if (declaration.type !== "VariableDeclarator") {
+              return yield* new InterpreterRuntimeError("Unsupported variable declaration shape.", declaration)
+            }
 
-        const init = getOptionalNode(declaration, "init")
-        const value = init ? yield* self.evaluateExpression(init) : undefined
-        yield* self.declarePattern(getNode(declaration, "id"), value, kind !== "const", declaration)
-      }
+            const init = yield* getOptionalNode(declaration, "init")
+            // `let x;` binds undefined.
+            const value = Option.getOrUndefined(yield* this.evaluateOptional(init))
+            return yield* this.declarePattern(yield* getNode(declaration, "id"), value, kind !== "const", declaration)
+          }),
+        { discard: true },
+      )
     })
   }
 
@@ -1325,81 +1481,95 @@ class Interpreter<R> {
     mutable: boolean,
     node: AstNode,
   ): Effect.Effect<void, unknown, R> {
-    const self = this
-    return Effect.gen(function* () {
-      if (pattern.type === "Identifier") {
-        self.declare(getString(pattern, "name"), value, mutable, node)
-        return
-      }
-
+    switch (pattern.type) {
+      case "Identifier":
+        return Effect.flatMap(getString(pattern, "name"), (name) => this.declare(name, value, mutable, node))
       // Default values: `x = expr` / `{ a = 1 }` - the default is evaluated only when the value is undefined.
-      if (pattern.type === "AssignmentPattern") {
-        const resolved = value === undefined ? yield* self.evaluateExpression(getNode(pattern, "right")) : value
-        yield* self.declarePattern(getNode(pattern, "left"), resolved, mutable, node)
-        return
-      }
+      case "AssignmentPattern":
+        return Effect.gen({ self: this }, function* () {
+          const resolved =
+            value === undefined ? yield* this.evaluateExpression(yield* getNode(pattern, "right")) : value
+          return yield* this.declarePattern(yield* getNode(pattern, "left"), resolved, mutable, node)
+        })
+      case "ObjectPattern":
+        return this.declareObjectPattern(pattern, value, mutable)
+      case "ArrayPattern":
+        return this.declareArrayPattern(pattern, value, mutable)
+      default:
+        return Effect.fail(new InterpreterRuntimeError(`Unsupported binding pattern '${pattern.type}'.`, pattern))
+    }
+  }
 
-      if (pattern.type === "ObjectPattern") {
-        if (value === null || typeof value !== "object" || Array.isArray(value) || isRuntimeReference(value)) {
-          throw new InterpreterRuntimeError(
-            "Object destructuring requires a data object value.",
-            pattern,
-            "InvalidDataValue",
-          )
-        }
+  private declareObjectPattern(pattern: AstNode, value: unknown, mutable: boolean): Effect.Effect<void, unknown, R> {
+    if (!Predicate.isObject(value) || isRuntimeReference(value)) {
+      return Effect.fail(
+        new InterpreterRuntimeError("Object destructuring requires a data object value.", pattern, "InvalidDataValue"),
+      )
+    }
+    let consumed = HashSet.empty<string>()
+    return Effect.flatMap(getArray(pattern, "properties"), (properties) =>
+      Effect.forEach(
+        properties,
+        (propertyValue) =>
+          Effect.gen({ self: this }, function* () {
+            const property = yield* asNode(propertyValue, "properties")
 
-        const consumed = new Set<string>()
-        for (const propertyValue of getArray(pattern, "properties")) {
-          const property = asNode(propertyValue, "properties")
-
-          // Object rest: `{ a, ...others }` - gather the not-yet-consumed own keys.
-          if (property.type === "RestElement") {
-            const rest: SafeObject = Object.create(null) as SafeObject
-            for (const [key, item] of Object.entries(value as SafeObject)) {
-              if (!consumed.has(key) && !isBlockedMember(key)) rest[key] = item
+            // Object rest: `{ a, ...others }` - gather the not-yet-consumed own keys.
+            if (property.type === "RestElement") {
+              const rest = makeSafeObject()
+              for (const [key, item] of Object.entries(value)) {
+                if (!HashSet.has(consumed, key) && !isBlockedMember(key)) rest[key] = item
+              }
+              return yield* this.declarePattern(yield* getNode(property, "argument"), rest, mutable, property)
             }
-            yield* self.declarePattern(getNode(property, "argument"), rest, mutable, property)
-            continue
-          }
 
-          if (
-            property.type !== "Property" ||
-            getBoolean(property, "computed") ||
-            getString(property, "kind") !== "init"
-          ) {
-            throw new InterpreterRuntimeError("Only named object destructuring properties are supported.", property)
-          }
+            if (
+              property.type !== "Property" ||
+              (yield* getBoolean(property, "computed")) ||
+              (yield* getString(property, "kind")) !== "init"
+            ) {
+              return yield* new InterpreterRuntimeError(
+                "Only named object destructuring properties are supported.",
+                property,
+              )
+            }
 
-          const keyNode = getNode(property, "key")
-          const key = keyNode.type === "Identifier" ? getString(keyNode, "name") : String(keyNode.value)
-          if (isBlockedMember(key)) {
-            throw new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, keyNode)
-          }
-          consumed.add(key)
-          yield* self.declarePattern(getNode(property, "value"), (value as SafeObject)[key], mutable, property)
+            const keyNode = yield* getNode(property, "key")
+            const key = keyNode.type === "Identifier" ? yield* getString(keyNode, "name") : String(keyNode.value)
+            if (isBlockedMember(key)) {
+              return yield* new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, keyNode)
+            }
+            consumed = HashSet.add(consumed, key)
+            return yield* this.declarePattern(yield* getNode(property, "value"), value[key], mutable, property)
+          }),
+        { discard: true },
+      ),
+    )
+  }
+
+  private declareArrayPattern(pattern: AstNode, value: unknown, mutable: boolean): Effect.Effect<void, unknown, R> {
+    if (!Array.isArray(value)) {
+      return Effect.fail(new InterpreterRuntimeError("Array destructuring requires an array value.", pattern))
+    }
+    return Effect.gen({ self: this }, function* () {
+      for (const [index, item] of (yield* getArray(pattern, "elements")).entries()) {
+        if (Predicate.isNull(item)) continue
+        const element = yield* asNode(item, `elements[${index}]`)
+        // Array rest: `[head, ...tail]` - binds the remaining elements (must be last).
+        if (element.type === "RestElement") {
+          return yield* this.declarePattern(yield* getNode(element, "argument"), value.slice(index), mutable, element)
         }
-        return
+        yield* this.declarePattern(element, value[index], mutable, pattern)
       }
+      return yield* Effect.void
+    })
+  }
 
-      if (pattern.type === "ArrayPattern") {
-        if (!Array.isArray(value)) {
-          throw new InterpreterRuntimeError("Array destructuring requires an array value.", pattern)
-        }
-
-        for (const [index, item] of getArray(pattern, "elements").entries()) {
-          if (item === null) continue
-          const element = asNode(item, `elements[${index}]`)
-          // Array rest: `[head, ...tail]` - binds the remaining elements (must be last).
-          if (element.type === "RestElement") {
-            yield* self.declarePattern(getNode(element, "argument"), value.slice(index), mutable, element)
-            break
-          }
-          yield* self.declarePattern(element, value[index], mutable, pattern)
-        }
-        return
-      }
-
-      throw new InterpreterRuntimeError(`Unsupported binding pattern '${pattern.type}'.`, pattern)
+  // Evaluates an optional expression: None when the syntax omits it (`return;`, `let x;`).
+  private evaluateOptional(node: Option.Option<AstNode>): Effect.Effect<Option.Option<unknown>, unknown, R> {
+    return Option.match(node, {
+      onNone: () => Effect.succeedNone,
+      onSome: (expression) => Effect.asSome(this.evaluateExpression(expression)),
     })
   }
 
@@ -1410,14 +1580,12 @@ class Interpreter<R> {
         // sandbox regex from those (the host `value` instance is never exposed).
         const regex = node.regex
         if (isRecord(regex) && typeof regex.pattern === "string") {
-          return Effect.sync(() =>
-            this.constructRegExp([regex.pattern, typeof regex.flags === "string" ? regex.flags : ""], node),
-          )
+          return this.constructRegExp([regex.pattern, typeof regex.flags === "string" ? regex.flags : ""], node)
         }
-        return Effect.sync(() => boundedData(node.value, "Literal"))
+        return Effect.fromResult(boundedData(node.value, "Literal"))
       }
       case "Identifier":
-        return Effect.sync(() => this.getIdentifierValue(getString(node, "name"), node))
+        return Effect.flatMap(getString(node, "name"), (name) => this.getIdentifierValue(name, node))
       case "BinaryExpression":
         return this.evaluateBinaryExpression(node)
       case "LogicalExpression":
@@ -1430,12 +1598,15 @@ class Interpreter<R> {
         return this.evaluateCallExpression(node)
       case "ArrowFunctionExpression":
       case "FunctionExpression":
-        return Effect.sync(() => this.createFunction(node))
+        return this.createFunction(node)
       case "MemberExpression":
         return this.readMember(node)
       case "ChainExpression":
-        return Effect.map(this.evaluateExpression(getNode(node, "expression")), (value) =>
-          value === OptionalShortCircuit ? undefined : value,
+        return Effect.flatMap(getNode(node, "expression"), (expression) =>
+          Effect.map(this.evaluateExpression(expression), (value) =>
+            // eslint-disable-next-line effect/no-undefined-use-option -- (b) a short-circuited optional chain gives the program the JS undefined value, as in JS
+            value === OptionalShortCircuit ? undefined : value,
+          ),
         )
       case "ObjectExpression":
         return this.evaluateObjectExpression(node)
@@ -1447,220 +1618,259 @@ class Interpreter<R> {
         return this.evaluateConditionalExpression(node)
       case "UpdateExpression":
         return this.evaluateUpdateExpression(node)
-      case "AwaitExpression": {
+      case "AwaitExpression":
         // `await` resolves a promise value; awaiting anything else is a passthrough no-op,
         // matching real JS semantics for non-thenables.
-        const self = this
-        return Effect.flatMap(this.evaluateExpression(getNode(node, "argument")), (value) =>
-          value instanceof SandboxPromise ? self.settlePromise(value, node) : Effect.succeed(value),
+        return Effect.flatMap(getNode(node, "argument"), (argument) =>
+          Effect.flatMap(this.evaluateExpression(argument), (value) =>
+            value instanceof SandboxPromise ? this.settlePromise(value, node) : Effect.succeed(value),
+          ),
         )
-      }
       case "NewExpression":
         return this.evaluateNewExpression(node)
       default:
-        throw unsupportedSyntax(node.type, node)
+        return Effect.fail(unsupportedSyntax(node.type, node))
     }
   }
 
   private evaluateNewExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const callee = getNode(node, "callee")
-    if (callee.type !== "Identifier") {
-      throw unsupportedSyntax("NewExpression", node)
-    }
-    const name = getString(callee, "name")
-    const argNodes = getArray(node, "arguments")
-    const self = this
-    if (name === "Promise") {
-      throw new InterpreterRuntimeError(
-        "new Promise(...) is not supported in CodeMode; tool calls already return promises - call the tool and await the result.",
-        node,
-        "UnsupportedSyntax",
-        [supportedSyntaxMessage],
-      )
-    }
-    if (errorConstructors.has(name)) {
-      return Effect.gen(function* () {
-        const arg =
-          argNodes.length > 0 ? yield* self.evaluateExpression(asNode(argNodes[0], "arguments[0]")) : undefined
+    return Effect.gen({ self: this }, function* () {
+      const callee = yield* getNode(node, "callee")
+      if (callee.type !== "Identifier") {
+        return yield* unsupportedSyntax("NewExpression", node)
+      }
+      const name = yield* getString(callee, "name")
+      const argNodes = yield* getArray(node, "arguments")
+      if (name === "Promise") {
+        return yield* new InterpreterRuntimeError(
+          "new Promise(...) is not supported in CodeMode; tool calls already return promises - call the tool and await the result.",
+          node,
+          "UnsupportedSyntax",
+          [supportedSyntaxMessage],
+        )
+      }
+      if (HashSet.has(errorConstructors, name)) {
+        if (argNodes.length === 0) return createErrorValue(name, "")
+        const arg = yield* this.evaluateExpression(yield* asNode(argNodes[0], "arguments[0]"))
         return createErrorValue(name, arg === undefined ? "" : coerceToString(arg))
-      })
-    }
-    if (valueConstructors.has(name)) {
-      return Effect.gen(function* () {
-        const args = yield* self.evaluateCallArguments(argNodes)
+      }
+      if (HashSet.has(valueConstructors, name)) {
+        const args = yield* this.evaluateCallArguments(argNodes)
         switch (name) {
           case "Date":
-            return self.constructDate(args)
+            return yield* this.constructDate(args)
           case "RegExp":
-            return self.constructRegExp(args, node)
+            return yield* this.constructRegExp(args, node)
           case "Map":
-            return self.constructMap(args[0], node)
+            return yield* this.constructMap(args[0], node)
           case "Set":
-            return self.constructSet(args[0], node)
+            return yield* this.constructSet(args[0], node)
           case "URL":
-            return self.constructURL(args, node)
+            return yield* this.constructURL(args, node)
           default:
-            return self.constructURLSearchParams(args[0], node)
+            return yield* this.constructURLSearchParams(args[0], node)
         }
-      })
-    }
-    throw unsupportedSyntax("NewExpression", node)
+      }
+      return yield* unsupportedSyntax("NewExpression", node)
+    })
   }
 
-  private constructDate(args: Array<unknown>): SandboxDate {
-    if (args.length === 0) return new SandboxDate(Date.now())
+  private constructDate(args: Array<unknown>): Effect.Effect<SandboxDate> {
+    // `new Date()` reads the current time from the Effect clock.
+    if (args.length === 0) return Effect.map(Clock.currentTimeMillis, (now) => new SandboxDate(now))
     if (args.length === 1) {
       const arg = args[0]
-      if (arg instanceof SandboxDate) return new SandboxDate(arg.time)
-      if (typeof arg === "number") return new SandboxDate(new Date(arg).getTime())
-      if (typeof arg === "string") return new SandboxDate(Date.parse(arg))
-      return new SandboxDate(Number.NaN)
-    }
-    // new Date(year, month, day?, hours?, ...) - local-time component form.
-    const parts = args.map((arg) => coerceToNumber(arg))
-    return new SandboxDate(new Date(...(parts as [number, number])).getTime())
-  }
-
-  private constructRegExp(args: Array<unknown>, node: AstNode): SandboxRegExp {
-    const first = args[0]
-    const pattern =
-      first instanceof SandboxRegExp ? first.regex.source : first === undefined ? "" : coerceToString(first)
-    const flagsArg = args[1]
-    if (flagsArg !== undefined && typeof flagsArg !== "string") {
-      throw new InterpreterRuntimeError(
-        `RegExp flags must be a string of flag characters (e.g. "g", "gi"), not ${flagsArg === null ? "null" : typeof flagsArg}.`,
-        node,
-      )
-    }
-    const flags = flagsArg ?? (first instanceof SandboxRegExp ? first.regex.flags : "")
-    try {
-      return new SandboxRegExp(pattern, flags)
-    } catch (error) {
-      // Say which part was rejected and how to fix it, instead of passing the engine
-      // message through bare. A flags failure names the flags; a pattern failure gets the
-      // escaping hint (the usual cause is an unescaped metacharacter in a built-up string).
-      const reason = regexFailureReason(error)
-      throw new InterpreterRuntimeError(
-        /flag/i.test(reason)
-          ? `new RegExp(...) received invalid flags ${JSON.stringify(flags)} (${reason}). Valid flags are d, g, i, m, s, u, v, and y.`
-          : `new RegExp(...) received ${JSON.stringify(pattern)}, which is not a valid regular expression pattern (${reason}). ${escapeRegexHint}`,
-        node,
-      ).as("SyntaxError")
-    }
-  }
-
-  private constructMap(init: unknown, node: AstNode): SandboxMap {
-    const target = new SandboxMap()
-    if (init === undefined || init === null) return target
-    const entries = Array.isArray(init)
-      ? init
-      : init instanceof SandboxMap
-        ? Array.from(init.map.entries(), ([key, item]): Array<unknown> => [key, item])
-        : undefined
-    if (entries === undefined) {
-      throw new InterpreterRuntimeError(
-        "new Map(...) expects an array of [key, value] pairs, a Map, or no argument.",
-        node,
-      )
-    }
-    for (const pair of entries) {
-      if (!Array.isArray(pair)) {
-        throw new InterpreterRuntimeError("new Map(...) expects [key, value] pairs.", node)
+      if (arg instanceof SandboxDate) return Effect.succeed(new SandboxDate(arg.time))
+      // A time value is clipped exactly as `new Date(number)` clips it; DateTime.make is None
+      // where JS produces an invalid date (non-finite or out of range), which reads as NaN.
+      if (typeof arg === "number") {
+        return Effect.succeed(
+          new SandboxDate(
+            Option.match(DateTime.make(arg), { onNone: () => Number.NaN, onSome: DateTime.toEpochMillis }),
+          ),
+        )
       }
-      target.map.set(pair[0], pair[1])
+      if (typeof arg === "string") return Effect.succeed(new SandboxDate(parseTime(arg)))
+      return Effect.succeed(new SandboxDate(Number.NaN))
     }
-    return target
-  }
-
-  private constructSet(init: unknown, node: AstNode): SandboxSet {
-    const target = new SandboxSet()
-    if (init === undefined || init === null) return target
-    const items = Array.isArray(init)
-      ? init
-      : init instanceof SandboxSet
-        ? Array.from(init.set.values())
-        : typeof init === "string"
-          ? Array.from(init)
-          : undefined
-    if (items === undefined) {
-      throw new InterpreterRuntimeError("new Set(...) expects an array, Set, string, or no argument.", node)
-    }
-    for (const item of items) target.set.add(item)
-    return target
-  }
-
-  private constructURL(args: Array<unknown>, node: AstNode): SandboxURL {
-    if (args.length === 0) {
-      throw new InterpreterRuntimeError("new URL(...) requires a URL string and an optional base URL.", node).as(
-        "TypeError",
-      )
-    }
-    const input = urlArgument(args[0], "new URL input")
-    const base = args[1] === undefined ? undefined : urlArgument(args[1], "new URL base")
-    try {
-      return new SandboxURL(new URL(input, base))
-    } catch {
-      throw new InterpreterRuntimeError(
-        `new URL(...) received an invalid URL${base === undefined ? "" : " or base URL"}.`,
-        node,
-      ).as("TypeError")
-    }
-  }
-
-  private constructURLSearchParams(init: unknown, node: AstNode): SandboxURLSearchParams {
-    if (init === undefined) return new SandboxURLSearchParams(new URLSearchParams())
-    if (init instanceof SandboxURLSearchParams) {
-      return new SandboxURLSearchParams(new URLSearchParams(init.params))
-    }
-    if (typeof init === "string") return new SandboxURLSearchParams(new URLSearchParams(init))
-    if (init === null || typeof init === "number" || typeof init === "boolean") {
-      return new SandboxURLSearchParams(new URLSearchParams(coerceToString(init)))
-    }
-    if (init instanceof SandboxMap) {
-      return this.constructURLSearchParams(
-        Array.from(init.map.entries(), ([key, value]) => [key, value]),
-        node,
-      )
-    }
-    if (Array.isArray(init)) {
-      const entries = init.map((pair) => {
-        if (!Array.isArray(pair) || pair.length !== 2) {
-          throw new InterpreterRuntimeError(
-            "new URLSearchParams(...) expects an array of [name, value] pairs.",
-            node,
-          ).as("TypeError")
-        }
-        return [uriArgument(pair[0], "URLSearchParams name"), uriArgument(pair[1], "URLSearchParams value")] as [
-          string,
-          string,
-        ]
-      })
-      return new SandboxURLSearchParams(new URLSearchParams(entries))
-    }
-    if (isSandboxValue(init)) return new SandboxURLSearchParams(new URLSearchParams())
-    const data = boundedData(init, "new URLSearchParams input")
-    if (data === null || typeof data !== "object") {
-      throw new InterpreterRuntimeError(
-        "new URLSearchParams(...) expects a query string, data object, array of pairs, or URLSearchParams.",
-        node,
-      ).as("TypeError")
-    }
-    return new SandboxURLSearchParams(
-      new URLSearchParams(Object.fromEntries(Object.entries(data).map(([key, value]) => [key, coerceToString(value)]))),
+    // new Date(year, month, day?, hours?, ...) - local-time component form. Omitted components
+    // take the defaults the Date constructor uses (day 1, all time fields 0).
+    const [year, month, day = 1, hours = 0, minutes = 0, seconds = 0, milliseconds = 0] = args.map((arg) =>
+      coerceToNumber(arg),
+    )
+    // DateTime.makeZoned(wall, { timeZone: zoneMakeLocal(), adjustForTimeZone: true }) is not the
+    // same: it is wrong for negative years (Intl offsets) and for second-precision historic offsets
+    // (Asia/Kolkata in 1905 is off by 530 s), so the host constructor resolves the local time.
+    return Effect.succeed(
+      new SandboxDate(
+        // eslint-disable-next-line effect/no-new-date-use-datetime -- (b) sandbox local-time Date components need host Date resolution; DateTime.makeZoned gives wrong results for negative years and second-precision historic offsets
+        new Date(year, month, day, hours, minutes, seconds, milliseconds).getTime(),
+      ),
     )
   }
 
-  private evaluateBinaryExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const operator = getString(node, "operator")
-    const self = this
+  private constructRegExp(args: Array<unknown>, node: AstNode): Effect.Effect<SandboxRegExp, InterpreterRuntimeError> {
     return Effect.gen(function* () {
-      const lhs = yield* self.evaluateExpression(getNode(node, "left"))
-      const rhs = yield* self.evaluateExpression(getNode(node, "right"))
+      const first = args[0]
+      const pattern =
+        first instanceof SandboxRegExp ? first.regex.source : first === undefined ? "" : coerceToString(first)
+      const flagsArg = args[1]
+      if (flagsArg !== undefined && typeof flagsArg !== "string") {
+        return yield* new InterpreterRuntimeError(
+          `RegExp flags must be a string of flag characters (e.g. "g", "gi"), not ${Predicate.isNull(flagsArg) ? "null" : typeof flagsArg}.`,
+          node,
+        )
+      }
+      const flags = flagsArg ?? (first instanceof SandboxRegExp ? first.regex.flags : "")
+      return yield* Effect.try({
+        try: () => new SandboxRegExp(pattern, flags),
+        catch: (error) => {
+          // Say which part was rejected and how to fix it, instead of passing the engine
+          // message through bare. A flags failure names the flags; a pattern failure gets the
+          // escaping hint (the usual cause is an unescaped metacharacter in a built-up string).
+          const reason = regexFailureReason(error)
+          return new InterpreterRuntimeError(
+            /flag/i.test(reason)
+              ? `new RegExp(...) received invalid flags ${quoteJsonString(flags)} (${reason}). Valid flags are d, g, i, m, s, u, v, and y.`
+              : `new RegExp(...) received ${quoteJsonString(pattern)}, which is not a valid regular expression pattern (${reason}). ${escapeRegexHint}`,
+            node,
+          ).as("SyntaxError")
+        },
+      })
+    })
+  }
+
+  private constructMap(init: unknown, node: AstNode): Effect.Effect<SandboxMap, InterpreterRuntimeError> {
+    return Effect.gen(function* () {
+      const target = new SandboxMap()
+      if (Predicate.isNullish(init)) return target
+      if (!Array.isArray(init) && !(init instanceof SandboxMap)) {
+        return yield* new InterpreterRuntimeError(
+          "new Map(...) expects an array of [key, value] pairs, a Map, or no argument.",
+          node,
+        )
+      }
+      const entries = Array.isArray(init)
+        ? init
+        : Array.from(init.map.entries(), ([key, item]): Array<unknown> => [key, item])
+      for (const pair of entries) {
+        if (!Array.isArray(pair)) {
+          return yield* new InterpreterRuntimeError("new Map(...) expects [key, value] pairs.", node)
+        }
+        target.map.set(pair[0], pair[1])
+      }
+      return target
+    })
+  }
+
+  private constructSet(init: unknown, node: AstNode): Effect.Effect<SandboxSet, InterpreterRuntimeError> {
+    return Effect.gen(function* () {
+      const target = new SandboxSet()
+      if (Predicate.isNullish(init)) return target
+      if (!Array.isArray(init) && !(init instanceof SandboxSet) && typeof init !== "string") {
+        return yield* new InterpreterRuntimeError("new Set(...) expects an array, Set, string, or no argument.", node)
+      }
+      const items = Array.isArray(init)
+        ? init
+        : init instanceof SandboxSet
+          ? Array.from(init.set.values())
+          : Array.from(init)
+      for (const item of items) target.set.add(item)
+      return target
+    })
+  }
+
+  private constructURL(
+    args: Array<unknown>,
+    node: AstNode,
+  ): Effect.Effect<SandboxURL, InterpreterRuntimeError | ToolRuntimeError> {
+    return Effect.gen(function* () {
+      if (args.length === 0) {
+        return yield* new InterpreterRuntimeError(
+          "new URL(...) requires a URL string and an optional base URL.",
+          node,
+        ).as("TypeError")
+      }
+      const input = yield* urlArgument(args[0], "new URL input")
+      const base = yield* Effect.transposeOption(
+        Option.map(Option.fromUndefinedOr(args[1]), (value) => urlArgument(value, "new URL base")),
+      )
+      return yield* Effect.try({
+        try: () => new SandboxURL(new URL(input, Option.getOrUndefined(base))),
+        catch: () =>
+          new InterpreterRuntimeError(
+            `new URL(...) received an invalid URL${Option.isNone(base) ? "" : " or base URL"}.`,
+            node,
+          ).as("TypeError"),
+      })
+    })
+  }
+
+  private constructURLSearchParams(
+    init: unknown,
+    node: AstNode,
+  ): Effect.Effect<SandboxURLSearchParams, InterpreterRuntimeError | ToolRuntimeError> {
+    return Effect.gen({ self: this }, function* () {
+      if (init === undefined) return new SandboxURLSearchParams(new URLSearchParams())
+      if (init instanceof SandboxURLSearchParams) {
+        return new SandboxURLSearchParams(new URLSearchParams(init.params))
+      }
+      if (typeof init === "string") return new SandboxURLSearchParams(new URLSearchParams(init))
+      if (Predicate.isNull(init) || typeof init === "number" || typeof init === "boolean") {
+        return new SandboxURLSearchParams(new URLSearchParams(coerceToString(init)))
+      }
+      if (init instanceof SandboxMap) {
+        return yield* this.constructURLSearchParams(
+          Array.from(init.map.entries(), ([key, value]) => [key, value]),
+          node,
+        )
+      }
+      if (Array.isArray(init)) {
+        const entries = yield* Effect.forEach(
+          init,
+          (pair): Effect.Effect<[string, string], InterpreterRuntimeError | ToolRuntimeError> =>
+            !Array.isArray(pair) || pair.length !== 2
+              ? Effect.fail(
+                  new InterpreterRuntimeError(
+                    "new URLSearchParams(...) expects an array of [name, value] pairs.",
+                    node,
+                  ).as("TypeError"),
+                )
+              : Effect.all([
+                  uriArgument(pair[0], "URLSearchParams name"),
+                  uriArgument(pair[1], "URLSearchParams value"),
+                ]),
+        )
+        return new SandboxURLSearchParams(new URLSearchParams(entries))
+      }
+      if (isSandboxValue(init)) return new SandboxURLSearchParams(new URLSearchParams())
+      const data = yield* Effect.fromResult(boundedData(init, "new URLSearchParams input"))
+      if (!Predicate.isObjectOrArray(data)) {
+        return yield* new InterpreterRuntimeError(
+          "new URLSearchParams(...) expects a query string, data object, array of pairs, or URLSearchParams.",
+          node,
+        ).as("TypeError")
+      }
+      return new SandboxURLSearchParams(
+        new URLSearchParams(
+          Object.fromEntries(Object.entries(data).map(([key, value]) => [key, coerceToString(value)])),
+        ),
+      )
+    })
+  }
+
+  private evaluateBinaryExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+    return Effect.gen({ self: this }, function* () {
+      const operator = yield* getString(node, "operator")
+      const lhs = yield* this.evaluateExpression(yield* getNode(node, "left"))
+      const rhs = yield* this.evaluateExpression(yield* getNode(node, "right"))
       // Like `typeof`, `instanceof` observes any value without coercing it (a promise or
       // function operand is a legitimate question, not an error), so it is handled before
       // the data-only operand check.
-      if (operator === "instanceof") return instanceofValue(lhs, rhs, node)
-      return boundedData(self.applyBinaryOperator(operator, lhs, rhs, node), "Binary expression result")
+      if (operator === "instanceof") return yield* instanceofValue(lhs, rhs, node)
+      return yield* Effect.fromResult(
+        boundedData(yield* this.applyBinaryOperator(operator, lhs, rhs, node), "Binary expression result"),
+      )
     })
   }
 
@@ -1669,9 +1879,16 @@ class Interpreter<R> {
    * semantics. Shared by binary expressions and compound assignment (`x op= y` must behave
    * exactly like `x = x op y`, coercion included).
    */
-  private applyBinaryOperator(operator: string, lhs: unknown, rhs: unknown, node: AstNode): unknown {
+  private applyBinaryOperator(
+    operator: string,
+    lhs: unknown,
+    rhs: unknown,
+    node: AstNode,
+  ): Effect.Effect<unknown, InterpreterRuntimeError> {
     if (containsOpaqueReference(lhs) || containsOpaqueReference(rhs)) {
-      throw new InterpreterRuntimeError("Binary operators require data values in CodeMode.", node, "InvalidDataValue")
+      return Effect.fail(
+        new InterpreterRuntimeError("Binary operators require data values in CodeMode.", node, "InvalidDataValue"),
+      )
     }
     // Data objects/arrays are null-prototype, so JS's ToPrimitive throws an opaque host
     // "No default value" TypeError when an operator coerces them. Coerce to their JS string
@@ -1681,150 +1898,164 @@ class Interpreter<R> {
     // Identity (=== / !==) and the right operand of `in` keep their raw object value.
     const coerceOperand = (operand: unknown): unknown => {
       if (operand instanceof SandboxDate) return operator === "+" ? coerceToString(operand) : operand.time
-      return operand !== null && typeof operand === "object" ? coerceToString(operand) : operand
+      return Predicate.isObjectOrArray(operand) ? coerceToString(operand) : operand
     }
-    const bothObjects = lhs !== null && typeof lhs === "object" && rhs !== null && typeof rhs === "object"
+    const bothObjects = Predicate.isObjectOrArray(lhs) && Predicate.isObjectOrArray(rhs)
     const l = coerceOperand(lhs)
     const r = coerceOperand(rhs)
+    // After coercion both operands are primitives, so each operator applies the JS primitive
+    // semantics directly: `+` concatenates when either side is a string and adds otherwise, the
+    // other arithmetic and bitwise operators apply ToNumber, and relational operators compare
+    // two strings by code unit and anything else numerically.
     switch (operator) {
       case "+":
-        return (l as string) + (r as string)
+        return Effect.succeed(
+          typeof l === "string" || typeof r === "string" ? String(l) + String(r) : Number(l) + Number(r),
+        )
       case "-":
-        return (l as number) - (r as number)
+        return Effect.succeed(Number(l) - Number(r))
       case "*":
-        return (l as number) * (r as number)
+        return Effect.succeed(Number(l) * Number(r))
       case "/":
-        return (l as number) / (r as number)
+        return Effect.succeed(Number(l) / Number(r))
       case "%":
-        return (l as number) % (r as number)
+        return Effect.succeed(Number(l) % Number(r))
       case "**":
-        return (l as number) ** (r as number)
+        return Effect.succeed(Number(l) ** Number(r))
       // Two objects compare by identity in JS (no ToPrimitive); only object-vs-primitive coerces.
       case "==":
-        return bothObjects ? lhs === rhs : l == r
+        return Effect.succeed(bothObjects ? lhs === rhs : l == r)
       case "===":
-        return lhs === rhs
+        return Effect.succeed(lhs === rhs)
       case "!=":
-        return bothObjects ? lhs !== rhs : l != r
+        return Effect.succeed(bothObjects ? lhs !== rhs : l != r)
       case "!==":
-        return lhs !== rhs
+        return Effect.succeed(lhs !== rhs)
       case "<":
-        return (l as string) < (r as string)
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l < r : Number(l) < Number(r))
       case "<=":
-        return (l as string) <= (r as string)
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l <= r : Number(l) <= Number(r))
       case ">":
-        return (l as string) > (r as string)
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l > r : Number(l) > Number(r))
       case ">=":
-        return (l as string) >= (r as string)
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l >= r : Number(l) >= Number(r))
       case "&":
-        return (l as number) & (r as number)
+        return Effect.succeed(Number(l) & Number(r))
       case "|":
-        return (l as number) | (r as number)
+        return Effect.succeed(Number(l) | Number(r))
       case "^":
-        return (l as number) ^ (r as number)
+        return Effect.succeed(Number(l) ^ Number(r))
       case "<<":
-        return (l as number) << (r as number)
+        return Effect.succeed(Number(l) << Number(r))
       case ">>":
-        return (l as number) >> (r as number)
+        return Effect.succeed(Number(l) >> Number(r))
       case ">>>":
-        return (l as number) >>> (r as number)
+        return Effect.succeed(Number(l) >>> Number(r))
       case "in":
-        if (rhs === null || typeof rhs !== "object") {
-          throw new InterpreterRuntimeError("The 'in' operator requires a data object on the right-hand side.", node)
+        if (!Predicate.isObjectOrArray(rhs)) {
+          return Effect.fail(
+            new InterpreterRuntimeError("The 'in' operator requires a data object on the right-hand side.", node),
+          )
         }
         // Own properties only, so arrays don't leak the host Array.prototype (map/constructor/...).
-        return Object.hasOwn(rhs as object, coerceOperand(lhs) as PropertyKey)
+        return Effect.succeed(Object.hasOwn(rhs, String(coerceOperand(lhs))))
       default:
-        throw new InterpreterRuntimeError(`Unsupported binary operator '${operator}'.`, node)
+        return Effect.fail(new InterpreterRuntimeError(`Unsupported binary operator '${operator}'.`, node))
     }
   }
 
   private evaluateLogicalExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const operator = getString(node, "operator")
-    return Effect.flatMap(this.evaluateExpression(getNode(node, "left")), (left) => {
-      if (operator === "&&") return left ? this.evaluateExpression(getNode(node, "right")) : Effect.succeed(left)
-      if (operator === "||") return left ? Effect.succeed(left) : this.evaluateExpression(getNode(node, "right"))
-      if (operator === "??")
-        return left !== null && left !== undefined
-          ? Effect.succeed(left)
-          : this.evaluateExpression(getNode(node, "right"))
-      throw new InterpreterRuntimeError(`Unsupported logical operator '${operator}'.`, node)
+    return Effect.gen({ self: this }, function* () {
+      const operator = yield* getString(node, "operator")
+      const left = yield* this.evaluateExpression(yield* getNode(node, "left"))
+      if (operator === "&&") return left ? yield* this.evaluateExpression(yield* getNode(node, "right")) : left
+      if (operator === "||") return left ? left : yield* this.evaluateExpression(yield* getNode(node, "right"))
+      if (operator === "??") {
+        return Predicate.isNotNullish(left) ? left : yield* this.evaluateExpression(yield* getNode(node, "right"))
+      }
+      return yield* new InterpreterRuntimeError(`Unsupported logical operator '${operator}'.`, node)
     })
   }
 
   private evaluateUnaryExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const operator = getString(node, "operator")
-    const argument = getNode(node, "argument")
-    // `typeof undeclaredIdentifier` is `"undefined"` in JS (never a ReferenceError), so
-    // feature-detection guards like `typeof x !== "undefined"` don't crash. Short-circuit before
-    // evaluating the argument; a declared-but-TDZ binding still falls through to the normal throw.
-    if (operator === "typeof" && argument.type === "Identifier" && !this.resolveBinding(getString(argument, "name"))) {
-      return Effect.succeed("undefined")
-    }
-    return Effect.map(this.evaluateExpression(argument), (value) => {
+    return Effect.gen({ self: this }, function* () {
+      const operator = yield* getString(node, "operator")
+      const argument = yield* getNode(node, "argument")
+      // `typeof undeclaredIdentifier` is `"undefined"` in JS (never a ReferenceError), so
+      // feature-detection guards like `typeof x !== "undefined"` don't crash. Short-circuit before
+      // evaluating the argument; a declared-but-TDZ binding still falls through to the normal throw.
+      if (
+        operator === "typeof" &&
+        argument.type === "Identifier" &&
+        Option.isNone(this.resolveBinding(yield* getString(argument, "name")))
+      ) {
+        return "undefined"
+      }
+      const value = yield* this.evaluateExpression(argument)
       // `typeof` and `!` never throw in JS - they observe any value (functions and runtime
       // references included) without coercing it, so feature detection and negation work.
       if (operator === "typeof") return typeofValue(value)
       if (operator === "!") return !value
       if (containsOpaqueReference(value)) {
-        throw new InterpreterRuntimeError("Unary operators require data values in CodeMode.", node, "InvalidDataValue")
+        return yield* new InterpreterRuntimeError(
+          "Unary operators require data values in CodeMode.",
+          node,
+          "InvalidDataValue",
+        )
       }
       // Numeric/bitwise unary operators ToPrimitive their operand; a Date yields its time value
       // (`+date` is the epoch-ms idiom), other null-prototype data objects/arrays coerce to
       // their JS string form first (see evaluateBinaryExpression).
       const operand =
-        value instanceof SandboxDate
-          ? value.time
-          : value !== null && typeof value === "object"
-            ? coerceToString(value)
-            : value
+        value instanceof SandboxDate ? value.time : Predicate.isObjectOrArray(value) ? coerceToString(value) : value
       let result: unknown
       switch (operator) {
         case "+":
-          result = +(operand as number)
+          result = Number(operand)
           break
         case "-":
-          result = -(operand as number)
+          result = -Number(operand)
           break
         case "~":
-          result = ~(operand as number)
+          result = ~Number(operand)
           break
         default:
-          throw new InterpreterRuntimeError(`Unsupported unary operator '${operator}'.`, node)
+          return yield* new InterpreterRuntimeError(`Unsupported unary operator '${operator}'.`, node)
       }
-      return boundedData(result, "Unary expression result")
+      return yield* Effect.fromResult(boundedData(result, "Unary expression result"))
     })
   }
 
   private evaluateAssignmentExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const left = getNode(node, "left")
-    const operator = getString(node, "operator")
-    const self = this
-    return Effect.gen(function* () {
+    return Effect.gen({ self: this }, function* () {
+      const left = yield* getNode(node, "left")
+      const operator = yield* getString(node, "operator")
       if (operator === "??=" || operator === "||=" || operator === "&&=") {
-        return yield* self.evaluateLogicalAssignment(node, left, operator)
+        return yield* this.evaluateLogicalAssignment(node, left, operator)
       }
-      const rightValue = yield* self.evaluateExpression(getNode(node, "right"))
+      const rightValue = yield* this.evaluateExpression(yield* getNode(node, "right"))
       if (left.type === "Identifier") {
-        const name = getString(left, "name")
-        if (operator === "=") return self.setIdentifierValue(name, rightValue, left)
-        const next = boundedData(
-          self.applyCompoundAssignment(operator, self.getIdentifierValue(name, left), rightValue, node),
-          "Assignment result",
+        const name = yield* getString(left, "name")
+        if (operator === "=") return yield* this.setIdentifierValue(name, rightValue, left)
+        const current = yield* this.getIdentifierValue(name, left)
+        const next = yield* Effect.fromResult(
+          boundedData(yield* this.applyCompoundAssignment(operator, current, rightValue, node), "Assignment result"),
         )
-        return self.setIdentifierValue(name, next, left)
+        return yield* this.setIdentifierValue(name, next, left)
       }
       if (left.type === "MemberExpression") {
-        if (operator === "=") return yield* self.writeMember(left, rightValue)
-        return yield* self.modifyMember(left, (current) => {
-          const next = boundedData(
-            self.applyCompoundAssignment(operator, current, rightValue, node),
-            "Assignment result",
-          )
-          return Effect.succeed({ write: true, next, result: next })
-        })
+        if (operator === "=") return yield* this.writeMember(left, rightValue)
+        return yield* this.modifyMember(left, (current) =>
+          Effect.flatMap(this.applyCompoundAssignment(operator, current, rightValue, node), (value) =>
+            Effect.map(Effect.fromResult(boundedData(value, "Assignment result")), (next) => ({
+              write: true,
+              next,
+              result: next,
+            })),
+          ),
+        )
       }
-      throw new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left)
+      return yield* new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left)
     })
   }
 
@@ -1833,109 +2064,116 @@ class Interpreter<R> {
     left: AstNode,
     operator: string,
   ): Effect.Effect<unknown, unknown, R> {
-    const self = this
     const shouldAssign = (current: unknown): boolean =>
-      operator === "??=" ? current === null || current === undefined : operator === "||=" ? !current : Boolean(current)
+      operator === "??=" ? Predicate.isNullish(current) : operator === "||=" ? !current : Boolean(current)
     if (left.type === "Identifier") {
-      const name = getString(left, "name")
-      return Effect.gen(function* () {
-        const current = self.getIdentifierValue(name, left)
+      return Effect.gen({ self: this }, function* () {
+        const name = yield* getString(left, "name")
+        const current = yield* this.getIdentifierValue(name, left)
         if (!shouldAssign(current)) return current
-        const rightValue = yield* self.evaluateExpression(getNode(node, "right"))
-        return self.setIdentifierValue(name, rightValue, left)
+        const rightValue = yield* this.evaluateExpression(yield* getNode(node, "right"))
+        return yield* this.setIdentifierValue(name, rightValue, left)
       })
     }
     if (left.type === "MemberExpression") {
       // Resolve the member exactly once; evaluate the RHS only if we actually assign.
-      return self.modifyMember(left, (current) =>
+      return this.modifyMember(left, (current) =>
         shouldAssign(current)
-          ? Effect.map(self.evaluateExpression(getNode(node, "right")), (rightValue) => ({
-              write: true,
-              next: rightValue,
-              result: rightValue,
-            }))
+          ? Effect.flatMap(getNode(node, "right"), (right) =>
+              Effect.map(this.evaluateExpression(right), (rightValue) => ({
+                write: true,
+                next: rightValue,
+                result: rightValue,
+              })),
+            )
           : Effect.succeed({ write: false, next: current, result: current }),
       )
     }
-    throw new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left)
+    return Effect.fail(
+      new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left),
+    )
   }
 
   private evaluateUpdateExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const operator = getString(node, "operator")
-    const argument = getNode(node, "argument")
-    const prefix = getBoolean(node, "prefix")
+    return Effect.gen({ self: this }, function* () {
+      const operator = yield* getString(node, "operator")
+      const argument = yield* getNode(node, "argument")
+      const prefix = yield* getBoolean(node, "prefix")
 
-    const increment = operator === "++" ? 1 : operator === "--" ? -1 : undefined
+      if (operator !== "++" && operator !== "--") {
+        return yield* new InterpreterRuntimeError(`Unsupported update operator '${operator}'.`, node)
+      }
+      const increment = operator === "++" ? 1 : -1
 
-    if (increment === undefined) {
-      throw new InterpreterRuntimeError(`Unsupported update operator '${operator}'.`, node)
-    }
-
-    if (argument.type === "Identifier") {
-      return Effect.sync(() => {
-        const name = getString(argument, "name")
-        const current = Number(this.getIdentifierValue(name, argument))
+      if (argument.type === "Identifier") {
+        const name = yield* getString(argument, "name")
+        const current = Number(yield* this.getIdentifierValue(name, argument))
         const next = current + increment
-        this.setIdentifierValue(name, next, argument)
+        yield* this.setIdentifierValue(name, next, argument)
         return prefix ? next : current
-      })
-    }
+      }
 
-    if (argument.type === "MemberExpression") {
-      return this.modifyMember(argument, (current) => {
-        const value = Number(current)
-        const next = value + increment
-        return Effect.succeed({ write: true, next, result: prefix ? next : value })
-      })
-    }
+      if (argument.type === "MemberExpression") {
+        return yield* this.modifyMember(argument, (current) => {
+          const value = Number(current)
+          const next = value + increment
+          return Effect.succeed({ write: true, next, result: prefix ? next : value })
+        })
+      }
 
-    throw new InterpreterRuntimeError("Update target must be an Identifier or MemberExpression.", argument)
+      return yield* new InterpreterRuntimeError("Update target must be an Identifier or MemberExpression.", argument)
+    })
   }
 
   private evaluateCallExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    const callee = getNode(node, "callee")
-    const argNodes = getArray(node, "arguments")
+    return Effect.gen({ self: this }, function* () {
+      const callee = yield* getNode(node, "callee")
+      const argNodes = yield* getArray(node, "arguments")
 
-    const self = this
-    return Effect.gen(function* () {
-      const callable = yield* self.evaluateExpression(callee)
+      const callable = yield* this.evaluateExpression(callee)
       if (callable === OptionalShortCircuit) return OptionalShortCircuit
-      if ((callable === null || callable === undefined) && node.optional === true) return OptionalShortCircuit
+      if (Predicate.isNullish(callable) && node.optional === true) return OptionalShortCircuit
 
-      const args = yield* self.evaluateCallArguments(argNodes)
+      const args = yield* this.evaluateCallArguments(argNodes)
 
       if (callable instanceof ToolReference) {
-        if (callable.path.length === 0) throw new InterpreterRuntimeError("The tools root is not callable.", callee)
+        if (callable.path.length === 0) {
+          return yield* new InterpreterRuntimeError("The tools root is not callable.", callee)
+        }
         // An un-awaited tool call is a first-class promise value; the call itself starts now.
-        return yield* self.createToolCallPromise(callable.path, args)
+        return yield* this.createToolCallPromise(callable.path, args)
       }
       if (callable instanceof PromiseMethodReference) {
-        return yield* self.invokePromiseMethod(callable, args, node)
+        return yield* this.invokePromiseMethod(callable, args, node)
       }
       if (callable instanceof CodeModeFunction) {
-        return yield* self.invokeFunction(callable, args)
+        return yield* this.invokeFunction(callable, args)
       }
       if (callable instanceof IntrinsicReference) {
-        return yield* self.invokeIntrinsic(callable, args, node)
+        return yield* this.invokeIntrinsic(callable, args, node)
       }
       if (callable instanceof GlobalMethodReference) {
-        if (callable.namespace === "console") return self.invokeConsole(callable.name, args, node)
+        if (callable.namespace === "console") return yield* this.invokeConsole(callable.name, args, node)
         if (callable.namespace === "Object" && args[0] instanceof ToolReference) {
-          return self.invokeObjectMethodOnTools(callable.name, args[0] as ToolReference, node)
+          return yield* this.invokeObjectMethodOnTools(callable.name, args[0], node)
         }
-        return boundedData(invokeGlobalMethod(callable, args, node), `${callable.namespace}.${callable.name} result`)
+        return yield* Effect.fromResult(
+          boundedData(yield* invokeGlobalMethod(callable, args, node), `${callable.namespace}.${callable.name} result`),
+        )
       }
       if (callable instanceof CoercionFunction) {
-        return boundedData(invokeCoercion(callable, args, node), `${callable.name} result`)
+        return yield* Effect.fromResult(
+          boundedData(yield* invokeCoercion(callable, args, node), `${callable.name} result`),
+        )
       }
       if (callable instanceof UriFunction) {
-        return invokeUriFunction(callable, args, node)
+        return yield* invokeUriFunction(callable, args, node)
       }
       // `Error("msg")` without `new` constructs an error exactly like `new Error("msg")`, as in JS.
       if (callable instanceof ErrorConstructorReference) {
         return createErrorValue(callable.name, args[0] === undefined ? "" : coerceToString(args[0]))
       }
-      throw new InterpreterRuntimeError("Only tools are callable in CodeMode.", callee)
+      return yield* new InterpreterRuntimeError("Only tools are callable in CodeMode.", callee)
     })
   }
 
@@ -1943,29 +2181,47 @@ class Interpreter<R> {
   // namespace/tool names from the host tool tree - the discovery idiom a model reaches for
   // first. Every other Object helper cannot produce data from a tool reference, so it fails
   // with a pointer at the working idioms instead of the generic plain-objects-only message.
-  private invokeObjectMethodOnTools(name: string, ref: ToolReference, node: AstNode): unknown {
+  private invokeObjectMethodOnTools(
+    name: string,
+    ref: ToolReference,
+    node: AstNode,
+  ): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> {
     if (name === "keys") {
-      return boundedData(this.enumerableKeys(ref)!, "Object.keys result")
+      return Effect.flatMap(this.toolKeys(ref.path), (keys) =>
+        Effect.fromResult(boundedData(keys, "Object.keys result")),
+      )
     }
-    throw new InterpreterRuntimeError(
-      `Object.${name}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.$codemode.search({ query }) for signatures.`,
-      node,
-      "InvalidDataValue",
+    return Effect.fail(
+      new InterpreterRuntimeError(
+        `Object.${name}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.$codemode.search({ query }) for signatures.`,
+        node,
+        "InvalidDataValue",
+      ),
     )
   }
 
-  private invokeConsole(name: string, args: Array<unknown>, node: AstNode): undefined {
-    if (!consoleMethods.has(name))
-      throw new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node)
-    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args, node)))
-    return undefined
+  // console.* records one formatted log line; the call itself evaluates to undefined, as in JS.
+  private invokeConsole(
+    name: string,
+    args: Array<unknown>,
+    node: AstNode,
+  ): Effect.Effect<void, InterpreterRuntimeError | ToolRuntimeError> {
+    if (!HashSet.has(consoleMethods, name)) {
+      return Effect.fail(new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node))
+    }
+    return Effect.suspend(() =>
+      Effect.map(Effect.fromResult(this.formatConsoleMessage(name, args)), (message) => {
+        this.logs.push(publicErrorMessage(message))
+      }),
+    )
   }
 
-  private formatConsoleMessage(name: string, args: Array<unknown>, node: AstNode): string {
-    if (name === "dir") return args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0])
-    if (name === "table") return this.formatConsoleTable(args[0], args[1], node)
+  // Only console.table can fail: its data goes through the data checkpoint.
+  private formatConsoleMessage(name: string, args: Array<unknown>): Result.Result<string, ToolRuntimeError> {
+    if (name === "dir") return Result.succeed(args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0]))
+    if (name === "table") return this.formatConsoleTable(args[0], args[1])
     const prefix = name === "warn" ? "[warn] " : name === "error" ? "[error] " : name === "debug" ? "[debug] " : ""
-    return `${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`
+    return Result.succeed(`${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`)
   }
 
   // Console arguments format deeply and totally: values render as a debugger would show them
@@ -1978,16 +2234,26 @@ class Interpreter<R> {
     if (value === undefined) return "undefined"
     // A top-level string prints bare; nested strings are JSON-quoted (see formatConsoleValue).
     if (typeof value === "string") return value
-    return this.formatConsoleValue(value, new Set(), 0)
+    return this.formatConsoleValue(value, new WeakSet(), 0)
   }
 
-  private formatConsoleValue(value: unknown, seen: Set<object>, depth: number): string {
-    // Nested undefined renders as null, matching what JSON boundary output would show.
-    if (value === null || value === undefined) return "null"
-    if (typeof value === "string") return JSON.stringify(value)
-    // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
-    if (typeof value === "number" || typeof value === "boolean") return String(value)
-    if (typeof value !== "object") return String(value)
+  private formatConsoleValue(value: unknown, seen: WeakSet<object>, depth: number): string {
+    switch (typeof value) {
+      // Nested undefined renders as null, matching what JSON boundary output would show.
+      case "undefined":
+        return "null"
+      case "string":
+        return quoteJsonString(value)
+      // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
+      case "number":
+      case "boolean":
+      case "bigint":
+      case "symbol":
+      case "function":
+        return String(value)
+    }
+    // Only objects remain here; a null object renders as null.
+    if (!Predicate.isObjectOrArray(value)) return "null"
     if (value instanceof SandboxPromise) return "[Promise (await it to get its value)]"
     if (value instanceof SandboxDate) return coerceToString(value)
     if (value instanceof SandboxRegExp) return coerceToString(value)
@@ -1996,76 +2262,76 @@ class Interpreter<R> {
     if (depth > MAX_CONSOLE_DEPTH) return "..."
     if (seen.has(value)) return "[Circular]"
     if (value instanceof SandboxMap) {
-      seen.add(value)
-      try {
-        const entries = Array.from(value.map.entries(), ([key, item]): Array<unknown> => [key, item])
-        return `Map(${value.map.size}) ${this.formatConsoleValue(entries, seen, depth + 1)}`
-      } finally {
-        seen.delete(value)
-      }
+      const entries = Array.from(value.map.entries(), ([key, item]): Array<unknown> => [key, item])
+      return renderOnPath(
+        seen,
+        value,
+        () => `Map(${value.map.size}) ${this.formatConsoleValue(entries, seen, depth + 1)}`,
+      )
     }
     if (value instanceof SandboxSet) {
-      seen.add(value)
-      try {
-        return `Set(${value.set.size}) ${this.formatConsoleValue(Array.from(value.set.values()), seen, depth + 1)}`
-      } finally {
-        seen.delete(value)
-      }
+      return renderOnPath(
+        seen,
+        value,
+        () => `Set(${value.set.size}) ${this.formatConsoleValue(Array.from(value.set.values()), seen, depth + 1)}`,
+      )
     }
     if (isRuntimeReference(value)) return "[CodeMode reference]"
-    seen.add(value)
-    try {
-      if (Array.isArray(value)) {
-        return `[${value.map((item) => this.formatConsoleValue(item, seen, depth + 1)).join(",")}]`
-      }
-      return `{${Object.entries(value)
-        .map(([key, item]) => `${JSON.stringify(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
-        .join(",")}}`
-    } finally {
-      seen.delete(value)
-    }
+    return renderOnPath(seen, value, () =>
+      Array.isArray(value)
+        ? `[${value.map((item) => this.formatConsoleValue(item, seen, depth + 1)).join(",")}]`
+        : `{${Object.entries(value)
+            .map(([key, item]) => `${quoteJsonString(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
+            .join(",")}}`,
+    )
   }
 
-  private formatConsoleTable(value: unknown, columnsArgument: unknown, node: AstNode): string {
-    if (value === undefined) return "undefined"
+  private formatConsoleTable(value: unknown, columnsArgument: unknown): Result.Result<string, ToolRuntimeError> {
+    if (value === undefined) return Result.succeed("undefined")
     // Sandbox values are legitimate table data (cells render their friendly forms); only
     // truly opaque references (functions, tools, promises) collapse to the marker.
-    if (containsOpaqueReference(value)) return "[CodeMode reference]"
-    const data = boundedData(value, "console.table argument")
-    const columns = this.consoleTableColumns(columnsArgument, node)
-    const rows = this.consoleTableRows(data, columns)
-    const keys = columns ?? Array.from(new Set(rows.flatMap((row) => Object.keys(row.values))))
-    const header = ["(index)", ...keys].join("\t")
-    return [
-      header,
-      ...rows.map((row) => [row.index, ...keys.map((key) => this.formatConsoleTableCell(row.values[key]))].join("\t")),
-    ].join("\n")
+    if (containsOpaqueReference(value)) return Result.succeed("[CodeMode reference]")
+    return Result.flatMap(boundedData(value, "console.table argument"), (data) =>
+      Result.map(this.consoleTableColumns(columnsArgument), (columns) => {
+        const rows = this.consoleTableRows(data, columns)
+        const keys = Option.getOrElse(columns, () => Arr.dedupe(rows.flatMap((row) => Object.keys(row.values))))
+        const header = ["(index)", ...keys].join("\t")
+        return [
+          header,
+          ...rows.map((row) =>
+            [row.index, ...keys.map((key) => this.formatConsoleTableCell(row.values[key]))].join("\t"),
+          ),
+        ].join("\n")
+      }),
+    )
   }
 
-  private consoleTableColumns(value: unknown, node: AstNode): ReadonlyArray<string> | undefined {
-    if (value === undefined) return undefined
-    if (containsRuntimeReference(value)) return undefined
-    const columns = copyOut(copyIn(value, "console.table columns"), true)
-    return Array.isArray(columns) ? columns.map((column) => String(column)) : undefined
+  // The explicit column list of console.table(data, columns); None shows every column.
+  private consoleTableColumns(value: unknown): Result.Result<Option.Option<ReadonlyArray<string>>, ToolRuntimeError> {
+    if (value === undefined || containsRuntimeReference(value)) return Result.succeedNone
+    return Result.map(copyIn(value, "console.table columns"), (copied) => {
+      const columns = copyOut(copied, true)
+      return Array.isArray(columns) ? Option.some(columns.map((column) => String(column))) : Option.none()
+    })
   }
 
   private consoleTableRows(
     data: unknown,
-    columns: ReadonlyArray<string> | undefined,
+    columns: Option.Option<ReadonlyArray<string>>,
   ): Array<{ readonly index: string; readonly values: Record<string, unknown> }> {
     if (Array.isArray(data)) {
       return data.map((item, index) => ({ index: String(index), values: this.consoleTableValues(item, columns) }))
     }
-    if (data !== null && typeof data === "object" && !isSandboxValue(data)) {
+    if (Predicate.isObjectOrArray(data) && !isSandboxValue(data)) {
       return Object.entries(data).map(([index, item]) => ({ index, values: this.consoleTableValues(item, columns) }))
     }
     return [{ index: "0", values: { Value: data } }]
   }
 
-  private consoleTableValues(value: unknown, columns: ReadonlyArray<string> | undefined): Record<string, unknown> {
-    if (value !== null && typeof value === "object" && !Array.isArray(value) && !isSandboxValue(value)) {
-      const source = value as Record<string, unknown>
-      if (columns !== undefined) return Object.fromEntries(columns.map((column) => [column, source[column]]))
+  private consoleTableValues(value: unknown, columns: Option.Option<ReadonlyArray<string>>): Record<string, unknown> {
+    if (Predicate.isObject(value) && !isSandboxValue(value)) {
+      const source = value
+      if (Option.isSome(columns)) return Object.fromEntries(columns.value.map((column) => [column, source[column]]))
       return Object.fromEntries(Object.entries(source))
     }
     return { Value: value }
@@ -2074,29 +2340,30 @@ class Interpreter<R> {
   private formatConsoleTableCell(value: unknown): string {
     if (value === undefined) return ""
     if (typeof value === "string") return value
-    return this.formatConsoleValue(value, new Set(), 0)
+    return this.formatConsoleValue(value, new WeakSet(), 0)
   }
 
+  // Evaluates call arguments left to right; each argument contributes one value, or all the
+  // items of a spread argument.
   private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> {
-    const self = this
-    return Effect.gen(function* () {
-      const args: Array<unknown> = []
+    return Effect.gen({ self: this }, function* () {
+      let args = Chunk.empty<unknown>()
       for (const [index, arg] of argNodes.entries()) {
-        const argNode = asNode(arg, `arguments[${index}]`)
-        if (argNode.type === "SpreadElement") {
-          const spread = yield* self.evaluateExpression(getNode(argNode, "argument"))
-          const items = spreadItems(spread)
-          if (items === undefined)
-            throw new InterpreterRuntimeError(
-              "Spread arguments require an array, string, Map, or Set in CodeMode.",
-              argNode,
-            )
-          args.push(...items)
-        } else {
-          args.push(yield* self.evaluateExpression(argNode))
+        const argNode = yield* asNode(arg, `arguments[${index}]`)
+        if (argNode.type !== "SpreadElement") {
+          args = Chunk.append(args, yield* this.evaluateExpression(argNode))
+          continue
         }
+        const spread = yield* this.evaluateExpression(yield* getNode(argNode, "argument"))
+        const items = spreadItems(spread)
+        if (items === undefined)
+          return yield* new InterpreterRuntimeError(
+            "Spread arguments require an array, string, Map, or Set in CodeMode.",
+            argNode,
+          )
+        args = Chunk.appendAll(args, Chunk.fromIterable(items))
       }
-      return args
+      return Chunk.toArray(args)
     })
   }
 
@@ -2110,24 +2377,23 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<unknown, unknown, R> {
-    const self = this
     if (ref.name === "resolve") {
       // Promise.resolve of a promise is that promise (JS flattens); anything else is a
       // promise already fulfilled with the value.
       const value = args[0]
-      return Effect.succeed(
-        value instanceof SandboxPromise ? value : new SandboxPromise(undefined, Effect.succeed(value)),
-      )
+      return Effect.succeed(value instanceof SandboxPromise ? value : SandboxPromise.settled(Effect.succeed(value)))
     }
     if (ref.name === "reject") {
-      return Effect.sync(() => new SandboxPromise(undefined, Effect.fail(new ProgramThrow(args[0]))))
+      return Effect.sync(() => SandboxPromise.settled(Effect.fail(new ProgramThrow(args[0]))))
     }
 
     const items = Array.isArray(args[0]) ? args[0] : spreadItems(args[0])
     if (items === undefined) {
-      throw new InterpreterRuntimeError(
-        `Promise.${ref.name} expects an array of promises or plain values (e.g. Promise.${ref.name}(items.map((item) => tools.ns.tool(item)))).`,
-        node,
+      return Effect.fail(
+        new InterpreterRuntimeError(
+          `Promise.${ref.name} expects an array of promises or plain values (e.g. Promise.${ref.name}(items.map((item) => tools.ns.tool(item)))).`,
+          node,
+        ),
       )
     }
 
@@ -2139,32 +2405,24 @@ class Interpreter<R> {
         const settles = items.map((item) =>
           item instanceof SandboxPromise ? this.settlePromise(item, node) : Effect.succeed(item),
         )
-        return Effect.gen(function* () {
-          const values: Array<unknown> = []
-          for (const settle of settles) values.push(yield* settle)
-          return values
-        })
+        return Effect.all(settles)
       }
       case "allSettled": {
         const observations = items.map((item) =>
           item instanceof SandboxPromise
-            ? Effect.map(this.observePromise(item), (exit) => ({ promise: item as SandboxPromise | undefined, exit }))
-            : Effect.succeed({ promise: undefined as SandboxPromise | undefined, exit: Exit.succeed(item as unknown) }),
+            ? Effect.map(this.observePromise(item), (exit) => ({ promise: Option.some(item), exit }))
+            : Effect.succeed({ promise: Option.none<SandboxPromise>(), exit: Exit.succeed<unknown>(item) }),
         )
-        return Effect.gen(function* () {
-          const outcomes: Array<unknown> = []
-          for (const observation of observations) {
-            const { exit, promise } = yield* observation
+        return Effect.forEach(observations, (observation) =>
+          Effect.flatMap(observation, ({ exit, promise }): Effect.Effect<SafeObject, unknown> => {
             if (Exit.isSuccess(exit)) {
-              outcomes.push(
-                Object.assign(Object.create(null) as SafeObject, { status: "fulfilled", value: exit.value }),
-              )
-              continue
+              return Effect.succeed(Object.assign(makeSafeObject(), { status: "fulfilled", value: exit.value }))
             }
-            const raceInterrupted = promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)
+            const raceInterrupted =
+              Option.exists(promise, (settled) => settled.interrupted) && Cause.hasInterruptsOnly(exit.cause)
             if (Cause.hasInterruptsOnly(exit.cause) && !raceInterrupted) {
               // Execution teardown (timeout/host interruption), not a program-level rejection.
-              return yield* Effect.failCause(exit.cause)
+              return Effect.failCause(exit.cause)
             }
             const thrown = raceInterrupted
               ? new InterpreterRuntimeError(
@@ -2172,82 +2430,85 @@ class Interpreter<R> {
                   node,
                 )
               : Cause.squash(exit.cause)
-            outcomes.push(
-              Object.assign(Object.create(null) as SafeObject, {
+            return Effect.succeed(
+              Object.assign(makeSafeObject(), {
                 status: "rejected",
                 reason: caughtErrorValue(thrown),
               }),
             )
-          }
-          return outcomes
-        })
-      }
-      case "race": {
-        if (items.length === 0) {
-          throw new InterpreterRuntimeError(
-            "Promise.race([]) would never settle; provide at least one promise or value.",
-            node,
-          )
-        }
-        const observations = items.map((item, index) =>
-          item instanceof SandboxPromise
-            ? Effect.map(this.observePromise(item), (exit) => ({ index, exit }))
-            : Effect.succeed({ index, exit: Exit.succeed(item as unknown) }),
+          }),
         )
-        return Effect.gen(function* () {
-          // First settlement (fulfilled OR rejected) wins; the observations never fail, so
-          // racing them yields exactly that. Losing in-flight calls are then interrupted.
-          const winner = yield* Effect.raceAll(observations)
-          for (const [index, item] of items.entries()) {
-            if (index === winner.index || !(item instanceof SandboxPromise) || item.fiber === undefined) continue
-            item.interrupted = true
-            yield* Fiber.interrupt(item.fiber)
-          }
-          const winningItem = items[winner.index]
-          return yield* self.unwrapPromiseExit(
-            winningItem instanceof SandboxPromise ? winningItem : undefined,
-            winner.exit,
-            node,
-          )
-        })
       }
     }
+
+    // The one method left is Promise.race.
+    if (items.length === 0) {
+      return Effect.fail(
+        new InterpreterRuntimeError(
+          "Promise.race([]) would never settle; provide at least one promise or value.",
+          node,
+        ),
+      )
+    }
+    const observations = items.map((item, index) =>
+      item instanceof SandboxPromise
+        ? Effect.map(this.observePromise(item), (exit) => ({ index, exit }))
+        : Effect.succeed({ index, exit: Exit.succeed(item as unknown) }),
+    )
+    return Effect.gen({ self: this }, function* () {
+      // First settlement (fulfilled OR rejected) wins; the observations never fail, so
+      // racing them yields exactly that. Losing in-flight calls are then interrupted.
+      const winner = yield* Effect.raceAll(observations)
+      for (const [index, item] of items.entries()) {
+        if (index === winner.index || !(item instanceof SandboxPromise) || Option.isNone(item.fiber)) continue
+        item.interrupted = true
+        yield* Fiber.interrupt(item.fiber.value)
+      }
+      const winningItem = items[winner.index]
+      return yield* this.unwrapPromiseExit(
+        winningItem instanceof SandboxPromise ? Option.some(winningItem) : Option.none(),
+        winner.exit,
+        node,
+      )
+    })
   }
 
   private invokeFunction(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
-    const self = this
     return Effect.suspend(() => {
-      const savedScopes = self.scopes
-      self.scopes = [...fn.capturedScopes, new Map<string, Binding>()]
-      const run = Effect.gen(function* () {
+      const savedScopes = this.scopes
+      this.scopes = [...fn.capturedScopes, MutableHashMap.empty<string, Binding>()]
+      const run = Effect.gen({ self: this }, function* () {
         // Seed every parameter name into the scope as a TDZ slot first, so a default that
         // references another parameter resolves to that (uninitialized) param rather than
         // silently falling through to an outer binding of the same name - matching JS.
-        const paramScope = self.currentScope()
+        const paramScope = yield* this.currentScope()
         for (const parameter of fn.parameters) {
-          for (const name of collectPatternNames(parameter)) {
-            paramScope.set(name, { mutable: true, value: undefined, initialized: false })
+          for (const name of yield* collectPatternNames(parameter)) {
+            MutableHashMap.set(paramScope, name, { mutable: true, initialized: false })
           }
         }
         for (const [index, parameter] of fn.parameters.entries()) {
           if (parameter.type === "RestElement") {
-            yield* self.declarePattern(getNode(parameter, "argument"), args.slice(index), true, parameter)
+            yield* this.declarePattern(yield* getNode(parameter, "argument"), args.slice(index), true, parameter)
             break
           }
-          yield* self.declarePattern(parameter, args[index], true, parameter)
+          yield* this.declarePattern(parameter, args[index], true, parameter)
         }
 
         if (fn.body.type === "BlockStatement") {
-          const result = yield* self.evaluateStatement(fn.body)
-          return result.kind === "return" || result.kind === "value" ? result.value : undefined
+          const result = yield* this.evaluateStatement(fn.body)
+          // A body that completes without `return` returns undefined.
+          const completion =
+            result.kind === "return" || result.kind === "value" ? Option.some(result.value) : Option.none()
+          return Option.getOrUndefined(completion)
         }
 
-        return yield* self.evaluateExpression(fn.body)
+        return yield* this.evaluateExpression(fn.body)
       })
       return run.pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            self.scopes = savedScopes
+            this.scopes = savedScopes
           }),
         ),
       )
@@ -2266,19 +2527,19 @@ class Interpreter<R> {
       ) {
         return this.invokeStringReplacer(ref.receiver, ref.name, args, node)
       }
-      return Effect.succeed(invokeStringMethod(ref.receiver, ref.name, args, node))
+      return invokeStringMethod(ref.receiver, ref.name, args, node)
     }
     if (typeof ref.receiver === "number") {
-      return Effect.succeed(invokeNumberMethod(ref.receiver, ref.name, args, node))
+      return invokeNumberMethod(ref.receiver, ref.name, args, node)
     }
     if (Array.isArray(ref.receiver)) {
       return this.invokeArrayMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxDate) {
-      return Effect.succeed(invokeDateMethod(ref.receiver, ref.name, node))
+      return invokeDateMethod(ref.receiver, ref.name, node)
     }
     if (ref.receiver instanceof SandboxRegExp) {
-      return Effect.succeed(invokeRegExpMethod(ref.receiver, ref.name, args, node))
+      return invokeRegExpMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxMap) {
       return this.invokeMapMethod(ref.receiver, ref.name, args, node)
@@ -2287,12 +2548,12 @@ class Interpreter<R> {
       return this.invokeSetMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxURL) {
-      return Effect.succeed(invokeURLMethod(ref.receiver, ref.name, node))
+      return invokeURLMethod(ref.receiver, ref.name, node)
     }
     if (ref.receiver instanceof SandboxURLSearchParams) {
       return this.invokeURLSearchParamsMethod(ref.receiver, ref.name, args, node)
     }
-    throw new InterpreterRuntimeError(`Method '${ref.name}' is not available in CodeMode.`, node)
+    return Effect.fail(new InterpreterRuntimeError(`Method '${ref.name}' is not available in CodeMode.`, node))
   }
 
   private invokeStringReplacer(
@@ -2301,57 +2562,66 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<unknown, unknown, R> {
-    const apply = this.applyCollectionCallback(args[1], `String.${name}`, node)
-    const matches: Array<{ readonly match: string; readonly offset: number; readonly args: Array<unknown> }> = []
-    const collect = (...callbackArgs: Array<unknown>): string => {
-      const match = callbackArgs[0]
-      const groups = callbackArgs[callbackArgs.length - 1]
-      const hasGroups = groups !== null && typeof groups === "object"
-      const offset = callbackArgs[callbackArgs.length - (hasGroups ? 3 : 2)]
-      if (typeof match !== "string" || typeof offset !== "number") {
-        throw new InterpreterRuntimeError(`String.${name} produced an invalid replacement match.`, node)
-      }
-      if (hasGroups) {
-        const safeGroups: SafeObject = Object.create(null) as SafeObject
-        for (const [key, group] of Object.entries(groups)) {
-          if (!isBlockedMember(key)) safeGroups[key] = group
+    return Effect.gen({ self: this }, function* () {
+      const apply = yield* this.applyCollectionCallback(args[1], `String.${name}`, node)
+      let matches = Chunk.empty<{ readonly match: string; readonly offset: number; readonly args: Array<unknown> }>()
+      // The host replace drives `collect` synchronously; an impossible callback shape is
+      // recorded and reported once the host call returns.
+      let invalidMatch = false
+      const collect = (...callbackArgs: Array<unknown>): string => {
+        const match = callbackArgs[0]
+        const groups = callbackArgs[callbackArgs.length - 1]
+        const hasGroups = Predicate.isObjectOrArray(groups)
+        const offset = callbackArgs[callbackArgs.length - (hasGroups ? 3 : 2)]
+        if (typeof match !== "string" || typeof offset !== "number") {
+          invalidMatch = true
+          return ""
         }
-        callbackArgs[callbackArgs.length - 1] = safeGroups
+        if (hasGroups) {
+          const safeGroups = makeSafeObject()
+          for (const [key, group] of Object.entries(groups)) {
+            if (!isBlockedMember(key)) safeGroups[key] = group
+          }
+          callbackArgs[callbackArgs.length - 1] = safeGroups
+        }
+        matches = Chunk.append(matches, { match, offset, args: callbackArgs })
+        return match
       }
-      matches.push({ match, offset, args: callbackArgs })
-      return match
-    }
 
-    const pattern = args[0]
-    if (pattern instanceof SandboxRegExp) {
-      if (name === "replaceAll" && !pattern.regex.global) {
-        throw new InterpreterRuntimeError(
-          `String.replaceAll requires a regular expression with the global (g) flag: write /${pattern.regex.source}/${pattern.regex.flags}g, or use String.replace to replace only the first match.`,
-          node,
-        )
+      const pattern = args[0]
+      if (pattern instanceof SandboxRegExp) {
+        if (name === "replaceAll" && !pattern.regex.global) {
+          return yield* new InterpreterRuntimeError(
+            `String.replaceAll requires a regular expression with the global (g) flag: write /${pattern.regex.source}/${pattern.regex.flags}g, or use String.replace to replace only the first match.`,
+            node,
+          )
+        }
+        if (name === "replace") value.replace(pattern.regex, collect)
+        else value.replaceAll(pattern.regex, collect)
+      } else {
+        if (typeof pattern !== "string") {
+          return yield* new InterpreterRuntimeError(`String.${name} expects argument 1 to be a string.`, node)
+        }
+        if (name === "replace") value.replace(pattern, collect)
+        else value.replaceAll(pattern, collect)
       }
-      if (name === "replace") value.replace(pattern.regex, collect)
-      else value.replaceAll(pattern.regex, collect)
-    } else {
-      if (typeof pattern !== "string") {
-        throw new InterpreterRuntimeError(`String.${name} expects argument 1 to be a string.`, node)
+      if (invalidMatch) {
+        return yield* new InterpreterRuntimeError(`String.${name} produced an invalid replacement match.`, node)
       }
-      if (name === "replace") value.replace(pattern, collect)
-      else value.replaceAll(pattern, collect)
-    }
 
-    return Effect.gen(function* () {
       const output: Array<string> = []
       let end = 0
       for (const match of matches) {
         output.push(
           value.slice(end, match.offset),
-          coerceToString(boundedData(yield* apply(match.args), `String.${name} replacer result`)),
+          coerceToString(
+            yield* Effect.fromResult(boundedData(yield* apply(match.args), `String.${name} replacer result`)),
+          ),
         )
         end = match.offset + match.match.length
       }
       output.push(value.slice(end))
-      return boundedData(output.join(""), `String.${name} result`)
+      return yield* Effect.fromResult(boundedData(output.join(""), `String.${name} result`))
     })
   }
 
@@ -2361,20 +2631,21 @@ class Interpreter<R> {
     callback: unknown,
     name: string,
     node: AstNode,
-  ): (args: Array<unknown>) => Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<(args: Array<unknown>) => Effect.Effect<unknown, unknown, R>, InterpreterRuntimeError> {
     if (
       !(callback instanceof CodeModeFunction) &&
       !(callback instanceof CoercionFunction) &&
       !(callback instanceof UriFunction)
     ) {
-      throw new InterpreterRuntimeError(`${name} expects a function callback.`, node)
+      return Effect.fail(new InterpreterRuntimeError(`${name} expects a function callback.`, node))
     }
-    return (callbackArgs) =>
+    return Effect.succeed((callbackArgs: Array<unknown>) =>
       callback instanceof CoercionFunction
-        ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
+        ? invokeCoercion(callback, callbackArgs, node)
         : callback instanceof UriFunction
-          ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
-          : this.invokeFunction(callback, callbackArgs)
+          ? invokeUriFunction(callback, callbackArgs, node)
+          : this.invokeFunction(callback, callbackArgs),
+    )
   }
 
   private invokeMapMethod(
@@ -2406,16 +2677,15 @@ class Interpreter<R> {
         return Effect.sync(() => Array.from(target.map.values()))
       case "entries":
         return Effect.sync(() => Array.from(target.map.entries(), ([key, item]): Array<unknown> => [key, item]))
-      case "forEach": {
-        const apply = this.applyCollectionCallback(args[0], "Map.forEach", node)
-        return Effect.gen(function* () {
+      case "forEach":
+        return Effect.gen({ self: this }, function* () {
+          const apply = yield* this.applyCollectionCallback(args[0], "Map.forEach", node)
           // Snapshot iteration, matching the array-method callback contract.
           for (const [key, item] of Array.from(target.map.entries())) yield* apply([item, key, target])
           return undefined
         })
-      }
       default:
-        throw new InterpreterRuntimeError(`Map method '${name}' is not available in CodeMode.`, node)
+        return Effect.fail(new InterpreterRuntimeError(`Map method '${name}' is not available in CodeMode.`, node))
     }
   }
 
@@ -2445,15 +2715,14 @@ class Interpreter<R> {
         return Effect.sync(() => Array.from(target.set.values()))
       case "entries":
         return Effect.sync(() => Array.from(target.set.values(), (item): Array<unknown> => [item, item]))
-      case "forEach": {
-        const apply = this.applyCollectionCallback(args[0], "Set.forEach", node)
-        return Effect.gen(function* () {
+      case "forEach":
+        return Effect.gen({ self: this }, function* () {
+          const apply = yield* this.applyCollectionCallback(args[0], "Set.forEach", node)
           for (const item of Array.from(target.set.values())) yield* apply([item, item, target])
           return undefined
         })
-      }
       default:
-        throw new InterpreterRuntimeError(`Set method '${name}' is not available in CodeMode.`, node)
+        return Effect.fail(new InterpreterRuntimeError(`Set method '${name}' is not available in CodeMode.`, node))
     }
   }
 
@@ -2463,49 +2732,48 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<unknown, unknown, R> {
-    const arg = (index: number): string => uriArgument(args[index], `URLSearchParams.${name} argument ${index + 1}`)
-    const requireArgs = (count: number): void => {
-      if (args.length < count) {
-        throw new InterpreterRuntimeError(
-          `URLSearchParams.${name} requires ${count} argument${count === 1 ? "" : "s"}.`,
-          node,
-        ).as("TypeError")
-      }
-    }
+    const arg = (index: number): Effect.Effect<string, ToolRuntimeError> =>
+      uriArgument(args[index], `URLSearchParams.${name} argument ${index + 1}`)
+    const requireArgs = (count: number): Effect.Effect<void, InterpreterRuntimeError> =>
+      args.length < count
+        ? Effect.fail(
+            new InterpreterRuntimeError(
+              `URLSearchParams.${name} requires ${count} argument${count === 1 ? "" : "s"}.`,
+              node,
+            ).as("TypeError"),
+          )
+        : Effect.void
     switch (name) {
-      case "append": {
-        requireArgs(2)
-        return Effect.sync(() => {
-          target.params.append(arg(0), arg(1))
-          return undefined
-        })
-      }
-      case "delete": {
-        requireArgs(1)
-        return Effect.sync(() => {
-          if (args[1] !== undefined) target.params.delete(arg(0), arg(1))
-          else target.params.delete(arg(0))
-          return undefined
-        })
-      }
-      case "get":
-        requireArgs(1)
-        return Effect.sync(() => target.params.get(arg(0)))
-      case "getAll":
-        requireArgs(1)
-        return Effect.sync(() => target.params.getAll(arg(0)))
-      case "has":
-        requireArgs(1)
-        return Effect.sync(() =>
-          args[1] !== undefined ? target.params.has(arg(0), arg(1)) : target.params.has(arg(0)),
+      case "append":
+        return Effect.andThen(requireArgs(2), () =>
+          Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+            Effect.sync(() => target.params.append(key, item)),
+          ),
         )
-      case "set": {
-        requireArgs(2)
-        return Effect.sync(() => {
-          target.params.set(arg(0), arg(1))
-          return undefined
-        })
-      }
+      case "delete":
+        return Effect.andThen(requireArgs(1), () =>
+          args[1] !== undefined
+            ? Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+                Effect.sync(() => target.params.delete(key, item)),
+              )
+            : Effect.flatMap(arg(0), (key) => Effect.sync(() => target.params.delete(key))),
+        )
+      case "get":
+        return Effect.andThen(requireArgs(1), () => Effect.map(arg(0), (key) => target.params.get(key)))
+      case "getAll":
+        return Effect.andThen(requireArgs(1), () => Effect.map(arg(0), (key) => target.params.getAll(key)))
+      case "has":
+        return Effect.andThen(requireArgs(1), () =>
+          args[1] !== undefined
+            ? Effect.map(Effect.all([arg(0), arg(1)]), ([key, item]) => target.params.has(key, item))
+            : Effect.map(arg(0), (key) => target.params.has(key)),
+        )
+      case "set":
+        return Effect.andThen(requireArgs(2), () =>
+          Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+            Effect.sync(() => target.params.set(key, item)),
+          ),
+        )
       case "sort":
         return Effect.sync(() => {
           target.params.sort()
@@ -2519,16 +2787,17 @@ class Interpreter<R> {
         return Effect.sync(() => Array.from(target.params.entries(), ([key, value]): Array<unknown> => [key, value]))
       case "toString":
         return Effect.sync(() => target.params.toString())
-      case "forEach": {
-        requireArgs(1)
-        const apply = this.applyCollectionCallback(args[0], "URLSearchParams.forEach", node)
-        return Effect.gen(function* () {
+      case "forEach":
+        return Effect.gen({ self: this }, function* () {
+          yield* requireArgs(1)
+          const apply = yield* this.applyCollectionCallback(args[0], "URLSearchParams.forEach", node)
           for (const [key, value] of Array.from(target.params.entries())) yield* apply([value, key, target])
           return undefined
         })
-      }
       default:
-        throw new InterpreterRuntimeError(`URLSearchParams method '${name}' is not available in CodeMode.`, node)
+        return Effect.fail(
+          new InterpreterRuntimeError(`URLSearchParams method '${name}' is not available in CodeMode.`, node),
+        )
     }
   }
 
@@ -2538,151 +2807,137 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<unknown, unknown, R> {
-    const optNumber = (value: unknown, label: string): number | undefined => {
-      if (value === undefined) return undefined
-      if (typeof value !== "number")
-        throw new InterpreterRuntimeError(`Array.${name} expects ${label} to be a number.`, node)
-      return value
-    }
-    switch (name) {
-      case "join": {
-        if (args.length > 1 || (args.length === 1 && typeof args[0] !== "string")) {
-          throw new InterpreterRuntimeError("Array.join expects zero arguments or one string separator.", node)
+    // An omitted optional argument passes through as undefined, exactly as the host method takes it.
+    const optNumber = (value: unknown, label: string): Effect.Effect<number | undefined, InterpreterRuntimeError> =>
+      value === undefined || typeof value === "number"
+        ? Effect.succeed(value)
+        : Effect.fail(new InterpreterRuntimeError(`Array.${name} expects ${label} to be a number.`, node))
+    return Effect.gen({ self: this }, function* () {
+      switch (name) {
+        case "join": {
+          const separator = args.length === 0 ? "," : args[0]
+          if (args.length > 1 || typeof separator !== "string") {
+            return yield* new InterpreterRuntimeError(
+              "Array.join expects zero arguments or one string separator.",
+              node,
+            )
+          }
+          // The data checkpoint rejects opaque elements; the elements themselves render unchanged.
+          yield* Effect.fromResult(boundedData(target, "Array.join input"))
+          return target.map((item) => coerceToString(item ?? "")).join(separator)
         }
-        const input = boundedData(target, "Array.join input") as Array<unknown>
-        return Effect.succeed(
-          input.map((item) => coerceToString(item ?? "")).join(args.length === 0 ? "," : (args[0] as string)),
-        )
-      }
-      case "includes":
-        if (args.length === 0 || args.length > 2)
-          throw new InterpreterRuntimeError("Array.includes expects a value and optional start index.", node)
-        return Effect.succeed(target.includes(args[0], optNumber(args[1], "start index")))
-      case "indexOf":
-        return Effect.succeed(target.indexOf(args[0], optNumber(args[1], "start index")))
-      case "lastIndexOf":
-        return Effect.succeed(
-          args[1] === undefined
+        case "includes":
+          if (args.length === 0 || args.length > 2)
+            return yield* new InterpreterRuntimeError("Array.includes expects a value and optional start index.", node)
+          return target.includes(args[0], yield* optNumber(args[1], "start index"))
+        case "indexOf":
+          return target.indexOf(args[0], yield* optNumber(args[1], "start index"))
+        case "lastIndexOf":
+          return args[1] === undefined
             ? target.lastIndexOf(args[0])
-            : target.lastIndexOf(args[0], optNumber(args[1], "start index")),
-        )
-      case "at":
-        return Effect.succeed(target.at(optNumber(args[0], "index") ?? 0))
-      case "slice":
-        return Effect.succeed(target.slice(optNumber(args[0], "start"), optNumber(args[1], "end")))
-      case "concat":
-        return Effect.succeed(target.concat(...args))
-      case "flat":
-        return Effect.succeed(target.flat(optNumber(args[0], "depth") ?? 1))
-      case "reverse":
-        return Effect.succeed([...target].reverse())
-      case "sort":
-      case "toSorted":
-        return this.sortArray(target, args[0], node)
-      case "toReversed":
-        return Effect.succeed([...target].reverse())
-      case "with": {
-        const index = optNumber(args[0], "index") ?? 0
-        const resolved = index < 0 ? target.length + index : index
-        if (resolved < 0 || resolved >= target.length) {
-          throw new InterpreterRuntimeError("Array.with index is out of range.", node)
+            : target.lastIndexOf(args[0], yield* optNumber(args[1], "start index"))
+        case "at":
+          return target.at((yield* optNumber(args[0], "index")) ?? 0)
+        case "slice":
+          return target.slice(yield* optNumber(args[0], "start"), yield* optNumber(args[1], "end"))
+        case "concat":
+          return target.concat(...args)
+        case "flat":
+          return target.flat((yield* optNumber(args[0], "depth")) ?? 1)
+        case "reverse":
+          return [...target].reverse()
+        case "sort":
+        case "toSorted":
+          return yield* this.sortArray(target, args[0], node)
+        case "toReversed":
+          return [...target].reverse()
+        case "with": {
+          const index = (yield* optNumber(args[0], "index")) ?? 0
+          const resolved = index < 0 ? target.length + index : index
+          if (resolved < 0 || resolved >= target.length) {
+            return yield* new InterpreterRuntimeError("Array.with index is out of range.", node)
+          }
+          const copied = [...target]
+          copied[resolved] = args[1]
+          return copied
         }
-        const copied = [...target]
-        copied[resolved] = args[1]
-        return Effect.succeed(copied)
+        case "push": {
+          // Validate before mutating (so no rollback is needed): inserting a container into
+          // itself would create a cycle no later walk could survive.
+          for (const item of args) yield* this.rejectCircularInsertion(target, item, "Array.push result", node)
+          target.push(...args)
+          return target.length
+        }
+        case "unshift": {
+          for (const item of args) yield* this.rejectCircularInsertion(target, item, "Array.unshift result", node)
+          target.unshift(...args)
+          return target.length
+        }
+        case "pop":
+          return target.pop()
+        case "shift":
+          return target.shift()
+        case "splice": {
+          // Mutates in place and returns the removed elements, exactly like JS: one argument
+          // removes to the end, an undefined delete count removes nothing.
+          if (args.length === 0) return target.splice(0, 0)
+          const start = (yield* optNumber(args[0], "start")) ?? 0
+          if (args.length === 1) return target.splice(start)
+          const deleteCount = (yield* optNumber(args[1], "delete count")) ?? 0
+          const inserted = args.slice(2)
+          for (const item of inserted) yield* this.rejectCircularInsertion(target, item, "Array.splice result", node)
+          return target.splice(start, deleteCount, ...inserted)
+        }
+        case "fill": {
+          yield* this.rejectCircularInsertion(target, args[0], "Array.fill result", node)
+          return target.fill(args[0], yield* optNumber(args[1], "start"), yield* optNumber(args[2], "end"))
+        }
+        case "copyWithin":
+          return target.copyWithin(
+            (yield* optNumber(args[0], "target index")) ?? 0,
+            (yield* optNumber(args[1], "start")) ?? 0,
+            yield* optNumber(args[2], "end"),
+          )
+        // keys/values/entries return arrays (not iterators), matching the Map/Set convention;
+        // they work with for...of and spread either way.
+        case "keys":
+          return Array.from(target.keys())
+        case "values":
+          return [...target]
+        case "entries":
+          return Array.from(target.entries(), ([index, item]): Array<unknown> => [index, item])
       }
-      case "push": {
-        // Validate before mutating (so no rollback is needed): inserting a container into
-        // itself would create a cycle no later walk could survive.
-        for (const item of args) this.rejectCircularInsertion(target, item, "Array.push result", node)
-        target.push(...args)
-        return Effect.succeed(target.length)
-      }
-      case "unshift": {
-        for (const item of args) this.rejectCircularInsertion(target, item, "Array.unshift result", node)
-        target.unshift(...args)
-        return Effect.succeed(target.length)
-      }
-      case "pop":
-        return Effect.succeed(target.pop())
-      case "shift":
-        return Effect.succeed(target.shift())
-      case "splice": {
-        // Mutates in place and returns the removed elements, exactly like JS: one argument
-        // removes to the end, an undefined delete count removes nothing.
-        if (args.length === 0) return Effect.succeed(target.splice(0, 0))
-        const start = optNumber(args[0], "start") ?? 0
-        if (args.length === 1) return Effect.succeed(target.splice(start))
-        const deleteCount = optNumber(args[1], "delete count") ?? 0
-        const inserted = args.slice(2)
-        for (const item of inserted) this.rejectCircularInsertion(target, item, "Array.splice result", node)
-        return Effect.succeed(target.splice(start, deleteCount, ...inserted))
-      }
-      case "fill": {
-        this.rejectCircularInsertion(target, args[0], "Array.fill result", node)
-        return Effect.succeed(target.fill(args[0], optNumber(args[1], "start"), optNumber(args[2], "end")))
-      }
-      case "copyWithin":
-        return Effect.succeed(
-          target.copyWithin(
-            optNumber(args[0], "target index") ?? 0,
-            optNumber(args[1], "start") ?? 0,
-            optNumber(args[2], "end"),
-          ),
-        )
-      // keys/values/entries return arrays (not iterators), matching the Map/Set convention;
-      // they work with for...of and spread either way.
-      case "keys":
-        return Effect.succeed(Array.from(target.keys()))
-      case "values":
-        return Effect.succeed([...target])
-      case "entries":
-        return Effect.succeed(Array.from(target.entries(), ([index, item]): Array<unknown> => [index, item]))
-    }
 
-    const callback = args[0]
-    if (
-      !(callback instanceof CodeModeFunction) &&
-      !(callback instanceof CoercionFunction) &&
-      !(callback instanceof UriFunction)
-    ) {
-      throw new InterpreterRuntimeError(`Array.${name} expects a function callback.`, node)
-    }
-    const self = this
-    // Accept a user function or supported builtin callable, so idioms such as
-    // `filter(Boolean)`, `map(String)`, and `map(encodeURIComponent)` work as in JS. Builtins
-    // are synchronous; only CodeModeFunctions can await tool calls.
-    const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
-      callback instanceof CoercionFunction
-        ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
-        : callback instanceof UriFunction
-          ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
-          : self.invokeFunction(callback, callbackArgs)
-    return Effect.gen(function* () {
+      const callback = args[0]
+      if (
+        !(callback instanceof CodeModeFunction) &&
+        !(callback instanceof CoercionFunction) &&
+        !(callback instanceof UriFunction)
+      ) {
+        return yield* new InterpreterRuntimeError(`Array.${name} expects a function callback.`, node)
+      }
+      // Accept a user function or supported builtin callable, so idioms such as
+      // `filter(Boolean)`, `map(String)`, and `map(encodeURIComponent)` work as in JS. Builtins
+      // are synchronous; only CodeModeFunctions can await tool calls.
+      const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
+        callback instanceof CoercionFunction
+          ? invokeCoercion(callback, callbackArgs, node)
+          : callback instanceof UriFunction
+            ? invokeUriFunction(callback, callbackArgs, node)
+            : this.invokeFunction(callback, callbackArgs)
       // Iterate a snapshot taken at call time so a callback that mutates the array can't
       // self-extend the loop - matching JS, where elements appended during iteration are not visited.
       const items = target.slice()
       switch (name) {
-        case "map": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) values.push(yield* apply([item, index, items]))
-          return values
-        }
+        case "map":
+          return yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
         case "flatMap": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) {
-            const mapped = yield* apply([item, index, items])
-            if (Array.isArray(mapped)) values.push(...mapped)
-            else values.push(mapped)
-          }
-          return values
+          const mapped = yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
+          return mapped.flatMap((value) => (Array.isArray(value) ? value : [value]))
         }
         case "filter": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) {
-            if (yield* apply([item, index, items])) values.push(item)
-          }
-          return values
+          const keep = yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
+          return items.filter((_, index) => keep[index])
         }
         case "find":
           for (const [index, item] of items.entries()) {
@@ -2715,7 +2970,7 @@ class Interpreter<R> {
             start = 0
           } else {
             if (items.length === 0)
-              throw new InterpreterRuntimeError("Array.reduce of an empty array with no initial value.", node)
+              return yield* new InterpreterRuntimeError("Array.reduce of an empty array with no initial value.", node)
             accumulator = items[0]
             start = 1
           }
@@ -2732,7 +2987,10 @@ class Interpreter<R> {
             start = items.length - 1
           } else {
             if (items.length === 0)
-              throw new InterpreterRuntimeError("Array.reduceRight of an empty array with no initial value.", node)
+              return yield* new InterpreterRuntimeError(
+                "Array.reduceRight of an empty array with no initial value.",
+                node,
+              )
             accumulator = items[items.length - 1]
             start = items.length - 2
           }
@@ -2752,7 +3010,7 @@ class Interpreter<R> {
           }
           return -1
       }
-      throw new InterpreterRuntimeError(`Array method '${name}' is not available in CodeMode.`, node)
+      return yield* new InterpreterRuntimeError(`Array method '${name}' is not available in CodeMode.`, node)
     })
   }
 
@@ -2762,7 +3020,7 @@ class Interpreter<R> {
     node: AstNode,
   ): Effect.Effect<Array<unknown>, unknown, R> {
     if (comparator !== undefined && !(comparator instanceof CodeModeFunction)) {
-      throw new InterpreterRuntimeError("Array.sort expects an arrow function comparator.", node)
+      return Effect.fail(new InterpreterRuntimeError("Array.sort expects an arrow function comparator.", node))
     }
     if (!(comparator instanceof CodeModeFunction)) {
       return Effect.sync(() =>
@@ -2773,11 +3031,10 @@ class Interpreter<R> {
         }),
       )
     }
-    const self = this
     const mergeSort = (items: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> => {
       if (items.length <= 1) return Effect.succeed(items)
       const midpoint = Math.floor(items.length / 2)
-      return Effect.gen(function* () {
+      return Effect.gen({ self: this }, function* () {
         const left = yield* mergeSort(items.slice(0, midpoint))
         const right = yield* mergeSort(items.slice(midpoint))
         const merged: Array<unknown> = []
@@ -2786,7 +3043,7 @@ class Interpreter<R> {
         while (leftIndex < left.length && rightIndex < right.length) {
           // Coerce the comparator's result like JS ToNumber (data objects -> NaN, never a host
           // crash) and treat NaN as 0 - the spec's "no consistent order" -> keep the left element.
-          const order = coerceToNumber(yield* self.invokeFunction(comparator, [left[leftIndex], right[rightIndex]]))
+          const order = coerceToNumber(yield* this.invokeFunction(comparator, [left[leftIndex], right[rightIndex]]))
           if (Number.isNaN(order) || order <= 0) merged.push(left[leftIndex++])
           else merged.push(right[rightIndex++])
         }
@@ -2794,27 +3051,28 @@ class Interpreter<R> {
       })
     }
     // Per spec, undefined elements sort to the end and the comparator is never called on them.
+    // Holes count as undefined elements: Array.from reads them as undefined, while filter skips
+    // them when it collects the defined elements.
     const defined = target.filter((item) => item !== undefined)
-    const undefinedCount = target.length - defined.length
-    return Effect.map(mergeSort(defined), (items) => [...items, ...Array(undefinedCount).fill(undefined)])
+    const undefinedItems = Array.from(target).filter(Predicate.isUndefined)
+    return Effect.map(mergeSort(defined), (items) => [...items, ...undefinedItems])
   }
 
   private evaluateObjectExpression(node: AstNode): Effect.Effect<Record<string, unknown>, unknown, R> {
-    const objectValue: Record<string, unknown> = Object.create(null) as Record<string, unknown>
-    const properties = getArray(node, "properties")
-    const self = this
-    return Effect.gen(function* () {
+    return Effect.gen({ self: this }, function* () {
+      const objectValue = makeSafeObject()
+      const properties = yield* getArray(node, "properties")
       for (const propertyValue of properties) {
-        const property = asNode(propertyValue, "properties")
+        const property = yield* asNode(propertyValue, "properties")
 
         if (property.type === "SpreadElement") {
-          const spread = yield* self.evaluateExpression(getNode(property, "argument"))
+          const spread = yield* this.evaluateExpression(yield* getNode(property, "argument"))
           // JS treats `{ ...null }` / `{ ...undefined }` as a no-op, so the common
           // `{ ...maybeOpts, override }` merge works when the operand is absent. Sandbox values
           // have no own enumerable properties in JS, so they are no-ops too.
-          if (spread === null || spread === undefined || isSandboxValue(spread)) continue
+          if (Predicate.isNullish(spread) || isSandboxValue(spread)) continue
           if (typeof spread !== "object" || Array.isArray(spread) || isRuntimeReference(spread)) {
-            throw new InterpreterRuntimeError(
+            return yield* new InterpreterRuntimeError(
               "Object spread requires a data object in CodeMode.",
               property,
               "InvalidDataValue",
@@ -2822,98 +3080,96 @@ class Interpreter<R> {
           }
           for (const [key, value] of Object.entries(spread)) {
             if (isBlockedMember(key))
-              throw new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, property)
+              return yield* new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, property)
             objectValue[key] = value
           }
           continue
         }
 
         if (property.type !== "Property") {
-          throw new InterpreterRuntimeError("Only standard object properties are supported.", property)
+          return yield* new InterpreterRuntimeError("Only standard object properties are supported.", property)
         }
 
-        if (getString(property, "kind") !== "init") {
-          throw new InterpreterRuntimeError("Only init object properties are supported.", property)
+        if ((yield* getString(property, "kind")) !== "init") {
+          return yield* new InterpreterRuntimeError("Only init object properties are supported.", property)
         }
 
-        const keyNode = getNode(property, "key")
-        const valueNode = getNode(property, "value")
-        const computed = getBoolean(property, "computed")
+        const keyNode = yield* getNode(property, "key")
+        const valueNode = yield* getNode(property, "value")
+        const computed = yield* getBoolean(property, "computed")
 
         let key: PropertyKey
 
         if (computed) {
-          key = self.toPropertyKey(yield* self.evaluateExpression(keyNode), keyNode)
+          key = yield* this.toPropertyKey(yield* this.evaluateExpression(keyNode), keyNode)
         } else if (keyNode.type === "Identifier") {
-          key = getString(keyNode, "name")
+          key = yield* getString(keyNode, "name")
         } else if (keyNode.type === "Literal") {
-          key = self.toPropertyKey(keyNode.value, keyNode)
+          key = yield* this.toPropertyKey(keyNode.value, keyNode)
         } else {
-          throw new InterpreterRuntimeError("Unsupported object property key shape.", keyNode)
+          return yield* new InterpreterRuntimeError("Unsupported object property key shape.", keyNode)
         }
 
         if (isBlockedMember(String(key))) {
-          throw new InterpreterRuntimeError(`Property '${String(key)}' is not available in CodeMode.`, keyNode)
+          return yield* new InterpreterRuntimeError(`Property '${String(key)}' is not available in CodeMode.`, keyNode)
         }
-        objectValue[String(key)] = yield* self.evaluateExpression(valueNode)
+        objectValue[String(key)] = yield* this.evaluateExpression(valueNode)
       }
 
       return objectValue
     })
   }
 
+  // Evaluates array elements left to right; each element contributes one value, or all the
+  // items of a spread element. An elided element (`[1, , 3]`) contributes undefined.
   private evaluateArrayExpression(node: AstNode): Effect.Effect<Array<unknown>, unknown, R> {
-    const elements = getArray(node, "elements")
-    const values: Array<unknown> = []
-
-    const self = this
-    return Effect.gen(function* () {
+    return Effect.gen({ self: this }, function* () {
+      const elements = yield* getArray(node, "elements")
+      let values = Chunk.empty<unknown>()
       for (const elementValue of elements) {
-        if (elementValue === null) {
-          values.push(undefined)
+        if (Predicate.isNull(elementValue)) {
+          // eslint-disable-next-line effect/no-undefined-use-option -- (b) an array elision adds the JS undefined element that the program sees
+          values = Chunk.append(values, undefined)
           continue
         }
-        const element = asNode(elementValue, "elements")
-        if (element.type === "SpreadElement") {
-          const spread = yield* self.evaluateExpression(getNode(element, "argument"))
-          const items = spreadItems(spread)
-          if (items === undefined)
-            throw new InterpreterRuntimeError(
-              "Array spread requires an array, string, Map, or Set in CodeMode.",
-              element,
-            )
-          values.push(...items)
-        } else {
-          values.push(yield* self.evaluateExpression(element))
+        const element = yield* asNode(elementValue, "elements")
+        if (element.type !== "SpreadElement") {
+          values = Chunk.append(values, yield* this.evaluateExpression(element))
+          continue
         }
+        const spread = yield* this.evaluateExpression(yield* getNode(element, "argument"))
+        const items = spreadItems(spread)
+        if (items === undefined)
+          return yield* new InterpreterRuntimeError(
+            "Array spread requires an array, string, Map, or Set in CodeMode.",
+            element,
+          )
+        values = Chunk.appendAll(values, Chunk.fromIterable(items))
       }
-      return values
+      return Chunk.toArray(values)
     })
   }
 
   private evaluateTemplateLiteral(node: AstNode): Effect.Effect<string, unknown, R> {
-    const quasis = getArray(node, "quasis")
-    const expressions = getArray(node, "expressions")
-
-    let output = ""
-
-    const self = this
-    return Effect.gen(function* () {
+    return Effect.gen({ self: this }, function* () {
+      const quasis = yield* getArray(node, "quasis")
+      const expressions = yield* getArray(node, "expressions")
+      let output = ""
       for (let index = 0; index < quasis.length; index += 1) {
-        const quasi = asNode(quasis[index], "quasis")
+        const quasi = yield* asNode(quasis[index], "quasis")
         const rawValue = quasi.value
 
         if (!isRecord(rawValue) || typeof rawValue.cooked !== "string") {
-          throw new InterpreterRuntimeError("Invalid template literal quasi.", quasi)
+          return yield* new InterpreterRuntimeError("Invalid template literal quasi.", quasi)
         }
 
         output += rawValue.cooked
 
         if (index < expressions.length) {
-          const raw = yield* self.evaluateExpression(asNode(expressions[index], "expressions"))
+          const raw = yield* this.evaluateExpression(yield* asNode(expressions[index], "expressions"))
           // The preserving checkpoint keeps sandbox values intact, so coerceToString renders
           // them directly (ISO date, /regex/ literal form) instead of a JSON-serialized husk.
-          output += coerceToString(boundedData(raw, "Template interpolation"))
+          output += coerceToString(yield* Effect.fromResult(boundedData(raw, "Template interpolation")))
         }
       }
 
@@ -2922,18 +3178,24 @@ class Interpreter<R> {
   }
 
   private evaluateConditionalExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
-    return Effect.flatMap(this.evaluateExpression(getNode(node, "test")), (test) =>
-      this.evaluateExpression(getNode(node, test ? "consequent" : "alternate")),
-    )
+    return Effect.gen({ self: this }, function* () {
+      const test = yield* this.evaluateExpression(yield* getNode(node, "test"))
+      return yield* this.evaluateExpression(yield* getNode(node, test ? "consequent" : "alternate"))
+    })
   }
 
-  private applyCompoundAssignment(operator: string, current: unknown, incoming: unknown, node: AstNode): unknown {
+  private applyCompoundAssignment(
+    operator: string,
+    current: unknown,
+    incoming: unknown,
+    node: AstNode,
+  ): Effect.Effect<unknown, InterpreterRuntimeError> {
     // `x op= y` is `x = x op y`: dispatch through the shared binary operator implementation
     // so compound assignment inherits the same coercion semantics (Dates, data objects, ...).
     // Only the arithmetic/bitwise operators are compoundable; logical assignments (&&=/||=/??=)
     // short-circuit and are handled by evaluateLogicalAssignment before reaching here.
-    if (!compoundOperators.has(operator)) {
-      throw new InterpreterRuntimeError(`Unsupported assignment operator '${operator}'.`, node)
+    if (!HashSet.has(compoundOperators, operator)) {
+      return Effect.fail(new InterpreterRuntimeError(`Unsupported assignment operator '${operator}'.`, node))
     }
     return this.applyBinaryOperator(operator.slice(0, -1), current, incoming, node)
   }
@@ -2952,34 +3214,32 @@ class Interpreter<R> {
     unknown,
     R
   > {
-    const objectNode = getNode(node, "object")
-    const propertyNode = getNode(node, "property")
-    const computed = getBoolean(node, "computed")
     const optional = node.optional === true
-    const self = this
-    return Effect.gen(function* () {
-      const objectValue = yield* self.evaluateExpression(objectNode)
+    return Effect.gen({ self: this }, function* () {
+      const objectNode = yield* getNode(node, "object")
+      const propertyNode = yield* getNode(node, "property")
+      const computed = yield* getBoolean(node, "computed")
+      const objectValue = yield* this.evaluateExpression(objectNode)
       if (objectValue === OptionalShortCircuit) return OptionalShortCircuit
-      if ((objectValue === null || objectValue === undefined) && optional) return OptionalShortCircuit
+      if (Predicate.isNullish(objectValue) && optional) return OptionalShortCircuit
 
-      const key = computed
-        ? self.toPropertyKey(yield* self.evaluateExpression(propertyNode), propertyNode)
-        : propertyNode.type === "Identifier"
-          ? getString(propertyNode, "name")
-          : self.toPropertyKey(yield* self.evaluateExpression(propertyNode), propertyNode)
+      const key =
+        !computed && propertyNode.type === "Identifier"
+          ? yield* getString(propertyNode, "name")
+          : yield* this.toPropertyKey(yield* this.evaluateExpression(propertyNode), propertyNode)
 
       if (objectValue instanceof ToolReference) {
         if (typeof key !== "string" || isBlockedMember(key)) {
-          throw new InterpreterRuntimeError("Tool paths must use safe string property names.", propertyNode)
+          return yield* new InterpreterRuntimeError("Tool paths must use safe string property names.", propertyNode)
         }
         return new ToolReference([...objectValue.path, key])
       }
 
       if (objectValue instanceof PromiseNamespace) {
-        if (typeof key === "string" && promiseStatics.has(key as PromiseMethodName)) {
-          return new PromiseMethodReference(key as PromiseMethodName)
+        if (typeof key === "string" && isPromiseMethodName(key)) {
+          return new PromiseMethodReference(key)
         }
-        throw new InterpreterRuntimeError(
+        return yield* new InterpreterRuntimeError(
           `Promise.${String(key)} is not available in CodeMode. Available: Promise.all, Promise.allSettled, Promise.race, Promise.resolve, and Promise.reject; consume promises with await.`,
           propertyNode,
         )
@@ -2987,13 +3247,13 @@ class Interpreter<R> {
 
       if (objectValue instanceof GlobalNamespace) {
         if (typeof key !== "string" || isBlockedMember(key)) {
-          throw new InterpreterRuntimeError(
+          return yield* new InterpreterRuntimeError(
             `${objectValue.name}.${String(key)} is not available in CodeMode.`,
             propertyNode,
           )
         }
-        if (objectValue.name === "Math" && mathConstants.has(key)) {
-          return new ComputedValue((Math as unknown as Record<string, number>)[key])
+        if (objectValue.name === "Math" && isMathConstant(key)) {
+          return new ComputedValue(Math[key])
         }
         return new GlobalMethodReference(objectValue.name, key)
       }
@@ -3002,66 +3262,70 @@ class Interpreter<R> {
         if (key === "length") return new ComputedValue(objectValue.length)
         if (typeof key === "number") return new ComputedValue(objectValue[key])
         if (typeof key === "string" && /^\d+$/.test(key)) return new ComputedValue(objectValue[Number(key)])
-        if (typeof key === "string" && stringMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(stringMethods, key)) return new IntrinsicReference(objectValue, key)
         // Unknown property on a string reads as `undefined`, matching JS (`"x".foo === undefined`),
         // instead of throwing - so defensive access like `result?.login ?? result` on a JSON-string
         // tool result doesn't crash. (Optional chaining only guards null/undefined receivers, so a
         // real string still reaches here.) Only the method allowlist above yields callables.
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       if (typeof objectValue === "number") {
-        if (typeof key === "string" && numberMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(numberMethods, key)) return new IntrinsicReference(objectValue, key)
         // Unknown property on a number reads as `undefined`, matching JS, rather than throwing.
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       // Number / String expose a small allowlist of statics; everything else stays opaque.
       if (objectValue instanceof CoercionFunction && typeof key === "string" && !isBlockedMember(key)) {
-        if (objectValue.name === "Number" && numberConstants.has(key)) {
-          return new ComputedValue((Number as unknown as Record<string, number>)[key])
+        if (objectValue.name === "Number" && isNumberConstant(key)) {
+          return new ComputedValue(Number[key])
         }
-        if (objectValue.name === "Number" && numberStatics.has(key)) return new GlobalMethodReference("Number", key)
-        if (objectValue.name === "String" && stringStatics.has(key)) return new GlobalMethodReference("String", key)
+        if (objectValue.name === "Number" && HashSet.has(numberStatics, key))
+          return new GlobalMethodReference("Number", key)
+        if (objectValue.name === "String" && HashSet.has(stringStatics, key))
+          return new GlobalMethodReference("String", key)
       }
 
       // Sandbox value types expose their method/property allowlists; any other key reads as
       // `undefined`, consistent with unknown-property reads on strings/numbers/arrays.
       if (objectValue instanceof SandboxDate) {
-        if (typeof key === "string" && dateMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        if (typeof key === "string" && HashSet.has(dateMethods, key)) return new IntrinsicReference(objectValue, key)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxRegExp) {
-        if (typeof key === "string" && regexpProperties.has(key)) {
-          return new ComputedValue((objectValue.regex as unknown as Record<string, unknown>)[key])
+        if (typeof key === "string" && isRegExpProperty(key)) {
+          return new ComputedValue(objectValue.regex[key])
         }
-        if (typeof key === "string" && regexpMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        if (typeof key === "string" && HashSet.has(regexpMethods, key)) return new IntrinsicReference(objectValue, key)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxMap) {
         if (key === "size") return new ComputedValue(objectValue.map.size)
-        if (typeof key === "string" && mapMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        if (typeof key === "string" && HashSet.has(mapMethods, key)) return new IntrinsicReference(objectValue, key)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxSet) {
         if (key === "size") return new ComputedValue(objectValue.set.size)
-        if (typeof key === "string" && setMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        if (typeof key === "string" && HashSet.has(setMethods, key)) return new IntrinsicReference(objectValue, key)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxURL) {
         if (key === "searchParams") {
           return new ComputedValue(objectValue.searchParams)
         }
-        if (typeof key === "string" && urlMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        if (typeof key === "string" && urlProperties.has(key)) return { target: objectValue, key }
-        return new ComputedValue(undefined)
+        if (typeof key === "string" && HashSet.has(urlMethods, key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && isUrlProperty(key)) {
+          return { kind: "url", target: objectValue, key } satisfies MemberReference
+        }
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxURLSearchParams) {
         if (key === "size") return new ComputedValue(objectValue.params.size)
-        if (typeof key === "string" && urlSearchParamsMethods.has(key)) {
+        if (typeof key === "string" && HashSet.has(urlSearchParamsMethods, key)) {
           return new IntrinsicReference(objectValue, key)
         }
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       // Any property access on a promise is a confused program (`p.then(...)`, `p.value`);
@@ -3069,14 +3333,14 @@ class Interpreter<R> {
       // await-hinting error instead of the forgiving unknown-property fallthrough.
       if (objectValue instanceof SandboxPromise) {
         if (key === "then" || key === "catch" || key === "finally") {
-          throw new InterpreterRuntimeError(
-            `Promise.prototype.${String(key)} is not supported in CodeMode; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
+          return yield* new InterpreterRuntimeError(
+            `Promise.prototype.${key} is not supported in CodeMode; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
             propertyNode,
             "UnsupportedSyntax",
             [supportedSyntaxMessage],
           )
         }
-        throw new InterpreterRuntimeError(
+        return yield* new InterpreterRuntimeError(
           "This value is an un-awaited Promise and has no readable properties; await it first - e.g. `const result = await tools.ns.tool(...)`.",
           objectNode,
           "InvalidDataValue",
@@ -3084,41 +3348,41 @@ class Interpreter<R> {
       }
 
       if (isRuntimeReference(objectValue)) {
-        throw new InterpreterRuntimeError(
+        return yield* new InterpreterRuntimeError(
           "CodeMode runtime references are opaque and do not expose properties.",
           objectNode,
           "InvalidDataValue",
         )
       }
 
-      if (typeof objectValue !== "object" || objectValue === null) {
-        throw new InterpreterRuntimeError("Cannot access a property on a non-object value.", objectNode)
+      if (!Predicate.isObjectOrArray(objectValue)) {
+        return yield* new InterpreterRuntimeError("Cannot access a property on a non-object value.", objectNode)
       }
 
       if (typeof key === "string" && isBlockedMember(key)) {
-        throw new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, propertyNode)
+        return yield* new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, propertyNode)
       }
 
       if (Array.isArray(objectValue)) {
         if (
           key !== "length" &&
-          !(typeof key === "string" && arrayMethods.has(key)) &&
+          !(typeof key === "string" && HashSet.has(arrayMethods, key)) &&
           typeof key !== "number" &&
           !/^\d+$/.test(key)
         ) {
           // Own non-index properties read through (match results carry index/groups); like JS,
           // they are readable in place and dropped by JSON at data boundaries.
-          if (typeof key === "string" && Object.hasOwn(objectValue, key)) {
-            return new ComputedValue((objectValue as Record<string, unknown> & Array<unknown>)[key])
+          if (typeof key === "string" && Object.hasOwn(objectValue, key) && Predicate.hasProperty(objectValue, key)) {
+            return new ComputedValue(objectValue[key])
           }
           // Unknown property on an array reads as `undefined`, matching JS (`[1,2].foo === undefined`),
           // instead of throwing - so defensive access under optional chaining behaves as expected.
-          return new ComputedValue(undefined)
+          return unknownPropertyRead
         }
-        return { target: objectValue, key }
+        return { kind: "array", target: objectValue, key } satisfies MemberReference
       }
 
-      return { target: objectValue as SafeObject, key }
+      return { kind: "object", target: objectValue, key } satisfies MemberReference
     })
   }
 
@@ -3134,15 +3398,13 @@ class Interpreter<R> {
         reference instanceof GlobalMethodReference
       )
         return reference
-      if (Array.isArray(reference.target)) {
-        if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
+      if (reference.kind === "array") {
+        if (typeof reference.key === "string" && HashSet.has(arrayMethods, reference.key)) {
           return new IntrinsicReference(reference.target, reference.key)
         }
         return reference.key === "length" ? reference.target.length : reference.target[Number(reference.key)]
       }
-      if (reference.target instanceof SandboxURL) {
-        return (reference.target.url as unknown as Record<string, unknown>)[String(reference.key)]
-      }
+      if (reference.kind === "url") return reference.target.url[reference.key]
       return reference.target[String(reference.key)]
     })
   }
@@ -3158,9 +3420,8 @@ class Interpreter<R> {
     node: AstNode,
     compute: (current: unknown) => Effect.Effect<{ write: boolean; next: unknown; result: unknown }, unknown, R>,
   ): Effect.Effect<unknown, unknown, R> {
-    const self = this
-    return Effect.gen(function* () {
-      const reference = yield* self.getMemberReference(node)
+    return Effect.gen({ self: this }, function* () {
+      const reference = yield* this.getMemberReference(node)
       if (
         reference === OptionalShortCircuit ||
         reference instanceof ComputedValue ||
@@ -3170,22 +3431,23 @@ class Interpreter<R> {
         reference instanceof IntrinsicReference ||
         reference instanceof GlobalMethodReference
       ) {
-        throw new InterpreterRuntimeError("Only data fields may be assigned in CodeMode.", node)
+        return yield* new InterpreterRuntimeError("Only data fields may be assigned in CodeMode.", node)
       }
-      if (Array.isArray(reference.target)) {
+      if (reference.kind === "array") {
         if (reference.key === "length")
-          throw new InterpreterRuntimeError("Array length cannot be assigned in CodeMode.", node)
-        if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
-          throw new InterpreterRuntimeError("Array methods cannot be assigned in CodeMode.", node)
+          return yield* new InterpreterRuntimeError("Array length cannot be assigned in CodeMode.", node)
+        if (typeof reference.key === "string" && HashSet.has(arrayMethods, reference.key)) {
+          return yield* new InterpreterRuntimeError("Array methods cannot be assigned in CodeMode.", node)
         }
       }
-      const key = Array.isArray(reference.target) ? Number(reference.key) : String(reference.key)
       const current =
-        reference.target instanceof SandboxURL
-          ? (reference.target.url as unknown as Record<string, unknown>)[key]
-          : (reference.target as Record<PropertyKey, unknown>)[key]
+        reference.kind === "array"
+          ? reference.target[Number(reference.key)]
+          : reference.kind === "url"
+            ? reference.target.url[reference.key]
+            : reference.target[String(reference.key)]
       const { write, next, result } = yield* compute(current)
-      if (write) self.assignToReference(reference, key, next, node)
+      if (write) yield* this.assignToReference(reference, next, node)
       return result
     })
   }
@@ -3197,128 +3459,143 @@ class Interpreter<R> {
     value: unknown,
     label: string,
     node: AstNode,
-    seen = new Set<object>(),
-  ): void {
-    if (value === container)
-      throw new InterpreterRuntimeError(`${label} contains a circular value.`, node, "InvalidDataValue")
-    if (value === null || typeof value !== "object" || isRuntimeReference(value) || seen.has(value)) return
-    seen.add(value)
-    const items = Array.isArray(value) ? value : Object.values(value)
-    for (const item of items) this.rejectCircularInsertion(container, item, label, node, seen)
-    seen.delete(value)
+  ): Effect.Effect<void, InterpreterRuntimeError> {
+    return containsContainer(container, value, new WeakSet())
+      ? Effect.fail(new InterpreterRuntimeError(`${label} contains a circular value.`, node, "InvalidDataValue"))
+      : Effect.void
   }
 
-  private assignToReference(reference: MemberReference, key: number | string, next: unknown, node: AstNode): void {
-    if (Array.isArray(reference.target)) {
+  private assignToReference(reference: MemberReference, next: unknown, node: AstNode): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      if (reference.kind === "array") {
+        const target = reference.target
+        const index = Number(reference.key)
+        if (!Number.isInteger(index) || index < 0) {
+          return yield* new InterpreterRuntimeError(
+            "Array assignment index must be a non-negative integer.",
+            node,
+            "InvalidDataValue",
+          )
+        }
+        return yield* Effect.map(this.rejectCircularInsertion(target, next, "Array assignment result", node), () => {
+          target[index] = next
+        })
+      }
+      if (reference.kind === "url") {
+        const property = reference.key
+        if (!isWritableUrlProperty(property)) {
+          return yield* new InterpreterRuntimeError(`URL.${property} is read-only.`, node).as("TypeError")
+        }
+        const url = reference.target.url
+        // A value that fails the data checkpoint keeps its own diagnostic; an invalid value makes
+        // the host URL setter throw.
+        const text = yield* uriArgument(next, `URL.${property} value`)
+        return yield* Effect.try({
+          try: () => {
+            url[property] = text
+          },
+          catch: () => new InterpreterRuntimeError(`URL.${property} received an invalid value.`, node).as("TypeError"),
+        })
+      }
       const target = reference.target
-      const index = key as number
-      if (!Number.isInteger(index) || index < 0) {
-        throw new InterpreterRuntimeError(
-          "Array assignment index must be a non-negative integer.",
-          node,
-          "InvalidDataValue",
+      const objectKey = String(reference.key)
+      return yield* Effect.map(this.rejectCircularInsertion(target, next, "Object assignment result", node), () => {
+        target[objectKey] = next
+      })
+    })
+  }
+
+  private toPropertyKey(value: unknown, node: AstNode): Effect.Effect<string | number, InterpreterRuntimeError> {
+    return typeof value === "string" || typeof value === "number"
+      ? Effect.succeed(value)
+      : Effect.fail(new InterpreterRuntimeError("Property key must be a string or number.", node))
+  }
+
+  private declare(
+    name: string,
+    value: unknown,
+    mutable: boolean,
+    node: AstNode,
+  ): Effect.Effect<void, InterpreterRuntimeError> {
+    return Effect.flatMap(this.currentScope(), (scope) => {
+      // A pre-seeded parameter slot (initialized === false) is being bound for the first time;
+      // anything else already present is a genuine duplicate declaration.
+      const existing = MutableHashMap.get(scope, name)
+      if (Option.isSome(existing) && existing.value.initialized !== false) {
+        return Effect.fail(new InterpreterRuntimeError(`Identifier '${name}' has already been declared.`, node))
+      }
+      return Effect.sync(() => {
+        MutableHashMap.set(scope, name, { mutable, value, initialized: true })
+      })
+    })
+  }
+
+  private getIdentifierValue(name: string, node: AstNode): Effect.Effect<unknown, InterpreterRuntimeError> {
+    return Effect.suspend(() => {
+      const binding = this.resolveBinding(name)
+
+      if (Option.isNone(binding)) {
+        return Effect.fail(new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError"))
+      }
+
+      // A parameter default that forward-references a later (not-yet-bound) parameter - JS TDZ.
+      if (binding.value.initialized === false) {
+        return Effect.fail(
+          new InterpreterRuntimeError(`Cannot access '${name}' before initialization.`, node).as("ReferenceError"),
         )
       }
-      this.rejectCircularInsertion(target, next, "Array assignment result", node)
-      target[index] = next
-      return
-    }
-    if (reference.target instanceof SandboxURL) {
-      const property = key as string
-      if (!urlWritableProperties.has(property)) {
-        throw new InterpreterRuntimeError(`URL.${property} is read-only.`, node).as("TypeError")
+
+      return Effect.succeed(binding.value.value)
+    })
+  }
+
+  private setIdentifierValue(
+    name: string,
+    value: unknown,
+    node: AstNode,
+  ): Effect.Effect<unknown, InterpreterRuntimeError> {
+    return Effect.suspend(() => {
+      const binding = this.resolveBinding(name)
+
+      if (Option.isNone(binding)) {
+        return Effect.fail(new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError"))
       }
-      try {
-        const url = reference.target.url as unknown as Record<string, string>
-        url[property] = uriArgument(next, `URL.${property} value`)
-        return
-      } catch (error) {
-        if (error instanceof InterpreterRuntimeError || error instanceof ToolRuntimeError) throw error
-        throw new InterpreterRuntimeError(`URL.${property} received an invalid value.`, node).as("TypeError")
+
+      if (!binding.value.mutable) {
+        return Effect.fail(new InterpreterRuntimeError(`Cannot assign to constant '${name}'.`, node).as("TypeError"))
       }
-    }
-    const target = reference.target as SafeObject
-    const objectKey = key as string
-    this.rejectCircularInsertion(target, next, "Object assignment result", node)
-    target[objectKey] = next
+
+      binding.value.value = value
+      return Effect.succeed(value)
+    })
   }
 
-  private toPropertyKey(value: unknown, node: AstNode): string | number {
-    if (typeof value === "string" || typeof value === "number") {
-      return value
-    }
-
-    throw new InterpreterRuntimeError("Property key must be a string or number.", node)
-  }
-
-  private declare(name: string, value: unknown, mutable: boolean, node: AstNode): void {
-    const scope = this.currentScope()
-
-    // A pre-seeded parameter slot (initialized === false) is being bound for the first time;
-    // anything else already present is a genuine duplicate declaration.
-    const existing = scope.get(name)
-    if (existing && existing.initialized !== false) {
-      throw new InterpreterRuntimeError(`Identifier '${name}' has already been declared.`, node)
-    }
-
-    scope.set(name, { mutable, value, initialized: true })
-  }
-
-  private getIdentifierValue(name: string, node: AstNode): unknown {
-    const binding = this.resolveBinding(name)
-
-    if (!binding) {
-      throw new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
-    }
-
-    // A parameter default that forward-references a later (not-yet-bound) parameter - JS TDZ.
-    if (binding.initialized === false) {
-      throw new InterpreterRuntimeError(`Cannot access '${name}' before initialization.`, node).as("ReferenceError")
-    }
-
-    return binding.value
-  }
-
-  private setIdentifierValue(name: string, value: unknown, node: AstNode): unknown {
-    const binding = this.resolveBinding(name)
-
-    if (!binding) {
-      throw new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
-    }
-
-    if (!binding.mutable) {
-      throw new InterpreterRuntimeError(`Cannot assign to constant '${name}'.`, node).as("TypeError")
-    }
-
-    binding.value = value
-    return value
-  }
-
-  private resolveBinding(name: string): Binding | undefined {
+  // The innermost binding of `name`, searching from the current scope outwards.
+  private resolveBinding(name: string): Option.Option<Binding> {
     for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
-      const scope = this.scopes[index]
-      const binding = scope?.get(name)
+      const binding = MutableHashMap.get(this.scopes[index], name)
 
-      if (binding) {
+      if (Option.isSome(binding)) {
         return binding
       }
     }
 
-    return undefined
+    return Option.none()
   }
 
-  private currentScope(): Map<string, Binding> {
-    const scope = this.scopes[this.scopes.length - 1]
-
-    if (!scope) {
-      throw new InterpreterRuntimeError("Interpreter scope stack is empty.")
-    }
-
-    return scope
+  // The innermost scope. The stack is never empty while a program runs (the global scope stays
+  // at its base), so an empty stack is an interpreter defect rather than a program error.
+  private currentScope(): Effect.Effect<Scope> {
+    return Effect.suspend(() => {
+      const scope = this.scopes[this.scopes.length - 1]
+      return scope
+        ? Effect.succeed(scope)
+        : Effect.die(new InterpreterRuntimeError("Interpreter scope stack is empty."))
+    })
   }
 
   private pushScope(): void {
-    this.scopes.push(new Map())
+    this.scopes.push(MutableHashMap.empty())
   }
 
   private popScope(): void {
@@ -3341,7 +3618,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
   limits: ResolvedExecutionLimits,
   searchIndex: ToolRuntime.DiscoveryPlan["searchIndex"],
-): Effect.Effect<Result, never, Services<Tools>> => {
+): Effect.Effect<ExecutionResult, never, Services<Tools>> => {
   const hooks = {
     ...(options.onToolCallStart === undefined ? {} : { onToolCallStart: options.onToolCallStart }),
     ...(options.onToolCallEnd === undefined ? {} : { onToolCallEnd: options.onToolCallEnd }),
@@ -3356,24 +3633,26 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   const logged = () => (logs.length > 0 ? { logs: [...logs] } : {})
 
   if (options.code.trim().length === 0) {
-    return Effect.succeed({
+    return Effect.map(tools.calls, (toolCalls) => ({
       ok: false,
       error: { kind: "ParseError", message: "Code cannot be empty." },
-      toolCalls: tools.calls,
-    })
+      toolCalls,
+    }))
   }
 
   const operation = Effect.gen(function* () {
-    const program = parseProgram(options.code)
+    const program = yield* parseProgram(options.code)
     const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, logs)
     const value = yield* interpreter.run(program)
-    const result = copyOut(copyIn(value, "Execution result"), true) as DataValue
+    const copied = copyOut(yield* Effect.fromResult(copyIn(value, "Execution result")), true)
+    // copyOut produces JSON data; only a sparse array (holes are not JSON) needs JSON's reading.
+    const result: DataValue = isJson(copied) ? copied : Option.getOrNull(toJsonValue(copied))
     return {
       ok: true,
       value: result,
       ...logged(),
-      toolCalls: tools.calls,
-    } satisfies Result
+      toolCalls: yield* tools.calls,
+    } satisfies ExecutionResult
   }).pipe((program) => {
     const timeoutMs = limits.timeoutMs
     if (timeoutMs === undefined) return program
@@ -3381,12 +3660,16 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       Effect.timeoutOrElse({
         duration: timeoutMs,
         orElse: () =>
-          Effect.succeed({
-            ok: false,
-            error: { kind: "TimeoutExceeded", message: `Execution timed out after ${timeoutMs}ms.` },
-            ...logged(),
-            toolCalls: tools.calls,
-          } satisfies Result),
+          Effect.map(
+            tools.calls,
+            (toolCalls) =>
+              ({
+                ok: false,
+                error: { kind: "TimeoutExceeded", message: `Execution timed out after ${timeoutMs}ms.` },
+                ...logged(),
+                toolCalls,
+              }) satisfies ExecutionResult,
+          ),
       }),
     )
   })
@@ -3395,12 +3678,16 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.interrupt
-        : Effect.succeed({
-            ok: false,
-            error: normalizeError(Cause.squash(cause)),
-            ...logged(),
-            toolCalls: tools.calls,
-          } satisfies Result),
+        : Effect.map(
+            tools.calls,
+            (toolCalls) =>
+              ({
+                ok: false,
+                error: normalizeError(Cause.squash(cause)),
+                ...logged(),
+                toolCalls,
+              }) satisfies ExecutionResult,
+          ),
     ),
     Effect.map((result) => (limits.maxOutputBytes === undefined ? result : boundOutput(result, limits.maxOutputBytes))),
   )
@@ -3424,42 +3711,49 @@ const utf8Truncate = (value: string, maxBytes: number): string => {
  * fails the execution; `truncated: true` marks affected results. Only runs when the host set
  * `maxOutputBytes` - with the limit absent, output passes through unbounded.
  */
-const boundOutput = (result: Result, maxOutputBytes: number): Result => {
-  let truncated = false
-
-  let value: DataValue = null
-  let valueBytes = 0
-  if (result.ok) {
-    const serialized = JSON.stringify(result.value) ?? "null"
-    const bytes = utf8ByteLength(serialized)
-    if (bytes > maxOutputBytes) {
-      truncated = true
-      value = `${utf8Truncate(serialized, maxOutputBytes)} [result truncated: ${bytes} bytes exceeds the ${maxOutputBytes}-byte output limit; return a smaller value]`
-      valueBytes = maxOutputBytes
-    } else {
-      value = result.value
-      valueBytes = bytes
-    }
+// The result value within the output budget: unchanged with its serialized size, or replaced by
+// its truncated serialized text and a marker.
+const boundValue = (
+  value: DataValue,
+  maxOutputBytes: number,
+): { readonly value: DataValue; readonly bytes: number; readonly truncated: boolean } => {
+  const serialized = Option.match(toJsonValue(value), { onNone: () => "null", onSome: encodeJsonText })
+  const bytes = utf8ByteLength(serialized)
+  if (bytes <= maxOutputBytes) return { value, bytes, truncated: false }
+  return {
+    value: `${utf8Truncate(serialized, maxOutputBytes)} [result truncated: ${bytes} bytes exceeds the ${maxOutputBytes}-byte output limit; return a smaller value]`,
+    bytes: maxOutputBytes,
+    truncated: true,
   }
+}
 
-  const logs = result.logs ?? []
+// The leading log lines that fit the byte budget (each line counts its newline), plus a marker
+// line when later lines were cut.
+const boundLogs = (
+  logs: ReadonlyArray<string>,
+  budget: number,
+): { readonly kept: ReadonlyArray<string>; readonly truncated: boolean } => {
   const kept: Array<string> = []
-  const logBudget = Math.max(0, maxOutputBytes - valueBytes)
   let logBytes = 0
   for (const line of logs) {
     const lineBytes = utf8ByteLength(line) + 1
-    if (logBytes + lineBytes > logBudget) break
+    if (logBytes + lineBytes > budget) break
     logBytes += lineBytes
     kept.push(line)
   }
-  if (kept.length < logs.length) {
-    truncated = true
-    kept.push(`[logs truncated: showing ${kept.length} of ${logs.length} lines]`)
-  }
+  if (kept.length === logs.length) return { kept, truncated: false }
+  return { kept: [...kept, `[logs truncated: showing ${kept.length} of ${logs.length} lines]`], truncated: true }
+}
 
-  if (!truncated) return result
-  const logsPart = kept.length > 0 ? { logs: kept } : {}
-  return result.ok
-    ? { ok: true, value, ...logsPart, truncated: true, toolCalls: result.toolCalls }
-    : { ok: false, error: result.error, ...logsPart, truncated: true, toolCalls: result.toolCalls }
+const boundOutput = (result: ExecutionResult, maxOutputBytes: number): ExecutionResult => {
+  const logsPart = (kept: ReadonlyArray<string>) => (kept.length > 0 ? { logs: kept } : {})
+  if (!result.ok) {
+    const logs = boundLogs(result.logs ?? [], maxOutputBytes)
+    if (!logs.truncated) return result
+    return { ok: false, error: result.error, ...logsPart(logs.kept), truncated: true, toolCalls: result.toolCalls }
+  }
+  const value = boundValue(result.value, maxOutputBytes)
+  const logs = boundLogs(result.logs ?? [], Math.max(0, maxOutputBytes - value.bytes))
+  if (!value.truncated && !logs.truncated) return result
+  return { ok: true, value: value.value, ...logsPart(logs.kept), truncated: true, toolCalls: result.toolCalls }
 }

@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { describe, expect, test } from "bun:test"
 import { RGBA } from "@opentui/core"
+import { HashSet, Option } from "effect"
 import { testRender } from "@opentui/solid"
 import type { JSX } from "solid-js"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
@@ -97,7 +98,7 @@ describe("DiffViewerFileTree", () => {
           error={undefined}
           theme={theme}
           focused
-          highlightedNode={src.id}
+          highlightedNode={Option.some(src.id)}
         />
       )),
     )
@@ -117,8 +118,7 @@ describe("DiffViewerFileTree", () => {
     const files = [{ file: "src/config/tui.ts" }, { file: "README.md" }]
     const tree = buildFileTree(files)
     const src = tree.nodes.find((node) => node.kind === "directory" && node.name === "src")!
-    const collapsed = allExpandedFileTreeDirectories(tree)
-    collapsed.delete(src.id)
+    const collapsed = HashSet.remove(allExpandedFileTreeDirectories(tree), src.id)
 
     expect(
       visibleLines(

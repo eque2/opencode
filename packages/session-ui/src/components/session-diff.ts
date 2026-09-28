@@ -2,6 +2,7 @@ import { parseDiffFromFile, parsePatchFiles, type FileDiffMetadata } from "@pier
 import { parsePatch } from "diff"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
+import { Iterable, MutableHashMap, Option } from "effect"
 
 type LegacyDiff = {
   file: string
@@ -26,7 +27,8 @@ export type ViewDiff = {
 }
 
 const diffCacheLimit = 16
-const patchFileDiffCache = new Map<string, FileDiffMetadata>()
+// String keys keep insertion order, so the first key is the least recently used entry.
+const patchFileDiffCache = MutableHashMap.empty<string, FileDiffMetadata>()
 
 export function resolveFileDiff(diff: DiffSource) {
   if (typeof diff.patch === "string") return fileDiffFromPatch(diff.file, diff.patch)
@@ -54,85 +56,97 @@ export function text(diff: ViewDiff, side: "deletions" | "additions") {
 
 function fileDiffFromPatch(file: string, patch: string) {
   const key = `${file}\0${patch}`
-  const hit = patchFileDiffCache.get(key)
-  if (hit) {
-    patchFileDiffCache.delete(key)
-    patchFileDiffCache.set(key, hit)
-    return hit
+  const hit = MutableHashMap.get(patchFileDiffCache, key)
+  if (Option.isSome(hit)) {
+    MutableHashMap.remove(patchFileDiffCache, key)
+    MutableHashMap.set(patchFileDiffCache, key, hit.value)
+    return hit.value
   }
 
-  const contents = completePatchContents(patch)
-  const input = contents ? undefined : patchInput(file, patch)
-  const value = contents
-    ? fileDiffFromContent(file, contents.before, contents.after)
-    : ((input ? parsePatchFiles(input)[0]?.files[0] : undefined) ?? emptyFileDiff(file))
-  patchFileDiffCache.set(key, value)
-  while (patchFileDiffCache.size > diffCacheLimit) patchFileDiffCache.delete(patchFileDiffCache.keys().next().value!)
+  const value = Option.match(completePatchContents(patch), {
+    onSome: (contents) => fileDiffFromContent(file, contents.before, contents.after),
+    onNone: () =>
+      patchInput(file, patch).pipe(
+        Option.flatMap((input) => Option.fromNullishOr(parsePatchFiles(input)[0]?.files[0])),
+        Option.getOrElse(() => emptyFileDiff(file)),
+      ),
+  })
+  MutableHashMap.set(patchFileDiffCache, key, value)
+  while (MutableHashMap.size(patchFileDiffCache) > diffCacheLimit) {
+    const oldest = Iterable.head(MutableHashMap.keys(patchFileDiffCache))
+    if (Option.isNone(oldest)) break
+    MutableHashMap.remove(patchFileDiffCache, oldest.value)
+  }
   return value
 }
 
-function completePatchContents(patch: string) {
-  try {
-    const parsed = parsePatch(patch)[0]
-    if (!parsed || (!parsed.index && !parsed.oldFileName && !parsed.newFileName)) return
-    // Snapshot and VCS producers request full context. Tool patches use jsdiff's shorter default context.
-    if (!patch.startsWith("diff --git ") && !/^--- [^\n]*\t\r?\n\+\+\+ [^\n]*\t(?:\r?\n|$)/m.test(patch)) return
-    // Full patches collapse into one leading hunk. Separated hunks omit ranges and must stay partial.
-    if (parsed.hunks.length !== 1) return
+// parsePatch throws on a malformed patch. The lifted form returns None instead.
+const parsePatchOption = Option.liftThrowable(parsePatch)
 
-    const hunk = parsed.hunks[0]
-    if (!hunk || hunk.oldStart > 1 || hunk.newStart > 1) return
-
-    const before: Array<{ text: string; newline: boolean }> = []
-    const after: Array<{ text: string; newline: boolean }> = []
-    let previous: "-" | "+" | " " | undefined
-
-    for (const line of hunk.lines) {
-      if (line.startsWith("\\")) {
-        if (previous === "-" || previous === " ") {
-          const value = before.at(-1)
-          if (value) value.newline = false
-        }
-        if (previous === "+" || previous === " ") {
-          const value = after.at(-1)
-          if (value) value.newline = false
-        }
-        continue
-      }
-      if (line.startsWith("-")) {
-        before.push({ text: line.slice(1), newline: true })
-        previous = "-"
-        continue
-      }
-      if (line.startsWith("+")) {
-        after.push({ text: line.slice(1), newline: true })
-        previous = "+"
-        continue
-      }
-      if (!line.startsWith(" ")) return
-      before.push({ text: line.slice(1), newline: true })
-      after.push({ text: line.slice(1), newline: true })
-      previous = " "
-    }
-
-    const text = (lines: Array<{ text: string; newline: boolean }>) =>
-      lines.map((line) => line.text + (line.newline ? "\n" : "")).join("")
-    return { before: text(before), after: text(after) }
-  } catch {
-    return
-  }
+function firstPatch(patch: string) {
+  return parsePatchOption(patch).pipe(Option.flatMap((patches) => Option.fromNullishOr(patches[0])))
 }
 
-function patchInput(file: string, patch: string) {
-  try {
-    const parsed = parsePatch(patch)[0]
-    if (!parsed) return
-    if (parsed.index || parsed.oldFileName || parsed.newFileName) return patch
-    if (!parsed.hunks.length) return
-    return `Index: ${file}\n===================================================================\n--- ${file}\t\n+++ ${file}\t\n${patch}`
-  } catch {
-    return
+function completePatchContents(patch: string): Option.Option<{ before: string; after: string }> {
+  const first = firstPatch(patch)
+  if (Option.isNone(first)) return Option.none()
+  const parsed = first.value
+  if (!parsed.index && !parsed.oldFileName && !parsed.newFileName) return Option.none()
+  // Snapshot and VCS producers request full context. Tool patches use jsdiff's shorter default context.
+  if (!patch.startsWith("diff --git ") && !/^--- [^\n]*\t\r?\n\+\+\+ [^\n]*\t(?:\r?\n|$)/m.test(patch)) return Option.none()
+  // Full patches collapse into one leading hunk. Separated hunks omit ranges and must stay partial.
+  if (parsed.hunks.length !== 1) return Option.none()
+
+  const hunk = parsed.hunks[0]
+  if (!hunk || hunk.oldStart > 1 || hunk.newStart > 1) return Option.none()
+
+  const before: Array<{ text: string; newline: boolean }> = []
+  const after: Array<{ text: string; newline: boolean }> = []
+  let previous: "-" | "+" | " " | undefined
+
+  for (const line of hunk.lines) {
+    if (line.startsWith("\\")) {
+      if (previous === "-" || previous === " ") {
+        const value = before.at(-1)
+        if (value) value.newline = false
+      }
+      if (previous === "+" || previous === " ") {
+        const value = after.at(-1)
+        if (value) value.newline = false
+      }
+      continue
+    }
+    if (line.startsWith("-")) {
+      before.push({ text: line.slice(1), newline: true })
+      previous = "-"
+      continue
+    }
+    if (line.startsWith("+")) {
+      after.push({ text: line.slice(1), newline: true })
+      previous = "+"
+      continue
+    }
+    if (!line.startsWith(" ")) return Option.none()
+    before.push({ text: line.slice(1), newline: true })
+    after.push({ text: line.slice(1), newline: true })
+    previous = " "
   }
+
+  const text = (lines: Array<{ text: string; newline: boolean }>) =>
+    lines.map((line) => line.text + (line.newline ? "\n" : "")).join("")
+  return Option.some({ before: text(before), after: text(after) })
+}
+
+function patchInput(file: string, patch: string): Option.Option<string> {
+  return firstPatch(patch).pipe(
+    Option.flatMap((parsed) => {
+      if (parsed.index || parsed.oldFileName || parsed.newFileName) return Option.some(patch)
+      if (!parsed.hunks.length) return Option.none()
+      return Option.some(
+        `Index: ${file}\n===================================================================\n--- ${file}\t\n+++ ${file}\t\n${patch}`,
+      )
+    }),
+  )
 }
 
 function fileDiffFromContent(file: string, before: string, after: string) {

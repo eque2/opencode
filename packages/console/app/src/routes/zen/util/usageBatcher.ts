@@ -23,8 +23,8 @@ export async function accumulateUsage(workspaceID: string, userID: string, works
   // Atomically take the current totals and reset to 0
   const [workspaceTotal, userTotal] = await Promise.all([redis.getdel<number>(wKey), redis.getdel<number>(uKey)])
 
-  const workspaceFlush = Number(workspaceTotal ?? 0)
-  const userFlush = Number(userTotal ?? 0)
+  const workspaceFlush = workspaceTotal ?? 0
+  const userFlush = userTotal ?? 0
   if (workspaceFlush === 0 && userFlush === 0) return null
 
   return { workspaceCost: workspaceFlush, userCost: userFlush }

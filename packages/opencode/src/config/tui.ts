@@ -4,12 +4,12 @@ import path from "path"
 import { mergeDeep, unique } from "remeda"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Context, Effect, Fiber, Layer } from "effect"
+import { Cause, Context, Effect, Fiber, Layer, Option } from "effect"
 import { ConfigParse } from "@/config/parse"
 import * as ConfigPaths from "@/config/paths"
 import { migrateTuiConfig } from "./tui-migrate"
 import { resolveHostAttentionSoundPaths } from "./tui-host-attention"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { isRecord } from "@opencode-ai/tui/util/record"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -18,7 +18,6 @@ import { ConfigPlugin } from "@/config/plugin"
 import { TuiKeybind } from "@opencode-ai/tui/config/keybind"
 import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { makeRuntime } from "@opencode-ai/core/effect/runtime"
-import { Filesystem } from "@/util/filesystem"
 import { ConfigVariable } from "@/config/variable"
 import { Npm } from "@opencode-ai/core/npm"
 import { FormatError, FormatUnknownError } from "@/cli/error"
@@ -47,8 +46,8 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/TuiConfig") {}
 
 function pluginScope(file: string, ctx: { directory: string }): ConfigPlugin.Scope {
-  if (Filesystem.contains(ctx.directory, file)) return "local"
-  // if (ctx.worktree !== "/" && Filesystem.contains(ctx.worktree, file)) return "local"
+  if (FSUtil.contains(ctx.directory, file)) return "local"
+  // if (ctx.worktree !== "/" && FSUtil.contains(ctx.worktree, file)) return "local"
   return "global"
 }
 
@@ -90,23 +89,24 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
       if (!plugins) return config
       return {
         ...config,
-        plugin: yield* Effect.forEach(plugins, (plugin) =>
-          Effect.promise(() => ConfigPlugin.resolvePluginSpec(plugin as ConfigPlugin.Origin["spec"], configFilepath)),
-        ),
+        plugin: yield* Effect.forEach(plugins, (plugin) => ConfigPlugin.resolvePluginSpec(plugin, configFilepath)),
       }
     })
 
   const load = (text: string, configFilepath: string): Effect.Effect<Info> =>
     Effect.gen(function* () {
-      const expanded = yield* Effect.promise(() =>
-        ConfigVariable.substitute({ text, type: "path", path: configFilepath, missing: "empty" }),
-      )
-      const data = ConfigParse.jsonc(expanded, configFilepath)
+      const expanded = yield* ConfigVariable.substitute({
+        text,
+        type: "path",
+        path: configFilepath,
+        missing: "empty",
+      }).pipe(Effect.provideService(FSUtil.Service, afs))
+      const data = yield* ConfigParse.parseJsonc(expanded, configFilepath)
       if (!isRecord(data)) return {} as Info
       // Flatten a nested "tui" key so users who wrote `{ "tui": { ... } }` inside tui.json
       // (mirroring the old opencode.json shape) still get their settings applied.
       const normalized = dropUnknownKeybinds(normalize(data))
-      const parsed = ConfigParse.schema(Info, normalized, configFilepath)
+      const parsed = yield* ConfigParse.decodeSchema(Info, normalized, configFilepath)
       const validated = parsed.attention?.sounds
         ? {
             ...parsed,
@@ -118,8 +118,8 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
         : parsed
       return yield* resolvePlugins(validated, configFilepath)
     }).pipe(
-      // catchCause (not tapErrorCause + orElseSucceed) because JSONC parsing and validation
-      // can sync-throw — those become defects, which orElseSucceed wouldn't catch.
+      // catchCause (not tapErrorCause + orElseSucceed) so that a defect from substitution or plugin
+      // resolution also skips the file, as do JSONC parse and validation failures.
       Effect.catchCause((cause) =>
         Effect.logWarning("skipping invalid tui config", {
           path: configFilepath,
@@ -134,16 +134,17 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
       // Matches how parse/schema/plugin failures in load() are handled — every
       // broken-config path degrades gracefully rather than crashing TUI startup.
       const text = yield* afs.readFileStringSafe(filepath).pipe(
+        Effect.map(Option.fromNullishOr),
         Effect.catchCause((cause) =>
           Effect.logWarning("failed to read tui config", {
             path: filepath,
             reason: FormatError(Cause.squash(cause)) ?? FormatUnknownError(Cause.squash(cause)),
-          }).pipe(Effect.as(undefined)),
+          }).pipe(Effect.as(Option.none<string>())),
         ),
       )
-      if (!text) return {} as Info
+      if (Option.isNone(text) || !text.value) return {} as Info
       yield* Effect.logInfo("loading tui config", { path: filepath })
-      return yield* load(text, filepath)
+      return yield* load(text.value, filepath)
     })
 
   const mergeFile = (acc: Acc, file: string) =>
@@ -159,7 +160,7 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
       const scope = pluginScope(file, ctx)
       const plugins = ConfigPlugin.deduplicatePluginOrigins([
         ...acc.plugin_origins,
-        ...data.plugin.map((spec) => ({ spec: spec as ConfigPlugin.Origin["spec"], scope, source: file })),
+        ...data.plugin.map((spec) => ({ spec, scope, source: file })),
       ])
       acc.result = {
         ...acc.result,
@@ -171,9 +172,11 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   // Every config dir we may read from: global config dir, any `.opencode`
   // folders between cwd and home, and OPENCODE_CONFIG_DIR.
   const directories = yield* ConfigPaths.directories(ctx.directory)
-  yield* Effect.promise(() => migrateTuiConfig({ directories, cwd: ctx.directory }))
+  // OPENCODE_CONFIG reads the ambient ConfigProvider. It is optional, so a ConfigError is a defect.
+  const customConfig = yield* FlagConfig.OPENCODE_CONFIG.pipe(Effect.orDie)
+  yield* migrateTuiConfig({ directories, cwd: ctx.directory, customConfig })
 
-  const projectFiles = Flag.OPENCODE_DISABLE_PROJECT_CONFIG ? [] : yield* ConfigPaths.files("tui", ctx.directory)
+  const projectFiles = (yield* ConfigPaths.projectConfigDisabled) ? [] : yield* ConfigPaths.files("tui", ctx.directory)
 
   const acc: Acc = {
     result: {},
@@ -185,9 +188,10 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
     yield* mergeFile(acc, file)
   }
 
-  // 2. Explicit OPENCODE_TUI_CONFIG override, if set.
-  if (Flag.OPENCODE_TUI_CONFIG) {
-    const configFile = Flag.OPENCODE_TUI_CONFIG
+  // 2. Explicit OPENCODE_TUI_CONFIG override, if set. The flag is optional, so a ConfigError is a defect.
+  const tuiConfig = Option.filter(yield* FlagConfig.OPENCODE_TUI_CONFIG.pipe(Effect.orDie), (file) => file !== "")
+  if (Option.isSome(tuiConfig)) {
+    const configFile = tuiConfig.value
     yield* mergeFile(acc, configFile)
     yield* Effect.logDebug("loaded custom tui config", { path: configFile })
   }
@@ -200,10 +204,11 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   // 4. `.opencode` directories (and OPENCODE_CONFIG_DIR) discovered while
   // walking up the tree. Also returned below so callers can install plugin
   // dependencies from each location.
-  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR)
+  const customDirectory = yield* ConfigPaths.customDirectory
+  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || Option.contains(customDirectory, dir))
 
   for (const dir of dirs) {
-    if (!dir.endsWith(".opencode") && dir !== Flag.OPENCODE_CONFIG_DIR) continue
+    if (!dir.endsWith(".opencode") && !Option.contains(customDirectory, dir)) continue
     for (const file of ConfigPaths.fileInDirectory(dir, "tui")) {
       yield* mergeFile(acc, file)
     }
@@ -237,10 +242,8 @@ const layer = Layer.effect(
         npm
           .install(dir, {
             add: [
-              {
-                name: "@opencode-ai/plugin",
-                version: InstallationLocal ? undefined : InstallationVersion,
-              },
+              // A local build installs the plugin package without a version pin.
+              { name: "@opencode-ai/plugin", ...(InstallationLocal ? {} : { version: InstallationVersion }) },
             ],
           })
           .pipe(Effect.forkScoped),
@@ -259,18 +262,19 @@ const layer = Layer.effect(
   }).pipe(Effect.withSpan("TuiConfig.layer")),
 )
 
-export const node = LayerNode.make({ service: Service, layer, deps: [Npm.node, FSUtil.node] })
+export const node = LayerNode.make({ service: Service, layer, deps: [Npm.node, FSUtil.node, Global.node] })
 
 const { runPromise } = makeRuntime(Service, AppNodeBuilder.build(node))
 
-export async function waitForDependencies() {
-  await runPromise((svc) => svc.waitForDependencies())
+// Promise forms for callers outside Effect.
+export function waitForDependencies() {
+  return runPromise((svc) => svc.waitForDependencies())
 }
 
-export async function get() {
+export function get() {
   return runPromise((svc) => svc.get())
 }
 
-export async function pluginOrigins() {
+export function pluginOrigins() {
   return runPromise((svc) => svc.pluginOrigins())
 }

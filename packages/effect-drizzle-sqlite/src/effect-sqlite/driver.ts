@@ -1,4 +1,3 @@
-/* oxlint-disable */
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { SqlClient } from "effect/unstable/sql/SqlClient"
@@ -54,16 +53,14 @@ export const make = Effect.fn("SQLiteDrizzle.make")(function* <TRelations extend
   const logger = yield* EffectLogger
 
   const dialect = new SQLiteAsyncDialect()
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm DrizzleConfig declares relations optional while make is generic over TRelations; the empty default {} is not assignable to TRelations (TS2322), and upstream effect-postgres make casts the same
   const relations = config.relations ?? ({} as TRelations)
   const session = new EffectSQLiteSession(client, dialect, relations, {
     logger,
     cache,
-    useJitMappers: jitCompatCheck(config.jit),
+    useJitMappers: yield* jitCompatCheck(config.jit),
   })
-  const db = new EffectSQLiteDatabase(dialect, session, relations) as EffectSQLiteDatabase<TRelations> & {
-    $client: SqlClient
-  }
-  db.$client = client
+  const db = Object.assign(new EffectSQLiteDatabase(dialect, session, relations), { $client: client })
   db.$cache.invalidate = cache.onMutate
 
   return db

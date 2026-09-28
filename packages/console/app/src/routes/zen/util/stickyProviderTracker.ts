@@ -6,8 +6,8 @@ export function createStickyTracker(
   stickyProvider: "strict" | "prefer" | undefined,
   stickyId: string,
 ) {
-  if (!stickyProvider) return
-  if (!stickyId) return
+  if (!stickyProvider) return undefined
+  if (!stickyId) return undefined
   const id = `${modelId}/${stickyId}`
   let _providerId: string | undefined
 

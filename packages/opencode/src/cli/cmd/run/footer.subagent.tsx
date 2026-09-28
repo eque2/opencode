@@ -3,6 +3,7 @@ import type { ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { registerOpencodeSpinner } from "@opencode-ai/tui/component/register-spinner"
 import { Show, createMemo, indexArray } from "solid-js"
+import { Option } from "effect"
 import { SPINNER_FRAMES } from "@opencode-ai/tui/component/spinner"
 import { RunEntryContent, separatorRows } from "./scrollback.writer"
 import type { FooterSubagentDetail, FooterSubagentTab, RunDiffStyle } from "./types"
@@ -50,7 +51,7 @@ export function RunFooterSubagentBody(props: {
   tab: () => FooterSubagentTab | undefined
   index: () => number
   total: () => number
-  detail: () => FooterSubagentDetail | undefined
+  detail: () => Option.Option<FooterSubagentDetail>
   width: () => number
   diffStyle?: RunDiffStyle
   onCycle: (dir: -1 | 1) => void
@@ -59,7 +60,9 @@ export function RunFooterSubagentBody(props: {
   const theme = createMemo(() => props.theme())
   const footer = createMemo(() => theme().footer)
   const tab = createMemo(() => props.tab())
-  const commits = createMemo(() => props.detail()?.commits ?? [])
+  const commits = createMemo(() =>
+    Option.match(props.detail(), { onNone: () => [], onSome: (detail) => detail.commits }),
+  )
   const opts = createMemo(() => ({ diffStyle: props.diffStyle }))
   const scrollbar = createMemo(() => ({
     trackOptions: {
@@ -85,7 +88,9 @@ export function RunFooterSubagentBody(props: {
   })
   const rows = indexArray(commits, (commit, index) => (
     <box flexDirection="column" gap={0} flexShrink={0}>
-      {index > 0 && separatorRows(commits()[index - 1], commit()) > 0 ? <box height={1} flexShrink={0} /> : null}
+      <Show when={index > 0 && separatorRows(commits()[index - 1], commit()) > 0}>
+        <box height={1} flexShrink={0} />
+      </Show>
       <RunEntryContent commit={commit()} theme={theme()} opts={opts()} width={props.width()} />
     </box>
   ))

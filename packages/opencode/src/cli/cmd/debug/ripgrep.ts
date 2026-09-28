@@ -1,15 +1,17 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 import { InstanceRef } from "@/effect/instance-ref"
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 export const RipgrepCommand = cmd({
   command: "rg",
   describe: "ripgrep debugging utilities",
   builder: (yargs) => yargs.command(FilesCommand).command(SearchCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const FilesCommand = effectCmd({
@@ -30,8 +32,9 @@ const FilesCommand = effectCmd({
         description: "Limit number of results",
       }),
   handler: Effect.fn("Cli.debug.rg.files")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const ctx = instance.value
     const ripgrep = yield* Ripgrep.Service
     const files = yield* ripgrep
       .glob({
@@ -63,8 +66,9 @@ const SearchCommand = effectCmd({
         description: "Limit number of results",
       }),
   handler: Effect.fn("Cli.debug.rg.search")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const ctx = instance.value
     const ripgrep = yield* Ripgrep.Service
     const results = yield* ripgrep
       .grep({
@@ -74,6 +78,6 @@ const SearchCommand = effectCmd({
         limit: args.limit ?? 10_000,
       })
       .pipe(Effect.orDie)
-    process.stdout.write(JSON.stringify(results, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(results).pipe(Effect.orDie)) + EOL)
   }),
 })

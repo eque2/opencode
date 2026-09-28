@@ -40,12 +40,10 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
 
     const list = Effect.fn("PermissionSaved.list")(function* (input?: ListInput) {
-      const rows = yield* db
-        .select()
-        .from(PermissionTable)
-        .where(input?.projectID ? eq(PermissionTable.project_id, input.projectID) : undefined)
-        .all()
-        .pipe(Effect.orDie)
+      const query = db.select().from(PermissionTable)
+      const rows = yield* (
+        input?.projectID ? query.where(eq(PermissionTable.project_id, input.projectID)).all() : query.all()
+      ).pipe(Effect.orDie)
       return rows.map(
         (row): Info => ({ id: row.id, projectID: row.project_id, action: row.action, resource: row.resource }),
       )

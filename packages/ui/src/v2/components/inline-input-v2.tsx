@@ -44,18 +44,18 @@ export function InlineInputV2(props: InlineInputV2Props) {
   return (
     <div
       data-component="inline-input-v2"
-      data-disabled={local.disabled ? "" : undefined}
-      data-invalid={local.invalid ? "" : undefined}
-      data-numeric={local.numeric ? "" : undefined}
+      bool:data-disabled={!!local.disabled}
+      bool:data-invalid={!!local.invalid}
+      bool:data-numeric={!!local.numeric}
       data-appearance={local.appearance ?? "base"}
-      data-label-width={local.labelWidth != null ? "" : undefined}
+      bool:data-label-width={local.labelWidth !== undefined}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
       }}
       style={{
-        ...(typeof local.style === "object" && local.style != null ? local.style : {}),
-        ...(local.labelWidth != null
+        ...(typeof local.style === "object" ? local.style : {}),
+        ...(local.labelWidth !== undefined
           ? {
               "--inline-input-v2-label-width":
                 typeof local.labelWidth === "number" ? `${local.labelWidth}px` : local.labelWidth,
@@ -86,7 +86,7 @@ export function InlineInputV2(props: InlineInputV2Props) {
             }}
             type={inputProps.type ?? "text"}
             disabled={local.disabled}
-            aria-invalid={local.invalid ? true : undefined}
+            {...(local.invalid ? { "aria-invalid": true } : {})}
             data-slot="inline-input-v2-input"
           />
         </div>

@@ -1,3 +1,5 @@
+import { Option, Predicate, Record, Schema } from "effect"
+
 export const DESKTOP_NATIVE_LOCALES = [
   "en",
   "zh",
@@ -198,12 +200,15 @@ export const DESKTOP_NATIVE_LOCALE_TAGS: Record<DesktopNativeLocale, string> = {
 export function detectDesktopNativeLocale(languages: readonly string[]): DesktopNativeLocale {
   for (const language of languages) {
     const source = locale(language)
-    if (!source) continue
-    if (["no", "nb", "nn"].includes(source.language)) return "no"
-    const match = DESKTOP_NATIVE_LOCALES.find((candidate) => {
-      const target = locale(DESKTOP_NATIVE_LOCALE_TAGS[candidate])
-      return target?.language === source.language && target.script === source.script
-    })
+    if (Option.isNone(source)) continue
+    const { language: sourceLanguage, script: sourceScript } = source.value
+    if (["no", "nb", "nn"].includes(sourceLanguage)) return "no"
+    const match = DESKTOP_NATIVE_LOCALES.find((candidate) =>
+      Option.exists(
+        locale(DESKTOP_NATIVE_LOCALE_TAGS[candidate]),
+        (target) => target.language === sourceLanguage && target.script === sourceScript,
+      ),
+    )
     if (match) return match
   }
   return "en"
@@ -213,13 +218,8 @@ export function desktopNativePluralCategories(locale: DesktopNativeLocale) {
   return new Intl.PluralRules(DESKTOP_NATIVE_LOCALE_TAGS[locale]).resolvedOptions().pluralCategories
 }
 
-function locale(value: string) {
-  try {
-    return new Intl.Locale(value).maximize()
-  } catch {
-    return undefined
-  }
-}
+/** The tag with its likely subtags added. None when Intl.Locale rejects the tag. */
+const locale = Option.liftThrowable((value: string) => new Intl.Locale(value).maximize())
 
 export const DESKTOP_NATIVE_ENGLISH = {
   "desktop.menu.app": "OpenCode",
@@ -325,7 +325,7 @@ export type DesktopNativeKey = keyof typeof DESKTOP_NATIVE_ENGLISH
 export type DesktopNativeMessages = Record<DesktopNativeKey, string>
 export type DesktopNativeBundle = { locale: DesktopNativeLocale; messages: DesktopNativeMessages }
 
-export const DESKTOP_NATIVE_KEYS = Object.keys(DESKTOP_NATIVE_ENGLISH) as DesktopNativeKey[]
+export const DESKTOP_NATIVE_KEYS: DesktopNativeKey[] = Record.keys(DESKTOP_NATIVE_ENGLISH)
 export const DESKTOP_NATIVE_MAX_PAYLOAD_BYTES = 64 * 1024
 
 export function createDesktopNativeBundle(
@@ -334,26 +334,43 @@ export function createDesktopNativeBundle(
 ): DesktopNativeBundle {
   return {
     locale,
-    messages: Object.fromEntries(DESKTOP_NATIVE_KEYS.map((key) => [key, translate(key)])) as DesktopNativeMessages,
+    messages: Record.map(DESKTOP_NATIVE_ENGLISH, (_, key) => translate(key)),
   }
 }
 
+const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+/** True when the value encodes to JSON text of at most DESKTOP_NATIVE_MAX_PAYLOAD_BYTES bytes. */
+function fitsDesktopNativePayload(value: unknown) {
+  return Option.exists(
+    encodeJsonText(value),
+    (json) => new TextEncoder().encode(json).byteLength <= DESKTOP_NATIVE_MAX_PAYLOAD_BYTES,
+  )
+}
+
+function isDesktopNativeLocale(value: unknown): value is DesktopNativeLocale {
+  return DESKTOP_NATIVE_LOCALES.some((locale) => locale === value)
+}
+
+/** True for an object with exactly the desktop native keys, each a string. */
+function isDesktopNativeMessages(value: unknown): value is DesktopNativeMessages {
+  if (!Predicate.isObject(value)) return false
+  const keys = Object.keys(value)
+  if (keys.length !== DESKTOP_NATIVE_KEYS.length) return false
+  if (!DESKTOP_NATIVE_KEYS.every((key) => typeof value[key] === "string")) return false
+  return keys.every((key) => key in DESKTOP_NATIVE_ENGLISH)
+}
+
+/** True for an object within the payload limit that has a supported locale and a complete message set. */
+function isDesktopNativeBundle(value: unknown): value is DesktopNativeBundle {
+  if (!Predicate.isObject(value)) return false
+  if (!fitsDesktopNativePayload(value)) return false
+  return isDesktopNativeLocale(value.locale) && isDesktopNativeMessages(value.messages)
+}
+
 export function parseDesktopNativeBundle(value: unknown): DesktopNativeBundle | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  try {
-    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > DESKTOP_NATIVE_MAX_PAYLOAD_BYTES) return undefined
-  } catch {
-    return undefined
-  }
-  const bundle = value as { locale?: unknown; messages?: unknown }
-  if (!DESKTOP_NATIVE_LOCALES.some((locale) => locale === bundle.locale)) return undefined
-  if (!bundle.messages || typeof bundle.messages !== "object" || Array.isArray(bundle.messages)) return undefined
-  const messages = bundle.messages as Record<string, unknown>
-  const keys = Object.keys(messages)
-  if (keys.length !== DESKTOP_NATIVE_KEYS.length) return undefined
-  if (!DESKTOP_NATIVE_KEYS.every((key) => typeof messages[key] === "string")) return undefined
-  if (!keys.every((key) => key in DESKTOP_NATIVE_ENGLISH)) return undefined
-  return bundle as DesktopNativeBundle
+  if (!isDesktopNativeBundle(value)) return undefined
+  return value
 }
 
 export function formatDesktopNativeMessage(message: string, params?: Record<string, string | number>) {

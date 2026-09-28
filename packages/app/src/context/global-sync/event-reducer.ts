@@ -1,6 +1,8 @@
 import { Binary } from "@opencode-ai/core/util/binary"
+import { DateTime, HashSet, Option, Predicate } from "effect"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type {
+  Event,
   Message,
   Part,
   PermissionRequest,
@@ -17,8 +19,8 @@ import { dropSessionCaches } from "./session-cache"
 import { diffs as list, message as clean } from "@/utils/diffs"
 import { messageKey } from "@/utils/session-message"
 
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-const SESSION_CONTENT_EVENTS = new Set([
+const SKIP_PARTS = HashSet.fromIterable<string>(["patch", "step-start", "step-finish"])
+const SESSION_CONTENT_EVENTS = HashSet.fromIterable<string>([
   "session.diff",
   "todo.updated",
   "session.status",
@@ -34,8 +36,67 @@ const SESSION_CONTENT_EVENTS = new Set([
   "question.rejected",
 ])
 
+/** A server event as applyGlobalEvent reads it: project.updated carries the project. */
+export type GlobalEvent =
+  | { type: "project.updated"; properties: Project }
+  | { type: Exclude<Event["type"], "project.updated">; properties?: unknown }
+
+/**
+ * The directory events that applyDirectoryEvent handles, with the payload fields it reads.
+ * session.renamed, session.usage.updated and session.moved are not in the SDK Event union.
+ */
+type HandledDirectoryEvent =
+  | { type: "server.instance.disposed" | "lsp.updated" | "reference.updated"; properties?: unknown }
+  | { type: "session.created" | "session.updated"; properties: { info: Session } }
+  | { type: "session.deleted"; properties: { sessionID?: string; info?: Session } }
+  | { type: "session.renamed"; properties: { sessionID: string; title: string } }
+  | { type: "session.usage.updated"; properties: Pick<Session, "cost" | "tokens"> & { sessionID: string } }
+  | {
+      type: "session.moved"
+      properties: {
+        sessionID: string
+        location: { directory: string; workspaceID?: string }
+        projectID?: string
+        subpath?: string
+      }
+    }
+  | { type: "session.diff"; properties: { sessionID: string; diff: unknown } }
+  | { type: "todo.updated"; properties: { sessionID: string; todos: Todo[] } }
+  | { type: "session.status"; properties: { sessionID: string; status: SessionStatus } }
+  | { type: "message.updated"; properties: { info: Message } }
+  | { type: "message.removed"; properties: { sessionID: string; messageID: string } }
+  | { type: "message.part.updated"; properties: { part: Part } }
+  | { type: "message.part.removed"; properties: { messageID: string; partID: string } }
+  | { type: "message.part.delta"; properties: { messageID: string; partID: string; field: string; delta: string } }
+  | { type: "vcs.branch.updated"; properties: { branch?: string } }
+  | { type: "permission.asked"; properties: PermissionRequest }
+  | { type: "permission.replied"; properties: { sessionID: string; requestID: string } }
+  | { type: "question.asked"; properties: QuestionRequest }
+  | { type: "question.replied" | "question.rejected"; properties: { sessionID: string; requestID: string } }
+
+/** A server event as applyDirectoryEvent reads it; other SDK event types pass through unchanged. */
+export type DirectoryEvent =
+  | HandledDirectoryEvent
+  | { type: Exclude<Event["type"], HandledDirectoryEvent["type"]>; properties?: unknown }
+
+type ListedDiff = ReturnType<typeof list>[number]
+
+/** The diffs() guard leaves status optional; the store keeps only diffs that name their status. */
+function isFileDiffInfo(diff: ListedDiff): diff is FileDiffInfo {
+  return typeof diff.file === "string" && typeof diff.patch === "string" && diff.status !== undefined
+}
+
+/** Receives a session's todos, or Option.none() when the session's caches are dropped. */
+type SetSessionTodo = (sessionID: string, todos: Option.Option<Todo[]>) => void
+
+/** Reads a part field that a delta event names at run time; Part has no index signature. */
+function fieldValue(part: unknown, field: string): unknown {
+  if (!Predicate.isObject(part)) return undefined
+  return part[field]
+}
+
 export function applyGlobalEvent(input: {
-  event: { type: string; properties?: unknown }
+  event: GlobalEvent
   project: Project[]
   setGlobalProject: (next: Project[] | ((draft: Project[]) => Project[])) => void
   refresh: () => void
@@ -46,7 +107,7 @@ export function applyGlobalEvent(input: {
   }
 
   if (input.event.type !== "project.updated") return
-  const properties = input.event.properties as Project
+  const properties = input.event.properties
   const result = Binary.search(input.project, properties.id, (s) => s.id)
   if (result.found) {
     input.setGlobalProject(
@@ -66,10 +127,10 @@ export function applyGlobalEvent(input: {
 function cleanupSessionCaches(
   setStore: SetStoreFunction<State>,
   sessionID: string,
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
+  setSessionTodo?: SetSessionTodo,
 ) {
   if (!sessionID) return
-  setSessionTodo?.(sessionID, undefined)
+  setSessionTodo?.(sessionID, Option.none())
   setStore(
     produce((draft) => {
       dropSessionCaches(draft, [sessionID])
@@ -81,9 +142,9 @@ export function cleanupDroppedSessionCaches(
   store: Store<State>,
   setStore: SetStoreFunction<State>,
   next: Session[],
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
+  setSessionTodo?: SetSessionTodo,
 ) {
-  const keep = new Set(next.map((item) => item.id))
+  const keep = HashSet.fromIterable(next.map((item) => item.id))
   const stale = [
     ...Object.keys(store.message),
     ...Object.keys(store.session_diff),
@@ -94,10 +155,10 @@ export function cleanupDroppedSessionCaches(
     ...Object.values(store.part)
       .map((parts) => parts?.find((part) => !!part?.sessionID)?.sessionID)
       .filter((sessionID): sessionID is string => !!sessionID),
-  ].filter((sessionID, index, list) => !keep.has(sessionID) && list.indexOf(sessionID) === index)
+  ].filter((sessionID, index, list) => !HashSet.has(keep, sessionID) && list.indexOf(sessionID) === index)
   if (stale.length === 0) return
   for (const sessionID of stale) {
-    setSessionTodo?.(sessionID, undefined)
+    setSessionTodo?.(sessionID, Option.none())
   }
   setStore(
     produce((draft) => {
@@ -107,7 +168,7 @@ export function cleanupDroppedSessionCaches(
 }
 
 export function applyDirectoryEvent(input: {
-  event: { type: string; properties?: unknown }
+  event: DirectoryEvent
   store: Store<State>
   setStore: SetStoreFunction<State>
   push: (directory: string) => void
@@ -115,13 +176,13 @@ export function applyDirectoryEvent(input: {
   loadLsp: () => void
   loadReferences?: () => void
   vcsCache?: VcsCache
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void
+  setSessionTodo?: SetSessionTodo
   retainedLimit?: number
   sessionContent?: boolean
   permission?: State["permission"]
 }) {
   const event = input.event
-  if (input.sessionContent === false && SESSION_CONTENT_EVENTS.has(event.type)) return
+  if (input.sessionContent === false && HashSet.has(SESSION_CONTENT_EVENTS, event.type)) return
   const limit = Math.max(input.store.limit, input.retainedLimit ?? 0)
   switch (event.type) {
     case "server.instance.disposed": {
@@ -129,7 +190,7 @@ export function applyDirectoryEvent(input: {
       return
     }
     case "session.created": {
-      const info = (event.properties as { info: Session }).info
+      const info = event.properties.info
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (result.found) {
         input.setStore("session", result.index, reconcile(info))
@@ -144,11 +205,11 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.updated": {
-      const info = (event.properties as { info: Session }).info
+      const info = event.properties.info
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (info.time.archived) {
         if (!result.found) break
-        if (input.store.session[result.index]!.time.archived === info.time.archived) break
+        if (input.store.session[result.index].time.archived === info.time.archived) break
         input.setStore(
           "session",
           produce((draft) => {
@@ -172,11 +233,13 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.deleted": {
-      const properties = event.properties as { sessionID?: string; info?: Session }
+      const properties = event.properties
       const sessionID = properties.info?.id ?? properties.sessionID
       if (!sessionID) break
       const result = Binary.search(input.store.session, sessionID, (s) => s.id)
-      const info = properties.info ?? (result.found ? input.store.session[result.index] : undefined)
+      const info = Option.orElse(Option.fromNullishOr(properties.info), () =>
+        result.found ? Option.fromNullishOr(input.store.session[result.index]) : Option.none(),
+      )
       if (result.found) {
         input.setStore(
           "session",
@@ -186,23 +249,23 @@ export function applyDirectoryEvent(input: {
         )
       }
       cleanupSessionCaches(input.setStore, sessionID, input.setSessionTodo)
-      if (info?.parentID) break
+      if (Option.exists(info, (session) => Boolean(session.parentID))) break
       input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       break
     }
     case "session.renamed": {
-      const properties = event.properties as { sessionID: string; title: string }
+      const properties = event.properties
       const result = Binary.search(input.store.session, properties.sessionID, (session) => session.id)
       if (!result.found) break
       input.setStore("session", result.index, (session) => ({
         ...session,
         title: properties.title,
-        time: { ...session.time, updated: Date.now() },
+        time: { ...session.time, updated: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
       }))
       break
     }
     case "session.usage.updated": {
-      const properties = event.properties as Pick<Session, "cost" | "tokens"> & { sessionID: string }
+      const properties = event.properties
       const result = Binary.search(input.store.session, properties.sessionID, (session) => session.id)
       if (!result.found) break
       input.setStore("session", result.index, (session) => ({
@@ -226,12 +289,7 @@ export function applyDirectoryEvent(input: {
     //   break
     // }
     case "session.moved": {
-      const properties = event.properties as {
-        sessionID: string
-        location: { directory: string; workspaceID?: string }
-        projectID?: string
-        subpath?: string
-      }
+      const properties = event.properties
       const result = Binary.search(input.store.session, properties.sessionID, (session) => session.id)
       if (!result.found) break
       if (properties.location.directory === input.directory) {
@@ -241,7 +299,7 @@ export function applyDirectoryEvent(input: {
           workspaceID: properties.location.workspaceID,
           directory: properties.location.directory,
           path: properties.subpath,
-          time: { ...session.time, updated: Date.now() },
+          time: { ...session.time, updated: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
         }))
         break
       }
@@ -254,23 +312,23 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.diff": {
-      const props = event.properties as { sessionID: string; diff: FileDiffInfo[] }
-      input.setStore("session_diff", props.sessionID, reconcile(list(props.diff) as FileDiffInfo[], { key: "file" }))
+      const props = event.properties
+      input.setStore("session_diff", props.sessionID, reconcile(list(props.diff).filter(isFileDiffInfo), { key: "file" }))
       break
     }
     case "todo.updated": {
-      const props = event.properties as { sessionID: string; todos: Todo[] }
+      const props = event.properties
       input.setStore("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
-      input.setSessionTodo?.(props.sessionID, props.todos)
+      input.setSessionTodo?.(props.sessionID, Option.some(props.todos))
       break
     }
     case "session.status": {
-      const props = event.properties as { sessionID: string; status: SessionStatus }
+      const props = event.properties
       input.setStore("session_status", props.sessionID, reconcile(props.status))
       break
     }
     case "message.updated": {
-      const info = clean((event.properties as { info: Message }).info)
+      const info = clean(event.properties.info)
       const messages = input.store.message[info.sessionID]
       if (!messages) {
         input.setStore("message", info.sessionID, [info])
@@ -291,13 +349,13 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "message.removed": {
-      const props = event.properties as { sessionID: string; messageID: string }
+      const props = event.properties
       input.setStore(
         produce((draft) => {
           const messages = draft.message[props.sessionID]
           if (messages) {
             const index = messages.findIndex((message) => message.id === props.messageID)
-            if (index >= 0) messages.splice(index, 1)
+            if (index >= 0) draft.message[props.sessionID] = messages.toSpliced(index, 1)
           }
           const parts = draft.part[props.messageID]
           if (parts) {
@@ -311,8 +369,8 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "message.part.updated": {
-      const part = (event.properties as { part: Part }).part
-      if (SKIP_PARTS.has(part.type)) break
+      const part = event.properties.part
+      if (HashSet.has(SKIP_PARTS, part.type)) break
       input.setStore(
         produce((draft) => {
           delete draft.part_text_accum_delta[part.id]
@@ -338,7 +396,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "message.part.removed": {
-      const props = event.properties as { messageID: string; partID: string }
+      const props = event.properties
       input.setStore(
         produce((draft) => {
           delete draft.part_text_accum_delta[props.partID]
@@ -354,21 +412,21 @@ export function applyDirectoryEvent(input: {
             if (!list) return
             const next = Binary.search(list, props.partID, (part) => part.id)
             if (!next.found) return
-            list.splice(next.index, 1)
-            if (list.length === 0) delete draft.part[props.messageID]
+            const rest = list.toSpliced(next.index, 1)
+            if (rest.length === 0) delete draft.part[props.messageID]
+            else draft.part[props.messageID] = rest
           }),
         )
       }
       break
     }
     case "message.part.delta": {
-      const props = event.properties as { messageID: string; partID: string; field: string; delta: string }
+      const props = event.properties
       const parts = input.store.part[props.messageID]
       if (!parts) break
       const result = Binary.search(parts, props.partID, (part) => part.id)
       if (!result.found) break
-      const field = props.field as keyof (typeof parts)[number]
-      const current = parts[result.index]?.[field]
+      const current = fieldValue(parts[result.index], props.field)
       input.setStore(
         "part_text_accum_delta",
         props.partID,
@@ -379,15 +437,15 @@ export function applyDirectoryEvent(input: {
         props.messageID,
         produce((draft) => {
           const part = draft[result.index]
-          const field = props.field as keyof typeof part
-          const existing = part[field] as string | undefined
-          ;(part[field] as string) = (existing ?? "") + props.delta
+          const existing = fieldValue(part, props.field)
+          // The event names the field at run time and Part has no index signature, so Reflect writes it.
+          Reflect.set(part, props.field, (typeof existing === "string" ? existing : "") + props.delta)
         }),
       )
       break
     }
     case "vcs.branch.updated": {
-      const props = event.properties as { branch?: string }
+      const props = event.properties
       if (input.store.vcs?.branch === props.branch) break
       const next = { ...input.store.vcs, branch: props.branch }
       input.setStore("vcs", next)
@@ -395,7 +453,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "permission.asked": {
-      const permission = event.properties as PermissionRequest
+      const permission = event.properties
       const permissions = input.store.permission[permission.sessionID]
       if (!permissions) {
         input.setStore("permission", permission.sessionID, [permission])
@@ -416,7 +474,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "permission.replied": {
-      const props = event.properties as { sessionID: string; requestID: string }
+      const props = event.properties
       const permissions = input.store.permission[props.sessionID]
       if (!permissions) break
       const result = Binary.search(permissions, props.requestID, (p) => p.id)
@@ -431,7 +489,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "question.asked": {
-      const question = event.properties as QuestionRequest
+      const question = event.properties
       const questions = input.store.question[question.sessionID]
       if (!questions) {
         input.setStore("question", question.sessionID, [question])
@@ -453,7 +511,7 @@ export function applyDirectoryEvent(input: {
     }
     case "question.replied":
     case "question.rejected": {
-      const props = event.properties as { sessionID: string; requestID: string }
+      const props = event.properties
       const questions = input.store.question[props.sessionID]
       if (!questions) break
       const result = Binary.search(questions, props.requestID, (q) => q.id)

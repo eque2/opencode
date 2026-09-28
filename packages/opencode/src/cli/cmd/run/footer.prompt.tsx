@@ -12,6 +12,7 @@ import { normalizePromptContent } from "@opencode-ai/tui/editor"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
+import { Array as Arr, Effect, HashSet, MutableHashMap, Option } from "effect"
 import * as Locale from "@/util/locale"
 import {
   createPromptHistory,
@@ -26,6 +27,7 @@ import {
 import { OPENCODE_BASE_MODE, useBindings } from "@opencode-ai/tui/keymap"
 import { realignEditorPromptParts, resolveEditorSlashValue } from "./prompt.editor"
 import { FOOTER_MENU_ROWS, createFooterMenuState, type RunFooterMenuItem } from "./footer.menu"
+import { FooterCallbackError, createFiberSlot, fromCallback } from "./footer.effect"
 import type { RunFooterTheme } from "./theme"
 import type { FooterState, RunAgent, RunCommand, RunPrompt, RunPromptPart, RunResource, RunTuiConfig } from "./types"
 
@@ -91,12 +93,12 @@ export type PromptState = {
   requestExit: () => boolean
   onSubmit: () => void
   submitText: (text: string) => void
-  openEditor: (input?: { value?: string }) => Promise<void>
+  openEditor: (input?: { value?: string }) => void
   onKeyDown: (event: KeyEvent) => void
   onContentChange: () => void
   replaceDraft: (text: string) => void
   replacePrompt: (prompt: RunPrompt) => void
-  bind: (area?: TextareaRenderable) => void
+  bind: (area: Option.Option<TextareaRenderable>) => void
 }
 
 function clamp(rows: number): number {
@@ -135,13 +137,15 @@ function extractLineRange(input: string) {
   }
 
   const start = Number(match[1])
-  const end = match[2] && start < Number(match[2]) ? Number(match[2]) : undefined
-  return { base, line: { start, end } }
+  const end = Number(match[2])
+  // A range end counts only when it is present and after the start.
+  const hasEnd = Boolean(match[2]) && start < end
+  return { base, line: { start, ...(hasEnd ? { end } : {}) } }
 }
 
 function slashHead(text: string) {
   if (!text.startsWith("/")) {
-    return
+    return undefined
   }
 
   for (let i = 1; i < text.length; i++) {
@@ -159,7 +163,7 @@ function slashHead(text: string) {
 function slashQuery(text: string, cursor: number) {
   const head = slashHead(text.slice(0, cursor))
   if (!head || head.end !== cursor) {
-    return
+    return undefined
   }
 
   return head.name
@@ -184,18 +188,18 @@ function parseSlashCommand(text: string, commands: RunCommand[] | undefined) {
 
 function selectedCommand(text: string, command: RunPrompt["command"]) {
   if (!command) {
-    return
+    return Option.none<NonNullable<RunPrompt["command"]>>()
   }
 
   const head = slashHead(text)
   if (!head || head.name !== command.name) {
-    return
+    return Option.none<NonNullable<RunPrompt["command"]>>()
   }
 
-  return {
+  return Option.some({
     name: command.name,
     arguments: head.arguments,
-  }
+  })
 }
 
 export function RunPromptBody(props: {
@@ -205,48 +209,52 @@ export function RunPromptBody(props: {
   onSubmit: () => void
   onKeyDown: (event: KeyEvent) => void
   onContentChange: () => void
-  bind: (area?: TextareaRenderable) => void
+  bind: (area: Option.Option<TextareaRenderable>) => void
 }) {
   const renderer = useRenderer()
   let area: TextareaRenderable | undefined
-  let pasteTick: ReturnType<typeof setTimeout> | undefined
+  // The pending paste relayout. The component cleanup interrupts it.
+  const pasteTick = createFiberSlot()
 
   const refreshPasteLayout = () => {
-    if (pasteTick) {
-      clearTimeout(pasteTick)
-    }
+    pasteTick.run(
+      Effect.sleep("0 millis").pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            if (!area || area.isDestroyed) {
+              return Effect.void
+            }
 
-    pasteTick = setTimeout(() => {
-      pasteTick = undefined
-      if (!area || area.isDestroyed) {
-        return
-      }
+            // Paste can leave the textarea layout stale until the next edit.
+            area.getLayoutNode().markDirty()
+            renderer.requestRender()
+            return Effect.tryPromise({
+              try: () => renderer.idle(),
+              catch: (cause) => new FooterCallbackError({ action: "renderer.idle", cause }),
+            }).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (!area || area.isDestroyed) {
+                    return
+                  }
 
-      // Paste can leave the textarea layout stale until the next edit.
-      area.getLayoutNode().markDirty()
-      renderer.requestRender()
-      void renderer
-        .idle()
-        .then(() => {
-          if (!area || area.isDestroyed) {
-            return
-          }
-
-          props.onContentChange()
-        })
-        .catch(() => {})
-    }, 0)
+                  props.onContentChange()
+                }),
+              ),
+              Effect.ignore,
+            )
+          }),
+        ),
+      ),
+    )
   }
 
   onMount(() => {
-    props.bind(area)
+    props.bind(Option.fromNullishOr(area))
   })
 
   onCleanup(() => {
-    if (pasteTick) {
-      clearTimeout(pasteTick)
-    }
-    props.bind(undefined)
+    props.bind(Option.none())
   })
 
   return (
@@ -301,7 +309,8 @@ export function createPromptState(input: PromptInput): PromptState {
   let prev = input.view()
   let type = 0
   let parts: Mention[] = []
-  let marks = new Map<number, number>()
+  // Extmark ID to the index of its part in `parts`.
+  let marks = MutableHashMap.empty<number, number>()
 
   const [mode, setMode] = createSignal<MenuMode>(false)
   const [at, setAt] = createSignal(0)
@@ -357,16 +366,20 @@ export function createPromptState(input: PromptInput): PromptState {
       },
     }))
   })
-  const [files] = createResource(
-    query,
-    async (value) => {
+  const findMentionFiles = (value: string) =>
+    Effect.suspend(() => {
       if (!visible() || mode() !== "mention") {
-        return []
+        return Effect.succeed<Auto[]>([])
       }
 
       const next = extractLineRange(value)
-      const list = await input.findFiles(next.base)
-      return list.map((item): Auto => {
+      return Effect.tryPromise({
+        try: () => input.findFiles(next.base),
+        catch: (cause) => new FooterCallbackError({ action: "findFiles", cause }),
+      }).pipe(Effect.map((list) => mentionFiles(list, next)))
+    })
+  const mentionFiles = (list: string[], next: ReturnType<typeof extractLineRange>) =>
+      list.map((item): Auto => {
         const url = pathToFileURL(path.resolve(input.directory, item))
         let filename = item
         if (next.line && !item.endsWith("/")) {
@@ -399,7 +412,10 @@ export function createPromptState(input: PromptInput): PromptState {
           },
         }
       })
-    },
+  const [files] = createResource(
+    query,
+    // Solid's resource fetcher takes a Promise, so the Effect runs here.
+    (value) => Effect.runPromise(findMentionFiles(value)),
     { initialValue: [] as Auto[] },
   )
   const mentionOptions = createMemo(() => [...agents(), ...files(), ...resources()])
@@ -419,11 +435,8 @@ export function createPromptState(input: PromptInput): PromptState {
       { kind: "slash", name: "new", display: "/new", description: "start a new session" } satisfies SlashOption,
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
     ]
-    const hidden = new Set(builtins.map((item) => item.name))
     const showSkillMenu = !shell() && skillCommands().length > 0 && !hasSkillsCommand()
-    if (showSkillMenu) {
-      hidden.add("skills")
-    }
+    const hidden = HashSet.fromIterable([...builtins.map((item) => item.name), ...(showSkillMenu ? ["skills"] : [])])
 
     return [
       ...(showSkillMenu
@@ -438,7 +451,7 @@ export function createPromptState(input: PromptInput): PromptState {
           ]
         : []),
       ...(input.commands() ?? [])
-        .filter((item) => item.source !== "skill" && !hidden.has(item.name))
+        .filter((item) => item.source !== "skill" && !HashSet.has(hidden, item.name))
         .map(
           (item) =>
             ({
@@ -509,14 +522,14 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     const next: Mention[] = []
-    const map = new Map<number, number>()
+    const map = MutableHashMap.empty<number, number>()
     for (const item of area.extmarks.getAllForTypeId(type)) {
-      const idx = marks.get(item.id)
-      if (idx === undefined) {
+      const idx = MutableHashMap.get(marks, item.id)
+      if (Option.isNone(idx)) {
         continue
       }
 
-      const part = parts[idx]
+      const part = parts[idx.value]
       if (!part) {
         continue
       }
@@ -544,11 +557,11 @@ export function createPromptState(input: PromptInput): PromptState {
         copy.source.text.value = text
       }
 
-      map.set(item.id, next.length)
+      MutableHashMap.set(map, item.id, next.length)
       next.push(copy)
     }
 
-    const stale = map.size !== marks.size
+    const stale = MutableHashMap.size(map) !== MutableHashMap.size(marks)
     parts = next
     marks = map
     if (stale) {
@@ -561,7 +574,7 @@ export function createPromptState(input: PromptInput): PromptState {
       area.extmarks.clear()
     }
     parts = []
-    marks = new Map()
+    marks = MutableHashMap.empty()
   }
 
   const restoreParts = (value: RunPromptPart[]) => {
@@ -587,7 +600,7 @@ export function createPromptState(input: PromptInput): PromptState {
         virtual: true,
         typeId: type,
       })
-      marks.set(id, idx)
+      MutableHashMap.set(marks, id, idx)
     })
   }
 
@@ -688,8 +701,11 @@ export function createPromptState(input: PromptInput): PromptState {
     }
   }
 
-  const bind = (next?: TextareaRenderable) => {
-    if (area === next) {
+  const bind = (next: Option.Option<TextareaRenderable>) => {
+    // `area` mirrors the textarea ref that opentui assigns, so it keeps the
+    // ref's nullable form.
+    const value = Option.getOrUndefined(next)
+    if (area === value) {
       return
     }
 
@@ -697,7 +713,7 @@ export function createPromptState(input: PromptInput): PromptState {
       area.off("line-info-change", scheduleRows)
     }
 
-    area = next
+    area = value
     if (!area || area.isDestroyed) {
       return
     }
@@ -722,7 +738,7 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     syncParts()
-    const command = shell() ? undefined : selectedCommand(area.plainText, draft.command)
+    const command = shell() ? Option.none() : selectedCommand(area.plainText, draft.command)
     draft = shell()
       ? {
           text: area.plainText,
@@ -732,7 +748,7 @@ export function createPromptState(input: PromptInput): PromptState {
       : {
           text: area.plainText,
           parts: structuredClone(parts),
-          ...(command ? { command } : {}),
+          ...(Option.isSome(command) ? { command: command.value } : {}),
         }
   }
 
@@ -745,7 +761,7 @@ export function createPromptState(input: PromptInput): PromptState {
       return false
     }
 
-    if (history.index === null && dir === -1) {
+    if (Option.isNone(history.index) && dir === -1) {
       stash = clonePrompt(draft)
     }
 
@@ -755,15 +771,17 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     history = next.state
-    const value =
-      next.state.index === null ? stash : (next.state.items[next.state.index] ?? { text: next.text, parts: [] })
+    const value = Option.match(next.state.index, {
+      onNone: () => stash,
+      onSome: (index) => next.state.items[index] ?? { text: next.text, parts: [] },
+    })
     restore(value, next.cursor)
     event.preventDefault()
     return true
   }
 
   const historyCommand = (dir: -1 | 1, event: KeyEvent) => {
-    if (move(dir, event)) return
+    if (move(dir, event)) return undefined
     if (!area || area.isDestroyed) return false
 
     const endOffset = Bun.stringWidth(area.plainText)
@@ -812,31 +830,46 @@ export function createPromptState(input: PromptInput): PromptState {
     area.focus()
   }
 
-  const openEditor = async (inputValue?: { value?: string }) => {
+  const openEditor = (inputValue?: { value?: string }) => {
     input.onInputClear()
     syncDraft()
     hide()
 
     const current = clonePrompt(draft)
-    try {
-      const content = await input.onEditorOpen({
-        value: inputValue?.value ?? current.text,
-      })
-      if (content === undefined) {
-        return
-      }
-      const normalized = normalizePromptContent(content)
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () =>
+          input.onEditorOpen({
+            value: inputValue?.value ?? current.text,
+          }),
+        catch: (cause) => new FooterCallbackError({ action: "editor.open", cause }),
+      }).pipe(
+        Effect.andThen((content) =>
+          Effect.try({
+            try: () => {
+              if (content === undefined) {
+                return
+              }
+              const normalized = normalizePromptContent(content)
 
-      restore({
-        text: normalized,
-        parts: realignEditorPromptParts(normalized, current.parts),
-        ...(current.mode ? { mode: current.mode } : {}),
-        ...(current.command ? { command: current.command } : {}),
-      })
-    } catch {
-      restore(current)
-      input.onStatus("failed to open editor")
-    }
+              restore({
+                text: normalized,
+                parts: realignEditorPromptParts(normalized, current.parts),
+                ...(current.mode ? { mode: current.mode } : {}),
+                ...(current.command ? { command: current.command } : {}),
+              })
+            },
+            catch: (cause) => new FooterCallbackError({ action: "editor.restore", cause }),
+          }),
+        ),
+        Effect.catch(() =>
+          Effect.sync(() => {
+            restore(current)
+            input.onStatus("failed to open editor")
+          }),
+        ),
+      ),
+    )
   }
 
   const select = (item?: PromptOption) => {
@@ -847,7 +880,7 @@ export function createPromptState(input: PromptInput): PromptState {
 
     if (next.kind === "slash") {
       if (next.action === "editor") {
-        void openEditor({
+        openEditor({
           value: resolveEditorSlashValue(area.plainText),
         })
         return
@@ -920,15 +953,15 @@ export function createPromptState(input: PromptInput): PromptState {
     if (part.type === "file") {
       const prev = parts.findIndex((item) => item.type === "file" && item.url === part.url)
       if (prev !== -1) {
-        const mark = [...marks.entries()].find((item) => item[1] === prev)?.[0]
-        if (mark !== undefined) {
-          area.extmarks.delete(mark)
+        const mark = Arr.findFirst(Arr.fromIterable(marks), ([, idx]) => idx === prev).pipe(Option.map(([id]) => id))
+        if (Option.isSome(mark)) {
+          area.extmarks.delete(mark.value)
         }
         parts = parts.filter((_, idx) => idx !== prev)
-        marks = new Map(
-          [...marks.entries()]
-            .filter((item) => item[0] !== mark)
-            .map((item) => [item[0], item[1] > prev ? item[1] - 1 : item[1]]),
+        marks = MutableHashMap.fromIterable(
+          Arr.fromIterable(marks)
+            .filter(([id]) => !Option.contains(mark, id))
+            .map(([id, idx]): [number, number] => [id, idx > prev ? idx - 1 : idx]),
         )
       }
     }
@@ -939,8 +972,8 @@ export function createPromptState(input: PromptInput): PromptState {
       virtual: true,
       typeId: type,
     })
-    marks.set(id, parts.length)
-    parts.push(part)
+    MutableHashMap.set(marks, id, parts.length)
+    parts = [...parts, part]
     hide()
     syncDraft()
     scheduleRows()
@@ -984,7 +1017,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Clear prompt or exit",
         category: "Prompt",
         run() {
-          if (requestExit()) return
+          if (requestExit()) return undefined
           return false
         },
       },
@@ -1001,7 +1034,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Interrupt session",
         category: "Session",
         run() {
-          if (input.onInterrupt()) return
+          if (input.onInterrupt()) return undefined
           return false
         },
       },
@@ -1018,7 +1051,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Open editor",
         category: "Prompt",
         run() {
-          void openEditor()
+          openEditor()
         },
       },
     ],
@@ -1065,6 +1098,7 @@ export function createPromptState(input: PromptInput): PromptState {
           if (!area || area.isDestroyed) return false
           if (area.cursorOffset !== 0) return false
           setShellMode(true)
+          return undefined
         },
       },
     ],
@@ -1088,6 +1122,7 @@ export function createPromptState(input: PromptInput): PromptState {
           if (!area || area.isDestroyed) return false
           if (area.cursorOffset !== 0) return false
           setShellMode(false)
+          return undefined
         },
       },
     ],
@@ -1179,40 +1214,50 @@ export function createPromptState(input: PromptInput): PromptState {
       return
     }
 
-    const command = next.mode === "shell" ? undefined : selectedCommand(next.text, next.command)
-    if (!command && next.mode !== "shell" && isExitCommand(next.text)) {
+    const command = next.mode === "shell" ? Option.none() : selectedCommand(next.text, next.command)
+    if (Option.isNone(command) && next.mode !== "shell" && isExitCommand(next.text)) {
       input.onExit()
       return
     }
 
     const parsed =
-      command || next.mode === "shell" || isNewCommand(next.text)
-        ? undefined
-        : parseSlashCommand(next.text, input.commands())
-    if (parsed?.type === "pending") {
+      Option.isSome(command) || next.mode === "shell" || isNewCommand(next.text)
+        ? Option.none()
+        : Option.some(parseSlashCommand(next.text, input.commands()))
+    if (Option.exists(parsed, (item) => item.type === "pending")) {
       input.onStatus("loading commands")
       return
     }
 
-    const submit = command
-      ? { ...next, command }
-      : parsed?.type === "command"
-        ? { ...next, command: parsed.command }
-        : next
+    // A command the draft already carries wins over one parsed from the text.
+    const slash = Option.flatMap(parsed, (item) => (item.type === "command" ? Option.some(item.command) : Option.none()))
+    const submit = Option.match(Option.orElse(command, () => slash), {
+      onNone: () => next,
+      onSome: (selected) => ({ ...next, command: selected }),
+    })
     const shellMode = next.mode === "shell"
 
     resetDraft()
-    queueMicrotask(async () => {
-      if (await input.onSubmit(submit)) {
-        push(next)
-        if (shellMode) {
-          setShellMode(false)
-          draft = emptyPrompt(false)
-        }
-        return
-      }
+    queueMicrotask(() => {
+      Effect.runFork(
+        fromCallback("prompt.submit", () => input.onSubmit(submit)).pipe(
+          Effect.andThen((accepted) =>
+            Effect.sync(() => {
+              if (accepted) {
+                push(next)
+                if (shellMode) {
+                  setShellMode(false)
+                  draft = emptyPrompt(false)
+                }
+                return
+              }
 
-      restore(next)
+              restore(next)
+            }),
+          ),
+          Effect.ignore,
+        ),
+      )
     })
   }
 

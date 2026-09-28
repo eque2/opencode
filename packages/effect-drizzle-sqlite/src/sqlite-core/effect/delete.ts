@@ -1,6 +1,6 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
@@ -13,9 +13,9 @@ import type { PreparedQueryConfig } from "drizzle-orm/sqlite-core/session"
 import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import type { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, type ValueOrArray } from "drizzle-orm/utils"
+import { type DrizzleTypeError, getTableColumns, type ValueOrArray } from "drizzle-orm/utils"
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
-import { getTableColumnsRuntime, orderSelectedFields } from "../../internal/drizzle-utils"
+import { orderSelectedFields } from "../../internal/drizzle-utils"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectDeleteWithout<
@@ -31,6 +31,7 @@ export type SQLiteEffectDeleteWithout<
         T["_"]["returning"],
         TDynamic,
         T["_"]["excludedMethods"] | K,
+        // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
         T["_"]["effectHKT"]
       >,
       T["_"]["excludedMethods"] | K
@@ -46,6 +47,7 @@ export type SQLiteEffectDeleteReturningAll<
     T["_"]["table"]["$inferSelect"],
     T["_"]["dynamic"],
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -63,6 +65,7 @@ export type SQLiteEffectDeleteReturning<
     SelectResultFields<TSelectedFields>,
     T["_"]["dynamic"],
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -73,30 +76,30 @@ export type SQLiteEffectDeleteExecute<T extends AnySQLiteEffectDelete> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectDeletePrepareConfig<T extends AnySQLiteEffectDelete> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"] | undefined
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectDeleteExecute<T>
+}
+
 export type SQLiteEffectDeletePrepare<
   T extends AnySQLiteEffectDelete,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"] | undefined
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectDeleteExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectDeletePrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectDeleteDynamic<T extends AnySQLiteEffectDelete> = SQLiteEffectDelete<
   T["_"]["table"],
   T["_"]["runResult"],
   T["_"]["returning"],
+  // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
   T["_"]["effectHKT"]
 >
 
@@ -109,21 +112,24 @@ export type SQLiteEffectDelete<
 
 export type AnySQLiteEffectDelete = SQLiteEffectDeleteBase<any, any, any, any, any, any>
 
-export interface SQLiteEffectDeleteBase<
-  TTable extends SQLiteTable,
-  TRunResult,
-  TReturning extends Record<string, unknown> | undefined = undefined,
-  TDynamic extends boolean = false,
-  _TExcludedMethods extends string = never,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">,
-    SQLWrapper,
-    Effect.Effect<
-      TReturning extends undefined ? TRunResult : TReturning[],
-      TEffectHKT["error"],
-      TEffectHKT["context"]
-    > {
-  readonly _: {
+export class SQLiteEffectDeleteBase<
+    TTable extends SQLiteTable,
+    TRunResult,
+    TReturning extends Record<string, unknown> | undefined = undefined,
+    TDynamic extends boolean = false,
+    _TExcludedMethods extends string = never,
+    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
+  >
+  extends Effectable.Class<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  >
+  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
+{
+  static readonly [entityKind]: string = "SQLiteEffectDelete"
+
+  declare readonly _: {
     dialect: "sqlite"
     readonly table: TTable
     readonly resultType: "async"
@@ -134,19 +140,6 @@ export interface SQLiteEffectDeleteBase<
     readonly result: TReturning extends undefined ? TRunResult : TReturning[]
     readonly effectHKT: TEffectHKT
   }
-}
-
-export class SQLiteEffectDeleteBase<
-    TTable extends SQLiteTable,
-    TRunResult,
-    TReturning extends Record<string, unknown> | undefined = undefined,
-    TDynamic extends boolean = false,
-    _TExcludedMethods extends string = never,
-    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-  >
-  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
-{
-  static readonly [entityKind]: string = "SQLiteEffectDelete"
 
   /** @internal */
   config: SQLiteDeleteConfig
@@ -157,12 +150,14 @@ export class SQLiteEffectDeleteBase<
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
   ) {
+    super()
     this.config = { table, withList }
   }
 
   where(where: SQL | undefined): SQLiteEffectDeleteWithout<this, TDynamic, "where"> {
     this.config.where = where
-    return this as any
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "where">
   }
 
   orderBy(
@@ -176,23 +171,27 @@ export class SQLiteEffectDeleteBase<
   ): SQLiteEffectDeleteWithout<this, TDynamic, "orderBy"> {
     if (typeof columns[0] === "function") {
       const orderBy = columns[0](
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm orderBy callback signature types its argument as the table (TTable), while the runtime passes a selection proxy of the table's columns, as in upstream drizzle; TS2352 rejects `as TTable`, and SelectionProxyHandler rejects a table target, so `as any` stays
         new Proxy(
-          getTableColumnsRuntime(this.config.table),
+          getTableColumns(this.config.table),
           new SelectionProxyHandler({ sqlAliasedBehavior: "alias", sqlBehavior: "sql" }),
         ) as any,
       )
 
       this.config.orderBy = Array.isArray(orderBy) ? orderBy : [orderBy]
-      return this as any
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+      return this as SQLiteEffectDeleteWithout<this, TDynamic, "orderBy">
     }
 
-    this.config.orderBy = columns as (SQLiteColumn | SQL | SQL.Aliased)[]
-    return this as any
+    this.config.orderBy = columns.filter((column) => typeof column !== "function")
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "orderBy">
   }
 
   limit(limit: number | Placeholder): SQLiteEffectDeleteWithout<this, TDynamic, "limit"> {
     this.config.limit = limit
-    return this as any
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "limit">
   }
 
   returning(): SQLiteEffectDeleteReturningAll<this, TDynamic>
@@ -200,10 +199,13 @@ export class SQLiteEffectDeleteBase<
     fields: TSelectedFields,
   ): SQLiteEffectDeleteReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFieldsFlat = getTableColumnsRuntime(this.table),
-  ): SQLiteEffectDeleteReturning<this, TDynamic, any> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
-    this.config.returning = orderSelectedFields<SQLiteColumn>(fields)
-    return this as any
+    fields: SelectedFieldsFlat = getTableColumns(this.table),
+  ): SQLiteEffectDeleteReturning<this, TDynamic, SelectedFieldsFlat> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
+    this.config.returning = orderSelectedFields(fields)
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state returning() overloads, which this adapter mirrors, return the same builder as their next states; the union is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as
+      | SQLiteEffectDeleteReturning<this, TDynamic, SelectedFieldsFlat>
+      | SQLiteEffectDeleteReturningAll<this, TDynamic>
   }
 
   /** @internal */
@@ -216,20 +218,19 @@ export class SQLiteEffectDeleteBase<
   }
 
   /** @internal */
-  _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this, TEffectHKT> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
-      this.config.returning ? "all" : "run",
-      undefined,
-      {
+  _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this> {
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectDeletePrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
         type: "delete",
         tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectDeletePrepare<this, TEffectHKT>
+    })
   }
 
-  prepare(): SQLiteEffectDeletePrepare<this, TEffectHKT> {
+  prepare(): SQLiteEffectDeletePrepare<this> {
     return this._prepare(false)
   }
 
@@ -254,8 +255,15 @@ export class SQLiteEffectDeleteBase<
   }
 
   $dynamic(): SQLiteEffectDeleteDynamic<this> {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm $dynamic() signature, which this adapter mirrors, returns the same builder in its TDynamic = true, excludedMethods = never state; TS2352 rejects the precise cast (_TExcludedMethods is not comparable to never), and a double cast is forbidden, so `as any` stays
     return this as any
   }
-}
 
-applyEffectWrapper(SQLiteEffectDeleteBase)
+  asEffect(): Effect.Effect<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  > {
+    return this.execute()
+  }
+}

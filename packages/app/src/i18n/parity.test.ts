@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { Data, Effect, HashMap, Option, Predicate } from "effect"
 import { desktopNativePluralCategories } from "./desktop-native"
+
+/** A translation module that has no string dictionary export. */
+class InvalidDictionaryError extends Data.TaggedError("Test.InvalidDictionaryError")<{ readonly message: string }> {}
 
 const appLocales = [
   "ar",
@@ -65,7 +69,7 @@ const appLocales = [
   "uz",
 ] as const
 const desktopLocales = appLocales
-const pluralCategories = new Map(
+const pluralCategories = HashMap.fromIterable(
   appLocales.map(
     (locale) =>
       [
@@ -74,6 +78,11 @@ const pluralCategories = new Map(
       ] as const,
   ),
 )
+
+/** The plural categories that a locale needs beyond "one" and "other". Empty for a locale with no entry. */
+function extraPluralCategories(locale: (typeof appLocales)[number]) {
+  return Option.getOrElse(HashMap.get(pluralCategories, locale), () => [])
+}
 
 const domains = [
   {
@@ -97,120 +106,141 @@ const domains = [
 ] as const
 
 describe("i18n parity", () => {
-  test("non-English locales have every English key and required plural variants", async () => {
-    for (const domain of domains) {
-      const source = await dictionary(domain.source)
-      for (const locale of domain.locales) {
-        const target = await dictionary(domain.target(locale))
-        const missing = Object.keys(source).filter((key) => !Object.hasOwn(target, key))
-        const extra = Object.keys(target)
-          .filter((key) => !Object.hasOwn(source, key))
-          .sort()
-        const expected = pluralFamilies(source)
-          .flatMap((key) => (pluralCategories.get(locale) ?? []).map((category) => `${key}.${category}`))
-          .sort()
-        expect({ domain: domain.name, locale, missing, extra }).toEqual({
-          domain: domain.name,
-          locale,
-          missing: [],
-          extra: expected,
-        })
-      }
-    }
-  })
+  test("non-English locales have every English key and required plural variants", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        for (const domain of domains) {
+          const source = yield* dictionary(domain.source)
+          for (const locale of domain.locales) {
+            const target = yield* dictionary(domain.target(locale))
+            const missing = Object.keys(source).filter((key) => !Object.hasOwn(target, key))
+            const extra = Object.keys(target)
+              .filter((key) => !Object.hasOwn(source, key))
+              .sort()
+            const expected = pluralFamilies(source)
+              .flatMap((key) => extraPluralCategories(locale).map((category) => `${key}.${category}`))
+              .sort()
+            expect({ domain: domain.name, locale, missing, extra }).toEqual({
+              domain: domain.name,
+              locale,
+              missing: [],
+              extra: expected,
+            })
+          }
+        }
+      }),
+    ))
 
-  test("non-English locales preserve English placeholders", async () => {
-    for (const domain of domains) {
-      const source = await dictionary(domain.source)
-      for (const locale of domain.locales) {
-        const target = await dictionary(domain.target(locale))
-        const mismatched = Object.keys(source).filter(
-          (key) => Object.hasOwn(target, key) && placeholders(source[key]).join() !== placeholders(target[key]).join(),
-        )
-        const pluralMismatched = pluralFamilies(source).flatMap((key) =>
-          (pluralCategories.get(locale) ?? [])
-            .map((category) => `${key}.${category}`)
-            .filter((variant) => placeholders(source[`${key}.other`]).join() !== placeholders(target[variant]).join()),
-        )
-        expect({ domain: domain.name, locale, mismatched, pluralMismatched }).toEqual({
-          domain: domain.name,
-          locale,
-          mismatched: [],
-          pluralMismatched: [],
-        })
-      }
-    }
-  })
+  test("non-English locales preserve English placeholders", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        for (const domain of domains) {
+          const source = yield* dictionary(domain.source)
+          for (const locale of domain.locales) {
+            const target = yield* dictionary(domain.target(locale))
+            const mismatched = Object.keys(source).filter(
+              (key) =>
+                Object.hasOwn(target, key) && placeholders(source[key]).join() !== placeholders(target[key]).join(),
+            )
+            const pluralMismatched = pluralFamilies(source).flatMap((key) =>
+              extraPluralCategories(locale)
+                .map((category) => `${key}.${category}`)
+                .filter(
+                  (variant) => placeholders(source[`${key}.other`]).join() !== placeholders(target[variant]).join(),
+                ),
+            )
+            expect({ domain: domain.name, locale, mismatched, pluralMismatched }).toEqual({
+              domain: domain.name,
+              locale,
+              mismatched: [],
+              pluralMismatched: [],
+            })
+          }
+        }
+      }),
+    ))
 
-  test("non-English locales translate targeted unseen session keys", async () => {
-    const source = await dictionary("./en.ts")
-    for (const locale of appLocales) {
-      const target = await dictionary(`./${locale}.ts`)
-      for (const key of ["command.session.previous.unseen", "command.session.next.unseen"]) {
-        expect(target[key]).toBeDefined()
-        expect(target[key]).not.toBe(source[key])
-      }
-    }
-  })
+  test("non-English locales translate targeted unseen session keys", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const source = yield* dictionary("./en.ts")
+        for (const locale of appLocales) {
+          const target = yield* dictionary(`./${locale}.ts`)
+          for (const key of ["command.session.previous.unseen", "command.session.next.unseen"]) {
+            expect(target[key]).toBeDefined()
+            expect(target[key]).not.toBe(source[key])
+          }
+        }
+      }),
+    ))
 
-  test("changed-file summary keys preserve rendered English copy and localize complete phrases", async () => {
-    const source = await dictionary("../../../ui/src/i18n/en.ts")
-    expect(source["ui.sessionTurn.diffs.changed.one"].replace("{{count}}", "1")).toBe("1 Changed file")
-    expect(source["ui.sessionTurn.diffs.changed.other"].replace("{{count}}", "2")).toBe("2 Changed files")
-    expect(source["ui.sessionTurn.diffs.changed"]).toBeUndefined()
+  test("changed-file summary keys preserve rendered English copy and localize complete phrases", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const source = yield* dictionary("../../../ui/src/i18n/en.ts")
+        expect(source["ui.sessionTurn.diffs.changed.one"].replace("{{count}}", "1")).toBe("1 Changed file")
+        expect(source["ui.sessionTurn.diffs.changed.other"].replace("{{count}}", "2")).toBe("2 Changed files")
+        expect(source["ui.sessionTurn.diffs.changed"]).toBeUndefined()
 
-    for (const locale of appLocales) {
-      const target = await dictionary(`../../../ui/src/i18n/${locale}.ts`)
-      for (const key of ["ui.sessionTurn.diffs.changed.one", "ui.sessionTurn.diffs.changed.other"]) {
-        expect(target[key].trim()).not.toBe("")
-        expect(placeholders(target[key])).toEqual(["count"])
-      }
-    }
-  })
+        for (const locale of appLocales) {
+          const target = yield* dictionary(`../../../ui/src/i18n/${locale}.ts`)
+          for (const key of ["ui.sessionTurn.diffs.changed.one", "ui.sessionTurn.diffs.changed.other"]) {
+            expect(target[key].trim()).not.toBe("")
+            expect(placeholders(target[key])).toEqual(["count"])
+          }
+        }
+      }),
+    ))
 })
 
 describe("i18n plural parity", () => {
-  test("locale-specific categories exist and preserve count placeholders", async () => {
-    for (const domain of domains.slice(0, 2)) {
-      const source = await dictionary(domain.source)
-      const families = pluralFamilies(source)
-      for (const locale of domain.locales) {
-        const target = await dictionary(domain.target(locale))
-        const missing = families.flatMap((key) =>
-          (pluralCategories.get(locale) ?? [])
-            .map((category) => `${key}.${category}`)
-            .filter((variant) => !Object.hasOwn(target, variant)),
-        )
-        const mismatched = families.flatMap((key) =>
-          (pluralCategories.get(locale) ?? [])
-            .map((category) => `${key}.${category}`)
-            .filter(
-              (variant) =>
-                Object.hasOwn(target, variant) &&
-                placeholders(source[`${key}.other`]).join() !== placeholders(target[variant]).join(),
-            ),
-        )
-        expect({ domain: domain.name, locale, missing, mismatched }).toEqual({
-          domain: domain.name,
-          locale,
-          missing: [],
-          mismatched: [],
-        })
-      }
-    }
-  })
+  test("locale-specific categories exist and preserve count placeholders", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        for (const domain of domains.slice(0, 2)) {
+          const source = yield* dictionary(domain.source)
+          const families = pluralFamilies(source)
+          for (const locale of domain.locales) {
+            const target = yield* dictionary(domain.target(locale))
+            const missing = families.flatMap((key) =>
+              extraPluralCategories(locale)
+                .map((category) => `${key}.${category}`)
+                .filter((variant) => !Object.hasOwn(target, variant)),
+            )
+            const mismatched = families.flatMap((key) =>
+              extraPluralCategories(locale)
+                .map((category) => `${key}.${category}`)
+                .filter(
+                  (variant) =>
+                    Object.hasOwn(target, variant) &&
+                    placeholders(source[`${key}.other`]).join() !== placeholders(target[variant]).join(),
+                ),
+            )
+            expect({ domain: domain.name, locale, missing, mismatched }).toEqual({
+              domain: domain.name,
+              locale,
+              missing: [],
+              mismatched: [],
+            })
+          }
+        }
+      }),
+    ))
 })
 
-async function dictionary(file: string) {
-  const module: unknown = await import(file)
-  if (typeof module !== "object" || module === null || !("dict" in module) || !isDictionary(module.dict)) {
-    throw new Error(`Invalid translation dictionary: ${file}`)
-  }
-  return module.dict
+/** Loads the `dict` export of a translation module. Fails with InvalidDictionaryError when it is not a string record. */
+function dictionary(file: string): Effect.Effect<Record<string, string>, InvalidDictionaryError> {
+  return Effect.gen(function* () {
+    const module: unknown = yield* Effect.promise(() => import(file))
+    if (!Predicate.isObject(module) || !("dict" in module) || !isDictionary(module.dict)) {
+      return yield* new InvalidDictionaryError({ message: `Invalid translation dictionary: ${file}` })
+    }
+    return module.dict
+  })
 }
 
 function isDictionary(value: unknown): value is Record<string, string> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  if (!Predicate.isObject(value)) return false
   return Object.values(value).every((item) => typeof item === "string")
 }
 

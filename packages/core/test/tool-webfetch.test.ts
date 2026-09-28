@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Duration, Effect, Fiber, Layer, Schema } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
@@ -57,7 +58,7 @@ const reset = () => {
 const call = (input: typeof WebFetchTool.Input.Type, id = "call-webfetch") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "webfetch", input },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "webfetch", input },
 })
 
 describe("WebFetchTool helpers", () => {

@@ -3,8 +3,10 @@ import { useTheme } from "@opencode-ai/ui/theme/context"
 import { resolveThemeVariant } from "@opencode-ai/ui/theme/resolve"
 import { resolveThemeVariantV2 } from "@opencode-ai/ui/theme/v2/resolve"
 import type { HexColor, ResolvedV2Theme } from "@opencode-ai/ui/theme/types"
+import { isHexColor } from "@opencode-ai/ui/theme/validate"
 import { showToast } from "@/utils/toast"
 import type { FitAddon, Ghostty, Terminal as Term } from "ghostty-web"
+import { Cause, Chunk, Data, Duration, Effect, Option, Predicate, References, Result, Schema } from "effect"
 import { type ComponentProps, createEffect, createMemo, onCleanup, onMount, splitProps } from "solid-js"
 import { SerializeAddon } from "@/addons/serialize"
 import { matchKeybind, parseKeybind } from "@/context/command"
@@ -14,7 +16,9 @@ import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 import { terminalFontFamily, useSettings } from "@/context/settings"
 import type { LocalPTY } from "@/context/terminal"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
+import { terminalRequest } from "@/utils/terminal-request"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
 
@@ -30,18 +34,39 @@ export interface TerminalProps extends ComponentProps<"div"> {
   onConnectError?: (error: unknown) => void
 }
 
-let shared: Promise<{ mod: typeof import("ghostty-web"); ghostty: Ghostty }> | undefined
+/** The server refused a PTY connect ticket. `message` is the localized reason. */
+class TerminalTicketError extends Data.TaggedError("App.TerminalTicketError")<{ readonly message: string }> {}
 
-const loadGhostty = () => {
-  if (shared) return shared
-  shared = import("ghostty-web")
-    .then(async (mod) => ({ mod, ghostty: await mod.Ghostty.load() }))
-    .catch((err) => {
-      shared = undefined
-      throw err
-    })
-  return shared
-}
+/** The PTY socket closed with a code other than 1000. */
+class TerminalConnectionLostError extends Data.TaggedError("App.TerminalConnectionLostError")<{
+  readonly message: string
+  readonly code: number
+}> {}
+
+type LoadedGhostty = { mod: typeof import("ghostty-web"); ghostty: Ghostty }
+
+// Every terminal shares one load. A failed load clears it, so the next terminal loads again.
+let shared: Option.Option<Promise<LoadedGhostty>> = Option.none()
+
+const importGhostty = Effect.gen(function* () {
+  const mod = yield* Effect.promise(() => import("ghostty-web"))
+  const ghostty = yield* Effect.promise(() => mod.Ghostty.load())
+  return { mod, ghostty }
+}).pipe(
+  Effect.onError(() =>
+    Effect.sync(() => {
+      shared = Option.none()
+    }),
+  ),
+)
+
+const loadGhostty = Effect.suspend(() => {
+  const loading = Option.getOrElse(shared, () => Effect.runPromise(importGhostty))
+  shared = Option.some(loading)
+  return Effect.promise(() => loading)
+})
+
+const decodeControlFrame = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
 
 type TerminalColors = {
   background: string
@@ -50,7 +75,7 @@ type TerminalColors = {
   selectionBackground: string
 }
 
-const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
+const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors & { foreground: HexColor }> = {
   light: {
     background: "#fcfcfc",
     foreground: "#211e1e",
@@ -65,10 +90,11 @@ const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
   },
 }
 
-const debugTerminal = (...values: unknown[]) => {
-  if (!import.meta.env.DEV) return
-  console.debug("[terminal]", ...values)
-}
+// Debug lines print in development only, so the log level is raised to Debug there.
+const debugTerminal = (...values: ReadonlyArray<unknown>) =>
+  import.meta.env.DEV
+    ? Effect.logDebug("[terminal]", ...values).pipe(Effect.provideService(References.MinimumLogLevel, "Debug"))
+    : Effect.void
 
 const resolveV2Token = (tokens: ResolvedV2Theme, key: string) => {
   let current = tokens[key]
@@ -81,12 +107,13 @@ const resolveV2Token = (tokens: ResolvedV2Theme, key: string) => {
     }
     current = tokens[match[1]]
   }
+  return undefined
 }
 
 const useTerminalUiBindings = (input: {
   container: HTMLDivElement
   term: Term
-  cleanups: VoidFunction[]
+  addCleanup: (fn: VoidFunction) => void
   handlePointerDown: () => void
   handleLinkClick: (event: MouseEvent) => void
 }) => {
@@ -119,18 +146,18 @@ const useTerminalUiBindings = (input: {
   }
 
   input.container.addEventListener("copy", handleCopy, true)
-  input.cleanups.push(() => input.container.removeEventListener("copy", handleCopy, true))
+  input.addCleanup(() => input.container.removeEventListener("copy", handleCopy, true))
 
   input.container.addEventListener("paste", handlePaste, true)
-  input.cleanups.push(() => input.container.removeEventListener("paste", handlePaste, true))
+  input.addCleanup(() => input.container.removeEventListener("paste", handlePaste, true))
 
   input.container.addEventListener("pointerdown", input.handlePointerDown)
-  input.cleanups.push(() => input.container.removeEventListener("pointerdown", input.handlePointerDown))
+  input.addCleanup(() => input.container.removeEventListener("pointerdown", input.handlePointerDown))
 
   input.container.addEventListener("click", input.handleLinkClick, {
     capture: true,
   })
-  input.cleanups.push(() =>
+  input.addCleanup(() =>
     input.container.removeEventListener("click", input.handleLinkClick, {
       capture: true,
     }),
@@ -138,8 +165,8 @@ const useTerminalUiBindings = (input: {
 
   input.term.textarea?.addEventListener("focus", handleTextareaFocus)
   input.term.textarea?.addEventListener("blur", handleTextareaBlur)
-  input.cleanups.push(() => input.term.textarea?.removeEventListener("focus", handleTextareaFocus))
-  input.cleanups.push(() => input.term.textarea?.removeEventListener("blur", handleTextareaBlur))
+  input.addCleanup(() => input.term.textarea?.removeEventListener("focus", handleTextareaFocus))
+  input.addCleanup(() => input.term.textarea?.removeEventListener("blur", handleTextareaBlur))
 }
 
 const persistTerminal = (input: {
@@ -148,26 +175,25 @@ const persistTerminal = (input: {
   cursor: number
   id: string
   onCleanup?: (pty: Partial<LocalPTY> & { id: string }) => void
-}) => {
-  if (!input.addon || !input.onCleanup || !input.term) return
-  const buffer = (() => {
-    try {
-      return input.addon.serialize()
-    } catch {
-      debugTerminal("failed to serialize terminal buffer")
-      return ""
-    }
-  })()
+}) =>
+  Effect.gen(function* () {
+    const addon = input.addon
+    const save = input.onCleanup
+    const term = input.term
+    if (!addon || !save || !term) return
+    const buffer = yield* Effect.sync(() => addon.serialize()).pipe(
+      Effect.catchDefect(() => debugTerminal("failed to serialize terminal buffer").pipe(Effect.as(""))),
+    )
 
-  input.onCleanup({
-    id: input.id,
-    buffer,
-    cursor: input.cursor,
-    rows: input.term.rows,
-    cols: input.term.cols,
-    scrollY: input.term.getViewportY(),
+    save({
+      id: input.id,
+      buffer,
+      cursor: input.cursor,
+      rows: term.rows,
+      cols: term.cols,
+      scrollY: term.getViewportY(),
+    })
   })
-}
 
 export const Terminal = (props: TerminalProps) => {
   const platform = usePlatform()
@@ -196,7 +222,7 @@ export const Terminal = (props: TerminalProps) => {
   ])
   const id = local.pty.id
   const restore = typeof local.pty.buffer === "string" ? local.pty.buffer : ""
-  const restoreSize =
+  const restoreSize: Option.Option<{ cols: number; rows: number }> =
     restore &&
     typeof local.pty.cols === "number" &&
     Number.isSafeInteger(local.pty.cols) &&
@@ -204,63 +230,58 @@ export const Terminal = (props: TerminalProps) => {
     typeof local.pty.rows === "number" &&
     Number.isSafeInteger(local.pty.rows) &&
     local.pty.rows > 0
-      ? { cols: local.pty.cols, rows: local.pty.rows }
-      : undefined
-  const scrollY = typeof local.pty.scrollY === "number" ? local.pty.scrollY : undefined
-  let ws: WebSocket | undefined
+      ? Option.some({ cols: local.pty.cols, rows: local.pty.rows })
+      : Option.none()
+  const scrollY = Option.liftPredicate(local.pty.scrollY, Predicate.isNumber)
+  let ws: Option.Option<WebSocket> = Option.none()
   let term: Term | undefined
   let _ghostty: Ghostty
   let serializeAddon: SerializeAddon
   let fitAddon: FitAddon
   let handleResize: () => void
-  let fitFrame: number | undefined
-  let sizeTimer: ReturnType<typeof setTimeout> | undefined
-  let pendingSize: { cols: number; rows: number } | undefined
+  let fitFrame: Option.Option<number> = Option.none()
+  const sizeSync = createFiberSlot()
+  let sizeQueued = false
+  let pendingSize: Option.Option<{ cols: number; rows: number }> = Option.none()
   let lastSize: { cols: number; rows: number } | undefined
   let disposed = false
-  const cleanups: VoidFunction[] = []
-  const start =
-    typeof local.pty.cursor === "number" && Number.isSafeInteger(local.pty.cursor) ? local.pty.cursor : undefined
-  let cursor = start ?? 0
-  let seek = start !== undefined ? start : restore ? -1 : 0
+  let cleanups = Chunk.empty<VoidFunction>()
+  const start = Option.filter(Option.liftPredicate(local.pty.cursor, Predicate.isNumber), Number.isSafeInteger)
+  let cursor = Option.getOrElse(start, () => 0)
+  let seek = Option.getOrElse(start, () => (restore ? -1 : 0))
   let output: ReturnType<typeof terminalWriter> | undefined
-  let drop: VoidFunction | undefined
-  let reconn: ReturnType<typeof setTimeout> | undefined
+  let drop: Option.Option<VoidFunction> = Option.none()
+  const reconnect = createFiberSlot()
+  let reconnecting = false
+  const textareaFocus = createFiberSlot()
+  const mountFocus = createFiberSlot()
   let tries = 0
 
-  const cleanup = () => {
-    if (!cleanups.length) return
-    const fns = cleanups.splice(0).reverse()
-    for (const fn of fns) {
-      try {
-        fn()
-      } catch (err) {
-        debugTerminal("cleanup failed", err)
-      }
-    }
+  const addCleanup = (fn: VoidFunction) => {
+    cleanups = Chunk.append(cleanups, fn)
   }
 
-  const pushSize = async (cols: number, rows: number) => {
-    if ((await sdk().protocol) === "v1") {
-      return sdk()
-        .client.pty.update({
-          ptyID: id,
-          size: { cols, rows },
-        })
-        .catch((err) => {
-          debugTerminal("failed to sync terminal size", err)
-        })
-    }
-    return sdk()
-      .api.pty.update({
-        ptyID: id,
-        location: { directory },
-        size: { cols, rows },
-      })
-      .catch((err) => {
-        debugTerminal("failed to sync terminal size", err)
-      })
-  }
+  // Runs every cleanup in reverse order. A cleanup that throws does not stop the others.
+  const cleanup = Effect.suspend(() => {
+    const fns = Chunk.reverse(cleanups)
+    cleanups = Chunk.empty()
+    return Effect.forEach(
+      fns,
+      (fn) => Effect.sync(fn).pipe(Effect.catchDefect((err) => debugTerminal("cleanup failed", err))),
+      { discard: true },
+    )
+  })
+
+  const pushSize = (cols: number, rows: number) =>
+    Effect.gen(function* () {
+      if ((yield* Effect.promise(() => sdk().protocol)) === "v1") {
+        yield* terminalRequest(() => sdk().client.pty.update({ ptyID: id, size: { cols, rows } }))
+        return
+      }
+      yield* terminalRequest(() => sdk().api.pty.update({ ptyID: id, location: { directory }, size: { cols, rows } }))
+    }).pipe(
+      Effect.catchTag("App.TerminalRequestError", (err) => debugTerminal("failed to sync terminal size", err.cause)),
+    )
 
   const getTerminalColors = (): TerminalColors => {
     const mode = theme.mode() === "dark" ? "dark" : "light"
@@ -276,7 +297,7 @@ export const Terminal = (props: TerminalProps) => {
         fallback.background)
       : (resolved["background-stronger"] ?? fallback.background)
     const alpha = mode === "dark" ? 0.25 : 0.2
-    const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
+    const base = isHexColor(text) ? text : fallback.foreground
     const selectionBackground = withAlpha(base, alpha)
     return {
       background,
@@ -291,43 +312,51 @@ export const Terminal = (props: TerminalProps) => {
   const scheduleFit = () => {
     if (disposed) return
     if (!fitAddon) return
-    if (fitFrame !== undefined) return
+    if (Option.isSome(fitFrame)) return
 
-    fitFrame = requestAnimationFrame(() => {
-      fitFrame = undefined
-      if (disposed) return
-      fitAddon.fit()
-    })
+    fitFrame = Option.some(
+      requestAnimationFrame(() => {
+        fitFrame = Option.none()
+        if (disposed) return
+        fitAddon.fit()
+      }),
+    )
   }
 
   const scheduleSize = (cols: number, rows: number) => {
     if (disposed) return
     if (lastSize?.cols === cols && lastSize?.rows === rows) {
-      pendingSize = undefined
-      if (sizeTimer !== undefined) clearTimeout(sizeTimer)
-      sizeTimer = undefined
+      pendingSize = Option.none()
+      sizeQueued = false
+      sizeSync.interrupt()
       return
     }
 
-    pendingSize = { cols, rows }
+    const size = { cols, rows }
+    pendingSize = Option.some(size)
 
     if (!lastSize) {
-      lastSize = pendingSize
-      void pushSize(cols, rows)
+      lastSize = size
+      Effect.runFork(pushSize(cols, rows))
       return
     }
 
-    if (sizeTimer !== undefined) return
-    sizeTimer = setTimeout(() => {
-      sizeTimer = undefined
-      const next = pendingSize
-      if (!next) return
-      pendingSize = undefined
-      if (disposed) return
-      if (lastSize?.cols === next.cols && lastSize?.rows === next.rows) return
-      lastSize = next
-      void pushSize(next.cols, next.rows)
-    }, 100)
+    // One sync waits at a time; later sizes only replace pendingSize until it runs.
+    if (sizeQueued) return
+    sizeQueued = true
+    sizeSync.run(
+      Effect.gen(function* () {
+        yield* Effect.sleep(Duration.millis(100))
+        sizeQueued = false
+        if (Option.isNone(pendingSize)) return
+        const next = pendingSize.value
+        pendingSize = Option.none()
+        if (disposed) return
+        if (lastSize?.cols === next.cols && lastSize?.rows === next.rows) return
+        lastSize = next
+        yield* Effect.forkDetach(pushSize(next.cols, next.rows), { startImmediately: true })
+      }),
+    )
   }
 
   createEffect(() => {
@@ -359,7 +388,8 @@ export const Terminal = (props: TerminalProps) => {
     if (!t) return
     t.focus()
     t.textarea?.focus()
-    setTimeout(() => t.textarea?.focus(), 0)
+    // A zero sleep yields to the next task, as setTimeout(0) did.
+    textareaFocus.run(Effect.sleep(Duration.zero).pipe(Effect.andThen(Effect.sync(() => t.textarea?.focus()))))
   }
   const handlePointerDown = () => {
     const activeElement = document.activeElement
@@ -390,8 +420,8 @@ export const Terminal = (props: TerminalProps) => {
   }
 
   onMount(() => {
-    const run = async () => {
-      const loaded = await loadGhostty()
+    const run = Effect.gen(function* () {
+      const loaded = yield* loadGhostty
       if (disposed) return
 
       const mod = loaded.mod
@@ -400,8 +430,7 @@ export const Terminal = (props: TerminalProps) => {
       const t = new mod.Terminal({
         cursorBlink: true,
         cursorStyle: "bar",
-        cols: restoreSize?.cols,
-        rows: restoreSize?.rows,
+        ...Option.getOrElse(restoreSize, () => ({})),
         fontSize: 14,
         fontFamily: terminalFontFamily(settings.appearance.terminalFont()),
         allowTransparency: false,
@@ -410,9 +439,9 @@ export const Terminal = (props: TerminalProps) => {
         scrollback: 10_000,
         ghostty: g,
       })
-      cleanups.push(() => t.dispose())
+      addCleanup(() => t.dispose())
       if (disposed) {
-        cleanup()
+        yield* cleanup
         return
       }
       _ghostty = g
@@ -441,7 +470,7 @@ export const Terminal = (props: TerminalProps) => {
 
       const fit = new mod.FitAddon()
       const serializer = new SerializeAddon()
-      cleanups.push(() => disposeIfDisposable(fit))
+      addCleanup(() => disposeIfDisposable(fit))
       t.loadAddon(serializer)
       t.loadAddon(fit)
       fitAddon = fit
@@ -452,7 +481,7 @@ export const Terminal = (props: TerminalProps) => {
       useTerminalUiBindings({
         container,
         term: t,
-        cleanups,
+        addCleanup,
         handlePointerDown,
         handleLinkClick,
       })
@@ -470,58 +499,59 @@ export const Terminal = (props: TerminalProps) => {
           if (active instanceof HTMLElement && active.isConnected) active.focus()
         }
         restoreFocus()
-        const timer = setTimeout(restoreFocus, 0)
-        cleanups.push(() => clearTimeout(timer))
+        mountFocus.run(Effect.sleep(Duration.zero).pipe(Effect.andThen(Effect.sync(restoreFocus))))
+        addCleanup(() => mountFocus.interrupt())
       }
 
       if (typeof document !== "undefined" && document.fonts) {
-        void document.fonts.ready.then(scheduleFit)
+        const fonts = document.fonts
+        yield* Effect.forkDetach(Effect.promise(() => fonts.ready).pipe(Effect.andThen(Effect.sync(scheduleFit))))
       }
 
       const onResize = t.onResize((size) => {
         scheduleSize(size.cols, size.rows)
       })
-      cleanups.push(() => disposeIfDisposable(onResize))
+      addCleanup(() => disposeIfDisposable(onResize))
       const onData = t.onData((data) => {
-        if (ws?.readyState === WebSocket.OPEN) ws.send(data)
+        if (Option.isSome(ws) && ws.value.readyState === WebSocket.OPEN) ws.value.send(data)
       })
-      cleanups.push(() => disposeIfDisposable(onData))
+      addCleanup(() => disposeIfDisposable(onData))
       const onKey = t.onKey((key) => {
         if (key.key == "Enter") {
           props.onSubmit?.()
         }
       })
-      cleanups.push(() => disposeIfDisposable(onKey))
+      addCleanup(() => disposeIfDisposable(onKey))
 
       const startResize = () => {
         fit.observeResize()
         handleResize = scheduleFit
         window.addEventListener("resize", handleResize)
-        cleanups.push(() => window.removeEventListener("resize", handleResize))
+        addCleanup(() => window.removeEventListener("resize", handleResize))
       }
 
       const write = (data: string) =>
-        new Promise<void>((resolve) => {
+        Effect.callback<void>((resume) => {
           if (!output) {
-            resolve()
+            resume(Effect.void)
             return
           }
           output.push(data)
-          output.flush(resolve)
+          output.flush(() => resume(Effect.void))
         })
 
-      if (restore && restoreSize) {
-        await write(restore)
+      if (restore && Option.isSome(restoreSize)) {
+        yield* write(restore)
         fit.fit()
         scheduleSize(t.cols, t.rows)
-        if (scrollY !== undefined) t.scrollToLine(scrollY)
+        if (Option.isSome(scrollY)) t.scrollToLine(scrollY.value)
         startResize()
       } else {
         fit.fit()
         scheduleSize(t.cols, t.rows)
         if (restore) {
-          await write(restore)
-          if (scrollY !== undefined) t.scrollToLine(scrollY)
+          yield* write(restore)
+          if (Option.isSome(scrollY)) t.scrollToLine(scrollY.value)
         }
         startResize()
       }
@@ -536,45 +566,53 @@ export const Terminal = (props: TerminalProps) => {
         local.onConnectError?.(err)
       }
 
-      const gone = async () => {
-        if ((await sdk().protocol) === "v1") {
-          return sdk()
-            .client.pty.get({ ptyID: id }, { throwOnError: false })
-            .then((result) => result.response.status === 404)
-            .catch((err) => {
-              debugTerminal("failed to inspect terminal session", err)
-              return false
-            })
+      const gone = Effect.gen(function* () {
+        if ((yield* Effect.promise(() => sdk().protocol)) === "v1") {
+          return yield* terminalRequest(() => sdk().client.pty.get({ ptyID: id }, { throwOnError: false })).pipe(
+            Effect.map((result) => result.response.status === 404),
+            Effect.catchTag("App.TerminalRequestError", (err) =>
+              debugTerminal("failed to inspect terminal session", err.cause).pipe(Effect.as(false)),
+            ),
+          )
         }
-        return sdk()
-          .api.pty.get({ ptyID: id, location: { directory } })
-          .then((result) => result.data.status === "exited")
-          .catch((err) => {
-            if (err && typeof err === "object" && "_tag" in err && err._tag === "PtyNotFoundError") return true
-            debugTerminal("failed to inspect terminal session", err)
-            return false
-          })
-      }
+        return yield* terminalRequest(() => sdk().api.pty.get({ ptyID: id, location: { directory } })).pipe(
+          Effect.map((result) => result.data.status === "exited"),
+          Effect.catchTag("App.TerminalRequestError", (err) =>
+            Predicate.isTagged(err.cause, "PtyNotFoundError")
+              ? Effect.succeed(true)
+              : debugTerminal("failed to inspect terminal session", err.cause).pipe(Effect.as(false)),
+          ),
+        )
+      })
 
-      const connectToken = async () => {
-        if ((await sdk().protocol) === "v1") {
-          const result = await sdk()
-            .client.pty.connectToken(
+      const connectToken = Effect.gen(function* () {
+        if ((yield* Effect.promise(() => sdk().protocol)) === "v1") {
+          const response = yield* terminalRequest(() =>
+            sdk().client.pty.connectToken(
               { ptyID: id, directory },
               {
                 throwOnError: false,
                 headers: { "x-opencode-ticket": "1" },
               },
-            )
-            .catch((err: unknown) => {
-              if (err instanceof Error && err.message.includes("Request is not supported")) return
-              throw err
-            })
-          if (!result) return
-          if (result.response.status === 200 && result.data?.ticket) return result.data.ticket
-          if (result.response.status === 404 || result.response.status === 405) return
-          if (result.response.status === 403) throw new Error(language.t("terminal.connectTicket.csrfError"))
-          throw new Error(language.t("terminal.connectTicket.statusError", { status: result.response.status }))
+            ),
+          ).pipe(
+            Effect.map(Option.some),
+            Effect.catchTag("App.TerminalRequestError", (err) =>
+              err.cause instanceof Error && err.cause.message.includes("Request is not supported")
+                ? Effect.succeed(Option.none())
+                : Effect.fail(err),
+            ),
+          )
+          if (Option.isNone(response)) return Option.none<string>()
+          const result = response.value
+          if (result.response.status === 200 && result.data?.ticket) return Option.some(result.data.ticket)
+          if (result.response.status === 404 || result.response.status === 405) return Option.none<string>()
+          if (result.response.status === 403) {
+            return yield* new TerminalTicketError({ message: language.t("terminal.connectTicket.csrfError") })
+          }
+          return yield* new TerminalTicketError({
+            message: language.t("terminal.connectTicket.statusError", { status: result.response.status }),
+          })
         }
         // return sdk()
         //   .api.pty.connectToken({
@@ -583,36 +621,45 @@ export const Terminal = (props: TerminalProps) => {
         //     "x-opencode-ticket": "1",
         //   })
         //   .then((result) => result.data.ticket)
-      }
+        return Option.none<string>()
+      })
 
-      const retry = (err: unknown) => {
+      const retry = (err: unknown): void => {
         if (disposed) return
-        if (reconn !== undefined) return
+        if (reconnecting) return
+        reconnecting = true
 
         const ms = Math.min(250 * 2 ** Math.min(tries, 4), 4_000)
-        reconn = setTimeout(async () => {
-          reconn = undefined
-          if (disposed) return
-          if (await gone()) {
+        reconnect.run(
+          Effect.gen(function* () {
+            yield* Effect.sleep(Duration.millis(ms))
+            reconnecting = false
             if (disposed) return
-            fail(err)
-            return
-          }
-          if (disposed) return
-          tries += 1
-          open()
-        }, ms)
+            if (yield* gone) {
+              if (disposed) return
+              fail(err)
+              return
+            }
+            if (disposed) return
+            tries += 1
+            yield* open
+          }),
+        )
       }
 
-      const open = async () => {
+      const open: Effect.Effect<void> = Effect.gen(function* () {
         if (disposed) return
-        drop?.()
+        if (Option.isSome(drop)) drop.value()
 
-        const ticket = await connectToken().catch((err) => {
-          fail(err)
-          return undefined
-        })
-        const protocol = await sdk().protocol
+        const ticket = yield* connectToken.pipe(
+          Effect.catch((err) =>
+            Effect.sync(() => {
+              fail(err._tag === "App.TerminalRequestError" ? err.cause : err)
+              return Option.none<string>()
+            }),
+          ),
+        )
+        const protocol = yield* Effect.promise(() => sdk().protocol)
         // if (protocol === "v2" && !ticket) return
         if (once.value) return
         if (disposed) return
@@ -624,7 +671,7 @@ export const Terminal = (props: TerminalProps) => {
             id,
             directory,
             cursor: seek,
-            ticket,
+            ticket: Option.getOrUndefined(ticket),
             sameOrigin,
             username,
             password,
@@ -632,7 +679,7 @@ export const Terminal = (props: TerminalProps) => {
           }),
         )
         socket.binaryType = "arraybuffer"
-        ws = socket
+        ws = Option.some(socket)
 
         const handleOpen = () => {
           if (disposed) return
@@ -647,16 +694,16 @@ export const Terminal = (props: TerminalProps) => {
           if (event.data instanceof ArrayBuffer) {
             const bytes = new Uint8Array(event.data)
             if (bytes[0] !== 0) return
-            const json = decoder.decode(bytes.subarray(1))
-            try {
-              const meta = JSON.parse(json) as { cursor?: unknown }
-              const next = meta?.cursor
-              if (typeof next === "number" && Number.isSafeInteger(next) && next >= 0) {
-                cursor = next
-                seek = next
-              }
-            } catch (err) {
-              debugTerminal("invalid websocket control frame", err)
+            const meta = decodeControlFrame(decoder.decode(bytes.subarray(1)))
+            if (Result.isFailure(meta)) {
+              Effect.runFork(debugTerminal("invalid websocket control frame", meta.failure))
+              return
+            }
+            if (!Predicate.hasProperty(meta.success, "cursor")) return
+            const next = meta.success.cursor
+            if (typeof next === "number" && Number.isSafeInteger(next) && next >= 0) {
+              cursor = next
+              seek = next
             }
             return
           }
@@ -670,7 +717,7 @@ export const Terminal = (props: TerminalProps) => {
 
         const handleError = (error: Event) => {
           if (disposed) return
-          debugTerminal("websocket error", error)
+          Effect.runFork(debugTerminal("websocket error", error))
         }
 
         const stop = () => {
@@ -678,55 +725,72 @@ export const Terminal = (props: TerminalProps) => {
           socket.removeEventListener("message", handleMessage)
           socket.removeEventListener("error", handleError)
           socket.removeEventListener("close", handleClose)
-          if (ws === socket) ws = undefined
-          if (drop === stop) drop = undefined
+          if (Option.isSome(ws) && ws.value === socket) ws = Option.none()
+          if (Option.isSome(drop) && drop.value === stop) drop = Option.none()
           if (socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) socket.close(1000)
         }
 
         const handleClose = (event: CloseEvent) => {
-          if (ws === socket) ws = undefined
-          if (drop === stop) drop = undefined
+          if (Option.isSome(ws) && ws.value === socket) ws = Option.none()
+          if (Option.isSome(drop) && drop.value === stop) drop = Option.none()
           socket.removeEventListener("open", handleOpen)
           socket.removeEventListener("message", handleMessage)
           socket.removeEventListener("error", handleError)
           socket.removeEventListener("close", handleClose)
           if (disposed) return
           if (event.code === 1000) return
-          retry(new Error(language.t("terminal.connectionLost.abnormalClose", { code: event.code })))
+          retry(
+            new TerminalConnectionLostError({
+              message: language.t("terminal.connectionLost.abnormalClose", { code: event.code }),
+              code: event.code,
+            }),
+          )
         }
 
-        drop = stop
+        drop = Option.some(stop)
         socket.addEventListener("open", handleOpen)
         socket.addEventListener("message", handleMessage)
         socket.addEventListener("error", handleError)
         socket.addEventListener("close", handleClose)
-      }
-
-      open()
-    }
-
-    void run().catch((err) => {
-      if (disposed) return
-      showToast({
-        variant: "error",
-        title: language.t("terminal.connectionLost.title"),
-        description: err instanceof Error ? err.message : language.t("terminal.connectionLost.description"),
       })
-      local.onConnectError?.(err)
+
+      // The first connect runs on its own, so its failures stay out of the mount error path.
+      yield* Effect.forkDetach(open, { startImmediately: true })
     })
+
+    Effect.runFork(
+      run.pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            if (disposed) return
+            const err = Cause.squash(cause)
+            showToast({
+              variant: "error",
+              title: language.t("terminal.connectionLost.title"),
+              description: err instanceof Error ? err.message : language.t("terminal.connectionLost.description"),
+            })
+            local.onConnectError?.(err)
+          }),
+        ),
+      ),
+    )
   })
 
   onCleanup(() => {
     disposed = true
-    if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
-    if (sizeTimer !== undefined) clearTimeout(sizeTimer)
-    if (reconn !== undefined) clearTimeout(reconn)
-    drop?.()
-    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) ws.close(1000)
+    if (Option.isSome(fitFrame)) cancelAnimationFrame(fitFrame.value)
+    sizeSync.interrupt()
+    reconnect.interrupt()
+    if (Option.isSome(drop)) drop.value()
+    if (Option.isSome(ws) && ws.value.readyState !== WebSocket.CLOSED && ws.value.readyState !== WebSocket.CLOSING)
+      ws.value.close(1000)
 
     const finalize = () => {
-      persistTerminal({ term, addon: serializeAddon, cursor, id, onCleanup: props.onCleanup })
-      cleanup()
+      Effect.runFork(
+        persistTerminal({ term, addon: serializeAddon, cursor, id, onCleanup: props.onCleanup }).pipe(
+          Effect.andThen(cleanup),
+        ),
+      )
     }
 
     if (!output) {

@@ -1,5 +1,6 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
+import { Chunk, Effect, MutableHashSet, Option } from "effect"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
@@ -21,41 +22,54 @@ export type HomeSessionIndex = {
 export const homeSessionIndexKey = (server: string) => ["home", "session-index", server] as const
 export const homeSessionEventsKey = (server: string) => ["home", "session-events", server] as const
 
+/** A V2 session as the server sends it: an active session can carry `time.archived: null`. */
+export type HomeSessionWire = Omit<SessionV2Info, "time"> & {
+  time: Omit<SessionV2Info["time"], "archived"> & { archived?: number | null }
+}
+
 type HomeSessionPage = { data?: V2SessionListResponse }
 
-export async function loadHomeSessionIndex(
+export function loadHomeSessionIndex(
   list: (
     input: { limit: number; order: "desc"; cursor?: string },
     options: { signal?: AbortSignal },
   ) => Promise<HomeSessionPage>,
   eventSequence = 0,
   signal?: AbortSignal,
-) {
-  const data: SessionV2Info[] = []
-  let cursor: string | undefined
+): Promise<HomeSessionIndex> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      let data = Chunk.empty<SessionV2Info>()
+      let cursor: string | undefined
 
-  for (;;) {
-    const response = await list(
-      {
-        limit: HOME_V2_SESSION_PAGE_LIMIT,
-        order: "desc",
-        ...(cursor ? { cursor } : {}),
-      },
-      { signal },
-    )
-    const page = response.data!
-    data.push(...page.data)
-    if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
-      return { sessions: parseHomeSessionIndex(data), eventSequence }
-    cursor = page.cursor.next
-  }
+      for (;;) {
+        // Effect.promise keeps a rejected page request as the rejection of the returned promise.
+        const response = yield* Effect.promise(() =>
+          list(
+            {
+              limit: HOME_V2_SESSION_PAGE_LIMIT,
+              order: "desc",
+              ...(cursor ? { cursor } : {}),
+            },
+            { signal },
+          ),
+        )
+        const page = response.data!
+        data = Chunk.appendAll(data, Chunk.fromIterable(page.data))
+        if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
+          return { sessions: parseHomeSessionIndex(Chunk.toReadonlyArray(data)), eventSequence }
+        cursor = page.cursor.next
+      }
+    }),
+  )
 }
 
-export function appendHomeSessionEvent(current: HomeSessionEvents | undefined, event: HomeSessionEvent) {
-  const sequence = (current?.sequence ?? 0) + 1
+export function appendHomeSessionEvent(current: Option.Option<HomeSessionEvents>, event: HomeSessionEvent) {
+  const previous = Option.getOrElse(current, (): HomeSessionEvents => ({ sequence: 0, entries: [] }))
+  const sequence = previous.sequence + 1
   return {
     sequence,
-    entries: [...(current?.entries ?? []), { sequence, event }],
+    entries: [...previous.entries, { sequence, event }],
   }
 }
 
@@ -85,7 +99,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
   const indexKey = homeSessionIndexKey(server)
   const eventsKey = homeSessionEventsKey(server)
   let connected = false
-  const removed = new Set<string>()
+  const removed = MutableHashSet.empty<string>()
 
   return {
     indexKey,
@@ -97,13 +111,18 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
       // Keep events received after the fetch began so its response cannot overwrite them.
       queryClient.setQueryData<HomeSessionEvents>(eventsKey, (current) => trimHomeSessionEvents(current, sequence))
     },
-    sessions(index: HomeSessionIndex | undefined, events: HomeSessionEvents | undefined) {
+    sessions(index: HomeSessionIndex | undefined, events?: HomeSessionEvents) {
       const sessions = homeSessionIndexSessions(index, events)
-      return removed.size === 0 ? sessions : sessions.filter((session) => !removed.has(session.id))
+      return MutableHashSet.size(removed) === 0
+        ? sessions
+        : sessions.filter((session) => !MutableHashSet.has(removed, session.id))
     },
     apply(event: HomeSessionEvent) {
       if (!queryClient.getQueryState(indexKey)) return
-      const next = appendHomeSessionEvent(queryClient.getQueryData<HomeSessionEvents>(eventsKey), event)
+      const next = appendHomeSessionEvent(
+        Option.fromNullishOr(queryClient.getQueryData<HomeSessionEvents>(eventsKey)),
+        event,
+      )
       if (queryClient.isFetching({ queryKey: indexKey, exact: true }) > 0) {
         queryClient.setQueryData(eventsKey, next)
         return
@@ -119,7 +138,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
       queryClient.setQueryData<HomeSessionEvents>(eventsKey, { sequence: next.sequence, entries: [] })
     },
     remove(sessionID: string) {
-      removed.add(sessionID)
+      MutableHashSet.add(removed, sessionID)
       if (!queryClient.getQueryState(indexKey)) return
       queryClient.setQueryData<HomeSessionIndex>(indexKey, (index) => {
         if (!index) return index
@@ -142,7 +161,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
 // multiple directories. A bounded page could omit an old session updated today.
 // Once released, use client.v2.project.list() and client.v2.session.list({
 // parentID: null, order: "desc" }), then remove this adapter and its V1 fields.
-export function parseHomeSessionIndex(sessions: SessionV2Info[]): Session[] {
+export function parseHomeSessionIndex(sessions: ReadonlyArray<HomeSessionWire>): Session[] {
   return sessions.flatMap((item) => {
     if (item.parentID || typeof item.time.archived === "number") return []
     return [toLegacySummary(item)]
@@ -166,7 +185,9 @@ export function applyHomeSessionEvent(sessions: Session[], event: HomeSessionEve
   return sessions.with(index, info)
 }
 
-function toLegacySummary(session: SessionV2Info): Session {
+// The V1 Session has no null archive time, so a wire null decodes to an absent key.
+function toLegacySummary(session: HomeSessionWire): Session {
+  const { archived, ...time } = session.time
   return {
     id: session.id,
     slug: session.id,
@@ -181,6 +202,9 @@ function toLegacySummary(session: SessionV2Info): Session {
     agent: session.agent,
     model: session.model,
     version: "",
-    time: session.time,
+    time: Option.match(Option.fromNullishOr(archived), {
+      onNone: () => time,
+      onSome: (value) => ({ ...time, archived: value }),
+    }),
   }
 }

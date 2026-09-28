@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, spyOn } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import fs from "fs/promises"
 import path from "path"
 import { pathToFileURL } from "url"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@/config/config"
+import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { disposeAllInstances, provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const { Plugin } = await import("../../src/plugin/index")
 const { PluginLoader } = await import("../../src/plugin/loader")
-const { readPackageThemes } = await import("../../src/plugin/shared")
+const { packageThemes, PluginEntryError } = await import("../../src/plugin/shared")
 const { Npm } = await import("@opencode-ai/core/npm")
 const { TestConfig } = await import("../fixture/config")
 const { RuntimeFlags } = await import("../../src/effect/runtime-flags")
@@ -36,12 +37,18 @@ function withTmp<T, A, E, R>(
   })
 }
 
+// The plugin list of the opencode.json file that a test writes.
+const decodePluginConfig = Schema.decodeUnknownSync(
+  Schema.Struct({ plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPluginV1.Spec))) }),
+)
+
+// A package.json object that a test reads back.
+const decodePackageJson = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))
+
 function load(dir: string, flags?: Parameters<typeof RuntimeFlags.layer>[0]) {
   const source = path.join(dir, "opencode.json")
   return Effect.gen(function* () {
-    const config = yield* Effect.promise(
-      () => Bun.file(source).json() as Promise<{ plugin?: Array<string | [string, Record<string, unknown>]> }>,
-    )
+    const config = decodePluginConfig(yield* Effect.promise(() => Bun.file(source).json()))
     const plugins = config.plugin ?? []
     return yield* Effect.gen(function* () {
       const plugin = yield* Plugin.Service
@@ -839,9 +846,7 @@ describe("plugin.loader.shared", () => {
       (tmp) =>
         Effect.gen(function* () {
           yield* load(tmp.path)
-          expect(
-            (yield* (yield* FSUtil.Service).readJson(tmp.extra.mark)) as { source: string; enabled: boolean },
-          ).toEqual({
+          expect(yield* (yield* FSUtil.Service).readJson(tmp.extra.mark)).toEqual({
             source: "tuple",
             enabled: true,
           })
@@ -964,16 +969,16 @@ export default {
         Effect.gen(function* () {
           const file = path.join(tmp.extra.mod, "package.json")
           const fsys = yield* FSUtil.Service
-          const json = (yield* fsys.readJson(file)) as Record<string, unknown>
-          const list = readPackageThemes("acme-plugin", {
+          const json = decodePackageJson(yield* fsys.readJson(file))
+          const list = yield* packageThemes("acme-plugin", {
             dir: tmp.extra.mod,
             pkg: file,
             json,
           })
 
           expect(list).toEqual([
-            FSUtil.resolve(path.join(tmp.extra.mod, "themes", "one.json")),
-            FSUtil.resolve(path.join(tmp.extra.mod, "themes", "two.json")),
+            yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "one.json")),
+            yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "two.json")),
           ])
         }),
     ),
@@ -1001,6 +1006,7 @@ export default {
       },
       (tmp) =>
         Effect.gen(function* () {
+          const fsys = yield* FSUtil.Service
           const install = spyOn(Npm, "add").mockResolvedValue({ directory: tmp.extra.mod, entrypoint: undefined })
           const missing: string[] = []
 
@@ -1016,9 +1022,11 @@ export default {
                 ],
                 kind: "tui",
                 missing: async (item) => {
-                  if (!item.pkg) return
-                  const themes = readPackageThemes(item.spec, item.pkg)
-                  if (!themes.length) return
+                  if (!item.pkg) return undefined
+                  const themes = await Effect.runPromise(
+                    packageThemes(item.spec, item.pkg).pipe(Effect.provideService(FSUtil.Service, fsys)),
+                  )
+                  if (!themes.length) return undefined
                   return {
                     spec: item.spec,
                     target: item.target,
@@ -1037,7 +1045,7 @@ export default {
               {
                 spec: "acme-plugin@1.0.0",
                 target: tmp.extra.mod,
-                themes: [FSUtil.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
+                themes: [yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
               },
             ])
             expect(missing).toHaveLength(0)
@@ -1074,6 +1082,7 @@ export default {
       },
       (tmp) =>
         Effect.gen(function* () {
+          const fsys = yield* FSUtil.Service
           const install = spyOn(Npm, "add").mockResolvedValue({ directory: tmp.extra.mod, entrypoint: undefined })
 
           try {
@@ -1088,10 +1097,12 @@ export default {
                 ],
                 kind: "tui",
                 finish: async (item) => {
-                  if (!item.pkg) return
+                  if (!item.pkg) return undefined
                   return {
                     spec: item.spec,
-                    themes: readPackageThemes(item.spec, item.pkg),
+                    themes: await Effect.runPromise(
+                      packageThemes(item.spec, item.pkg).pipe(Effect.provideService(FSUtil.Service, fsys)),
+                    ),
                   }
                 },
               }),
@@ -1100,7 +1111,7 @@ export default {
             expect(loaded).toEqual([
               {
                 spec: "acme-plugin@1.0.0",
-                themes: [FSUtil.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
+                themes: [yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
               },
             ])
           } finally {
@@ -1122,14 +1133,16 @@ export default {
       (tmp) =>
         Effect.gen(function* () {
           const fsys = yield* FSUtil.Service
-          const json = (yield* fsys.readJson(tmp.extra.file)) as Record<string, unknown>
-          expect(() =>
-            readPackageThemes("acme", {
+          const json = decodePackageJson(yield* fsys.readJson(tmp.extra.file))
+          const error = yield* Effect.flip(
+            packageThemes("acme", {
               dir: tmp.extra.mod,
               pkg: tmp.extra.file,
               json,
             }),
-          ).toThrow("outside plugin directory")
+          )
+          expect(error).toBeInstanceOf(PluginEntryError)
+          expect(error.message).toContain("outside plugin directory")
         }),
     ),
   )

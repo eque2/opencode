@@ -1,6 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, For, Match, Show, Switch, createSignal } from "solid-js"
+import { Effect } from "effect"
 
 const id = "internal:sidebar-mcp"
 
@@ -78,16 +79,19 @@ function View(props: { api: TuiPluginApi }) {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    order: 200,
-    slots: {
-      sidebar_content() {
-        return <View api={api} />
-      },
-    },
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.slots.register({
+        order: 200,
+        slots: {
+          sidebar_content() {
+            return <View api={api} />
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,

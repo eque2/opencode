@@ -1,8 +1,23 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { Script } from "node:vm"
+import { Effect } from "effect"
 
-const src = await Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text()
+const preloadUrl = new URL("../public/oc-theme-preload.js", import.meta.url)
 
-const run = () => Function(src)()
+/** The theme preload script. index.html loads it as a classic script before the app mounts. */
+let preload: Script
+
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const src = yield* Effect.promise(() => Bun.file(preloadUrl).text())
+      preload = new Script(src, { filename: preloadUrl.pathname })
+    }),
+  ),
+)
+
+/** Runs the preload script in the global scope, as the browser runs a classic script. */
+const run = () => preload.runInThisContext()
 
 beforeEach(() => {
   document.head.innerHTML = ""
@@ -13,7 +28,7 @@ beforeEach(() => {
     value: () =>
       ({
         matches: false,
-      }) as MediaQueryList,
+      }) satisfies Pick<MediaQueryList, "matches">,
     configurable: true,
   })
 })

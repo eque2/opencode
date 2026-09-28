@@ -36,21 +36,23 @@ const ConsoleOrgOption = Schema.Struct({
   orgID: Schema.String,
   orgName: Schema.String,
   active: Schema.Boolean,
-})
+}).annotate({ description: "Console organization that the user can switch to" })
 
 const ConsoleOrgList = Schema.Struct({
   orgs: Schema.Array(ConsoleOrgOption),
-})
+}).annotate({ description: "Console organizations that the user can switch to" })
 
 export const ConsoleSwitchPayload = Schema.Struct({
   accountID: AccountID,
   orgID: OrgID,
-})
+}).annotate({ description: "Request to switch the active Console organization" })
 
 const ToolIDs = Schema.Array(Schema.String).annotate({ identifier: "ToolIDs" })
+export const ToolID = Schema.String.pipe(Schema.brand("ToolID"))
 const ToolListItem = Schema.Struct({
-  id: Schema.String,
+  id: ToolID,
   description: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an arbitrary JSON Schema document (JSONSchema7) for the tool parameters
   parameters: Schema.Unknown,
 }).annotate({ identifier: "ToolListItem" })
 const ToolList = Schema.Array(ToolListItem).annotate({ identifier: "ToolList" })
@@ -58,7 +60,7 @@ export const ToolListQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   provider: ProviderV2.ID,
   model: ModelV2.ID,
-})
+}).annotate({ description: "Query parameters that select the provider and model for the tool list" })
 
 const WorktreeList = Schema.Array(Schema.String)
 const WorktreeErrorName = Schema.Union([
@@ -85,7 +87,7 @@ export const SessionListQuery = Schema.Struct({
   search: Schema.optional(Schema.String),
   limit: Schema.optional(Schema.NumberFromString),
   archived: Schema.optional(QueryBoolean),
-})
+}).annotate({ description: "Query parameters that filter and page the session list" })
 
 export const ExperimentalPaths = {
   capabilities: "/experimental/capabilities",

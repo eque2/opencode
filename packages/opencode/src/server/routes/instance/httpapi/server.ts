@@ -116,6 +116,7 @@ import { errorLayer } from "./middleware/error"
 import { fenceLayer } from "./middleware/fence"
 import { schemaErrorLayer } from "./middleware/schema-error"
 
+// eslint-disable-next-line effect/no-map-use-hashmap -- (a) external boundary: Context.makeUnsafe takes a native ReadonlyMap of service keys
 export const context = Context.makeUnsafe<unknown>(new Map())
 
 const cors = (corsOptions?: CorsOptions) =>

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { normalizeCustomProviderID, providerOptions } from "../../../../src/component/dialog-provider"
 
 describe("providerOptions", () => {
@@ -32,10 +33,10 @@ describe("providerOptions", () => {
   })
 
   test("normalizes and validates custom provider ids", () => {
-    expect(normalizeCustomProviderID("  custom-provider  ")).toBe("custom-provider")
-    expect(normalizeCustomProviderID("custom_provider")).toBe("custom_provider")
-    expect(normalizeCustomProviderID("@ai-sdk/custom-provider")).toBe("custom-provider")
-    expect(normalizeCustomProviderID("-custom-provider")).toBeUndefined()
-    expect(normalizeCustomProviderID("Custom Provider")).toBeUndefined()
+    expect(normalizeCustomProviderID("  custom-provider  ")).toEqual(Option.some("custom-provider"))
+    expect(normalizeCustomProviderID("custom_provider")).toEqual(Option.some("custom_provider"))
+    expect(normalizeCustomProviderID("@ai-sdk/custom-provider")).toEqual(Option.some("custom-provider"))
+    expect(normalizeCustomProviderID("-custom-provider")).toEqual(Option.none())
+    expect(normalizeCustomProviderID("Custom Provider")).toEqual(Option.none())
   })
 })

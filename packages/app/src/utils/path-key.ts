@@ -1,4 +1,8 @@
-export type PathKey = string & { _brand: "PathKey" }
+import { Brand } from "effect"
+
+export type PathKey = string & Brand.Brand<"PathKey">
+
+const makePathKey = Brand.nominal<PathKey>()
 
 const isDrive = (value: string) => {
   if (value.length !== 2) return false
@@ -18,7 +22,7 @@ const isWindowsPath = (value: string) => value[1] === ":" || value.startsWith("\
 export const pathKey = (path: string) => {
   const value = isWindowsPath(path) ? path.replaceAll("\\", "/") : path
   const trimmed = trimTrailingSlashes(value)
-  if (!trimmed && value.startsWith("/")) return "/" as PathKey
-  if (isDrive(trimmed)) return `${trimmed}/` as PathKey
-  return trimmed as PathKey
+  if (!trimmed && value.startsWith("/")) return makePathKey("/")
+  if (isDrive(trimmed)) return makePathKey(`${trimmed}/`)
+  return makePathKey(trimmed)
 }

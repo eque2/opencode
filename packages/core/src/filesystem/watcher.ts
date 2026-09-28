@@ -1,15 +1,15 @@
+/// <reference path="./parcel-watcher-wrapper.d.ts" />
 export * as Watcher from "./watcher"
 
-// @ts-ignore
 import { createWrapper } from "@parcel/watcher/wrapper"
 import type ParcelWatcher from "@parcel/watcher"
 import { makeLocationNode } from "../effect/app-node"
-import { Cause, Context, Effect, Layer } from "effect"
+import { Cause, Context, Effect, Layer, Option, Result } from "effect"
 import { FileSystemWatcher } from "@opencode-ai/schema/filesystem-watcher"
 import path from "path"
 import { Config } from "../config"
 import { EventV2 } from "../event"
-import { Flag } from "../flag/flag"
+import { FlagConfig } from "../flag/flag"
 import { FSUtil } from "../fs-util"
 import { Git } from "../git"
 import { Location } from "../location"
@@ -23,22 +23,23 @@ const SUBSCRIBE_TIMEOUT_MS = 10_000
 
 export const Event = FileSystemWatcher.Event
 
-const watcher = lazy((): typeof import("@parcel/watcher") | undefined => {
-  try {
-    const libc = typeof OPENCODE_LIBC === "undefined" ? undefined : OPENCODE_LIBC
-    const binding = require(
-      `@parcel/watcher-${process.platform}-${process.arch}${process.platform === "linux" ? `-${libc || "glibc"}` : ""}`,
-    )
-    return createWrapper(binding) as typeof import("@parcel/watcher")
-  } catch {
-    return
-  }
+// The native binding is optional: without one for this platform the watcher stays off.
+const watcher = lazy((): Option.Option<typeof import("@parcel/watcher")> => {
+  const libc = typeof OPENCODE_LIBC === "string" && OPENCODE_LIBC ? OPENCODE_LIBC : "glibc"
+  return Result.getSuccess(
+    Result.try(() =>
+      createWrapper(
+        require(`@parcel/watcher-${process.platform}-${process.arch}${process.platform === "linux" ? `-${libc}` : ""}`),
+      ),
+    ),
+  )
 })
 
-function getBackend() {
-  if (process.platform === "win32") return "windows"
-  if (process.platform === "darwin") return "fs-events"
-  if (process.platform === "linux") return "inotify"
+function getBackend(): Option.Option<ParcelWatcher.BackendType> {
+  if (process.platform === "win32") return Option.some("windows")
+  if (process.platform === "darwin") return Option.some("fs-events")
+  if (process.platform === "linux") return Option.some("inotify")
+  return Option.none()
 }
 
 function protecteds(dir: string) {
@@ -48,7 +49,7 @@ function protecteds(dir: string) {
   })
 }
 
-export const hasNativeBinding = () => !!watcher()
+export const hasNativeBinding = () => Option.isSome(watcher())
 
 export interface Interface {}
 
@@ -57,20 +58,22 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    if (yield* Flag.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER) return Service.of({})
+    if (yield* FlagConfig.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER) return Service.of({})
 
-    const backend = getBackend()
+    const supported = getBackend()
     const location = yield* Location.Service
-    if (!backend) {
+    if (Option.isNone(supported)) {
       yield* Effect.logError("watcher backend not supported", {
         directory: location.directory,
         platform: process.platform,
       })
       return Service.of({})
     }
+    const backend = supported.value
 
-    const w = watcher()
-    if (!w) return Service.of({})
+    const binding = watcher()
+    if (Option.isNone(binding)) return Service.of({})
+    const w = binding.value
 
     yield* Effect.logInfo("watcher backend", { directory: location.directory, platform: process.platform, backend })
     const events = yield* EventV2.Service
@@ -78,10 +81,9 @@ const layer = Layer.effect(
     const git = yield* Git.Service
     const context = yield* Effect.context()
     const runFork = Effect.runForkWith(context)
-    const subscriptions: ParcelWatcher.AsyncSubscription[] = []
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(() => Promise.allSettled(subscriptions.map((subscription) => subscription.unsubscribe()))),
-    )
+    // Unsubscribe failures are ignored: the watcher is shutting down either way.
+    const unsubscribe = (subscription: ParcelWatcher.AsyncSubscription) =>
+      Effect.tryPromise(() => subscription.unsubscribe()).pipe(Effect.ignore)
 
     const callback: ParcelWatcher.SubscribeCallback = (_error, updates) => {
       for (const update of updates) {
@@ -91,31 +93,37 @@ const layer = Layer.effect(
       }
     }
 
+    // Each subscription is released when the layer scope closes. A subscription that
+    // resolves after the timeout is released in the background as soon as it arrives.
     const subscribe = (directory: string, ignore: string[]) => {
       const pending = w.subscribe(directory, callback, { ignore, backend })
       return Effect.promise(() => pending).pipe(
-        Effect.tap((subscription) => Effect.sync(() => subscriptions.push(subscription))),
+        Effect.tap((subscription) => Effect.addFinalizer(() => unsubscribe(subscription))),
         Effect.timeout(SUBSCRIBE_TIMEOUT_MS),
-        Effect.catchCause((cause) => {
-          pending.then((subscription) => subscription.unsubscribe()).catch(() => {})
-          return Effect.logError("failed to subscribe", { directory, cause: Cause.pretty(cause) })
-        }),
+        Effect.catchCause((cause) =>
+          Effect.tryPromise(() => pending).pipe(
+            Effect.flatMap(unsubscribe),
+            Effect.ignore,
+            Effect.forkDetach,
+            Effect.andThen(Effect.logError("failed to subscribe", { directory, cause: Cause.pretty(cause) })),
+          ),
+        ),
       )
     }
 
     const config = (yield* (yield* Config.Service).entries())
       .filter((entry): entry is Config.Document => entry.type === "document")
       .flatMap((item) => item.info.watcher?.ignore ?? [])
-    if (location.vcs && (yield* Flag.OPENCODE_EXPERIMENTAL_FILEWATCHER)) {
+    if (location.vcs && (yield* FlagConfig.OPENCODE_EXPERIMENTAL_FILEWATCHER)) {
       yield* Effect.forkScoped(
         subscribe(location.directory, [...Ignore.PATTERNS, ...config, ...protecteds(location.directory)]),
       )
     }
 
-    if (location.vcs?.type === "git") {
-      const resolved = (yield* git.repo.discover(location.directory))?.gitDirectory
-      const vcs = resolved ? yield* fs.realPath(resolved).pipe(Effect.catch(() => Effect.succeed(resolved))) : undefined
-      if (vcs && !config.includes(".git") && !config.includes(vcs) && (!resolved || !config.includes(resolved))) {
+    const resolved = location.vcs?.type === "git" ? (yield* git.repo.discover(location.directory))?.gitDirectory : ""
+    if (resolved) {
+      const vcs = yield* fs.realPath(resolved).pipe(Effect.catch(() => Effect.succeed(resolved)))
+      if (!config.includes(".git") && !config.includes(vcs) && !config.includes(resolved)) {
         const ignore = (yield* fs.readDirectoryEntries(vcs).pipe(Effect.catch(() => Effect.succeed([])))).flatMap(
           (entry) => (entry.name === "HEAD" ? [] : [entry.name]),
         )

@@ -1,7 +1,7 @@
 export * as ProjectDirectories from "./directories"
 
 import { and, asc, desc, eq, isNotNull, isNull, ne, or } from "drizzle-orm"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Predicate, Schema } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { AbsolutePath, optional } from "../schema"
@@ -19,13 +19,13 @@ export const CreateInput = Schema.Struct({
   directory: AbsolutePath,
   strategy: Schema.optional(Schema.String),
   behavior: Schema.Literals(["ignore", "replace"]).pipe(Schema.optional),
-})
+}).annotate({ identifier: "ProjectDirectories.CreateInput" })
 export type CreateInput = typeof CreateInput.Type
 
 export const RemoveInput = Schema.Struct({
   projectID: ProjectSchema.ID,
   directory: AbsolutePath,
-})
+}).annotate({ identifier: "ProjectDirectories.RemoveInput" })
 export type RemoveInput = typeof RemoveInput.Type
 
 type DatabaseClient = EffectDrizzleSqlite.EffectSQLiteDatabase
@@ -70,7 +70,8 @@ const layer = Layer.effect(
         input.behavior === "replace"
           ? insert.onConflictDoUpdate({
               target: [ProjectDirectoryTable.project_id, ProjectDirectoryTable.directory],
-              set: { strategy: input.strategy ?? null },
+              // Replacing with no strategy clears the column.
+              set: { strategy: Option.getOrNull(Option.fromUndefinedOr(input.strategy)) },
               setWhere: input.strategy
                 ? or(isNull(ProjectDirectoryTable.strategy), ne(ProjectDirectoryTable.strategy, input.strategy))
                 : isNotNull(ProjectDirectoryTable.strategy),
@@ -105,7 +106,7 @@ const layer = Layer.effect(
         .orderBy(desc(ProjectDirectoryTable.time_created), asc(ProjectDirectoryTable.directory))
         .all()
         .pipe(Effect.orDie)
-      return rows.map((row) => ({ directory: row.directory, strategy: row.strategy ?? undefined }))
+      return rows.map(toDirectory)
     })
 
     const contains = Effect.fn("ProjectDirectories.contains")(function* (input: {
@@ -142,7 +143,7 @@ const layer = Layer.effect(
         )
         .get()
         .pipe(Effect.orDie)
-      return row ? { directory: row.directory, strategy: row.strategy ?? undefined } : undefined
+      return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), toDirectory))
     })
 
     return Service.of({
@@ -154,5 +155,13 @@ const layer = Layer.effect(
     })
   }),
 )
+
+// A NULL strategy column is an absent strategy.
+function toDirectory(row: { readonly directory: AbsolutePath; readonly strategy: string | null }): Directory {
+  return {
+    directory: row.directory,
+    ...(Predicate.isNotNull(row.strategy) ? { strategy: row.strategy } : {}),
+  }
+}
 
 export const node = makeGlobalNode({ service: Service, layer: layer, deps: [Database.node] })

@@ -1,5 +1,7 @@
-import { readdir, readFile, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, ByteSize, Clock, Data, Effect, FileSystem, Option, Predicate, Schema } from "effect"
+import type { PlatformError } from "effect/PlatformError"
 
 const EMPTY_STORE_MAX_BYTES = 128
 const DRAFT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -14,81 +16,101 @@ type StoreCandidate = {
   empty: boolean
 }
 
-export async function cleanupStoreFiles(userDataPath: string, now = Date.now()) {
-  const entries = await readdir(userDataPath, { withFileTypes: true }).catch(() => [])
-  const candidates = (
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isFile())
-        .map(async (entry) => {
-          const kind = storeKind(entry.name)
-          if (!kind) return
+class StoreFileError extends Data.TaggedError("StoreFileError")<{ readonly cause: unknown }> {}
 
-          const file = join(userDataPath, entry.name)
-          const stats = await stat(file).catch(() => undefined)
-          if (!stats?.isFile()) return
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
-          return {
-            name: entry.name,
-            path: file,
-            kind,
-            modified: stats.mtimeMs,
-            empty: await isEmptyStore(file, stats.size),
-          }
-        }),
-    )
-  ).filter((candidate) => !!candidate)
+export function cleanupStoreFiles(userDataPath: string, now?: number) {
+  return Effect.runPromise(cleanupStores(userDataPath, now).pipe(Effect.provide(NodeFileSystem.layer)))
+}
 
-  const stale = new Set<StoreCandidate>()
-  for (const candidate of candidates) {
-    if (candidate.empty) stale.add(candidate)
-    if (candidate.kind === "draft" && now - candidate.modified > DRAFT_RETENTION_MS) stale.add(candidate)
-  }
+export function deleteStoreFileIfEmpty(userDataPath: string, name: string) {
+  return Effect.runPromise(deleteEmptyStoreFile(userDataPath, name).pipe(Effect.provide(NodeFileSystem.layer)))
+}
 
-  candidates
+const cleanupStores = Effect.fnUntraced(function* (userDataPath: string, nowOverride?: number) {
+  const fs = yield* FileSystem.FileSystem
+  const now = nowOverride ?? (yield* Clock.currentTimeMillis)
+  const names = yield* fs.readDirectory(userDataPath).pipe(Effect.orElseSucceed((): string[] => []))
+  // storeCandidate keeps regular files only, through fileStats.
+  const candidates = Arr.getSomes(
+    yield* Effect.forEach(names, (name) => storeCandidate(userDataPath, name), { concurrency: "unbounded" }),
+  )
+
+  const expired = candidates.filter(
+    (candidate) => candidate.empty || (candidate.kind === "draft" && now - candidate.modified > DRAFT_RETENTION_MS),
+  )
+  const overflow = candidates
     .filter((candidate) => candidate.kind === "draft" && !candidate.empty)
     .sort((a, b) => b.modified - a.modified)
     .slice(DRAFT_KEEP_RECENT)
-    .forEach((candidate) => stale.add(candidate))
+  const stale = [...expired, ...overflow.filter((candidate) => !expired.includes(candidate))]
 
-  const deleted = await Promise.all(
-    [...stale].map(async (candidate) => {
-      await rm(candidate.path, { force: true })
-      return candidate.name
-    }),
+  const deleted = yield* Effect.forEach(
+    stale,
+    (candidate) => fs.remove(candidate.path, { force: true }).pipe(Effect.mapError(storeFileError), Effect.as(candidate.name)),
+    { concurrency: "unbounded" },
   )
 
   return { scanned: candidates.length, deleted }
-}
+})
 
-export async function deleteStoreFileIfEmpty(userDataPath: string, name: string) {
-  if (!storeKind(name)) return false
+export const deleteEmptyStoreFile = Effect.fnUntraced(function* (userDataPath: string, name: string) {
+  if (Option.isNone(storeKind(name))) return false
 
   const file = join(userDataPath, name)
-  const stats = await stat(file).catch(() => undefined)
-  if (!stats?.isFile()) return false
-  if (!(await isEmptyStore(file, stats.size))) return false
+  const stats = yield* fileStats(file)
+  if (Option.isNone(stats)) return false
+  if (!(yield* isEmptyStore(file, stats.value.size))) return false
 
-  await rm(file, { force: true })
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.remove(file, { force: true }).pipe(Effect.mapError(storeFileError))
   return true
+})
+
+const storeCandidate = Effect.fnUntraced(function* (userDataPath: string, name: string) {
+  const kind = storeKind(name)
+  if (Option.isNone(kind)) return Option.none<StoreCandidate>()
+
+  const path = join(userDataPath, name)
+  const stats = yield* fileStats(path)
+  if (Option.isNone(stats)) return Option.none<StoreCandidate>()
+
+  return Option.some({
+    name,
+    path,
+    kind: kind.value,
+    // Node.js always reports mtime, so the fallback only guards other backends.
+    modified: Option.match(stats.value.mtime, { onNone: () => 0, onSome: (mtime) => mtime.getTime() }),
+    empty: yield* isEmptyStore(path, stats.value.size),
+  })
+})
+
+function storeKind(name: string): Option.Option<StoreKind> {
+  if (/^opencode\.draft\..+\.dat$/.test(name)) return Option.some("draft")
+  if (/^opencode\.workspace\..+\.dat$/.test(name)) return Option.some("workspace")
+  return Option.none()
 }
 
-function storeKind(name: string): StoreKind | undefined {
-  if (/^opencode\.draft\..+\.dat$/.test(name)) return "draft"
-  if (/^opencode\.workspace\..+\.dat$/.test(name)) return "workspace"
-}
+const fileStats = Effect.fnUntraced(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem
+  return yield* fs.stat(file).pipe(Effect.option, Effect.map(Option.filter((stats) => stats.type === "File")))
+})
 
-async function isEmptyStore(file: string, size: number) {
-  if (size > EMPTY_STORE_MAX_BYTES) return false
+const isEmptyStore = Effect.fnUntraced(function* (file: string, size: ByteSize.ByteSize) {
+  if (Number(size) > EMPTY_STORE_MAX_BYTES) return false
 
-  const raw = await readFile(file, "utf8").catch(() => undefined)
-  if (raw === undefined) return false
-  if (raw.trim() === "") return true
+  const fs = yield* FileSystem.FileSystem
+  const raw = yield* fs.readFileString(file, "utf8").pipe(Effect.option)
+  return Option.match(raw, {
+    onNone: () => false,
+    onSome: (text) =>
+      text.trim() === "" ||
+      Option.exists(decodeJson(text), (parsed) => Predicate.isObject(parsed) && Object.keys(parsed).length === 0),
+  })
+})
 
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0
-  } catch {
-    return false
-  }
+// The rejected Promise keeps the Node.js error, which PlatformError keeps as its cause.
+function storeFileError(error: PlatformError) {
+  return new StoreFileError({ cause: error.cause ?? error })
 }

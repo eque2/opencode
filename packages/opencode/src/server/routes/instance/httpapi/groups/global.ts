@@ -4,7 +4,7 @@ import { EventManifest } from "@/event-manifest"
 import { InstanceDisposed } from "@/server/event"
 import "@opencode-ai/core/account"
 import "@/server/event"
-import { Schema } from "effect"
+import { Predicate, Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import semver from "semver"
 import { described } from "./metadata"
@@ -12,7 +12,7 @@ import { described } from "./metadata"
 const GlobalHealth = Schema.Struct({
   healthy: Schema.Literal(true),
   version: Schema.String,
-})
+}).annotate({ description: "Server health and version" })
 
 const SyncEventSchemas = EventManifest.Latest.values()
   .flatMap((definition) => {
@@ -50,9 +50,9 @@ const GlobalEventSchema = Schema.Struct({
 
 export const GlobalUpgradeInput = Schema.Struct({
   target: Schema.String.check(
-    Schema.makeFilter((value) => (semver.valid(value) === null ? "Expected a semantic version" : undefined)),
+    Schema.makeFilter((value) => Predicate.isNotNull(semver.valid(value)) || "Expected a semantic version"),
   ),
-})
+}).annotate({ description: "Request to upgrade opencode" })
 
 const GlobalUpgradeResult = Schema.Union([
   Schema.Struct({

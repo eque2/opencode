@@ -13,6 +13,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
+import { Option } from "effect"
 
 import { SortableTerminalTabV2 } from "@/components/session/session-sortable-terminal-tab-v2"
 import { Terminal } from "@/components/terminal"
@@ -43,7 +44,7 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
   const height = createMemo(() => layout.terminal.height())
   const close = () => view().terminal.close()
   let root: HTMLDivElement | undefined
-  let tabList: HTMLDivElement | undefined
+  let tabList = Option.none<HTMLDivElement>()
 
   onCleanup(() => terminal.cancelFocus())
 
@@ -138,7 +139,6 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
   })
 
   const all = terminal.all
-  const ids = createMemo(() => all().map((pty) => pty.id))
 
   const recoverTerminal = (key: string, id: string, clone: (id: string) => Promise<void>) => {
     if (store.recovered[key]) return
@@ -241,10 +241,14 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
                   !!event.target.closest('[data-slot="tabs-trigger-close-button"], input, [contenteditable="true"]'),
               }),
             ]}
-            modifiers={[RestrictToHorizontalAxis, RestrictToElement.configure({ element: () => tabList ?? null })]}
+            modifiers={[
+              RestrictToHorizontalAxis,
+              RestrictToElement.configure({ element: () => Option.getOrNull(tabList) }),
+            ]}
             plugins={(defaults) => [
               ...defaults.filter((plugin) => plugin !== Accessibility),
               AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+              // eslint-disable-next-line effect/no-null-use-option -- (a) @dnd-kit/dom FeedbackOptions.dropAnimation takes null to turn off the drop animation; undefined keeps the default animation
               Feedback.configure({ dropAnimation: null }),
             ]}
             onDragEnd={(event) => {
@@ -263,8 +267,10 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
                 class={newLayout() ? "!h-[52px] !flex-none" : "!h-auto !flex-none"}
               >
                 <Tabs.List
-                  ref={tabList}
-                  class={newLayout() ? undefined : "h-10 border-b border-border-weaker-base"}
+                  ref={(el: HTMLDivElement) => {
+                    tabList = Option.some(el)
+                  }}
+                  {...(newLayout() ? {} : { class: "h-10 border-b border-border-weaker-base" })}
                   onPointerDown={(event: PointerEvent & { currentTarget: HTMLDivElement }) => {
                     const active = document.activeElement
                     if (event.target === active) return

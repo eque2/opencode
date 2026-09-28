@@ -1,4 +1,5 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk"
+import { Array as Arr } from "effect"
 
 export const DEFAULT_VARIANT_VALUE = "default"
 
@@ -65,7 +66,7 @@ export function buildEffortSelectOption(input: {
       input.currentVariant === DEFAULT_VARIANT_VALUE
         ? DEFAULT_VARIANT_VALUE
         : selectVariant(input.currentVariant, input.variants),
-    options: [...new Set([...input.variants, DEFAULT_VARIANT_VALUE])].map((variant) => ({
+    options: Arr.dedupe([...input.variants, DEFAULT_VARIANT_VALUE]).map((variant) => ({
       value: variant,
       name: formatVariantName(variant),
     })),

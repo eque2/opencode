@@ -4,7 +4,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Effect } from "effect"
 import { Discovery } from "../../src/skill/discovery"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
+import { existsSync } from "fs"
 import { rm } from "fs/promises"
 import path from "path"
 import { testEffect } from "../lib/effect"
@@ -43,7 +43,7 @@ beforeAll(async () => {
         const filePath = url.pathname.replace("/.well-known/skills/", "")
         const fullPath = path.join(fixturePath, filePath)
 
-        if (await Filesystem.exists(fullPath)) {
+        if (existsSync(fullPath)) {
           if (!fullPath.endsWith("index.json")) {
             downloadCount++
           }

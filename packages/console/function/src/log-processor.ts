@@ -1,5 +1,8 @@
 import { Resource } from "@opencode-ai/console-resource"
 import type { TraceItem } from "@cloudflare/workers-types"
+import { z } from "zod"
+
+const Metric = z.record(z.string(), z.unknown())
 
 export default {
   async tail(events: TraceItem[]) {
@@ -41,7 +44,7 @@ export default {
         ...event.logs.flatMap((log) =>
           log.message.flatMap((message: string) => {
             if (!message.startsWith("_metric:")) return []
-            const json = JSON.parse(message.slice(8)) as Record<string, unknown>
+            const json = Metric.parse(JSON.parse(message.slice(8)))
             data = { ...data, ...json }
             if ("llm.error.code" in json) {
               return [{ time, data: { ...data, event_type: "llm.error" } }]
@@ -54,16 +57,16 @@ export default {
       console.log(JSON.stringify(data, null, 2))
 
       const lakeIngest = getLakeIngest()
-      const [lake] = await Promise.all([
-        // fetch("https://api.honeycomb.io/1/batch/zen", {
-        //   method: "POST",
-        //   headers: {
-        //     "Content-Type": "application/json",
-        //     "X-Honeycomb-Team": Resource.HONEYCOMB_API_KEY.value,
-        //   },
-        //   body: JSON.stringify(events),
-        // }),
-        ...(lakeIngest
+      // fetch("https://api.honeycomb.io/1/batch/zen", {
+      //   method: "POST",
+      //   headers: {
+      //     "Content-Type": "application/json",
+      //     "X-Honeycomb-Team": Resource.HONEYCOMB_API_KEY.value,
+      //   },
+      //   body: JSON.stringify(events),
+      // }),
+      const [lake] = await Promise.all(
+        lakeIngest
           ? [
               fetch(lakeIngest.url, {
                 method: "POST",
@@ -74,8 +77,8 @@ export default {
                 body: JSON.stringify({ events: events.map((event) => toLakeEvent(event.time, event.data)) }),
               }),
             ]
-          : []),
-      ])
+          : [],
+      )
       // console.log(honeycomb.status)
       // console.log(await honeycomb.text())
       if (lake) {
@@ -165,12 +168,14 @@ function ipPrefix(ip: string | undefined) {
   if (!ip.includes(":")) return undefined
 
   // Expand "::" to its full form, then keep the first 4 hextets.
-  const [head, tail] = ip.split("::") as [string, string | undefined]
+  const parts = ip.split("::")
+  const head = parts[0]
+  const tail = parts.at(1)
   const headParts = head ? head.split(":") : []
   const tailParts = tail !== undefined ? tail.split(":") : []
   const missing = 8 - headParts.length - tailParts.length
   if (missing < 0) return undefined
-  const full = [...headParts, ...new Array(missing).fill("0"), ...tailParts]
+  const full = [...headParts, ...Array.from({ length: missing }, () => "0"), ...tailParts]
   if (full.length !== 8) return undefined
 
   const prefix = full

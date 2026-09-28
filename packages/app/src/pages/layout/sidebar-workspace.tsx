@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect"
 import { useNavigate, useParams } from "@solidjs/router"
 import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -22,6 +23,21 @@ import { pathKey } from "@/utils/path-key"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { sortedRootSessions } from "./helpers"
 import { useIsFetching } from "@tanstack/solid-query"
+
+/** A request for the next page of sidebar sessions that rejected. `cause` is the original rejection. */
+class SessionPageLoadError extends Data.TaggedError("App.SessionPageLoadError")<{ readonly cause: unknown }> {}
+
+/**
+ * Loads the next page of sidebar sessions in the background. A rejection goes to the Effect logger,
+ * as an unhandled rejection went to the console before.
+ */
+const loadSessionPage = (load: () => Promise<void>) => {
+  Effect.runFork(
+    Effect.tryPromise({ try: load, catch: (cause) => new SessionPageLoadError({ cause }) }).pipe(
+      Effect.tapCause((cause) => Effect.logError(cause)),
+    ),
+  )
+}
 
 type InlineEditorComponent = (props: {
   id: string
@@ -66,9 +82,9 @@ export const WorkspaceDragOverlay = (props: {
   const language = useLanguage()
   const label = createMemo(() => {
     const project = props.sidebarProject()
-    if (!project) return
+    if (!project) return undefined
     const directory = props.activeWorkspace()
-    if (!directory) return
+    if (!directory) return undefined
 
     const [workspaceStore] = serverSync().child(directory, { bootstrap: false })
     const kind =
@@ -244,7 +260,7 @@ const WorkspaceSessionList = (props: {
   loading: Accessor<boolean>
   sessions: Accessor<Session[]>
   hasMore: Accessor<boolean>
-  loadMore: () => Promise<void>
+  loadMore: () => void
   language: ReturnType<typeof useLanguage>
 }): JSX.Element => (
   <nav class="flex flex-col gap-1">
@@ -282,8 +298,8 @@ const WorkspaceSessionList = (props: {
           class="flex w-full text-left justify-start text-14-regular text-text-weak pl-2 pr-10"
           size="large"
           onClick={(e: MouseEvent) => {
-            void props.loadMore()
-            ;(e.currentTarget as HTMLButtonElement).blur()
+            props.loadMore()
+            if (e.currentTarget instanceof HTMLElement) e.currentTarget.blur()
           }}
         >
           {props.language.t("common.loadMore")}
@@ -329,9 +345,9 @@ export const SortableWorkspace = (props: {
   const loading = () => fetching() > 0 && count() === 0
   const touch = createMediaQuery("(hover: none)")
   const showNew = createMemo(() => !loading() && (touch() || count() === 0 || (active() && !params.id)))
-  const loadMore = async () => {
+  const loadMore = () => {
     setWorkspaceStore("limit", (limit) => (limit ?? 0) + 5)
-    await serverSync().project.loadSessions(props.directory)
+    loadSessionPage(() => serverSync().project.loadSessions(props.directory))
   }
 
   const workspaceEditActive = createMemo(() => props.ctx.editorOpen(`workspace:${props.directory}`))
@@ -462,9 +478,9 @@ export const LocalWorkspace = (props: {
   const fetching = useIsFetching(() => queryOptions().sessions(pathKey(props.project.worktree)))
   const hasMore = createMemo(() => workspace().store.sessionTotal > count())
   const loading = () => fetching() > 0 && count() === 0
-  const loadMore = async () => {
+  const loadMore = () => {
     workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
-    await serverSync().project.loadSessions(props.project.worktree)
+    loadSessionPage(() => serverSync().project.loadSessions(props.project.worktree))
   }
 
   return (

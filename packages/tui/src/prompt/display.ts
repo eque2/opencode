@@ -1,4 +1,5 @@
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+// An empty locale list selects the default locale (ECMA-402).
+const graphemes = new Intl.Segmenter([], { granularity: "grapheme" })
 
 export function promptOffsetWidth(value: string) {
   let width = 0
@@ -33,16 +34,17 @@ export function displayCharAt(value: string, offset: number) {
     if (offset === width || offset < next) return part.segment
     width = next
   }
+  return undefined
 }
 
 export function mentionTriggerIndex(value: string, offset = promptOffsetWidth(value)) {
   const text = displaySlice(value, 0, offset)
   const index = text.lastIndexOf("@")
-  if (index === -1) return
+  if (index === -1) return undefined
 
-  const before = index === 0 ? undefined : text[index - 1]
   const query = text.slice(index)
-  if ((before === undefined || /\s/.test(before)) && !/\s/.test(query)) {
+  if ((index === 0 || /\s/.test(text[index - 1])) && !/\s/.test(query)) {
     return promptOffsetWidth(text.slice(0, index))
   }
+  return undefined
 }

@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { HttpClientRequest } from "effect/unstable/http"
-import { CacheHint, LLM, LLMError, Message, ToolCallPart, Usage } from "../../src"
+import { CacheHint, LLM, LLMError, Message, ToolCallID, ToolCallPart, Usage } from "../../src"
 import { Auth, LLMClient } from "../../src/route"
 import * as AnthropicMessages from "../../src/protocols/anthropic-messages"
 import { continuationRequest, nativeAnthropicMessagesContinuation } from "../continuation-scenarios"
@@ -208,9 +208,25 @@ describe("Anthropic Messages route", () => {
           { role: "user", content: [{ type: "text", text: "What is the weather?" }] },
           {
             role: "assistant",
-            content: [{ type: "tool_use", id: "call_1", name: "lookup", input: { query: "weather" } }],
+            content: [
+              {
+                type: "tool_use",
+                id: AnthropicMessages.AnthropicToolUseID.make("call_1"),
+                name: "lookup",
+                input: { query: "weather" },
+              },
+            ],
           },
-          { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: '{"forecast":"sunny"}' }] },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: AnthropicMessages.AnthropicToolUseID.make("call_1"),
+                content: '{"forecast":"sunny"}',
+              },
+            ],
+          },
         ],
         stream: true,
         max_tokens: 4096,
@@ -435,7 +451,7 @@ describe("Anthropic Messages route", () => {
       expect(response.toolCalls).toEqual([
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -444,13 +460,13 @@ describe("Anthropic Messages route", () => {
       ])
       expect(response.events).toEqual([
         { type: "step-start", index: 0 },
-        { type: "tool-input-start", id: "call_1", name: "lookup" },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' },
-        { type: "tool-input-end", id: "call_1", name: "lookup", providerMetadata: undefined },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup" },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup", providerMetadata: undefined },
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -581,7 +597,7 @@ describe("Anthropic Messages route", () => {
       const toolCall = response.events.find((event) => event.type === "tool-call")
       expect(toolCall).toEqual({
         type: "tool-call",
-        id: "srvtoolu_abc",
+        id: ToolCallID.make("srvtoolu_abc"),
         name: "web_search",
         input: { query: "effect 4" },
         providerExecuted: true,
@@ -589,7 +605,7 @@ describe("Anthropic Messages route", () => {
       const toolResult = response.events.find((event) => event.type === "tool-result")
       expect(toolResult).toEqual({
         type: "tool-result",
-        id: "srvtoolu_abc",
+        id: ToolCallID.make("srvtoolu_abc"),
         name: "web_search",
         result: { type: "json", value: [{ type: "web_search_result", url: "https://example.com", title: "Example" }] },
         providerExecuted: true,
@@ -651,14 +667,14 @@ describe("Anthropic Messages route", () => {
             Message.assistant([
               {
                 type: "tool-call",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "web_search",
                 input: { query: "effect 4" },
                 providerExecuted: true,
               },
               {
                 type: "tool-result",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "web_search",
                 result: { type: "json", value: [{ url: "https://example.com" }] },
                 providerExecuted: true,
@@ -701,7 +717,7 @@ describe("Anthropic Messages route", () => {
             Message.assistant([
               {
                 type: "tool-result",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "future_server_tool",
                 result: { type: "json", value: {} },
                 providerExecuted: true,
@@ -822,7 +838,7 @@ describe("Anthropic Messages route", () => {
   it.effect("drops cache_control breakpoints past the 4-per-request cap", () =>
     Effect.gen(function* () {
       const hint = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model,
           system: [
@@ -837,7 +853,7 @@ describe("Anthropic Messages route", () => {
         }),
       )
 
-      const system = (prepared.body as { system: Array<{ cache_control?: unknown }> }).system
+      const system = prepared.body.system ?? []
       const marked = system.filter((part) => part.cache_control !== undefined)
       expect(marked).toHaveLength(4)
       expect(system[4]?.cache_control).toBeUndefined()
@@ -848,7 +864,7 @@ describe("Anthropic Messages route", () => {
   it.effect("spends breakpoint budget on tools before system before messages", () =>
     Effect.gen(function* () {
       const hint = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model,
           tools: [
@@ -882,13 +898,10 @@ describe("Anthropic Messages route", () => {
         }),
       )
 
-      const body = prepared.body as {
-        tools: Array<{ cache_control?: unknown }>
-        system: Array<{ cache_control?: unknown }>
-        messages: Array<{ content: Array<{ cache_control?: unknown }> }>
-      }
-      expect(body.tools.every((t) => t.cache_control !== undefined)).toBe(true)
-      expect(body.system[0]?.cache_control).toBeUndefined()
+      const body = prepared.body
+      expect(body.tools?.every((t) => t.cache_control !== undefined)).toBe(true)
+      expect(body.system).toHaveLength(1)
+      expect(body.system?.[0]?.cache_control).toBeUndefined()
       expect(body.messages[0]?.content[0]?.cache_control).toBeUndefined()
     }),
   )

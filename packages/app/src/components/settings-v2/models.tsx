@@ -110,7 +110,7 @@ export const SettingsModelsV2: Component = () => {
                   <div
                     class="settings-v2-section"
                     data-component="settings-models-provider"
-                    data-expanded={expanded() ? "" : undefined}
+                    bool:data-expanded={expanded()}
                   >
                     <h3 class="settings-v2-models-group-header">
                       <button

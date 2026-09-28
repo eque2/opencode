@@ -1,7 +1,6 @@
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Clock, Duration, Effect, Schedule } from "effect"
-import { MessageV2 } from "./message-v2"
+import { Cause, Clock, DateTime, Duration, Effect, Option, Predicate, Random, Schedule, Schema } from "effect"
 import { iife } from "@/util/iife"
 import { isRecord } from "@/util/record"
 
@@ -44,9 +43,23 @@ function cap(ms: number) {
   return Math.min(ms, RETRY_MAX_DELAY)
 }
 
-export function delay(attempt: number, error?: SessionV1.APIError, random = Math.random()) {
-  if (error) {
-    const headers = error.data.responseHeaders
+/**
+ * The retry delay in milliseconds. `random` is the jitter in [0, 1); without it the delay has no
+ * jitter. `now` is the epoch time for an HTTP-date retry-after header; without it the delay reads
+ * the current time.
+ */
+export function delay(attempt: number, error?: SessionV1.APIError, random?: number, now?: number) {
+  return delayFor(
+    attempt,
+    Option.fromNullishOr(error),
+    random ?? 0,
+    now ?? DateTime.toEpochMillis(DateTime.nowUnsafe()),
+  )
+}
+
+function delayFor(attempt: number, error: Option.Option<SessionV1.APIError>, random: number, now: number) {
+  if (Option.isSome(error)) {
+    const headers = error.value.data.responseHeaders
     if (headers) {
       const retryAfterMs = headers["retry-after-ms"]
       if (retryAfterMs) {
@@ -64,9 +77,9 @@ export function delay(attempt: number, error?: SessionV1.APIError, random = Math
           return cap(Math.ceil(parsedSeconds * 1000))
         }
         // Try parsing as HTTP date format
-        const parsed = Date.parse(retryAfter) - Date.now()
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          return cap(Math.ceil(parsed))
+        const parsed = Option.map(DateTime.make(retryAfter), (date) => DateTime.toEpochMillis(date) - now)
+        if (Option.isSome(parsed) && parsed.value > 0) {
+          return cap(Math.ceil(parsed.value))
         }
       }
 
@@ -110,9 +123,16 @@ export function retryable(error: Err, provider: string) {
       }
     }
     if (error.data.responseBody?.includes("GoUsageLimitError")) {
-      const body = parseJSON(error.data.responseBody)
-      const workspace = str(body?.metadata?.workspace)
-      const limitName = str(body?.metadata?.limitName)
+      const metadata = Option.flatMap(decodeGoUsageLimitBody(error.data.responseBody), (body) =>
+        Option.fromNullishOr(body.metadata),
+      )
+      const field = (key: "workspace" | "limitName") =>
+        Option.getOrElse(
+          Option.flatMap(metadata, (item) => Option.map(Option.fromNullishOr(item[key]), str)),
+          () => "",
+        )
+      const workspace = field("workspace")
+      const limitName = field("limitName")
       const retryAfter = num(error.data.responseHeaders?.["retry-after"])
       const resetIn = iife(() => {
         if (retryAfter === undefined) return ""
@@ -145,7 +165,8 @@ export function retryable(error: Err, provider: string) {
     return { message: error.data.message.includes("Overloaded") ? "Provider is overloaded" : error.data.message }
   }
 
-  const message = isRecord(error.data) ? error.data.message : undefined
+  if (!isRecord(error.data)) return undefined
+  const message = error.data.message
   if (typeof message !== "string") return undefined
   const lower = message.toLowerCase()
   if (lower.includes("too_many_requests")) return { message: "Too Many Requests" }
@@ -158,27 +179,31 @@ function matchesRetryableMessage(value: unknown) {
   return typeof value === "string" && RETRYABLE_MESSAGE_PATTERNS.some((pattern) => pattern.test(value))
 }
 
-function str(value: unknown) {
-  if (value === undefined || value === null) return ""
-  return String(value)
+// Text of a scalar JSON value. JSON objects and arrays read as empty.
+function str(value: Schema.Json) {
+  if (Predicate.isString(value) || Predicate.isNumber(value) || Predicate.isBoolean(value)) return String(value)
+  return ""
 }
 
-function num(value: unknown) {
-  const parsed = Number.parseFloat(str(value))
+function num(value: string | undefined) {
+  const parsed = Number.parseFloat(value ?? "")
   if (Number.isNaN(parsed)) return undefined
   return parsed
 }
 
-function parseJSON(value: unknown) {
-  return iife(() => {
-    try {
-      if (typeof value !== "string") return undefined
-      return JSON.parse(value)
-    } catch {
-      return undefined
-    }
-  })
-}
+// The Go usage limit response body. Its metadata names the workspace and the limit.
+const decodeGoUsageLimitBody = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      metadata: Schema.optional(
+        Schema.Struct({
+          workspace: Schema.optional(Schema.Json),
+          limitName: Schema.optional(Schema.Json),
+        }),
+      ),
+    }).annotate({ identifier: "SessionRetry.GoUsageLimitBody" }),
+  ),
+)
 
 export function policy(opts: {
   provider: string
@@ -192,8 +217,14 @@ export function policy(opts: {
       if (!retry) return Cause.done(meta.attempt)
       if (meta.attempt > RETRY_MAX_RETRIES) return Cause.done(meta.attempt)
       return Effect.gen(function* () {
-        const wait = delay(meta.attempt, SessionV1.APIError.isInstance(error) ? error : undefined)
         const now = yield* Clock.currentTimeMillis
+        const random = yield* Random.next
+        const wait = delayFor(
+          meta.attempt,
+          SessionV1.APIError.isInstance(error) ? Option.some(error) : Option.none(),
+          random,
+          now,
+        )
         yield* opts.set({
           attempt: meta.attempt,
           message: retry.message,

@@ -1,6 +1,6 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
 import type { PreparedQuery } from "drizzle-orm/session"
@@ -9,12 +9,8 @@ import type { SQLiteAsyncDialect } from "drizzle-orm/sqlite-core/dialect"
 
 type SQLiteEffectRawAction = "all" | "get" | "values" | "run"
 
-export interface SQLiteEffectRaw<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
-  extends Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]>,
-    RunnableQuery<TResult, "sqlite">,
-    SQLWrapper {}
-
 export class SQLiteEffectRaw<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
+  extends Effectable.Class<TResult, TEffectHKT["error"], TEffectHKT["context"]>
   implements RunnableQuery<TResult, "sqlite">, SQLWrapper, PreparedQuery
 {
   static readonly [entityKind]: string = "SQLiteEffectRaw"
@@ -31,7 +27,9 @@ export class SQLiteEffectRaw<TResult, TEffectHKT extends QueryEffectHKTBase = Qu
     private action: SQLiteEffectRawAction,
     private dialect: SQLiteAsyncDialect,
     private mapBatchResult: (result: unknown) => unknown,
-  ) {}
+  ) {
+    super()
+  }
 
   getQuery(): Query & { method: SQLiteEffectRawAction } {
     return { ...this.dialect.sqlToQuery(this.getSQL()), method: this.action }
@@ -44,6 +42,8 @@ export class SQLiteEffectRaw<TResult, TEffectHKT extends QueryEffectHKTBase = Qu
   _prepare(): PreparedQuery {
     return this
   }
-}
 
-applyEffectWrapper(SQLiteEffectRaw)
+  asEffect(): Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}

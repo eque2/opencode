@@ -1,10 +1,11 @@
-import { Effect, Option, Schema, Stream } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
+import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
-import { isRecord, own } from "./spec.js"
+import { isJsonMediaType, isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Json))
 const maxErrorBodyChars = 1_024
 const maxResponseBodyBytes = 50 * 1024 * 1024
 
@@ -29,12 +30,14 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
         ),
       )
     const text = yield* readResponseBody(response, plan)
-    const mediaType = response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase()
-    const json = mediaType === "application/json" || mediaType?.endsWith("+json") === true
-    const decoded = text === "" ? Option.some(null) : json ? decodeJson(text) : Option.none()
-    const parsed = json ? Option.getOrElse(decoded, () => text) : text === "" ? null : text
+    const json = Option.exists(Headers.get(response.headers, "content-type"), isJsonMediaType)
+    // An empty body is absent; the program receives it as JSON null.
+    const body: Option.Option<unknown> = text === "" ? Option.none() : json ? decodeJson(text) : Option.some(text)
     if (response.status < 200 || response.status >= 300) {
-      const rendered = typeof parsed === "string" ? parsed : (JSON.stringify(parsed) ?? "")
+      const rendered = Option.match(body, {
+        onNone: () => text,
+        onSome: (value) => (typeof value === "string" ? value : Option.getOrElse(encodeJson(value), () => text)),
+      })
       const summary =
         rendered === "" || rendered === "null"
           ? "no response body"
@@ -45,10 +48,10 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
         toolError(`${plan.operation.method} ${plan.operation.path} failed with HTTP ${response.status}: ${summary}`),
       )
     }
-    if (json && Option.isNone(decoded)) {
+    if (json && text !== "" && Option.isNone(body)) {
       return yield* Effect.fail(toolError(`${plan.operation.method} ${plan.operation.path} returned malformed JSON.`))
     }
-    return parsed
+    return Option.getOrNull(body)
   })
 
 const buildRequest = (
@@ -60,19 +63,19 @@ const buildRequest = (
     const url = buildUrl(plan, input)
     if (url instanceof ToolError) return yield* Effect.fail(url)
     const missing = plan.fields.find(
-      (field) => field.required && field.location !== "path" && own(input, field.inputName) === undefined,
+      (field) => field.required && field.location !== "path" && Option.isNone(own(input, field.inputName)),
     )
     if (missing !== undefined) {
       const label = missing.location === "body" ? "body field" : `${missing.location} parameter`
       return yield* Effect.fail(toolError(`Missing required ${label} '${missing.inputName}'.`))
     }
 
-    let request = HttpClientRequest.make(plan.operation.method as HttpMethod.HttpMethod)(url)
+    let request = HttpClientRequest.make(plan.method)(url)
     for (const field of plan.fields) {
       if (field.location !== "query") continue
       const item = own(input, field.inputName)
-      if (item === undefined) continue
-      const serialized = serializeQuery(request, field, item)
+      if (Option.isNone(item)) continue
+      const serialized = serializeQuery(request, field, item.value)
       if (serialized instanceof ToolError) return yield* Effect.fail(serialized)
       request = serialized
     }
@@ -82,8 +85,8 @@ const buildRequest = (
     for (const field of plan.fields) {
       if (field.location !== "header") continue
       const item = own(input, field.inputName)
-      if (item === undefined) continue
-      const serialized = serializeSimple(field, item, String)
+      if (Option.isNone(item)) continue
+      const serialized = serializeSimple(field, item.value, String)
       if (serialized instanceof ToolError) return yield* Effect.fail(serialized)
       request = HttpClientRequest.setHeader(request, field.name, serialized)
     }
@@ -95,22 +98,20 @@ const buildRequest = (
           toolError(`Invalid JSON body for ${plan.operation.method} ${plan.operation.path}.`, cause),
         ),
       )
-    if (plan.body?.mode === "value") {
-      const field = plan.fields.find((field) => field.location === "body")
-      const body = field === undefined ? undefined : own(input, field.inputName)
-      if (body !== undefined) request = yield* setBody(body, plan.body.mediaType)
+    if (Option.isNone(plan.body)) return request
+    const body = plan.body.value
+    if (body.mode === "value") {
+      const value = Arr.findFirst(plan.fields, (field) => field.location === "body").pipe(
+        Option.flatMap((field) => own(input, field.inputName)),
+      )
+      return Option.isSome(value) ? yield* setBody(value.value, body.mediaType) : request
     }
-    if (plan.body?.mode === "object") {
-      const entries = plan.fields.flatMap((field) => {
-        if (field.location !== "body") return []
-        const item = own(input, field.inputName)
-        return item === undefined ? [] : [[field.name, item] as const]
-      })
-      if (plan.body.required || entries.length > 0) {
-        request = yield* setBody(Object.fromEntries(entries), plan.body.mediaType)
-      }
-    }
-    return request
+    const entries = plan.fields.flatMap((field) =>
+      field.location === "body"
+        ? Option.toArray(Option.map(own(input, field.inputName), (item) => [field.name, item] as const))
+        : [],
+    )
+    return body.required || entries.length > 0 ? yield* setBody(Object.fromEntries(entries), body.mediaType) : request
   })
 
 const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
@@ -122,16 +123,16 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
     alternatives: for (const requirement of plan.security) {
       const names = Object.keys(requirement)
       if (names.length === 0) return none
-      const credentials: Array<readonly [string, SecurityScheme, Credential]> = []
+      let credentials: ReadonlyArray<readonly [string, SecurityScheme, Credential]> = []
       for (const name of names) {
         const scheme = own(plan.schemes, name)
-        if (scheme === undefined || plan.auth === undefined) {
+        if (Option.isNone(scheme) || plan.auth === undefined) {
           unavailable.push(name)
           continue alternatives
         }
         const credential = yield* plan.auth.resolve({
           name,
-          definition: scheme,
+          definition: scheme.value,
           scopes: requirement[name] ?? [],
           operation: plan.operation,
         })
@@ -139,7 +140,7 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
           unavailable.push(name)
           continue alternatives
         }
-        credentials.push([name, scheme, credential])
+        credentials = Arr.append(credentials, [name, scheme.value, credential] as const)
       }
       const applied = applyCredentials(credentials)
       return applied instanceof ToolError ? yield* Effect.fail(applied) : applied
@@ -147,54 +148,70 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
 
     return yield* Effect.fail(
       toolError(
-        `${plan.operation.method} ${plan.operation.path} requires authentication; no credential available for: ${[...new Set(unavailable)].join(", ")}.`,
+        `${plan.operation.method} ${plan.operation.path} requires authentication; no credential available for: ${Arr.dedupe(unavailable).join(", ")}.`,
       ),
     )
   })
 
+/** Credential carriers in resolution order; request header and query order follow it. */
+type Carriers = {
+  readonly header: ReadonlyArray<readonly [string, string]>
+  readonly query: ReadonlyArray<readonly [string, string]>
+}
+
+const addCarrier = (
+  carriers: Carriers,
+  carrier: "header" | "query",
+  name: string,
+  value: string,
+): Carriers | ToolError => {
+  if (carriers[carrier].some(([existing]) => existing === name)) {
+    return toolError(`Authentication resolves multiple credentials for ${carrier} '${name}'.`)
+  }
+  const entry = [name, value] as const
+  return carrier === "header"
+    ? { ...carriers, header: Arr.append(carriers.header, entry) }
+    : { ...carriers, query: Arr.append(carriers.query, entry) }
+}
+
+const applyCredential = (
+  carriers: Carriers,
+  [name, definition, credential]: readonly [string, SecurityScheme, Credential],
+): Carriers | ToolError => {
+  if (credential.type === "bearer") return addCarrier(carriers, "header", "authorization", `Bearer ${credential.token}`)
+  if (credential.type === "basic") {
+    // Buffer instead of btoa: btoa throws on non-Latin-1 credentials.
+    return addCarrier(
+      carriers,
+      "header",
+      "authorization",
+      `Basic ${Buffer.from(`${credential.username}:${credential.password}`, "utf8").toString("base64")}`,
+    )
+  }
+  if (credential.type === "header") {
+    return addCarrier(carriers, "header", credential.name.toLowerCase(), credential.value)
+  }
+  // apiKey: the carrier comes from the scheme declaration.
+  if (definition.type !== "apiKey") {
+    return toolError(
+      `Security scheme '${name}' is not an apiKey scheme; resolve a bearer, basic, or header credential for it.`,
+    )
+  }
+  if (definition.in === "cookie") return toolError(`Cookie authentication '${name}' is not supported.`)
+  const parameter = definition.in === "header" ? definition.name.toLowerCase() : definition.name
+  return addCarrier(carriers, definition.in, parameter, credential.value)
+}
+
 const applyCredentials = (
   credentials: ReadonlyArray<readonly [string, SecurityScheme, Credential]>,
 ): AppliedAuth | ToolError => {
-  const headers = new Map<string, string>()
-  const query = new Map<string, string>()
-  const add = (carrier: "header" | "query", name: string, value: string): ToolError | undefined => {
-    const target = carrier === "header" ? headers : query
-    if (target.has(name)) return toolError(`Authentication resolves multiple credentials for ${carrier} '${name}'.`)
-    target.set(name, value)
+  let carriers: Carriers = { header: [], query: [] }
+  for (const credential of credentials) {
+    const next = applyCredential(carriers, credential)
+    if (next instanceof ToolError) return next
+    carriers = next
   }
-  for (const [name, definition, credential] of credentials) {
-    if (credential.type === "bearer") {
-      const duplicate = add("header", "authorization", `Bearer ${credential.token}`)
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    if (credential.type === "basic") {
-      // Buffer instead of btoa: btoa throws on non-Latin-1 credentials.
-      const duplicate = add(
-        "header",
-        "authorization",
-        `Basic ${Buffer.from(`${credential.username}:${credential.password}`, "utf8").toString("base64")}`,
-      )
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    if (credential.type === "header") {
-      const duplicate = add("header", credential.name.toLowerCase(), credential.value)
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    // apiKey: the carrier comes from the scheme declaration.
-    if (definition.type !== "apiKey") {
-      return toolError(
-        `Security scheme '${name}' is not an apiKey scheme; resolve a bearer, basic, or header credential for it.`,
-      )
-    }
-    if (definition.in === "cookie") return toolError(`Cookie authentication '${name}' is not supported.`)
-    const parameter = definition.in === "header" ? definition.name.toLowerCase() : definition.name
-    const duplicate = add(definition.in, parameter, credential.value)
-    if (duplicate !== undefined) return duplicate
-  }
-  return { headers: Object.fromEntries(headers), query: Object.fromEntries(query) }
+  return { headers: Object.fromEntries(carriers.header), query: Object.fromEntries(carriers.query) }
 }
 
 const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string | ToolError => {
@@ -202,10 +219,10 @@ const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string 
   for (const field of plan.fields) {
     if (field.location !== "path") continue
     const item = own(input, field.inputName)
-    if (item === undefined) {
+    if (Option.isNone(item)) {
       return toolError(`Missing required path parameter '${field.inputName}'.`)
     }
-    const fieldValue = serializeSimple(field, item, (value) =>
+    const fieldValue = serializeSimple(field, item.value, (value) =>
       encodeURIComponent(value).replace(
         /[!'()*]/g,
         (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -220,9 +237,13 @@ const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string 
     url = url.replaceAll(`{${field.name}}`, fieldValue)
   }
   const unresolved = url.match(/\{[^{}]+\}/)
-  if (unresolved !== null) return toolError(`Unresolved path parameter ${unresolved[0]}.`)
+  if (Predicate.isNotNull(unresolved)) return toolError(`Unresolved path parameter ${unresolved[0]}.`)
   return url
 }
+
+/** A value with one unambiguous string form in a path, query, or header. */
+const isScalar = (item: unknown): item is string | number | boolean | null =>
+  Predicate.isNull(item) || Predicate.isString(item) || Predicate.isNumber(item) || Predicate.isBoolean(item)
 
 const serializeSimple = (
   field: Plan["fields"][number],
@@ -230,9 +251,9 @@ const serializeSimple = (
   encode: (value: string) => string,
 ): string | ToolError => {
   const scalar = (item: unknown): string | ToolError =>
-    item !== null && typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean"
-      ? toolError(`Parameter '${field.inputName}' contains an unsupported nested value.`)
-      : encode(String(item))
+    isScalar(item)
+      ? encode(String(item))
+      : toolError(`Parameter '${field.inputName}' contains an unsupported nested value.`)
   if (Array.isArray(value)) {
     const items = value.map(scalar)
     const invalid = items.find((item): item is ToolError => item instanceof ToolError)
@@ -257,7 +278,7 @@ const serializeQuery = (
     if (!isRecord(value)) return toolError(`Deep-object parameter '${field.inputName}' must be an object.`)
     return Object.entries(value).reduce<HttpClientRequest.HttpClientRequest | ToolError>((current, [name, item]) => {
       if (current instanceof ToolError) return current
-      if (item === undefined || (item !== null && typeof item === "object")) {
+      if (!isScalar(item)) {
         return toolError(`Deep-object parameter '${field.inputName}' contains an unsupported nested value.`)
       }
       return HttpClientRequest.appendUrlParam(current, `${field.name}[${name}]`, String(item))
@@ -267,7 +288,7 @@ const serializeQuery = (
     const rendered = serializeSimple(field, value, String)
     if (rendered instanceof ToolError) return rendered
     if (!field.explode) return HttpClientRequest.appendUrlParam(request, field.name, rendered)
-    if (value.some((item) => item === undefined || (item !== null && typeof item === "object"))) {
+    if (!value.every(isScalar)) {
       return toolError(`Query parameter '${field.inputName}' contains an unsupported nested value.`)
     }
     return value.reduce((current, item) => HttpClientRequest.appendUrlParam(current, field.name, String(item)), request)
@@ -275,7 +296,7 @@ const serializeQuery = (
   if (isRecord(value) && field.explode) {
     return Object.entries(value).reduce<HttpClientRequest.HttpClientRequest | ToolError>((current, [name, item]) => {
       if (current instanceof ToolError) return current
-      if (item === undefined || (item !== null && typeof item === "object")) {
+      if (!isScalar(item)) {
         return toolError(`Query parameter '${field.inputName}' contains an unsupported nested value.`)
       }
       return HttpClientRequest.appendUrlParam(current, name, String(item))
@@ -290,14 +311,19 @@ const readResponseBody = (
   plan: Plan,
 ): Effect.Effect<string, ToolError> =>
   Effect.gen(function* () {
-    const contentLength = response.headers["content-length"]
-    const parsedSize = contentLength === undefined ? undefined : Number.parseInt(contentLength, 10)
-    const declaredSize =
-      parsedSize !== undefined && Number.isSafeInteger(parsedSize) && parsedSize >= 0 ? parsedSize : undefined
-    if (declaredSize !== undefined && declaredSize > maxResponseBodyBytes) {
+    const declaredSize = Headers.get(response.headers, "content-length").pipe(
+      Option.map((value) => Number.parseInt(value, 10)),
+      Option.filter((size) => Number.isSafeInteger(size) && size >= 0),
+    )
+    if (Option.isSome(declaredSize) && declaredSize.value > maxResponseBodyBytes) {
       return yield* Effect.fail(toolError(`${plan.operation.method} ${plan.operation.path} response exceeds 50 MiB.`))
     }
-    let body = Buffer.allocUnsafe(Math.min(maxResponseBodyBytes, declaredSize ?? 64 * 1024))
+    let body = Buffer.allocUnsafe(
+      Math.min(
+        maxResponseBodyBytes,
+        Option.getOrElse(declaredSize, () => 64 * 1024),
+      ),
+    )
     let size = 0
     yield* Stream.runForEach(response.stream, (chunk) => {
       if (size + chunk.byteLength > maxResponseBodyBytes) {

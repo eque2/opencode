@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type {
-  AgentListOutput,
-  ModelDefaultOutput,
-  ModelListOutput,
-  ProviderListOutput,
-} from "@opencode-ai/client/promise"
+import type { AgentListOutput, ModelInfo, ProviderListOutput } from "@opencode-ai/client/promise"
+import { HashMap, Option } from "effect"
 import { directoryKey, normalizeAgentList, normalizePermissionRequest, normalizeProviderList } from "./utils"
 
 describe("normalizeAgentList", () => {
@@ -26,7 +22,6 @@ describe("normalizeAgentList", () => {
     expect(result).toEqual([
       {
         name: "build",
-        description: undefined,
         mode: "primary",
         hidden: false,
         temperature: 0.2,
@@ -37,7 +32,6 @@ describe("normalizeAgentList", () => {
         variant: "high",
         prompt: "Build software",
         options: { temperature: 0.2, topP: 0.9 },
-        steps: undefined,
       },
     ])
   })
@@ -69,44 +63,44 @@ describe("normalizePermissionRequest", () => {
 
 describe("normalizeProviderList", () => {
   test("groups current models into the app provider catalog", () => {
+    const gpt5: ModelInfo = {
+      id: "gpt-5",
+      modelID: "gpt-5",
+      providerID: "openai",
+      name: "GPT-5",
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+      variants: [{ id: "high" }],
+      time: { released: 1 },
+      cost: [{ input: 1, output: 2, cache: { read: 0.1, write: 0.2 } }],
+      status: "active",
+      enabled: true,
+      limit: { context: 128_000, output: 8_192 },
+    }
+    const gptOld: ModelInfo = {
+      id: "gpt-old",
+      modelID: "gpt-old",
+      providerID: "openai",
+      name: "GPT Old",
+      capabilities: { tools: false, input: ["text"], output: ["text"] },
+      variants: [],
+      time: { released: 0 },
+      cost: [],
+      status: "deprecated",
+      enabled: true,
+      limit: { context: 1, output: 1 },
+    }
     const result = normalizeProviderList(
       [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }] as ProviderListOutput["data"],
-      [
-        {
-          id: "gpt-5",
-          modelID: "gpt-5",
-          providerID: "openai",
-          name: "GPT-5",
-          capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
-          variants: [{ id: "high" }],
-          time: { released: 1 },
-          cost: [{ input: 1, output: 2, cache: { read: 0.1, write: 0.2 } }],
-          status: "active",
-          enabled: true,
-          limit: { context: 128_000, output: 8_192 },
-        },
-        {
-          id: "gpt-old",
-          modelID: "gpt-old",
-          providerID: "openai",
-          name: "GPT Old",
-          capabilities: { tools: false, input: ["text"], output: ["text"] },
-          variants: [],
-          time: { released: 0 },
-          cost: [],
-          status: "deprecated",
-          enabled: true,
-          limit: { context: 1, output: 1 },
-        },
-      ] as ModelListOutput["data"],
-      { id: "gpt-5", providerID: "openai" } as ModelDefaultOutput["data"],
+      [gpt5, gptOld],
+      gpt5,
     )
 
     expect(result.connected).toEqual(["openai"])
     expect(result.defaultModel).toEqual({ providerID: "openai", modelID: "gpt-5" })
     expect(result.default).toEqual({ openai: "gpt-5" })
-    expect(result.all.get("openai")?.models["gpt-old"]).toBeUndefined()
-    expect(result.all.get("openai")?.models["gpt-5"]).toMatchObject({
+    const openai = Option.getOrUndefined(HashMap.get(result.all, "openai"))
+    expect(openai?.models["gpt-old"]).toBeUndefined()
+    expect(openai?.models["gpt-5"]).toMatchObject({
       id: "gpt-5",
       providerID: "openai",
       capabilities: { toolcall: true, attachment: true },
@@ -116,7 +110,10 @@ describe("normalizeProviderList", () => {
   })
 
   test("preserves an empty current default", () => {
-    expect(normalizeProviderList([] as ProviderListOutput["data"], [], null).defaultModel).toBeNull()
+    const noServerDefault = Option.none<ModelInfo>()
+    expect(
+      normalizeProviderList([] as ProviderListOutput["data"], [], Option.getOrNull(noServerDefault)).defaultModel,
+    ).toBeNull()
   })
 })
 

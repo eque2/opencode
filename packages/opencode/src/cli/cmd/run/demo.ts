@@ -16,6 +16,7 @@
 // or failing the synthetic tool parts as appropriate.
 import path from "path"
 import type { Event, ToolPart } from "@opencode-ai/sdk/v2"
+import { Clock, DateTime, Duration, Effect, MutableHashMap, Option } from "effect"
 import { createSessionData, reduceSessionData, type SessionData } from "./session-data"
 import { writeSessionOutput } from "./stream"
 import type { FooterApi, PermissionReply, QuestionReject, QuestionReply, RunPrompt, StreamCommit } from "./types"
@@ -141,8 +142,9 @@ type State = {
   call: number
   perm: number
   ask: number
-  perms: Map<string, Perm>
-  asks: Map<string, Ask>
+  event: number
+  perms: MutableHashMap.MutableHashMap<string, Perm>
+  asks: MutableHashMap.MutableHashMap<string, Ask>
 }
 
 type Input = {
@@ -200,7 +202,7 @@ function showSubagent(
           status: input.status,
           title: input.title,
           toolCalls: input.toolCalls,
-          lastUpdatedAt: Date.now(),
+          lastUpdatedAt: nowMillis(),
         },
       ],
       details: {
@@ -215,31 +217,34 @@ function showSubagent(
   })
 }
 
-function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (!signal) {
-      setTimeout(resolve, ms)
-      return
-    }
+// Sleeps for ms, or ends early when the signal aborts.
+function wait(ms: number, signal?: AbortSignal): Effect.Effect<void> {
+  if (!signal) {
+    return Effect.sleep(Duration.millis(ms))
+  }
 
-    if (signal.aborted) {
-      resolve()
-      return
-    }
+  if (signal.aborted) {
+    return Effect.void
+  }
 
-    const done = () => {
-      clearTimeout(timer)
-      signal.removeEventListener("abort", done)
-      resolve()
-    }
+  return Effect.raceFirst(
+    Effect.sleep(Duration.millis(ms)),
+    Effect.callback<void>((resume) => {
+      const done = () => resume(Effect.void)
+      signal.addEventListener("abort", done, { once: true })
+      return Effect.sync(() => signal.removeEventListener("abort", done))
+    }),
+  )
+}
 
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", done)
-      resolve()
-    }, ms)
+// The demo event builders run inside synchronous footer callbacks, so they
+// read the clock directly.
+function nowMillis(): number {
+  return DateTime.toEpochMillis(DateTime.nowUnsafe())
+}
 
-    signal.addEventListener("abort", done, { once: true })
-  })
+function eventID(state: State, type: string): string {
+  return `${type}:${take(state, "event", "event")}`
 }
 
 function split(text: string): string[] {
@@ -251,7 +256,7 @@ function split(text: string): string[] {
   return [text.slice(0, size), text.slice(size, size * 2), text.slice(size * 2)]
 }
 
-function take(state: State, key: "msg" | "part" | "call" | "perm" | "ask", prefix: string): string {
+function take(state: State, key: "msg" | "part" | "call" | "perm" | "ask" | "event", prefix: string): string {
   state[key] += 1
   return `demo_${prefix}_${state[key]}`
 }
@@ -276,6 +281,7 @@ function feed(state: State, event: Event): void {
 function open(state: State): string {
   const id = take(state, "msg", "msg")
   feed(state, {
+    id: eventID(state, "message.updated"),
     type: "message.updated",
     properties: {
       sessionID: state.id,
@@ -284,7 +290,7 @@ function open(state: State): string {
         sessionID: state.id,
         role: "assistant",
         time: {
-          created: Date.now(),
+          created: nowMillis(),
         },
         parentID: `user_${id}`,
         modelID: "demo",
@@ -307,20 +313,21 @@ function open(state: State): string {
         },
       },
     },
-  } as Event)
+  } satisfies Event)
   return id
 }
 
-async function emitText(state: State, body: string, signal?: AbortSignal): Promise<void> {
+const emitText = Effect.fn("RunDemo.emitText")(function* (state: State, body: string, signal?: AbortSignal) {
   const msg = open(state)
   const part = take(state, "part", "part")
-  const start = Date.now()
+  const start = yield* Clock.currentTimeMillis
 
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: start,
       part: {
         id: part,
         sessionID: state.id,
@@ -332,7 +339,7 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
         },
       },
     },
-  } as Event)
+  } satisfies Event)
 
   let next = ""
   for (const item of split(body)) {
@@ -342,6 +349,7 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
 
     next += item
     feed(state, {
+      id: eventID(state, "message.part.delta"),
       type: "message.part.delta",
       properties: {
         sessionID: state.id,
@@ -350,15 +358,17 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
         field: "text",
         delta: item,
       },
-    } as Event)
-    await wait(45, signal)
+    } satisfies Event)
+    yield* wait(45, signal)
   }
 
+  const end = yield* Clock.currentTimeMillis
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: end,
       part: {
         id: part,
         sessionID: state.id,
@@ -367,23 +377,24 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
         text: next,
         time: {
           start,
-          end: Date.now(),
+          end,
         },
       },
     },
-  } as Event)
-}
+  } satisfies Event)
+})
 
-async function emitReasoning(state: State, body: string, signal?: AbortSignal): Promise<void> {
+const emitReasoning = Effect.fn("RunDemo.emitReasoning")(function* (state: State, body: string, signal?: AbortSignal) {
   const msg = open(state)
   const part = take(state, "part", "part")
-  const start = Date.now()
+  const start = yield* Clock.currentTimeMillis
 
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: start,
       part: {
         id: part,
         sessionID: state.id,
@@ -395,7 +406,7 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
         },
       },
     },
-  } as Event)
+  } satisfies Event)
 
   let next = ""
   for (const item of split(body)) {
@@ -405,6 +416,7 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
 
     next += item
     feed(state, {
+      id: eventID(state, "message.part.delta"),
       type: "message.part.delta",
       properties: {
         sessionID: state.id,
@@ -413,15 +425,17 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
         field: "text",
         delta: item,
       },
-    } as Event)
-    await wait(45, signal)
+    } satisfies Event)
+    yield* wait(45, signal)
   }
 
+  const end = yield* Clock.currentTimeMillis
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: end,
       part: {
         id: part,
         sessionID: state.id,
@@ -430,12 +444,12 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
         text: next,
         time: {
           start,
-          end: Date.now(),
+          end,
         },
       },
     },
-  } as Event)
-}
+  } satisfies Event)
+})
 
 function make(state: State, tool: string, input: Record<string, unknown>): Ref {
   return {
@@ -444,16 +458,17 @@ function make(state: State, tool: string, input: Record<string, unknown>): Ref {
     call: take(state, "call", "call"),
     tool,
     input,
-    start: Date.now(),
+    start: nowMillis(),
   }
 }
 
 function startTool(state: State, ref: Ref, metadata: Record<string, unknown> = {}): void {
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: nowMillis(),
       part: {
         id: ref.part,
         sessionID: state.id,
@@ -471,19 +486,20 @@ function startTool(state: State, ref: Ref, metadata: Record<string, unknown> = {
         },
       },
     },
-  } as Event)
+  } satisfies Event)
 }
 
 function askPermission(state: State, item: Permit): void {
   startTool(state, item.ref)
 
   const id = take(state, "perm", "perm")
-  state.perms.set(id, {
+  MutableHashMap.set(state.perms, id, {
     ref: item.ref,
     done: item.done,
   })
 
   feed(state, {
+    id: eventID(state, "permission.asked"),
     type: "permission.asked",
     properties: {
       id,
@@ -497,7 +513,7 @@ function askPermission(state: State, item: Permit): void {
         callID: item.ref.call,
       },
     },
-  } as Event)
+  } satisfies Event)
 }
 
 function doneTool(
@@ -510,10 +526,11 @@ function doneTool(
   },
 ): void {
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: nowMillis(),
       part: {
         id: ref.part,
         sessionID: state.id,
@@ -529,20 +546,21 @@ function doneTool(
           metadata: output.metadata ?? {},
           time: {
             start: ref.start,
-            end: Date.now(),
+            end: nowMillis(),
           },
         },
       },
     },
-  } as Event)
+  } satisfies Event)
 }
 
 function failTool(state: State, ref: Ref, error: string): void {
   feed(state, {
+    id: eventID(state, "message.part.updated"),
     type: "message.part.updated",
     properties: {
       sessionID: state.id,
-      time: Date.now(),
+      time: nowMillis(),
       part: {
         id: ref.part,
         sessionID: state.id,
@@ -557,17 +575,17 @@ function failTool(state: State, ref: Ref, error: string): void {
           metadata: {},
           time: {
             start: ref.start,
-            end: Date.now(),
+            end: nowMillis(),
           },
         },
       },
     },
-  } as Event)
+  } satisfies Event)
 }
 
 function emitError(state: State, text: string): void {
   const event = {
-    id: `session.error:${state.id}:${Date.now()}`,
+    id: `session.error:${state.id}:${nowMillis()}`,
     type: "session.error",
     properties: {
       sessionID: state.id,
@@ -582,14 +600,14 @@ function emitError(state: State, text: string): void {
   feed(state, event)
 }
 
-async function emitBash(state: State, signal?: AbortSignal): Promise<void> {
+const emitBash = Effect.fn("RunDemo.emitBash")(function* (state: State, signal?: AbortSignal) {
   const ref = make(state, "bash", {
     command: "git status",
     workdir: process.cwd(),
     description: "Show git status",
   })
   startTool(state, ref)
-  await wait(70, signal)
+  yield* wait(70, signal)
   doneTool(state, ref, {
     title: "git status",
     output: `${process.cwd()}\ngit status\nOn branch demo\nnothing to commit, working tree clean\n`,
@@ -597,7 +615,7 @@ async function emitBash(state: State, signal?: AbortSignal): Promise<void> {
       exitCode: 0,
     },
   })
-}
+})
 
 function emitWrite(state: State): void {
   const file = path.join(process.cwd(), "src", "demo-format.ts")
@@ -683,7 +701,7 @@ function emitTask(state: State): void {
         limit: 200,
       },
       time: {
-        start: Date.now(),
+        start: nowMillis(),
       },
     },
   } satisfies ToolPart
@@ -1004,9 +1022,10 @@ function emitQuestion(state: State, kind: QuestionKind = "multi"): void {
   startTool(state, ref)
 
   const id = take(state, "ask", "ask")
-  state.asks.set(id, { ref })
+  MutableHashMap.set(state.asks, id, { ref })
 
   feed(state, {
+    id: eventID(state, "question.asked"),
     type: "question.asked",
     properties: {
       id,
@@ -1017,32 +1036,37 @@ function emitQuestion(state: State, kind: QuestionKind = "multi"): void {
         callID: ref.call,
       },
     },
-  } as Event)
+  } satisfies Event)
 }
 
-async function emitFmt(state: State, kind: string, body: string, signal?: AbortSignal): Promise<boolean> {
+const emitFmt = Effect.fn("RunDemo.emitFmt")(function* (
+  state: State,
+  kind: string,
+  body: string,
+  signal?: AbortSignal,
+) {
   if (kind === "text") {
-    await emitText(state, body || SAMPLE_MARKDOWN, signal)
+    yield* emitText(state, body || SAMPLE_MARKDOWN, signal)
     return true
   }
 
   if (kind === "markdown" || kind === "md") {
-    await emitText(state, body || SAMPLE_MARKDOWN, signal)
+    yield* emitText(state, body || SAMPLE_MARKDOWN, signal)
     return true
   }
 
   if (kind === "table") {
-    await emitText(state, body || SAMPLE_TABLE, signal)
+    yield* emitText(state, body || SAMPLE_TABLE, signal)
     return true
   }
 
   if (kind === "reasoning") {
-    await emitReasoning(state, body || "Planning next steps [REDACTED] while preserving reducer ordering.", signal)
+    yield* emitReasoning(state, body || "Planning next steps [REDACTED] while preserving reducer ordering.", signal)
     return true
   }
 
   if (kind === "bash") {
-    await emitBash(state, signal)
+    yield* emitBash(state, signal)
     return true
   }
 
@@ -1082,11 +1106,11 @@ async function emitFmt(state: State, kind: string, body: string, signal?: AbortS
   }
 
   if (kind === "mix") {
-    await emitText(state, SAMPLE_MARKDOWN, signal)
-    await wait(50, signal)
-    await emitReasoning(state, "Thinking through formatter edge cases [REDACTED].", signal)
-    await wait(50, signal)
-    await emitBash(state, signal)
+    yield* emitText(state, SAMPLE_MARKDOWN, signal)
+    yield* wait(50, signal)
+    yield* emitReasoning(state, "Thinking through formatter edge cases [REDACTED].", signal)
+    yield* wait(50, signal)
+    yield* emitBash(state, signal)
     emitWrite(state)
     emitEdit(state)
     emitPatch(state)
@@ -1098,7 +1122,7 @@ async function emitFmt(state: State, kind: string, body: string, signal?: AbortS
   }
 
   return false
-}
+})
 
 function intro(state: State): void {
   note(
@@ -1130,15 +1154,12 @@ export function createRunDemo(input: Input) {
     call: 0,
     perm: 0,
     ask: 0,
-    perms: new Map(),
-    asks: new Map(),
+    event: 0,
+    perms: MutableHashMap.empty<string, Perm>(),
+    asks: MutableHashMap.empty<string, Ask>(),
   }
 
-  const start = async (): Promise<void> => {
-    intro(state)
-  }
-
-  const prompt = async (line: RunPrompt, signal?: AbortSignal): Promise<boolean> => {
+  const runPrompt = Effect.fn("RunDemo.prompt")(function* (line: RunPrompt, signal?: AbortSignal) {
     const text = line.text.trim()
     const list = text.split(/\s+/)
     const cmd = list[0] || ""
@@ -1180,7 +1201,7 @@ export function createRunDemo(input: Input) {
         return true
       }
 
-      const ok = await emitFmt(state, kind, body, signal)
+      const ok = yield* emitFmt(state, kind, body, signal)
       if (ok) {
         return true
       }
@@ -1190,17 +1211,23 @@ export function createRunDemo(input: Input) {
     }
 
     return false
-  }
+  })
+
+  // runtime.ts awaits start and prompt as Promises, so they run the Effects here.
+  const start = (): Promise<void> => Effect.runPromise(Effect.sync(() => intro(state)))
+
+  const prompt = (line: RunPrompt, signal?: AbortSignal): Promise<boolean> => Effect.runPromise(runPrompt(line, signal))
 
   const permission = (input: PermissionReply): boolean => {
-    const item = state.perms.get(input.requestID)
-    if (!item || !input.reply) {
+    const found = MutableHashMap.get(state.perms, input.requestID)
+    if (Option.isNone(found) || !input.reply) {
       return false
     }
 
-    state.perms.delete(input.requestID)
+    const item = found.value
+    MutableHashMap.remove(state.perms, input.requestID)
     const event = {
-      id: `permission.replied:${input.requestID}:${Date.now()}`,
+      id: `permission.replied:${input.requestID}:${nowMillis()}`,
       type: "permission.replied",
       properties: {
         sessionID: state.id,
@@ -1220,14 +1247,15 @@ export function createRunDemo(input: Input) {
   }
 
   const questionReply = (input: QuestionReply): boolean => {
-    const ask = state.asks.get(input.requestID)
-    if (!ask || !input.answers) {
+    const found = MutableHashMap.get(state.asks, input.requestID)
+    if (Option.isNone(found) || !input.answers) {
       return false
     }
 
-    state.asks.delete(input.requestID)
+    const ask = found.value
+    MutableHashMap.remove(state.asks, input.requestID)
     const event = {
-      id: `question.replied:${input.requestID}:${Date.now()}`,
+      id: `question.replied:${input.requestID}:${nowMillis()}`,
       type: "question.replied",
       properties: {
         sessionID: state.id,
@@ -1247,19 +1275,21 @@ export function createRunDemo(input: Input) {
   }
 
   const questionReject = (input: QuestionReject): boolean => {
-    const ask = state.asks.get(input.requestID)
-    if (!ask) {
+    const found = MutableHashMap.get(state.asks, input.requestID)
+    if (Option.isNone(found)) {
       return false
     }
 
-    state.asks.delete(input.requestID)
+    const ask = found.value
+    MutableHashMap.remove(state.asks, input.requestID)
     feed(state, {
+      id: eventID(state, "question.rejected"),
       type: "question.rejected",
       properties: {
         sessionID: state.id,
         requestID: input.requestID,
       },
-    } as Event)
+    } satisfies Event)
     failTool(state, ask.ref, "question rejected")
     return true
   }

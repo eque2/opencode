@@ -1,21 +1,24 @@
 import { describe, expect, test, afterAll } from "bun:test"
+import { Effect, Schema } from "effect"
 import { Storage } from "../../src/core/storage"
+
+const User = Schema.Struct({ name: Schema.String })
 
 describe("core.storage", () => {
   test("should list files with after and before range", async () => {
-    await Storage.write(["test", "users", "user1"], { name: "user1" })
-    await Storage.write(["test", "users", "user2"], { name: "user2" })
-    await Storage.write(["test", "users", "user3"], { name: "user3" })
-    await Storage.write(["test", "users", "user4"], { name: "user4" })
-    await Storage.write(["test", "users", "user5"], { name: "user5" })
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user1"], { name: "user1" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user2"], { name: "user2" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user3"], { name: "user3" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user4"], { name: "user4" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user5"], { name: "user5" }))
 
-    const result = await Storage.list({ prefix: ["test", "users"], after: "user2", before: "user4" })
+    const result = await Effect.runPromise(Storage.list({ prefix: ["test", "users"], after: "user2", before: "user4" }))
 
     expect(result).toEqual([["test", "users", "user3"]])
   })
 
   test("should list files with after only", async () => {
-    const result = await Storage.list({ prefix: ["test", "users"], after: "user3" })
+    const result = await Effect.runPromise(Storage.list({ prefix: ["test", "users"], after: "user3" }))
 
     expect(result).toEqual([
       ["test", "users", "user4"],
@@ -24,7 +27,7 @@ describe("core.storage", () => {
   })
 
   test("should list files with limit", async () => {
-    const result = await Storage.list({ prefix: ["test", "users"], limit: 3 })
+    const result = await Effect.runPromise(Storage.list({ prefix: ["test", "users"], limit: 3 }))
 
     expect(result).toEqual([
       ["test", "users", "user1"],
@@ -34,13 +37,13 @@ describe("core.storage", () => {
   })
 
   test("should list all files without prefix", async () => {
-    const result = await Storage.list()
+    const result = await Effect.runPromise(Storage.list())
 
     expect(result.length).toBeGreaterThan(0)
   })
 
   test("should list all files with prefix", async () => {
-    const result = await Storage.list({ prefix: ["test", "users"] })
+    const result = await Effect.runPromise(Storage.list({ prefix: ["test", "users"] }))
 
     expect(result).toEqual([
       ["test", "users", "user1"],
@@ -52,13 +55,13 @@ describe("core.storage", () => {
   })
 
   afterAll(async () => {
-    const testFiles = await Storage.list({ prefix: ["test"] })
+    const testFiles = await Effect.runPromise(Storage.list({ prefix: ["test"] }))
 
     for (const file of testFiles) {
-      await Storage.remove(file)
+      await Effect.runPromise(Storage.remove(file))
     }
 
-    const remainingFiles = await Storage.list({ prefix: ["test"] })
+    const remainingFiles = await Effect.runPromise(Storage.list({ prefix: ["test"] }))
     expect(remainingFiles).toEqual([])
   })
 })

@@ -2,7 +2,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { HttpServerRequest } from "effect/unstable/http"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 
@@ -34,16 +34,14 @@ function ref(request: HttpServerRequest.HttpServerRequest): Location.Ref {
     (request.headers["x-opencode-directory"] ? decode(request.headers["x-opencode-directory"]) : process.cwd())
   return Location.Ref.make({
     directory: AbsolutePath.make(directory),
-    workspaceID: workspaceID ? WorkspaceV2.ID.make(workspaceID) : undefined,
+    ...(workspaceID ? { workspaceID: WorkspaceV2.ID.make(workspaceID) } : {}),
   })
 }
 
+const decodeComponent = Option.liftThrowable(decodeURIComponent)
+
 function decode(input: string) {
-  try {
-    return decodeURIComponent(input)
-  } catch {
-    return input
-  }
+  return decodeComponent(input).pipe(Option.getOrElse(() => input))
 }
 
 export const layer = Layer.effect(

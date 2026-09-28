@@ -1,65 +1,67 @@
-import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import type { Hooks } from "@opencode-ai/plugin"
+import { Config, Effect, Option } from "effect"
 
-export async function CloudflareWorkersAuthPlugin(_input: PluginInput): Promise<Hooks> {
-  const prompts = !process.env.CLOUDFLARE_ACCOUNT_ID
-    ? [
-        {
-          type: "text" as const,
-          key: "accountId",
-          message: "Enter your Cloudflare Account ID",
-          placeholder: "e.g. 1234567890abcdef1234567890abcdef",
-        },
-      ]
-    : []
+// An empty variable counts as unset, as the former `!process.env.X` checks did.
+const envSet = (name: string) =>
+  readEnvSnapshot(Config.option(Config.String(name))).pipe(
+    Effect.map((value) => Option.isSome(Option.filter(value, (item) => item !== ""))),
+  )
 
-  return {
-    auth: {
-      provider: "cloudflare-workers-ai",
-      methods: [
-        {
-          type: "api",
-          label: "API key",
-          prompts,
-        },
-      ],
-    },
-  }
+const accountIdPrompt = {
+  type: "text" as const,
+  key: "accountId",
+  message: "Enter your Cloudflare Account ID",
+  placeholder: "e.g. 1234567890abcdef1234567890abcdef",
 }
 
-export async function CloudflareAIGatewayAuthPlugin(_input: PluginInput): Promise<Hooks> {
-  const prompts = [
-    ...(!process.env.CLOUDFLARE_ACCOUNT_ID
-      ? [
-          {
-            type: "text" as const,
-            key: "accountId",
-            message: "Enter your Cloudflare Account ID",
-            placeholder: "e.g. 1234567890abcdef1234567890abcdef",
-          },
-        ]
-      : []),
-    ...(!process.env.CLOUDFLARE_GATEWAY_ID
-      ? [
-          {
-            type: "text" as const,
-            key: "gatewayId",
-            message: "Enter your Cloudflare AI Gateway ID",
-            placeholder: "e.g. my-gateway",
-          },
-        ]
-      : []),
-  ]
+const gatewayIdPrompt = {
+  type: "text" as const,
+  key: "gatewayId",
+  message: "Enter your Cloudflare AI Gateway ID",
+  placeholder: "e.g. my-gateway",
+}
 
-  return {
-    auth: {
-      provider: "cloudflare-ai-gateway",
-      methods: [
-        {
-          type: "api",
-          label: "Gateway API token",
-          prompts,
+// The factories read no plugin input, so they take none; they still fit the plugin SDK signature.
+export function CloudflareWorkersAuthPlugin(): Promise<Hooks> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const prompts = (yield* envSet("CLOUDFLARE_ACCOUNT_ID")) ? [] : [accountIdPrompt]
+      return {
+        auth: {
+          provider: "cloudflare-workers-ai",
+          methods: [
+            {
+              type: "api",
+              label: "API key",
+              prompts,
+            },
+          ],
         },
-      ],
-    },
-  }
+      } satisfies Hooks
+    }),
+  )
+}
+
+export function CloudflareAIGatewayAuthPlugin(): Promise<Hooks> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const prompts = [
+        ...((yield* envSet("CLOUDFLARE_ACCOUNT_ID")) ? [] : [accountIdPrompt]),
+        ...((yield* envSet("CLOUDFLARE_GATEWAY_ID")) ? [] : [gatewayIdPrompt]),
+      ]
+      return {
+        auth: {
+          provider: "cloudflare-ai-gateway",
+          methods: [
+            {
+              type: "api",
+              label: "Gateway API token",
+              prompts,
+            },
+          ],
+        },
+      } satisfies Hooks
+    }),
+  )
 }

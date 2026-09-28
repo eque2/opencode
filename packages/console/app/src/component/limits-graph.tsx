@@ -33,7 +33,10 @@ export function LimitsGraph(props: { href: string }) {
   let root!: HTMLElement
 
   onMount(() => {
-    if (!window.IntersectionObserver) return setVisible(true)
+    if (!window.IntersectionObserver) {
+      setVisible(true)
+      return
+    }
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return

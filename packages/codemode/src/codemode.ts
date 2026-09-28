@@ -56,7 +56,7 @@ export type Options<Tools extends Record<string, unknown> = {}> = Omit<ExecuteOp
 }
 
 /** Schema for a host tool input containing CodeMode source. */
-export const Input = Schema.Struct({ code: Schema.String })
+export const Input = Schema.Struct({ code: Schema.String }).annotate({ identifier: "Input" })
 export type Input = typeof Input.Type
 
 export const DiagnosticKind = Schema.Literals([
@@ -79,18 +79,18 @@ export const Diagnostic = Schema.Struct({
   message: Schema.String,
   location: Schema.optionalKey(Schema.Struct({ line: Schema.Number, column: Schema.Number })),
   suggestions: Schema.optionalKey(Schema.Array(Schema.String)),
-})
+}).annotate({ identifier: "Diagnostic" })
 /** A normalized program diagnostic safe to return across an agent tool boundary. */
 export type Diagnostic = typeof Diagnostic.Type
 
-const ToolCallSchema = Schema.Struct({ name: Schema.String })
+const ToolCallSchema = Schema.Struct({ name: Schema.String }).annotate({ identifier: "ToolCallSchema" })
 export const Success = Schema.Struct({
   ok: Schema.Literal(true),
   value: Schema.Json,
   logs: Schema.optionalKey(Schema.Array(Schema.String)),
   truncated: Schema.optionalKey(Schema.Boolean),
   toolCalls: Schema.Array(ToolCallSchema),
-})
+}).annotate({ identifier: "Success" })
 /** Successful execution after the result has crossed the plain-data boundary. */
 export type Success = typeof Success.Type
 
@@ -100,7 +100,7 @@ export const Failure = Schema.Struct({
   logs: Schema.optionalKey(Schema.Array(Schema.String)),
   truncated: Schema.optionalKey(Schema.Boolean),
   toolCalls: Schema.Array(ToolCallSchema),
-})
+}).annotate({ identifier: "Failure" })
 /** Failed execution with calls admitted before the diagnostic was produced. */
 export type Failure = typeof Failure.Type
 
@@ -122,6 +122,7 @@ const validateLimit = <Value extends number | undefined>(
   minimum: number,
 ): Value => {
   if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) {
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-error-constructor -- (c) CodeMode.make and CodeMode.execute are synchronous public APIs; codemode.test.ts pins a synchronous toThrow(RangeError)
     throw new RangeError(`${name} must be a safe integer greater than or equal to ${minimum}.`)
   }
   return value

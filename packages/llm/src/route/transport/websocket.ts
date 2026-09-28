@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Queue, Stream } from "effect"
+import { Cause, Context, Effect, Layer, Option, Queue, Stream } from "effect"
 import { Headers } from "effect/unstable/http"
 import { LLMError, TransportReason } from "../../schema"
 import * as HttpTransport from "./http"
@@ -12,17 +12,25 @@ export interface WebSocketRequest {
 export interface WebSocketConnection {
   readonly sendText: (message: string) => Effect.Effect<void, LLMError>
   readonly messages: Stream.Stream<string | Uint8Array, LLMError>
-  readonly close: Effect.Effect<void, never>
+  readonly close: Effect.Effect<void>
 }
 
 export interface Interface {
   readonly open: (input: WebSocketRequest) => Effect.Effect<WebSocketConnection, LLMError>
 }
 
-type WebSocketConstructorWithHeaders = new (
-  url: string,
-  options?: { readonly headers?: Headers.Headers },
-) => globalThis.WebSocket
+// The WebSocket members that `fromWebSocket` uses. A global WebSocket
+// satisfies it, and so does any other socket with the same members.
+export type WebSocketLike = Pick<
+  globalThis.WebSocket,
+  "readyState" | "addEventListener" | "removeEventListener" | "send" | "close"
+>
+
+// Bun's global WebSocket constructor also accepts `{ headers }` (bun-types
+// `Bun.WebSocketOptions`), but the llm tsconfig loads lib.dom, and the DOM
+// constructor type only takes protocols. This adds Bun's signature to it.
+type WebSocketConstructorWithHeaders = typeof globalThis.WebSocket &
+  (new (url: string, options?: { readonly headers?: Headers.Headers }) => globalThis.WebSocket)
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM/WebSocketExecutor") {}
 
@@ -42,14 +50,15 @@ const eventMessage = (event: Event) => {
   return event.type
 }
 
-const binaryMessage = (data: unknown) => {
-  if (data instanceof Uint8Array) return data
-  if (data instanceof ArrayBuffer) return new Uint8Array(data)
-  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-  return undefined
+const messagePayload = (data: unknown): Option.Option<string | Uint8Array> => {
+  if (typeof data === "string") return Option.some(data)
+  if (data instanceof Uint8Array) return Option.some(data)
+  if (data instanceof ArrayBuffer) return Option.some(new Uint8Array(data))
+  if (ArrayBuffer.isView(data)) return Option.some(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+  return Option.none()
 }
 
-const waitOpen = (ws: globalThis.WebSocket, input: WebSocketRequest) => {
+const waitOpen = (ws: WebSocketLike, input: WebSocketRequest) => {
   if (ws.readyState === globalThis.WebSocket.OPEN) return Effect.void
   if (ws.readyState === globalThis.WebSocket.CLOSING || ws.readyState === globalThis.WebSocket.CLOSED) {
     return Effect.fail(
@@ -101,31 +110,37 @@ const waitOpen = (ws: globalThis.WebSocket, input: WebSocketRequest) => {
   })
 }
 
+const webSocketProtocol = (protocol: string) => {
+  if (protocol === "https:") return Option.some("wss:")
+  if (protocol === "http:") return Option.some("ws:")
+  return Option.none<string>()
+}
+
 const webSocketUrl = (value: string) =>
-  Effect.try({
-    try: () => {
-      const url = new URL(value)
-      if (url.protocol === "https:") {
-        url.protocol = "wss:"
-        return url.toString()
-      }
-      if (url.protocol === "http:") {
-        url.protocol = "ws:"
-        return url.toString()
-      }
-      throw new Error(`Unsupported WebSocket URL protocol ${url.protocol}`)
-    },
-    catch: (error) =>
-      transportError("prepare", error instanceof Error ? error.message : "Invalid WebSocket URL", {
+  Effect.gen(function* () {
+    const url = yield* Effect.try({
+      try: () => new URL(value),
+      catch: (error) =>
+        transportError("prepare", error instanceof Error ? error.message : "Invalid WebSocket URL", {
+          url: value,
+          kind: "websocket",
+        }),
+    })
+    const protocol = webSocketProtocol(url.protocol)
+    if (Option.isNone(protocol))
+      return yield* transportError("prepare", `Unsupported WebSocket URL protocol ${url.protocol}`, {
         url: value,
         kind: "websocket",
-      }),
+      })
+    url.protocol = protocol.value
+    return url.toString()
   })
 
 export const open = (input: WebSocketRequest) =>
   Effect.try({
     try: () =>
-      new (globalThis.WebSocket as unknown as WebSocketConstructorWithHeaders)(input.url, { headers: input.headers }),
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) Bun's WebSocket constructor accepts { headers }; the lib.dom constructor type omits it.
+      new (globalThis.WebSocket as WebSocketConstructorWithHeaders)(input.url, { headers: input.headers }),
     catch: (error) =>
       transportError("open", error instanceof Error ? error.message : "Failed to construct WebSocket", {
         url: input.url,
@@ -136,23 +151,23 @@ export const open = (input: WebSocketRequest) =>
 export const layer: Layer.Layer<Service> = Layer.succeed(Service, Service.of({ open }))
 
 export const fromWebSocket = (
-  ws: globalThis.WebSocket,
+  ws: WebSocketLike,
   input: WebSocketRequest,
 ): Effect.Effect<WebSocketConnection, LLMError> =>
   Effect.gen(function* () {
     yield* waitOpen(ws, input)
-    const messages = yield* Queue.bounded<string | Uint8Array, LLMError | Cause.Done<void>>(128)
+    const messages = yield* Queue.bounded<string | Uint8Array, LLMError | Cause.Done>(128)
 
     const onMessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") return Queue.offerUnsafe(messages, event.data)
-      const binary = binaryMessage(event.data)
-      if (binary) return Queue.offerUnsafe(messages, binary)
-      Queue.failCauseUnsafe(
-        messages,
-        Cause.fail(
-          transportError("message", "Unsupported WebSocket message payload", { url: input.url, kind: "message" }),
-        ),
-      )
+      const payload = messagePayload(event.data)
+      if (Option.isSome(payload)) Queue.offerUnsafe(messages, payload.value)
+      else
+        Queue.failCauseUnsafe(
+          messages,
+          Cause.fail(
+            transportError("message", "Unsupported WebSocket message payload", { url: input.url, kind: "message" }),
+          ),
+        )
     }
     const onError = (event: Event) => {
       Queue.failCauseUnsafe(
@@ -163,13 +178,14 @@ export const fromWebSocket = (
       )
     }
     const onClose = (event: CloseEvent) => {
-      if (event.code === 1000 || event.code === 1005) return Queue.endUnsafe(messages)
-      Queue.failCauseUnsafe(
-        messages,
-        Cause.fail(
-          transportError("message", `WebSocket closed with code ${event.code}`, { url: input.url, kind: "close" }),
-        ),
-      )
+      if (event.code === 1000 || event.code === 1005) Queue.endUnsafe(messages)
+      else
+        Queue.failCauseUnsafe(
+          messages,
+          Cause.fail(
+            transportError("message", `WebSocket closed with code ${event.code}`, { url: input.url, kind: "close" }),
+          ),
+        )
     }
     const cleanup = Effect.sync(() => {
       ws.removeEventListener("message", onMessage)

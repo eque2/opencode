@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { createSignal } from "solid-js"
 import { SegmentedControlItemV2, SegmentedControlV2 } from "./segmented-control-v2"
 
@@ -75,7 +76,7 @@ export const AllowDeselect = {
           <SegmentedControlItemV2 value="c">C</SegmentedControlItemV2>
         </SegmentedControlV2>
         <div style={{ "font-family": "var(--v2-font-family-sans)", "font-size": "12px", color: "#808080" }}>
-          Value: {value() === null ? "none" : value()}
+          Value: {Option.getOrElse(Option.fromNullishOr(value()), () => "none")}
         </div>
       </div>
     )

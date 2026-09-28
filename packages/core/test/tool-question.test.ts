@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Effect, Exit, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -63,7 +64,12 @@ describe("QuestionTool", () => {
         yield* settleTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-question-denied", name: "question", input: { questions: [] } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-question-denied"),
+            name: "question",
+            input: { questions: [] },
+          },
         }),
       ).toEqual({ result: { type: "error", value: "Permission denied: question" } })
       expect(capturedInput()).toBeUndefined()
@@ -96,7 +102,7 @@ describe("QuestionTool", () => {
         yield* settleTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-question", name: "question", input: { questions } },
+          call: { type: "tool-call", id: ToolCallID.make("call-question"), name: "question", input: { questions } },
         }),
       ).toEqual({
         result: {
@@ -133,7 +139,7 @@ describe("QuestionTool", () => {
       yield* executeTool(registryService, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-question", name: "question", input: { questions: [] } },
+        call: { type: "tool-call", id: ToolCallID.make("call-question"), name: "question", input: { questions: [] } },
       })
       expect(capturedInput()).toEqual({
         sessionID,
@@ -152,7 +158,7 @@ describe("QuestionTool", () => {
       const fiber = yield* executeTool(registryService, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-question", name: "question", input: { questions: [] } },
+        call: { type: "tool-call", id: ToolCallID.make("call-question"), name: "question", input: { questions: [] } },
       }).pipe(Effect.forkScoped)
 
       const exit = yield* Fiber.await(fiber)

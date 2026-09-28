@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { APICallError } from "ai"
+import { APICallError, type ModelMessage, type TextPart } from "ai"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "@/provider/transform"
 import type { Provider } from "@/provider/provider"
@@ -61,17 +61,21 @@ const model: Provider.Model = {
   release_date: "2026-01-01",
 }
 
+// Fixture IDs are short names; message IDs must carry the "msg" prefix.
+function messageID(id: string) {
+  return MessageID.make(id.startsWith("msg") ? id : `msg_${id}`)
+}
+
 function userInfo(id: string): SessionV1.User {
   return {
-    id,
+    id: messageID(id),
     sessionID,
     role: "user",
     time: { created: 0 },
     agent: "user",
     model: { providerID, modelID: ModelV2.ID.make("test") },
     tools: {},
-    mode: "",
-  } as unknown as SessionV1.User
+  }
 }
 
 function assistantInfo(
@@ -82,14 +86,14 @@ function assistantInfo(
 ): SessionV1.Assistant {
   const infoModel = meta ?? { providerID: model.providerID, modelID: model.api.id }
   return {
-    id,
+    id: messageID(id),
     sessionID,
     role: "assistant",
     time: { created: 0 },
     error,
-    parentID,
-    modelID: infoModel.modelID,
-    providerID: infoModel.providerID,
+    parentID: messageID(parentID),
+    modelID: ModelV2.ID.make(infoModel.modelID),
+    providerID: ProviderV2.ID.make(infoModel.providerID),
     mode: "",
     agent: "agent",
     path: { cwd: "/", root: "/" },
@@ -100,14 +104,21 @@ function assistantInfo(
       reasoning: 0,
       cache: { read: 0, write: 0 },
     },
-  } as unknown as SessionV1.Assistant
+  }
 }
 
-function basePart(messageID: string, id: string) {
+// Text parts of a model message; string content has none.
+function textParts(message: ModelMessage | undefined): TextPart[] {
+  const content = message?.content
+  if (!content || typeof content === "string") return []
+  return content.filter((part): part is TextPart => part.type === "text")
+}
+
+function basePart(message: string, id: string) {
   return {
     id: PartID.make(id.startsWith("prt") ? id : `prt_${id}`),
     sessionID,
-    messageID: MessageID.make(messageID.startsWith("msg") ? messageID : `msg_${messageID}`),
+    messageID: messageID(message),
   }
 }
 
@@ -1271,6 +1282,7 @@ describe("session.message-v2.toModelMessage", () => {
             ...basePart(assistantID, "p2"),
             type: "reasoning",
             text: "thinking-one",
+            time: { start: 0 },
             metadata: { anthropic: { signature: "sig1" } },
           },
           { ...basePart(assistantID, "p3"), type: "text", text: "" },
@@ -1279,10 +1291,11 @@ describe("session.message-v2.toModelMessage", () => {
             ...basePart(assistantID, "p5"),
             type: "reasoning",
             text: "thinking-two",
+            time: { start: 0 },
             metadata: { anthropic: { signature: "sig2" } },
           },
           { ...basePart(assistantID, "p6"), type: "text", text: "the answer" },
-        ] as SessionV1.Part[],
+        ],
       },
     ]
 
@@ -1290,8 +1303,8 @@ describe("session.message-v2.toModelMessage", () => {
 
     // step-start splits into two assistant messages; SDK's groupIntoBlocks merges them later
     expect(result).toHaveLength(2)
-    expect((result[0].content as any[]).find((p) => p.type === "text").text).toBe(" ")
-    expect((result[1].content as any[]).find((p) => p.type === "text").text).toBe("the answer")
+    expect(textParts(result[0])[0]?.text).toBe(" ")
+    expect(textParts(result[1])[0]?.text).toBe("the answer")
   })
 
   test("leaves empty text alone when reasoning signature is under 'bedrock' namespace", async () => {
@@ -1306,18 +1319,19 @@ describe("session.message-v2.toModelMessage", () => {
             ...basePart(assistantID, "p1"),
             type: "reasoning",
             text: "thinking-bedrock",
+            time: { start: 0 },
             metadata: { bedrock: { signature: "bedrock-sig" } },
           },
           { ...basePart(assistantID, "p2"), type: "text", text: "" },
           { ...basePart(assistantID, "p3"), type: "text", text: "answer" },
-        ] as SessionV1.Part[],
+        ],
       },
     ]
 
     const result = await MessageV2.toModelMessages(input, model)
 
     expect(result).toHaveLength(1)
-    const texts = (result[0].content as any[]).filter((p) => p.type === "text")
+    const texts = textParts(result[0])
     expect(texts.map((t) => t.text)).toStrictEqual(["", "answer"])
   })
 
@@ -1329,17 +1343,17 @@ describe("session.message-v2.toModelMessage", () => {
       {
         info: assistantInfo(assistantID, "m-parent"),
         parts: [
-          { ...basePart(assistantID, "p1"), type: "reasoning", text: "thinking" },
+          { ...basePart(assistantID, "p1"), type: "reasoning", text: "thinking", time: { start: 0 } },
           { ...basePart(assistantID, "p2"), type: "text", text: "" },
           { ...basePart(assistantID, "p3"), type: "text", text: "answer" },
-        ] as SessionV1.Part[],
+        ],
       },
     ]
 
     const result = await MessageV2.toModelMessages(input, model)
 
     expect(result).toHaveLength(1)
-    const texts = (result[0].content as any[]).filter((p) => p.type === "text")
+    const texts = textParts(result[0])
     expect(texts.map((t) => t.text)).toStrictEqual(["", "answer"])
   })
 
@@ -1351,14 +1365,14 @@ describe("session.message-v2.toModelMessage", () => {
         parts: [
           { ...basePart(assistantID, "p1"), type: "text", text: "" },
           { ...basePart(assistantID, "p2"), type: "text", text: "hello" },
-        ] as SessionV1.Part[],
+        ],
       },
     ]
 
     const result = await MessageV2.toModelMessages(input, model)
 
     expect(result).toHaveLength(1)
-    const texts = (result[0].content as any[]).filter((p) => p.type === "text")
+    const texts = textParts(result[0])
     expect(texts.map((t) => t.text)).toStrictEqual(["", "hello"])
   })
 })
@@ -1530,23 +1544,21 @@ describe("session.message-v2.fromError", () => {
     const zlibError = new Error(
       'ZlibError fetching "https://opencode.cloudflare.dev/anthropic/messages". For more information, pass `verbose: true` in the second argument to fetch()',
     )
-    ;(zlibError as any).code = "ZlibError"
-    ;(zlibError as any).errno = 0
-    ;(zlibError as any).path = ""
+    Object.assign(zlibError, { code: "ZlibError", errno: 0, path: "" })
 
     const result = MessageV2.fromError(zlibError, { providerID })
 
     expect(SessionV1.APIError.isInstance(result)).toBe(true)
-    expect((result as SessionV1.APIError).data.isRetryable).toBe(true)
-    expect((result as SessionV1.APIError).data.message).toInclude("decompression")
+    if (!SessionV1.APIError.isInstance(result)) return
+    expect(result.data.isRetryable).toBe(true)
+    expect(result.data.message).toInclude("decompression")
   })
 
   test("classifies ZlibError as AbortedError when abort context is provided", () => {
     const zlibError = new Error(
       'ZlibError fetching "https://opencode.cloudflare.dev/anthropic/messages". For more information, pass `verbose: true` in the second argument to fetch()',
     )
-    ;(zlibError as any).code = "ZlibError"
-    ;(zlibError as any).errno = 0
+    Object.assign(zlibError, { code: "ZlibError", errno: 0 })
 
     const result = MessageV2.fromError(zlibError, { providerID, aborted: true })
 

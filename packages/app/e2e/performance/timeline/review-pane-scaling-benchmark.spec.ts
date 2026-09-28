@@ -189,7 +189,10 @@ async function measureReviewPaneLoad(page: Page, input: { expectedFile: string; 
     const final = probe.samples.at(-1)!
     const resources = performance
       .getEntriesByType("resource")
-      .filter((entry) => entry.name.includes("/vcs/diff")) as PerformanceResourceTiming[]
+      .filter(
+        (entry): entry is PerformanceResourceTiming =>
+          entry instanceof PerformanceResourceTiming && entry.name.includes("/vcs/diff"),
+      )
     const resource = resources.at(-1)
     const longTasks = probe.longTasks.filter(
       (entry) => entry.startTime >= startedAt && entry.startTime <= startedAt + probe.stableReadyMs!,

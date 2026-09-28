@@ -12,7 +12,7 @@ import { ToolDefinition, ToolFailure, ToolOutput } from "./schema"
  * encoding services are allowed. Tools should be self-contained — anything
  * beyond pure data conversion belongs in the handler closure.
  */
-export type ToolSchema<T> = Schema.Codec<T, any, never, never>
+export type ToolSchema<T> = Schema.Codec<T, any>
 export interface ToolExecuteContext {
   readonly id: ToolCallPart["id"]
   readonly name: ToolCallPart["name"]
@@ -166,8 +166,9 @@ export function make(config: TypedToolConfig | DynamicToolConfig): AnyTool {
   if ("jsonSchema" in config) {
     return {
       description: config.description,
-      parameters: Schema.Unknown as ToolSchema<unknown>,
-      success: Schema.Unknown as ToolSchema<unknown>,
+      // Dynamic tools describe their input and output with JSON Schema: both are JSON values.
+      parameters: Schema.Json,
+      success: Schema.Json,
       execute: config.execute,
       toModelOutput: config.toModelOutput,
       toStructuredOutput: config.toStructuredOutput,

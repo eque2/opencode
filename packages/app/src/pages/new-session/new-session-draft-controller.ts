@@ -1,4 +1,5 @@
 import { useSearchParams } from "@solidjs/router"
+import { Option } from "effect"
 import { createEffect, untrack } from "solid-js"
 import { usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useComments } from "@/context/comments"
@@ -45,7 +46,8 @@ export function createNewSessionDraftController(workspace: { worktree: () => str
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
-      setSearchParams({ ...searchParams, prompt: undefined })
+      // Solid Router deletes a search param whose value is "" (mergeSearchString), so this clears ?prompt.
+      setSearchParams({ ...searchParams, prompt: "" })
     })
   })
 
@@ -53,7 +55,8 @@ export function createNewSessionDraftController(workspace: { worktree: () => str
     input,
     prompt: {
       ready: prompt.ready,
-      readyPromise: () => prompt.ready.promise,
+      /** The pending prompt load, or none when the prompt has nothing left to load. */
+      readyPromise: () => Option.fromNullishOr(prompt.ready.promise),
     },
     project: {
       controls: projectControls,

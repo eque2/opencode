@@ -2,7 +2,7 @@ import { Pty } from "@opencode-ai/core/pty"
 import { PtyProtocol } from "@opencode-ai/core/pty/protocol"
 import { PtyTicket } from "@opencode-ai/core/pty/ticket"
 import { Location } from "@opencode-ai/core/location"
-import { Effect, Queue } from "effect"
+import { Effect, Option, Queue } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
@@ -40,11 +40,12 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
         Effect.fn(function* (ctx) {
           const pty = yield* Pty.Service
           const location = yield* Location.Service
-          const cwd = ctx.payload.cwd || location.directory
+          const { args, ...payload } = ctx.payload
+          const cwd = payload.cwd || location.directory
           return yield* response(
             pty.create({
-              ...ctx.payload,
-              args: ctx.payload.args ? [...ctx.payload.args] : undefined,
+              ...payload,
+              ...(args ? { args: [...args] } : {}),
               cwd,
               env: {
                 ...ctx.payload.env,
@@ -76,11 +77,12 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
         "pty.update",
         Effect.fn(function* (ctx) {
           const pty = yield* Pty.Service
+          const { size, ...payload } = ctx.payload
           return yield* response(
             pty
               .update(ctx.params.ptyID, {
-                ...ctx.payload,
-                size: ctx.payload.size ? { ...ctx.payload.size } : undefined,
+                ...payload,
+                ...(size ? { size: { ...size } } : {}),
               })
               .pipe(
                 Effect.catchTag(
@@ -155,12 +157,10 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
               : false
             if (!valid) return HttpServerResponse.empty({ status: 403 })
           }
-          const parsedCursor = url.searchParams.get("cursor")
-          const cursorNumber = parsedCursor === null ? undefined : Number(parsedCursor)
-          const cursor =
-            cursorNumber !== undefined && Number.isSafeInteger(cursorNumber) && cursorNumber >= -1
-              ? cursorNumber
-              : undefined
+          const cursor = Option.fromNullishOr(url.searchParams.get("cursor")).pipe(
+            Option.map((value) => Number(value)),
+            Option.filter((value) => Number.isSafeInteger(value) && value >= -1),
+          )
 
           const socket = yield* Effect.orDie(ctx.request.upgrade)
           const writer = yield* socket.writer
@@ -179,21 +179,23 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
           // output, and the close frame keep their order.
           // TODO: Integrate graceful-shutdown socket tracking before clients migrate to this route.
           const outbox = yield* Queue.unbounded<string | Uint8Array | Socket.CloseEvent>()
-          const attachment = yield* pty
+          const attached = yield* pty
             .attach(ctx.params.ptyID, {
-              cursor,
+              cursor: Option.getOrUndefined(cursor),
               onData: (chunk) => Queue.offerUnsafe(outbox, chunk),
               onEnd: () => Queue.offerUnsafe(outbox, new Socket.CloseEvent(1000)),
             })
             .pipe(
+              Effect.map(Option.some),
               Effect.catchTags({
                 "Pty.NotFoundError": () =>
-                  closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(undefined)),
+                  closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(Option.none())),
                 "Pty.ExitedError": () =>
-                  closeAccepted(new Socket.CloseEvent(4404, "session exited")).pipe(Effect.as(undefined)),
+                  closeAccepted(new Socket.CloseEvent(4404, "session exited")).pipe(Effect.as(Option.none())),
               }),
             )
-          if (!attachment) return HttpServerResponse.empty()
+          if (Option.isNone(attached)) return HttpServerResponse.empty()
+          const attachment = attached.value
 
           for (const chunk of PtyProtocol.chunks(attachment.replay)) Queue.offerUnsafe(outbox, chunk)
           Queue.offerUnsafe(outbox, PtyProtocol.metaFrame(attachment.cursor))

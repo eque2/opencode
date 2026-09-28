@@ -1,5 +1,6 @@
 import { Component, Show, createMemo, createResource } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
+import { Effect } from "effect"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { Switch } from "@opencode-ai/ui/v2/switch-v2"
@@ -288,7 +289,15 @@ export const SettingsGeneralV2: Component<{
 
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
     () => desktop() && "getPinchZoomEnabled" in platform,
-    () => Promise.resolve(platform.getPinchZoomEnabled?.() ?? false).catch(() => false),
+    () =>
+      Effect.runPromise(
+        Effect.suspend(() => {
+          const enabled = platform.getPinchZoomEnabled?.() ?? false
+          if (typeof enabled === "boolean") return Effect.succeed(enabled)
+          // A rejected platform read shows the switch as off, as before.
+          return Effect.tryPromise(() => enabled).pipe(Effect.orElseSucceed(() => false))
+        }),
+      ),
     { initialValue: false },
   )
 

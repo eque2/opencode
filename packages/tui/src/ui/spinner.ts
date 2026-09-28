@@ -1,5 +1,6 @@
 import type { ColorInput } from "@opentui/core"
 import { RGBA } from "@opentui/core"
+import { Option } from "effect"
 import type { ColorGenerator } from "opentui-spinner"
 
 interface AdvancedGradientOptions {
@@ -144,21 +145,26 @@ function createKnightRiderTrail(options: AdvancedGradientOptions): ColorGenerato
   // Use the provided defaultColor if it's an RGBA instance, otherwise convert/default
   // We use RGBA.fromHex for the fallback to ensure we have an RGBA object.
   // Note: If defaultColor is a string, we convert it once here.
-  const defaultRgba = defaultColor instanceof RGBA ? defaultColor : RGBA.fromHex((defaultColor as string) || "#000000")
+  const defaultRgba = defaultColor instanceof RGBA ? defaultColor : RGBA.fromHex(defaultColor || "#000000")
 
   // Store the base alpha from the inactive factor
   const baseInactiveAlpha = defaultRgba.a
 
-  let cachedFrameIndex = -1
-  let cachedState: ScannerState | null = null
+  // The scanner state of the last frame. Every character of one frame reads the same state.
+  let cache = Option.none<{ readonly frameIndex: number; readonly state: ScannerState }>()
 
   return (frameIndex: number, charIndex: number, _totalFrames: number, totalChars: number) => {
-    if (frameIndex !== cachedFrameIndex) {
-      cachedFrameIndex = frameIndex
-      cachedState = getScannerState(frameIndex, totalChars, options)
-    }
-
-    const state = cachedState!
+    const state = Option.match(
+      Option.filter(cache, (entry) => entry.frameIndex === frameIndex),
+      {
+        onSome: (entry) => entry.state,
+        onNone: () => {
+          const next = getScannerState(frameIndex, totalChars, options)
+          cache = Option.some({ frameIndex, state: next })
+          return next
+        },
+      },
+    )
 
     const index = calculateColorIndex(frameIndex, charIndex, totalChars, options, state)
 
@@ -197,11 +203,10 @@ function createKnightRiderTrail(options: AdvancedGradientOptions): ColorGenerato
  * @returns Array of RGBA colors with alpha-based trail fade (background-independent)
  */
 export function deriveTrailColors(brightColor: ColorInput, steps: number = 6): RGBA[] {
-  const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor as string)
+  const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor)
 
-  const colors: RGBA[] = []
-
-  for (let i = 0; i < steps; i++) {
+  // One color for each step i = 0, 1, ... while i < steps.
+  return Array.from({ length: Math.max(0, Math.ceil(steps)) }, (_, i) => {
     // Alpha-based falloff with optional bloom effect
     let alpha: number
     let brightnessFactor: number
@@ -224,10 +229,8 @@ export function deriveTrailColors(brightColor: ColorInput, steps: number = 6): R
     const g = Math.min(1.0, baseRgba.g * brightnessFactor)
     const b = Math.min(1.0, baseRgba.b * brightnessFactor)
 
-    colors.push(RGBA.fromValues(r, g, b, alpha))
-  }
-
-  return colors
+    return RGBA.fromValues(r, g, b, alpha)
+  })
 }
 
 /**
@@ -237,7 +240,7 @@ export function deriveTrailColors(brightColor: ColorInput, steps: number = 6): R
  * @returns The same color with reduced alpha for background-independent dimming
  */
 export function deriveInactiveColor(brightColor: ColorInput, factor: number = 0.2): RGBA {
-  const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor as string)
+  const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor)
 
   // Use the full color brightness but adjust alpha for background-independent dimming
   return RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, factor)

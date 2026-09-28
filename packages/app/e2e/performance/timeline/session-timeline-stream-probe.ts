@@ -122,7 +122,12 @@ export async function installTimelineStreamProbe(
         start: () => {},
       }
       ;(window as Window & { __timelineStreamBenchmark?: TimelineProbeState }).__timelineStreamBenchmark = state
-      const scrollTo = Element.prototype.scrollTo
+      // The wrapper keeps the native method detached, so its type names the Element receiver that apply(this, args)
+      // supplies. Cleanup restores it.
+      const native: {
+        scrollTo: { (this: Element, options?: ScrollToOptions): void; (this: Element, x: number, y: number): void }
+      } = Element.prototype
+      const scrollTo = native.scrollTo
       const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!
       if (profileVisual) {
         Element.prototype.scrollTo = function (...args) {
@@ -138,7 +143,9 @@ export async function installTimelineStreamProbe(
         }
         Object.defineProperty(Element.prototype, "scrollTop", {
           configurable: true,
-          get: scrollTop.get,
+          get() {
+            return scrollTop.get?.call(this)
+          },
           set(value) {
             state.scroll.assignments += 1
             if (Math.abs(this.scrollTop - value) < 1) state.scroll.assignmentNoops += 1
@@ -162,9 +169,10 @@ export async function installTimelineStreamProbe(
         state.layoutShifts.push(
           ...entries
             .map((entry) => {
-              const shift = entry as LayoutShiftEntry
-              if (shift.startTime < state.started || shift.hadRecentInput) return
-              return shift.value
+              if (!("value" in entry) || typeof entry.value !== "number") return undefined
+              if (entry.startTime < state.started || ("hadRecentInput" in entry && entry.hadRecentInput))
+                return undefined
+              return entry.value
             })
             .filter((value): value is number => value !== undefined),
         )
@@ -298,7 +306,7 @@ export async function installTimelineStreamProbe(
             state.visibleRows = new Set(visibleRows.map((item) => item.element))
             const rows = visibleRows.map((item) => item.rect)
             rows.slice(1).forEach((rect, index) => {
-              const previous = rows[index]!
+              const previous = rows[index]
               state.maxOverlap = Math.max(state.maxOverlap, previous.bottom - rect.top)
               state.maxGap = Math.max(state.maxGap, rect.top - previous.bottom)
             })
@@ -402,7 +410,7 @@ export function layoutShiftValue(
   entry: Pick<LayoutShiftEntry, "startTime" | "value" | "hadRecentInput">,
   start: number,
 ) {
-  if (entry.startTime < start || entry.hadRecentInput) return
+  if (entry.startTime < start || entry.hadRecentInput) return undefined
   return entry.value
 }
 
@@ -452,7 +460,7 @@ export async function collectTimelineStreamMetrics(
     const busyFrames =
       busyStart === undefined || busyEnd === undefined
         ? []
-        : state.frames.filter((_, index) => state.frameAt[index]! >= busyStart && state.frameAt[index]! <= busyEnd)
+        : state.frames.filter((_, index) => state.frameAt[index] >= busyStart && state.frameAt[index] <= busyEnd)
     const busySorted = busyFrames.slice().sort((a, b) => a - b)
     const busyDuration = busyFrames.reduce((sum, value) => sum + value, 0)
     const completionObservedMs = (completion?.at ?? NaN) - state.started

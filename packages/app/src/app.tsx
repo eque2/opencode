@@ -8,18 +8,9 @@ import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
-import {
-  type BaseRouterProps,
-  Navigate,
-  Route,
-  Router,
-  useLocation,
-  useNavigate,
-  useParams,
-  useSearchParams,
-} from "@solidjs/router"
+import { type BaseRouterProps, Navigate, Route, Router, useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import { Effect } from "effect"
+import { Data, Effect } from "effect"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import {
   type Component,
@@ -32,12 +23,10 @@ import {
   For,
   type JSX,
   lazy,
-  onCleanup,
   type ParentProps,
   Show,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { makeEventListener } from "@solid-primitives/event-listener"
 import { CommandProvider, useCommand, type CommandOption } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -62,6 +51,7 @@ import LegacyLayout from "@/pages/layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
+import { createFiberSlot } from "./utils/fiber-slot"
 import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { createSessionLineage } from "@/pages/session/session-lineage"
 
@@ -70,6 +60,17 @@ import { NewHome } from "@/pages/home"
 import { LegacyHome } from "@/pages/home/legacy-home"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
+
+/** Creating a draft tab rejected. `cause` is the rejection. */
+class DraftCreateError extends Data.TaggedError("App.DraftCreateError")<{ readonly cause: unknown }> {}
+
+/**
+ * Runs an app shell action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 const SessionRoute = () => {
   const settings = useSettings()
@@ -97,7 +98,14 @@ const SessionRoute = () => {
     if (!settings.general.newLayoutDesigns()) return
     if (params.id || search.draftId) return
     if (!tabs.ready() || !sdk().directory) return
-    tabs.newDraft({ server: server.key, directory: sdk().directory }, search.prompt)
+    const draft = { server: server.key, directory: sdk().directory }
+    const prompt = search.prompt
+    runDetached(
+      Effect.tryPromise({
+        try: () => tabs.newDraft(draft, prompt),
+        catch: (cause) => new DraftCreateError({ cause }),
+      }),
+    )
   })
 
   return (
@@ -159,7 +167,7 @@ function LegacyTargetSessionRedirect() {
     navigate(legacySessionHref(directory, params.id), { replace: true })
   })
 
-  return null
+  return undefined
 }
 
 // Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
@@ -242,30 +250,6 @@ function UiI18nBridge(props: ParentProps) {
   )
 }
 
-function LayoutCompatibility(props: ParentProps) {
-  const global = useGlobal()
-  const navigate = useNavigate()
-  const server = useServer()
-  const settings = useSettings()
-
-  createEffect(() => {
-    if (settings.general.newLayoutDesigns()) return
-    const current = server.current
-    if (!current) return
-    const protocol = global.ensureServerCtx(current).sdk.protocolKind()
-    if (protocol !== "v2") return
-    const next = global.servers.list().find((s) => {
-      if (ServerConnection.key(s) === ServerConnection.key(current)) return false
-      return global.ensureServerCtx(s).sdk.protocolKind() !== "v2"
-    })
-    if (!next) return
-    navigate("/")
-    queueMicrotask(() => server.setActive(ServerConnection.key(next)))
-  })
-
-  return <>{props.children}</>
-}
-
 declare global {
   interface Window {
     __OPENCODE__?: {
@@ -305,7 +289,7 @@ function BodyDesignClass() {
     document.body.classList.toggle("font-[440]", enabled)
   })
 
-  return null
+  return undefined
 }
 
 // Server-agnostic providers shared across every route. These live in the shared
@@ -327,22 +311,21 @@ function DesktopCommands() {
   const language = useLanguage()
   const platform = usePlatform()
 
-  command.register("desktop", () => {
-    const commands: CommandOption[] = []
-    if (platform.platform === "desktop" && platform.exportDebugLogs) {
-      commands.push({
+  command.register("desktop", (): CommandOption[] => {
+    if (platform.platform !== "desktop" || !platform.exportDebugLogs) return []
+    return [
+      {
         id: "logs.export",
         title: language.t("command.logs.export"),
         category: language.t("command.category.settings"),
         onSelect: () => {
           void platform.exportDebugLogs?.()
         },
-      })
-    }
-    return commands
+      },
+    ]
   })
 
-  return null
+  return undefined
 }
 
 // Server-scoped providers shared by the legacy shell and the top-level new shell.
@@ -427,6 +410,9 @@ export function AppBaseProviders(
   )
 }
 
+/** The startup promise that AppInterface received rejected. `cause` is the rejection. */
+class StartupGateError extends Data.TaggedError("App.StartupGateError")<{ readonly cause: unknown }> {}
+
 function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; startup?: Promise<void> }>) {
   const server = useServer()
   const checkServerHealth = useCheckServerHealth()
@@ -456,13 +442,19 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; start
   const checking = createMemo(
     () => checkMode() === "blocking" && ["unresolved", "pending"].includes(startupHealthCheck.state),
   )
-  const [startup] = createResource(async () => {
-    if (!props.startup) return true
-    await props.startup.catch((error) => {
-      console.error("[startup] startup gate failed", error)
-    })
-    return true
-  })
+  // The startup gate opens when the startup promise settles. A rejection is logged and still opens it.
+  const [startup] = createResource(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const gate = props.startup
+        if (!gate) return true
+        yield* Effect.tryPromise({ try: () => gate, catch: (cause) => new StartupGateError({ cause }) }).pipe(
+          Effect.catch((error) => Effect.logError("[startup] startup gate failed", error.cause)),
+        )
+        return true
+      }),
+    ),
+  )
   const startupChecking = createMemo(
     () => startupHealthCheck.latest === true && ["unresolved", "pending"].includes(startup.state),
   )
@@ -506,8 +498,16 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
 
-  const timer = setInterval(() => props.onRetry?.(), 1000)
-  onCleanup(() => clearInterval(timer))
+  // Like setInterval, the first retry runs one second after mount, and a throwing onRetry is logged
+  // without stopping the loop. The slot interrupts the loop when the component unmounts.
+  const retry = createFiberSlot()
+  retry.run(
+    Effect.sync(() => props.onRetry?.()).pipe(
+      Effect.catchDefect((defect) => Effect.logError(defect)),
+      Effect.delay("1 second"),
+      Effect.forever,
+    ),
+  )
 
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">

@@ -20,6 +20,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { type SelectedLineRange } from "@pierre/diffs"
 import { Dynamic } from "solid-js/web"
+import { Array, HashSet, MutableHashMap, Option, Predicate, Record } from "effect"
 import { mediaKindFromPath } from "../pierre/media"
 import { cloneSelectedLineRange, previewSelectedLines } from "../pierre/selection-bridge"
 import { createLineCommentController } from "./line-comment-annotations"
@@ -69,7 +70,6 @@ type RawReviewDiff = (SnapshotFileDiff | FileDiffInfo | VcsFileDiff) & {
 type ReviewDiff = ((SnapshotFileDiff & { file: string }) | FileDiffInfo | VcsFileDiff) & {
   preloaded?: PreloadMultiFileDiffResult<any>
 }
-type Item = ViewDiff & { preloaded?: PreloadMultiFileDiffResult<any> }
 
 function diff(value: unknown): value is ReviewDiff {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -104,7 +104,7 @@ export interface SessionReviewProps {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
   focusedFile?: string
   open?: string[]
   onOpenChange?: (open: string[]) => void
@@ -151,10 +151,11 @@ function ReviewCommentMenu(props: {
   )
 }
 
-function diffId(file: string): string | undefined {
-  const sum = checksum(file)
-  if (!sum) return
-  return `session-review-diff-${sum}`
+function diffId(file: string): Option.Option<string> {
+  return Option.fromNullishOr(checksum(file)).pipe(
+    Option.filter((sum) => sum.length > 0),
+    Option.map((sum) => `session-review-diff-${sum}`),
+  )
 }
 
 type SessionReviewSelection = {
@@ -162,21 +163,27 @@ type SessionReviewSelection = {
   range: SelectedLineRange
 }
 
+// Accordion value for a file whose diff cannot render. It never matches an
+// entry of the open list (file paths contain no NUL), so the item never
+// expands, and each file keeps a distinct value.
+const disabledItemValue = (file: string) => `\u0000disabled:${file}`
+
 export const SessionReview = (props: SessionReviewProps) => {
   let scroll: HTMLDivElement | undefined
   let focusToken = 0
-  let frame: number | undefined
+  let frame = Option.none<number>()
   const i18n = useI18n()
   const fileComponent = useFileComponent()
-  const anchors = new Map<string, HTMLElement>()
-  const nodes = new Map<string, HTMLDivElement>()
+  const anchors = MutableHashMap.empty<string, HTMLElement>()
+  const nodes = MutableHashMap.empty<string, HTMLDivElement>()
   const [store, setStore] = createStore({
     open: [] as string[],
-    visible: {} as Record<string, boolean>,
-    force: {} as Record<string, boolean>,
-    selection: null as SessionReviewSelection | null,
-    commenting: null as SessionReviewSelection | null,
-    opened: null as SessionReviewFocus | null,
+    // Keyed by file; a file with no entry is not visible and not forced.
+    visible: {} as Partial<Record<string, boolean>>,
+    force: {} as Partial<Record<string, boolean>>,
+    selection: Option.none<SessionReviewSelection>(),
+    commenting: Option.none<SessionReviewSelection>(),
+    opened: Option.none<SessionReviewFocus>(),
   })
   const selection = () => store.selection
   const commenting = () => store.commenting
@@ -187,33 +194,22 @@ export const SessionReview = (props: SessionReviewProps) => {
     Object.fromEntries(list(props.diffs).map((diff) => [diff.file, { ...normalize(diff), preloaded: diff.preloaded }])),
   )
   const files = createMemo(() => props.diffs.map((diff) => diff.file!))
-  const grouped = createMemo(() => {
-    const next = new Map<string, SessionReviewComment[]>()
-    for (const comment of props.comments ?? []) {
-      const list = next.get(comment.file)
-      if (list) {
-        list.push(comment)
-        continue
-      }
-      next.set(comment.file, [comment])
-    }
-    return next
-  })
+  const grouped = createMemo(() => Array.groupBy(props.comments ?? [], (comment) => comment.file))
   const diffStyle = () => props.diffStyle ?? (props.split ? "split" : "unified")
   const hasDiffs = () => files().length > 0
 
   const syncVisible = () => {
-    frame = undefined
+    frame = Option.none()
     if (!scroll) return
 
     const root = scroll.getBoundingClientRect()
     const top = root.top - REVIEW_MOUNT_MARGIN
     const bottom = root.bottom + REVIEW_MOUNT_MARGIN
-    const openSet = new Set(open())
+    const openSet = HashSet.fromIterable(open())
     const next: Record<string, boolean> = {}
 
     for (const [file, el] of nodes) {
-      if (!openSet.has(file)) continue
+      if (!HashSet.has(openSet, file)) continue
       const rect = el.getBoundingClientRect()
       if (rect.bottom < top || rect.top > bottom) continue
       next[file] = true
@@ -227,32 +223,32 @@ export const SessionReview = (props: SessionReviewProps) => {
   }
 
   const queue = () => {
-    if (frame !== undefined) return
-    frame = requestAnimationFrame(syncVisible)
+    if (Option.isSome(frame)) return
+    frame = Option.some(requestAnimationFrame(syncVisible))
   }
 
   const pinned = (file: string) =>
     props.focusedComment?.file === file ||
     props.focusedFile === file ||
-    selection()?.file === file ||
-    commenting()?.file === file ||
-    opened()?.file === file
+    Option.exists(selection(), (current) => current.file === file) ||
+    Option.exists(commenting(), (current) => current.file === file) ||
+    Option.exists(opened(), (current) => current.file === file)
 
   const handleScroll: JSX.EventHandler<HTMLDivElement, Event> = (event) => {
     queue()
     const next = props.onScroll
     if (!next) return
-    if (Array.isArray(next)) {
-      const [fn, data] = next as [(data: unknown, event: Event) => void, unknown]
-      fn(data, event)
+    if (typeof next === "function") {
+      next(event)
       return
     }
-    ;(next as JSX.EventHandler<HTMLDivElement, Event>)(event)
+    // Solid bound handler: [handler, data].
+    next[0](next[1], event)
   }
 
   onCleanup(() => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
+    if (Option.isNone(frame)) return
+    cancelAnimationFrame(frame.value)
   })
 
   createEffect(() => {
@@ -292,10 +288,11 @@ export const SessionReview = (props: SessionReviewProps) => {
       focusToken++
       const token = focusToken
 
-      setStore("opened", focus)
+      setStore("opened", Option.some(focus))
 
       const comment = (props.comments ?? []).find((c) => c.file === focus.file && c.id === focus.id)
-      if (comment) setStore("selection", { file: comment.file, range: cloneSelectedLineRange(comment.selection) })
+      if (comment)
+        setStore("selection", Option.some({ file: comment.file, range: cloneSelectedLineRange(comment.selection) }))
 
       const current = open()
       if (!current.includes(focus.file)) {
@@ -308,20 +305,22 @@ export const SessionReview = (props: SessionReviewProps) => {
         const root = scroll
         if (!root) return
 
-        const wrapper = anchors.get(focus.file)
-        const anchor = wrapper?.querySelector(`[data-comment-id="${focus.id}"]`)
-        const ready =
-          anchor instanceof HTMLElement && anchor.style.pointerEvents !== "none" && anchor.style.opacity !== "0"
+        const wrapper = MutableHashMap.get(anchors, focus.file)
+        const anchor = wrapper.pipe(
+          Option.flatMapNullishOr((el) => el.querySelector(`[data-comment-id="${focus.id}"]`)),
+          Option.filter((el): el is HTMLElement => el instanceof HTMLElement),
+        )
+        const ready = Option.exists(anchor, (el) => el.style.pointerEvents !== "none" && el.style.opacity !== "0")
 
         const target = ready ? anchor : wrapper
-        if (!target) {
+        if (Option.isNone(target)) {
           if (attempt >= 120) return
           requestAnimationFrame(() => scrollTo(attempt + 1))
           return
         }
 
         const rootRect = root.getBoundingClientRect()
-        const targetRect = target.getBoundingClientRect()
+        const targetRect = target.value.getBoundingClientRect()
         const offset = targetRect.top - rootRect.top
         const next = root.scrollTop + offset - rootRect.height / 2 + targetRect.height / 2
         root.scrollTop = Math.max(0, next)
@@ -333,7 +332,7 @@ export const SessionReview = (props: SessionReviewProps) => {
 
       requestAnimationFrame(() => scrollTo(0))
 
-      requestAnimationFrame(() => props.onFocusedCommentChange?.(null))
+      requestAnimationFrame(() => props.onFocusedCommentChange?.(Option.none()))
     })
   })
 
@@ -400,7 +399,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const mounted = createMemo(() => expanded() && (!!store.visible[file] || pinned(file)))
                     const force = () => !!store.force[file]
 
-                    const comments = createMemo(() => grouped().get(file) ?? [])
+                    const comments = createMemo(() => Option.getOrElse(Record.get(grouped(), file), () => []))
                     const commentedLines = createMemo(() => comments().map((c) => c.selection))
 
                     const beforeText = () => text(diff(), "deletions")
@@ -411,7 +410,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const tooLarge = createMemo(() => {
                       if (!expanded()) return false
                       if (force()) return false
-                      if (mediaKind()) return false
+                      if (Option.isSome(mediaKind())) return false
                       return changedLines() > MAX_DIFF_CHANGED_LINES
                     })
 
@@ -420,34 +419,51 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const isDeleted = () =>
                       diff().status === "deleted" || (afterText().length === 0 && beforeText().length > 0)
 
-                    const selectedLines = createMemo(() => {
-                      const current = selection()
-                      if (!current || current.file !== file) return null
-                      return current.range
-                    })
-
-                    const draftRange = createMemo(() => {
-                      const current = commenting()
-                      if (!current || current.file !== file) return null
-                      return current.range
-                    })
+                    // The review keeps one selection, one draft and one opened
+                    // comment; each file reads the part that belongs to it.
+                    const ownRange = (current: Option.Option<SessionReviewSelection>) =>
+                      current.pipe(
+                        Option.filter((value) => value.file === file),
+                        Option.map((value) => value.range),
+                      )
+                    const selectedLines = createMemo(() => ownRange(selection()))
+                    const draftRange = createMemo(() => ownRange(commenting()))
 
                     const commentsUi = createLineCommentController<SessionReviewComment>({
                       comments,
                       label: i18n.t("ui.lineComment.submit"),
                       draftKey: () => file,
                       mention: props.lineCommentMention,
+                      // LineCommentStateProps is a nullable contract (packages/app
+                      // implements it too); convert at this boundary only.
                       state: {
-                        opened: () => {
-                          const current = opened()
-                          if (!current || current.file !== file) return null
-                          return current.id
-                        },
-                        setOpened: (id) => setStore("opened", id ? { file, id } : null),
-                        selected: selectedLines,
-                        setSelected: (range) => setStore("selection", range ? { file, range } : null),
-                        commenting: draftRange,
-                        setCommenting: (range) => setStore("commenting", range ? { file, range } : null),
+                        opened: () =>
+                          Option.getOrNull(
+                            opened().pipe(
+                              Option.filter((current) => current.file === file),
+                              Option.map((current) => current.id),
+                            ),
+                          ),
+                        setOpened: (id) =>
+                          setStore(
+                            "opened",
+                            Option.fromNullOr(id).pipe(
+                              Option.filter((value) => value.length > 0),
+                              Option.map((value) => ({ file, id: value })),
+                            ),
+                          ),
+                        selected: () => Option.getOrNull(selectedLines()),
+                        setSelected: (range) =>
+                          setStore(
+                            "selection",
+                            Option.map(Option.fromNullOr(range), (value) => ({ file, range: value })),
+                          ),
+                        commenting: () => Option.getOrNull(draftRange()),
+                        setCommenting: (range) =>
+                          setStore(
+                            "commenting",
+                            Option.map(Option.fromNullOr(range), (value) => ({ file, range: value })),
+                          ),
                       },
                       getSide: selectionSide,
                       clearSelectionOnSelectionEndNull: false,
@@ -475,20 +491,22 @@ export const SessionReview = (props: SessionReviewProps) => {
                         })
                       },
                       editSubmitLabel: props.lineCommentActions?.saveLabel,
-                      renderCommentActions: props.lineCommentActions
-                        ? (comment, controls) => (
-                            <ReviewCommentMenu
-                              labels={props.lineCommentActions!}
-                              onEdit={controls.edit}
-                              onDelete={controls.remove}
-                            />
-                          )
-                        : undefined,
+                      ...(props.lineCommentActions
+                        ? {
+                            renderCommentActions: (comment, controls) => (
+                              <ReviewCommentMenu
+                                labels={props.lineCommentActions!}
+                                onEdit={controls.edit}
+                                onDelete={controls.remove}
+                              />
+                            ),
+                          }
+                        : {}),
                     })
 
                     onCleanup(() => {
-                      anchors.delete(file)
-                      nodes.delete(file)
+                      MutableHashMap.remove(anchors, file)
+                      MutableHashMap.remove(nodes, file)
                       queue()
                     })
 
@@ -504,11 +522,11 @@ export const SessionReview = (props: SessionReviewProps) => {
 
                     return (
                       <Accordion.Item
-                        value={diffCanRender() ? file : null!}
-                        id={diffId(file)}
+                        value={diffCanRender() ? file : disabledItemValue(file)}
+                        id={Option.getOrUndefined(diffId(file))}
                         data-file={file}
                         data-slot="session-review-accordion-item"
-                        data-selected={props.focusedFile === file ? "" : undefined}
+                        {...(props.focusedFile === file ? { "data-selected": "" } : {})}
                       >
                         <StickyAccordionHeader>
                           <Accordion.Trigger disabled={!diffCanRender()} class="cursor-default">
@@ -552,7 +570,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                                       {i18n.t("ui.sessionReview.change.removed")}
                                     </span>
                                   </Match>
-                                  <Match when={!!mediaKind()}>
+                                  <Match when={Option.isSome(mediaKind())}>
                                     <span data-slot="session-review-change" data-type="modified">
                                       {i18n.t("ui.sessionReview.change.modified")}
                                     </span>
@@ -574,8 +592,8 @@ export const SessionReview = (props: SessionReviewProps) => {
                           <div
                             data-slot="session-review-diff-wrapper"
                             ref={(el) => {
-                              anchors.set(file, el)
-                              nodes.set(file, el)
+                              MutableHashMap.set(anchors, file, el)
+                              MutableHashMap.set(nodes, file, el)
                               queue()
                             }}
                           >
@@ -620,22 +638,22 @@ export const SessionReview = (props: SessionReviewProps) => {
                                     onRendered={() => {
                                       props.onDiffRendered?.()
                                     }}
-                                    enableLineSelection={props.onLineComment != null}
-                                    enableGutterUtility={props.onLineComment != null}
+                                    enableLineSelection={Predicate.isNotNullish(props.onLineComment)}
+                                    enableGutterUtility={Predicate.isNotNullish(props.onLineComment)}
                                     onLineSelected={handleLineSelected}
                                     onLineSelectionEnd={handleLineSelectionEnd}
                                     annotations={commentsUi.annotations()}
                                     renderAnnotation={commentsUi.renderAnnotation}
-                                    renderGutterUtility={
-                                      props.onLineComment ? commentsUi.renderGutterUtility : undefined
-                                    }
-                                    selectedLines={selectedLines()}
+                                    {...(props.onLineComment
+                                      ? { renderGutterUtility: commentsUi.renderGutterUtility }
+                                      : {})}
+                                    selectedLines={Option.getOrNull(selectedLines())}
                                     commentedLines={commentedLines()}
                                     media={{
                                       mode: "auto",
                                       path: file,
                                       deleted: diff().status === "deleted",
-                                      readFile: diff().status === "deleted" ? undefined : props.readFile,
+                                      ...(diff().status === "deleted" ? {} : { readFile: props.readFile }),
                                     }}
                                   />
                                 </Match>

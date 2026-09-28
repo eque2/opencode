@@ -6,6 +6,7 @@
 // the run footer + scrollback color model. Falls back to a hardcoded dark-mode
 // palette if detection fails.
 import { RGBA, SyntaxStyle, type CliRenderer, type ColorInput, type TerminalColors } from "@opentui/core"
+import { Effect, Record, Result, Schema } from "effect"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { EntryKind } from "./types"
 
@@ -69,21 +70,24 @@ export type RunTheme = {
 }
 
 type ThemeColor = Exclude<keyof TuiThemeCurrent, "thinkingOpacity">
-type HexColor = `#${string}`
-type RefName = string
+// A "#rrggbb" hex value, "transparent" or "none", or the name of a def or theme color.
+type ColorText = string
 type Variant = {
-  dark: HexColor | RefName
-  light: HexColor | RefName
+  dark: ColorText
+  light: ColorText
 }
-type ColorValue = HexColor | RefName | Variant | RGBA | number
+type ColorValue = ColorText | Variant | RGBA | number
 type ThemeJson = {
-  defs?: Record<string, HexColor | RefName>
+  defs?: Record<string, ColorText>
   theme: Omit<Record<ThemeColor, ColorValue>, "selectedListItemText" | "backgroundMenu"> & {
     selectedListItemText?: ColorValue
     backgroundMenu?: ColorValue
     thinkingOpacity?: number
   }
 }
+
+// The theme only reads the palette and the cached light or dark mode.
+type RunThemeRenderer = Pick<CliRenderer, "getPalette" | "themeMode">
 
 type SharedSyntaxTheme = TuiThemeCurrent & {
   _hasSelectedListItemText: boolean
@@ -256,7 +260,7 @@ function nearestIndexed(indexed: RGBA[], rgba: RGBA): RGBA {
     },
     {
       dist: Number.POSITIVE_INFINITY,
-      item: indexed[0]!,
+      item: indexed[0],
     },
   )
 
@@ -273,14 +277,24 @@ function splashShadow(indexed: RGBA[], base: RGBA, overlay: RGBA, value: number)
   return nearestIndexed(indexed, mixed)
 }
 
-export function resolveTheme(theme: ThemeJson, pick: "dark" | "light"): TuiThemeCurrent {
-  const defs = theme.defs ?? {}
+/** A theme color that names a missing or circular reference. */
+export class ThemeColorError extends Schema.TaggedError<ThemeColorError>()("ThemeColorError", {
+  message: Schema.String,
+}) {}
 
-  const resolveColor = (value: ColorValue, chain: string[] = []): RGBA => {
-    if (value instanceof RGBA) return value
+export function resolveTheme(
+  theme: ThemeJson,
+  pick: "dark" | "light",
+): Result.Result<TuiThemeCurrent, ThemeColorError> {
+  const defs = theme.defs ?? {}
+  // A reference can name any theme entry, so look them up by name.
+  const named: Readonly<Record<string, ColorValue | undefined>> = theme.theme
+
+  const resolveColor = (value: ColorValue, chain: string[] = []): Result.Result<RGBA, ThemeColorError> => {
+    if (value instanceof RGBA) return Result.succeed(value)
 
     if (typeof value === "number") {
-      return RGBA.fromIndex(value, ansiToRgba(value))
+      return Result.succeed(RGBA.fromIndex(value, ansiToRgba(value)))
     }
 
     if (typeof value !== "string") {
@@ -288,41 +302,38 @@ export function resolveTheme(theme: ThemeJson, pick: "dark" | "light"): TuiTheme
     }
 
     if (value === "transparent" || value === "none") {
-      return RGBA.fromInts(0, 0, 0, 0)
+      return Result.succeed(RGBA.fromInts(0, 0, 0, 0))
     }
 
     if (value.startsWith("#")) {
-      return RGBA.fromHex(value)
+      return Result.succeed(RGBA.fromHex(value))
     }
 
     if (chain.includes(value)) {
-      throw new Error(`Circular color reference: ${[...chain, value].join(" -> ")}`)
+      return Result.fail(
+        new ThemeColorError({ message: `Circular color reference: ${[...chain, value].join(" -> ")}` }),
+      )
     }
 
-    const next = defs[value] ?? theme.theme[value as ThemeColor]
+    const next = defs[value] ?? named[value]
     if (next === undefined) {
-      throw new Error(`Color reference "${value}" not found in defs or theme`)
+      return Result.fail(new ThemeColorError({ message: `Color reference "${value}" not found in defs or theme` }))
     }
 
     return resolveColor(next, [...chain, value])
   }
 
-  const resolved = Object.fromEntries(
-    Object.entries(theme.theme)
-      .filter(([key]) => key !== "selectedListItemText" && key !== "backgroundMenu" && key !== "thinkingOpacity")
-      .map(([key, value]) => [key, resolveColor(value as ColorValue)]),
-  ) as Partial<Record<ThemeColor, RGBA>>
-
-  return {
-    ...(resolved as Record<ThemeColor, RGBA>),
-    selectedListItemText:
-      theme.theme.selectedListItemText === undefined
-        ? resolved.background!
-        : resolveColor(theme.theme.selectedListItemText),
-    backgroundMenu:
-      theme.theme.backgroundMenu === undefined ? resolved.backgroundElement! : resolveColor(theme.theme.backgroundMenu),
-    thinkingOpacity: theme.theme.thinkingOpacity ?? 0.6,
-  }
+  const { selectedListItemText, backgroundMenu, thinkingOpacity, ...colors } = theme.theme
+  return Result.gen(function* () {
+    const resolved = yield* Result.all(Record.map(colors, (value) => resolveColor(value)))
+    return {
+      ...resolved,
+      selectedListItemText:
+        selectedListItemText === undefined ? resolved.background : yield* resolveColor(selectedListItemText),
+      backgroundMenu: backgroundMenu === undefined ? resolved.backgroundElement : yield* resolveColor(backgroundMenu),
+      thinkingOpacity: thinkingOpacity ?? 0.6,
+    }
+  })
 }
 
 function generateGrayScale(bg: RGBA, isDark: boolean, map: (rgba: RGBA) => RGBA): Record<number, RGBA> {
@@ -474,15 +485,10 @@ function quantizeColor(indexed: RGBA[], rgba: RGBA): RGBA {
 }
 
 function quantizeTheme(theme: TuiThemeCurrent, indexed: RGBA[]): TuiThemeCurrent {
-  const resolved = Object.fromEntries(
-    Object.entries(theme)
-      .filter(([key]) => key !== "thinkingOpacity")
-      .map(([key, value]) => [key, quantizeColor(indexed, value as RGBA)]),
-  ) as Partial<Record<ThemeColor, RGBA>>
-
+  const { thinkingOpacity, ...colors } = theme
   return {
-    ...(resolved as Record<ThemeColor, RGBA>),
-    thinkingOpacity: theme.thinkingOpacity,
+    ...Record.map(colors, (value) => quantizeColor(indexed, value)),
+    thinkingOpacity,
   }
 }
 
@@ -653,11 +659,17 @@ export const RUN_THEME_FALLBACK: RunTheme = {
   },
 }
 
-export async function resolveRunTheme(renderer: CliRenderer): Promise<RunTheme> {
-  try {
-    const colors = await renderer.getPalette({
-      size: 256,
-    })
+/**
+ * Resolves the run theme from the terminal palette. Any failure (no palette, an
+ * unresolved color, a failed module load) gives RUN_THEME_FALLBACK.
+ */
+export const resolveRunThemeEffect = Effect.fn("RunTheme.resolve")(
+  function* (renderer: RunThemeRenderer) {
+    const colors = yield* Effect.tryPromise(() =>
+      renderer.getPalette({
+        size: 256,
+      }),
+    )
     const bg = colors.defaultBackground ?? colors.palette[0]
     if (!bg) {
       return RUN_THEME_FALLBACK
@@ -668,10 +680,10 @@ export async function resolveRunTheme(renderer: CliRenderer): Promise<RunTheme> 
     const pick = colors.defaultBackground
       ? mode(RGBA.fromHex(colors.defaultBackground))
       : (renderer.themeMode ?? mode(RGBA.fromHex(bg)))
-    const footerTheme = resolveTheme(generateSystem(colors, pick), pick)
+    const footerTheme = yield* Effect.fromResult(resolveTheme(generateSystem(colors, pick), pick))
     const indexed = indexedPalette(colors, 256)
     const scrollbackTheme = quantizeTheme(footerTheme, indexed)
-    const shared = await import("@opencode-ai/tui/context/theme")
+    const shared = yield* Effect.tryPromise(() => import("@opencode-ai/tui/context/theme"))
     const syntaxTheme: SharedSyntaxTheme = {
       ...scrollbackTheme,
       _hasSelectedListItemText: true,
@@ -684,7 +696,11 @@ export async function resolveRunTheme(renderer: CliRenderer): Promise<RunTheme> 
       syntax,
       shared.generateSubtleSyntax(syntaxTheme),
     )
-  } catch {
-    return RUN_THEME_FALLBACK
-  }
+  },
+  Effect.catchCause(() => Effect.succeed(RUN_THEME_FALLBACK)),
+)
+
+// footer.ts and runtime.lifecycle.ts read the theme as a Promise.
+export function resolveRunTheme(renderer: RunThemeRenderer): Promise<RunTheme> {
+  return Effect.runPromise(resolveRunThemeEffect(renderer))
 }

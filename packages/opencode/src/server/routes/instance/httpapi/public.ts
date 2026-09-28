@@ -1,8 +1,10 @@
 import { OpenCodeEvent } from "@opencode-ai/protocol/groups/event"
-import { Schema } from "effect"
+import { MutableHashSet, Predicate, Schema } from "effect"
 import { OpenApi } from "effect/unstable/httpapi"
 import { OpenCodeHttpApi } from "./api"
 import { QueryBooleanOpenApi } from "./groups/query"
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
 
 type OpenApiParameter = {
   name: string
@@ -281,7 +283,8 @@ function addV2EventComponents(spec: OpenApiSpec) {
   const document = Schema.toJsonSchemaDocument(OpenCodeEvent, { onExcessProperty: "error" })
   for (const [name, schema] of Object.entries(document.definitions)) {
     if (schemas[name] || schemas[`${name}Encoded`]) continue
-    schemas[name] = rewriteJsonSchemaDefinitionRefs(structuredClone(schema)) as OpenApiSchema
+    const rewritten = rewriteJsonSchemaDefinitionRefs(schema)
+    if (isOpenApiSchema(rewritten)) schemas[name] = rewritten
   }
   const stream = schemas.V2EventStreamEncoded ?? schemas.V2EventStream
   if (stream) {
@@ -290,15 +293,23 @@ function addV2EventComponents(spec: OpenApiSpec) {
   }
 }
 
+/** Copy a JSON Schema definition and point its `#/$defs/` refs at the OpenAPI components. */
 function rewriteJsonSchemaDefinitionRefs(input: unknown): unknown {
   if (Array.isArray(input)) return input.map(rewriteJsonSchemaDefinitionRefs)
   if (!input || typeof input !== "object") return input
-  const output = input as Record<string, unknown>
-  if (typeof output.$ref === "string" && output.$ref.startsWith("#/$defs/")) {
-    output.$ref = output.$ref.replace("#/$defs/", "#/components/schemas/")
-  }
-  for (const [key, value] of Object.entries(output)) output[key] = rewriteJsonSchemaDefinitionRefs(value)
-  return output
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [
+      key,
+      key === "$ref" && typeof value === "string" && value.startsWith("#/$defs/")
+        ? value.replace("#/$defs/", "#/components/schemas/")
+        : rewriteJsonSchemaDefinitionRefs(value),
+    ]),
+  )
+}
+
+// Every OpenApiSchema field is optional, so any plain object is a structurally valid OpenApiSchema.
+function isOpenApiSchema(input: unknown): input is OpenApiSchema {
+  return Predicate.isObject(input)
 }
 
 function applyLegacySchemaOverrides(spec: OpenApiSpec) {
@@ -316,7 +327,7 @@ function applyLegacySchemaOverrides(spec: OpenApiSpec) {
   const providerOptions = schemas.ProviderConfig?.properties?.options
   if (providerOptions) providerOptions.additionalProperties = {}
   const model = schemas.ProviderConfig?.properties?.models?.additionalProperties
-  const variants = typeof model === "object" ? model.properties?.variants?.additionalProperties : undefined
+  const variants = typeof model === "object" && model.properties?.variants?.additionalProperties
   if (variants && typeof variants === "object") variants.additionalProperties = {}
   const syncInfo = schemas.SyncEventSessionUpdated?.properties?.data?.properties?.info
   if (syncInfo?.properties) makePropertiesNullable(syncInfo.properties)
@@ -353,7 +364,7 @@ function nullable(schema: OpenApiSchema): OpenApiSchema {
 }
 
 function stableSchema(input: unknown, schemas: Record<string, OpenApiSchema>): string {
-  return JSON.stringify(canonicalizeSchema(input, schemas))
+  return encodeJson(canonicalizeSchema(input, schemas))
 }
 
 function canonicalizeSchema(input: unknown, schemas: Record<string, OpenApiSchema>): unknown {
@@ -468,18 +479,18 @@ function legacyErrorResponse(description: string, name: "BadRequestError" | "Not
 function fixSelfReferencingComponents(spec: OpenApiSpec) {
   const schemas = spec.components?.schemas
   if (!schemas) return
-  const selfRefs = new Set<string>()
+  const selfRefs = MutableHashSet.empty<string>()
   for (const [name, schema] of Object.entries(schemas)) {
-    if (schema.$ref === `#/components/schemas/${name}`) selfRefs.add(name)
+    if (schema.$ref === `#/components/schemas/${name}`) MutableHashSet.add(selfRefs, name)
   }
-  if (selfRefs.size === 0) return
+  if (MutableHashSet.size(selfRefs) === 0) return
   // Find a parent union component whose anyOf/oneOf contains a $ref to the
   // broken component — that parent was generated correctly and holds the inline
   // schema we need.
   for (const [, schema] of Object.entries(schemas)) {
     for (const member of schema.anyOf ?? schema.oneOf ?? []) {
       const ref = member.$ref?.replace("#/components/schemas/", "")
-      if (!ref || !selfRefs.has(ref)) continue
+      if (!ref || !MutableHashSet.has(selfRefs, ref)) continue
       // This member's $ref points to a self-referencing component. The member
       // itself is just {$ref:...}, so the actual schema must be resolved from
       // the union. Since the union component was generated before the

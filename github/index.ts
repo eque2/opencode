@@ -113,6 +113,30 @@ type IssueQueryResponse = {
   }
 }
 
+// The parts of the Actions context that this action reads.
+type ActionContext = Pick<GitHubContext, "eventName" | "payload" | "repo" | "actor">
+
+// The webhook payload fields that this action reads. The guards below check each one at run time.
+type CommentPayload = {
+  comment: Pick<IssueCommentEvent["comment"], "id" | "body">
+}
+
+// `title` stays optional: the MOCK_EVENT templates in README.md send an issue with a number only.
+type IssueCommentPayload = CommentPayload & {
+  issue: Pick<IssueCommentEvent["issue"], "number"> & { title?: string; pull_request?: unknown }
+}
+
+type ReviewCommentPayload = {
+  comment: Pick<
+    PullRequestReviewCommentEvent["comment"],
+    "id" | "body" | "path" | "diff_hunk" | "commit_id" | "original_commit_id"
+  > & {
+    line: number | null
+    original_line: number | null
+    position: number | null
+  }
+}
+
 const { client, server } = createOpencode()
 let accessToken: string
 let octoRest: Octokit
@@ -147,8 +171,8 @@ try {
   session = await client.session.create<true>().then((r) => r.data)
   await subscribeSessionEvents()
   shareId = await (async () => {
-    if (useEnvShare() === false) return
-    if (!useEnvShare() && repoData.data.private) return
+    if (useEnvShare() === false) return undefined
+    if (!useEnvShare() && repoData.data.private) return undefined
     await client.session.share<true>({ path: session })
     return session.id.slice(-8)
   })()
@@ -242,7 +266,7 @@ function createOpencode() {
 }
 
 function assertPayloadKeyword() {
-  const payload = useContext().payload as IssueCommentEvent | PullRequestReviewCommentEvent
+  const payload = commentPayload()
   const body = payload.comment.body.trim()
   if (!body.match(/(?:^|\s)(?:\/opencode|\/oc)(?=$|\s)/)) {
     throw new Error("Comments must mention `/opencode` or `/oc`")
@@ -255,7 +279,7 @@ function getReviewCommentContext() {
     return null
   }
 
-  const payload = context.payload as PullRequestReviewCommentEvent
+  const payload = reviewCommentPayload()
   return {
     file: payload.comment.path,
     diffHunk: payload.comment.diff_hunk,
@@ -348,17 +372,94 @@ function isMock() {
 }
 
 function isPullRequest() {
-  const context = useContext()
-  const payload = context.payload as IssueCommentEvent
+  const payload = issueCommentPayload()
   return Boolean(payload.issue.pull_request)
 }
 
-function useContext() {
-  return isMock() ? (JSON.parse(useEnvMock().mockEvent!) as GitHubContext) : github.context
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isActionContext(value: unknown): value is ActionContext {
+  return (
+    isRecord(value) &&
+    typeof value.eventName === "string" &&
+    isRecord(value.payload) &&
+    isRecord(value.repo) &&
+    typeof value.repo.owner === "string" &&
+    typeof value.repo.repo === "string" &&
+    typeof value.actor === "string"
+  )
+}
+
+function useContext(): ActionContext {
+  if (!isMock()) return github.context
+  const context: unknown = JSON.parse(useEnvMock().mockEvent!)
+  if (!isActionContext(context)) {
+    throw new Error("MOCK_EVENT must be a JSON object with eventName, payload, repo.owner, repo.repo and actor")
+  }
+  return context
+}
+
+function isCommentPayload(value: unknown): value is CommentPayload {
+  return (
+    isRecord(value) &&
+    isRecord(value.comment) &&
+    typeof value.comment.id === "number" &&
+    typeof value.comment.body === "string"
+  )
+}
+
+function isIssueCommentPayload(value: unknown): value is IssueCommentPayload {
+  if (!isRecord(value) || !isRecord(value.issue)) return false
+  const { number, title } = value.issue
+  return typeof number === "number" && (title === undefined || typeof title === "string") && isCommentPayload(value)
+}
+
+function isNumberOrNull(value: unknown) {
+  return value === null || typeof value === "number"
+}
+
+function isReviewCommentPayload(value: unknown): value is ReviewCommentPayload {
+  if (!isRecord(value) || !isRecord(value.comment)) return false
+  const comment = value.comment
+  return (
+    typeof comment.id === "number" &&
+    typeof comment.body === "string" &&
+    typeof comment.path === "string" &&
+    typeof comment.diff_hunk === "string" &&
+    typeof comment.commit_id === "string" &&
+    typeof comment.original_commit_id === "string" &&
+    isNumberOrNull(comment.line) &&
+    isNumberOrNull(comment.original_line) &&
+    isNumberOrNull(comment.position)
+  )
+}
+
+function commentPayload() {
+  const { payload } = useContext()
+  if (!isCommentPayload(payload)) throw new Error("Event payload has no comment with a numeric id and a string body")
+  return payload
+}
+
+function issueCommentPayload() {
+  const { payload } = useContext()
+  if (!isIssueCommentPayload(payload)) {
+    throw new Error("Event payload is not an issue comment (expected comment.id, comment.body, issue.number)")
+  }
+  return payload
+}
+
+function reviewCommentPayload() {
+  const { payload } = useContext()
+  if (!isReviewCommentPayload(payload)) {
+    throw new Error("Event payload is not a pull request review comment with a file path and diff hunk")
+  }
+  return payload
 }
 
 function useIssueId() {
-  const payload = useContext().payload as IssueCommentEvent
+  const payload = issueCommentPayload()
   return payload.issue.number
 }
 
@@ -392,11 +493,15 @@ async function getAccessToken() {
   }
 
   if (!response.ok) {
-    const responseJson = (await response.json()) as { error?: string }
-    throw new Error(`App token exchange failed: ${response.status} ${response.statusText} - ${responseJson.error}`)
+    const responseJson: unknown = await response.json()
+    const error = isRecord(responseJson) && typeof responseJson.error === "string" ? responseJson.error : undefined
+    throw new Error(`App token exchange failed: ${response.status} ${response.statusText} - ${error}`)
   }
 
-  const responseJson = (await response.json()) as { token: string }
+  const responseJson: unknown = await response.json()
+  if (!isRecord(responseJson) || typeof responseJson.token !== "string") {
+    throw new Error("App token exchange response did not include a token")
+  }
   return responseJson.token
 }
 
@@ -412,8 +517,7 @@ async function createComment() {
 }
 
 async function getUserPrompt() {
-  const context = useContext()
-  const payload = context.payload as IssueCommentEvent | PullRequestReviewCommentEvent
+  const payload = commentPayload()
   const reviewContext = getReviewCommentContext()
 
   let prompt = (() => {
@@ -580,7 +684,7 @@ async function summarize(response: string) {
     if (isScheduleEvent()) {
       return "Scheduled task changes"
     }
-    const payload = useContext().payload as IssueCommentEvent
+    const payload = issueCommentPayload()
     return `Fix issue: ${payload.issue.title}`
   }
 }
@@ -785,15 +889,15 @@ async function assertPermissions() {
     permission = response.data.permission
     console.log(`  permission: ${permission}`)
   } catch (error) {
-    console.error(`Failed to check permissions: ${error}`)
-    throw new Error(`Failed to check permissions for user ${actor}: ${error}`, { cause: error })
+    console.error(`Failed to check permissions: ${String(error)}`)
+    throw new Error(`Failed to check permissions for user ${actor}: ${String(error)}`, { cause: error })
   }
 
   if (!["admin", "write"].includes(permission)) throw new Error(`User ${actor} does not have write permissions`)
 }
 
 async function updateComment(body: string) {
-  if (!commentId) return
+  if (!commentId) return undefined
 
   console.log("Updating comment...")
 
@@ -885,7 +989,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
 }
 
 function buildPromptDataForIssue(issue: GitHubIssue) {
-  const payload = useContext().payload as IssueCommentEvent
+  const payload = commentPayload()
 
   const comments = (issue.comments?.nodes || [])
     .filter((c) => {
@@ -1012,7 +1116,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
 }
 
 function buildPromptDataForPR(pr: GitHubPullRequest) {
-  const payload = useContext().payload as IssueCommentEvent
+  const payload = commentPayload()
 
   const comments = (pr.comments?.nodes || [])
     .filter((c) => {

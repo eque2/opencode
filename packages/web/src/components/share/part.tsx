@@ -1,6 +1,6 @@
 import map from "lang-map"
-import { DateTime } from "luxon"
-import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
+import { Array as Arr, DateTime, Duration, Effect, Fiber, Option, Predicate, Schema } from "effect"
+import { For, Show, Match, Switch, type JSX, createMemo, createSignal, onCleanup, type ParentProps } from "solid-js"
 import {
   IconHashtag,
   IconSparkles,
@@ -27,17 +27,39 @@ import { ContentBash } from "./content-bash"
 import { ContentError } from "./content-error"
 import { formatCount, formatDuration, formatNumber, normalizeLocale, useShareMessages } from "../share/common"
 import { ContentMarkdown } from "./content-markdown"
-import type { MessageV2 } from "opencode/session/message-v2"
+import type { AssistantMessage, MessageInfo, MessagePart, ToolPart, ToolStateCompleted } from "./message"
 import type { Diagnostic } from "vscode-languageserver-types"
 
 import styles from "./part.module.css"
 
 const MIN_DURATION = 2000
 
+// The same Intl options as luxon's DateTime.DATETIME_MED and DATETIME_FULL_WITH_SECONDS,
+// so the rendered text stays identical after the move to effect DateTime.
+const TIMESTAMP_FORMATS = {
+  medium: { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "numeric" },
+  full: {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    timeZoneName: "short",
+  },
+} satisfies Record<string, Intl.DateTimeFormatOptions>
+
+export function formatTimestamp(millis: number, locale: string, style: keyof typeof TIMESTAMP_FORMATS) {
+  return DateTime.formatLocal(DateTime.makeUnsafe(millis), {
+    ...TIMESTAMP_FORMATS[style],
+    locale: normalizeLocale(locale),
+  })
+}
+
 export interface PartProps {
   index: number
-  message: MessageV2.Info
-  part: MessageV2.Part
+  message: MessageInfo
+  part: MessagePart
   last: boolean
 }
 
@@ -45,6 +67,11 @@ export function Part(props: PartProps) {
   const [copied, setCopied] = createSignal(false)
   const id = createMemo(() => props.message.id + "-" + props.index)
   const messages = useShareMessages()
+  let resetCopied: Option.Option<Fiber.Fiber<void>> = Option.none()
+
+  onCleanup(() => {
+    if (Option.isSome(resetCopied)) Effect.runFork(Fiber.interrupt(resetCopied.value))
+  })
 
   return (
     <div
@@ -53,7 +80,7 @@ export function Part(props: PartProps) {
       data-component="part"
       data-type={props.part.type}
       data-role={props.message.role}
-      data-copied={copied() ? true : undefined}
+      bool:data-copied={copied()}
     >
       <div data-component="decoration">
         <div data-slot="anchor" title={messages.link_to_message}>
@@ -64,12 +91,17 @@ export function Part(props: PartProps) {
               const anchor = e.currentTarget
               const hash = anchor.getAttribute("href") || ""
               const { origin, pathname, search } = window.location
-              navigator.clipboard
-                .writeText(`${origin}${pathname}${search}${hash}`)
-                .catch((err) => console.error("Copy failed", err))
+              Effect.runFork(
+                Effect.tryPromise({
+                  try: () => navigator.clipboard.writeText(`${origin}${pathname}${search}${hash}`),
+                  catch: (error) => error,
+                }).pipe(Effect.catch((error) => Effect.logError("Copy failed", error))),
+              )
 
               setCopied(true)
-              setTimeout(() => setCopied(false), 3000)
+              resetCopied = Option.some(
+                Effect.runFork(Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))), Effect.asVoid)),
+              )
             }}
           >
             <Switch>
@@ -141,13 +173,9 @@ export function Part(props: PartProps) {
             </div>
             {props.last && props.message.role === "assistant" && props.message.time.completed && (
               <Footer
-                title={DateTime.fromMillis(props.message.time.completed)
-                  .setLocale(normalizeLocale(messages.locale))
-                  .toLocaleString(DateTime.DATETIME_FULL_WITH_SECONDS)}
+                title={formatTimestamp(props.message.time.completed, messages.locale, "full")}
               >
-                {DateTime.fromMillis(props.message.time.completed)
-                  .setLocale(normalizeLocale(messages.locale))
-                  .toLocaleString(DateTime.DATETIME_MED)}
+                {formatTimestamp(props.message.time.completed, messages.locale, "medium")}
               </Footer>
             )}
           </div>
@@ -283,9 +311,12 @@ export function Part(props: PartProps) {
                 </Switch>
               </div>
               <ToolFooter
-                time={DateTime.fromMillis(props.part.state.time.end)
-                  .diff(DateTime.fromMillis(props.part.state.time.start))
-                  .toMillis()}
+                time={Duration.toMillis(
+                  DateTime.distance(
+                    DateTime.makeUnsafe(props.part.state.time.start),
+                    DateTime.makeUnsafe(props.part.state.time.end),
+                  ),
+                )}
               />
             </>
           )}
@@ -295,19 +326,21 @@ export function Part(props: PartProps) {
 }
 
 type ToolProps = {
-  id: MessageV2.ToolPart["id"]
-  tool: MessageV2.ToolPart["tool"]
-  state: MessageV2.ToolStateCompleted
-  message: MessageV2.Assistant
+  id: ToolPart["id"]
+  tool: ToolPart["tool"]
+  state: ToolStateCompleted
+  message: AssistantMessage
   isLastPart?: boolean
 }
 
-interface Todo {
-  id: string
-  content: string
-  status: "pending" | "in_progress" | "completed"
-  priority: "low" | "medium" | "high"
-}
+// Mirrors SessionTodo.Info in @opencode-ai/schema: the status and priority
+// fields are plain strings there, so a "cancelled" status still decodes.
+const Todo = Schema.Struct({
+  content: Schema.String,
+  status: Schema.String,
+  priority: Schema.String,
+}).annotate({ identifier: "Todo" })
+const decodeTodos = Schema.decodeUnknownOption(Schema.Array(Todo))
 
 function stripWorkingDirectory(filePath?: string, workingDir?: string) {
   if (filePath === undefined || workingDir === undefined) return filePath
@@ -388,16 +421,20 @@ function formatErrorString(error: string, label: string): JSX.Element {
 
 export function TodoWriteTool(props: ToolProps) {
   const messages = useShareMessages()
-  const priority: Record<Todo["status"], number> = {
+  const priority: Partial<Record<string, number>> = {
     in_progress: 0,
     pending: 1,
     completed: 2,
   }
+  const rank = (status: string) => priority[status] ?? Number.NaN
   const todos = createMemo(() =>
-    ((props.state.input?.todos ?? []) as Todo[]).slice().sort((a, b) => priority[a.status] - priority[b.status]),
+    decodeTodos(props.state.input?.todos ?? []).pipe(
+      Option.map((items) => items.slice().sort((a, b) => rank(a.status) - rank(b.status))),
+      Option.getOrElse(() => []),
+    ),
   )
-  const starting = () => todos().every((t: Todo) => t.status === "pending")
-  const finished = () => todos().every((t: Todo) => t.status === "completed")
+  const starting = () => todos().every((t) => t.status === "pending")
+  const finished = () => todos().every((t) => t.status === "completed")
 
   return (
     <>
@@ -730,11 +767,9 @@ export function FallbackTool(props: ToolProps) {
               <div></div>
               <div>{arg[0]}</div>
               <div>
-                {typeof arg[1] === "string" || typeof arg[1] === "number" || typeof arg[1] === "boolean"
+                {Predicate.isString(arg[1]) || Predicate.isNumber(arg[1]) || Predicate.isBoolean(arg[1])
                   ? String(arg[1])
-                  : arg[1] == null
-                    ? ""
-                    : JSON.stringify(arg[1])}
+                  : Option.match(Option.fromNullishOr(arg[1]), { onNone: () => "", onSome: encodeJson })}
               </div>
             </>
           )}
@@ -756,32 +791,22 @@ export function FallbackTool(props: ToolProps) {
 // Converts nested objects/arrays into [path, value] pairs.
 // E.g. {a:{b:{c:1}}, d:[{e:2}, 3]} => [["a.b.c",1], ["d[0].e",2], ["d[1]",3]]
 function flattenToolArgs(obj: unknown, prefix: string = ""): Array<[string, unknown]> {
-  const entries: Array<[string, unknown]> = []
-  if (typeof obj !== "object" || obj === null) return entries
+  if (!Predicate.isObjectOrArray(obj)) return []
 
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+  return Arr.flatMap(Object.entries(obj), ([key, value]): Array<[string, unknown]> => {
     const path = prefix ? `${prefix}.${key}` : key
 
-    if (value !== null && typeof value === "object") {
-      if (Array.isArray(value)) {
-        value.forEach((item, index) => {
-          const arrayPath = `${path}[${index}]`
-          if (item !== null && typeof item === "object") {
-            entries.push(...flattenToolArgs(item, arrayPath))
-          } else {
-            entries.push([arrayPath, item])
-          }
-        })
-      } else {
-        entries.push(...flattenToolArgs(value, path))
-      }
-    } else {
-      entries.push([path, value])
+    if (Array.isArray(value)) {
+      return Arr.flatMap(value, (item, index): Array<[string, unknown]> => {
+        const arrayPath = `${path}[${index}]`
+        return Predicate.isObjectOrArray(item) ? flattenToolArgs(item, arrayPath) : [[arrayPath, item]]
+      })
     }
-  }
-
-  return entries
+    return Predicate.isObjectOrArray(value) ? flattenToolArgs(value, path) : [[path, value]]
+  })
 }
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
 function getProvider(model: string) {
   const lowerModel = model.toLowerCase()

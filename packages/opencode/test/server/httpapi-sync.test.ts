@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Context, Effect, Layer } from "effect"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { Effect, Layer, Schema } from "effect"
+import { HttpClientResponse } from "effect/unstable/http"
 import { SyncPaths } from "../../src/server/routes/instance/httpapi/groups/sync"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import { Session } from "@/session/session"
@@ -10,13 +10,11 @@ import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
-const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
-const context = Context.empty() as Context.Context<unknown>
+const context = HttpApiApp.context
 const it = testEffect(Layer.mergeAll(LayerNode.compile(Session.node), httpApiLayer))
 
 afterEach(async () => {
   mock.restore()
-  Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = originalWorkspaces
   await disposeAllInstances()
   await resetDatabase()
 })
@@ -26,7 +24,6 @@ describe("sync HttpApi", () => {
     "serves sync routes",
     () =>
       Effect.gen(function* () {
-        Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
         const tmp = yield* TestInstance
         const headers = { "x-opencode-directory": tmp.directory, "content-type": "application/json" }
         const session = yield* Session.use.create({ title: "sync" })
@@ -41,13 +38,17 @@ describe("sync HttpApi", () => {
           body: JSON.stringify({}),
         })
         expect(history.status).toBe(200)
-        const rows = (yield* history.json) as Array<{
-          id: string
-          aggregate_id: string
-          seq: number
-          type: string
-          data: Record<string, unknown>
-        }>
+        const rows = yield* HttpClientResponse.schemaBodyJson(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              aggregate_id: Schema.String,
+              seq: Schema.Number,
+              type: Schema.String,
+              data: Schema.Record(Schema.String, Schema.Unknown),
+            }),
+          ),
+        )(history)
         expect(rows.map((row) => row.aggregate_id)).toContain(session.id)
 
         const replayed = yield* requestInDirectory(SyncPaths.replay, tmp.directory, {
@@ -140,7 +141,9 @@ describe("sync HttpApi", () => {
 
         expect(response.status).toBe(400)
         expect(response.headers.get("content-type") ?? "").toContain("application/json")
-        const body = (yield* Effect.promise(() => response.json())) as Record<string, unknown>
+        const body = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
+          yield* Effect.promise(() => response.json()),
+        )
         expect(body.success).toBe(false)
         expect(Array.isArray(body.error) || Array.isArray(body.errors)).toBe(true)
       }),

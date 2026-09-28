@@ -17,9 +17,9 @@ export function AttachmentCardV2(props: {
   return (
     <div
       data-component="attachment-card-v2"
-      data-active={props.active ? "true" : undefined}
-      data-clickable={props.clickable ? "true" : undefined}
-      data-wide={props.wide ? "true" : undefined}
+      bool:data-active={!!props.active}
+      bool:data-clickable={!!props.clickable}
+      bool:data-wide={!!props.wide}
       data-surface={props.surface}
       title={props.hover}
       onClick={() => props.onClick?.()}

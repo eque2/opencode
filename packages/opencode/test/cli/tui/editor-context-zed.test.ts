@@ -3,6 +3,7 @@ import { mkdir, symlink } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, expect, spyOn, test } from "bun:test"
+import { Effect, Option } from "effect"
 import { isZedTerminal, offsetToPosition, resolveZedDbPath, resolveZedSelection } from "@opencode-ai/tui/editor-zed"
 import { tmpdir } from "../../fixture/fixture"
 
@@ -87,7 +88,7 @@ test("resolveZedDbPath skips candidates that cannot be stated", async () => {
   process.env.OPENCODE_ZED_DB = loop
 
   try {
-    expect(resolveZedDbPath()).toBeUndefined()
+    expect(Option.isNone(await Effect.runPromise(resolveZedDbPath()))).toBeTrue()
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_ZED_DB
     else process.env.OPENCODE_ZED_DB = previous
@@ -95,17 +96,17 @@ test("resolveZedDbPath skips candidates that cannot be stated", async () => {
   }
 })
 
-test("isZedTerminal only returns true for Zed terminal environments", () => {
+test("isZedTerminal only returns true for Zed terminal environments", async () => {
   delete process.env.ZED_TERM
   delete process.env.TERM_PROGRAM
-  expect(isZedTerminal()).toBeFalse()
+  expect(await Effect.runPromise(isZedTerminal())).toBeFalse()
 
   process.env.ZED_TERM = "true"
-  expect(isZedTerminal()).toBeTrue()
+  expect(await Effect.runPromise(isZedTerminal())).toBeTrue()
 
   process.env.ZED_TERM = "false"
   process.env.TERM_PROGRAM = "zed"
-  expect(isZedTerminal()).toBeTrue()
+  expect(await Effect.runPromise(isZedTerminal())).toBeTrue()
 })
 
 test("resolveZedSelection returns active editor selection", async () => {

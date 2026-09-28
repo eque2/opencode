@@ -17,7 +17,7 @@ describe("timeline fixture validation", () => {
   test("rejects malformed SDK values at runtime", () => {
     expect(() =>
       assistantMessage([], {
-        error: { name: "APIError", data: { message: "failed" } } as never,
+        error: { name: "APIError", data: { message: "failed" } },
       }),
     ).toThrow()
     expect(() =>
@@ -47,7 +47,8 @@ describe("timeline fixture validation", () => {
   })
 })
 
-if (false) {
+// Compile-time checks only: typecheck:e2e compiles this function, and no test calls it.
+export function fixtureTypeChecks() {
   const userSeed = { id: "prt_type_user", type: "text", text: "typed" } satisfies PartSeed<"user">
   userMessage([userSeed])
 

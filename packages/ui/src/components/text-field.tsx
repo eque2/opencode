@@ -1,7 +1,9 @@
 import { TextField as Kobalte } from "@kobalte/core/text-field"
+import { Effect } from "effect"
 import { createSignal, Show, splitProps } from "solid-js"
 import type { ComponentProps } from "solid-js"
 import { useI18n } from "../context/i18n"
+import { createFiberSlot } from "../hooks/create-fiber-slot"
 import { IconButton } from "./icon-button"
 import { Tooltip } from "./tooltip"
 
@@ -54,6 +56,7 @@ export function TextField(props: TextFieldProps) {
     "multiline",
   ])
   const [copied, setCopied] = createSignal(false)
+  const copyFeedback = createFiberSlot()
 
   const label = () => {
     if (copied()) return i18n.t("ui.textField.copied")
@@ -67,15 +70,20 @@ export function TextField(props: TextFieldProps) {
     return "copy"
   }
 
-  async function handleCopy() {
+  function handleCopy() {
     const value = local.value ?? local.defaultValue ?? ""
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    copyFeedback.run(
+      Effect.gen(function* () {
+        yield* Effect.promise(() => navigator.clipboard.writeText(value))
+        setCopied(true)
+        yield* Effect.sleep("2 seconds")
+        setCopied(false)
+      }),
+    )
   }
 
   function handleClick() {
-    if (local.copyable) void handleCopy()
+    if (local.copyable) handleCopy()
   }
 
   return (

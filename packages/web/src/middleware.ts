@@ -1,50 +1,50 @@
+import type { APIContext } from "astro"
 import { defineMiddleware } from "astro:middleware"
+import { Array, Option } from "effect"
 import { exactLocale, matchLocale } from "./i18n/locales"
 
 function docsAlias(pathname: string) {
-  const hit = /^\/docs\/([^/]+)(\/.*)?$/.exec(pathname)
-  if (!hit) return null
-
-  const value = hit[1] ?? ""
-  const tail = hit[2] ?? ""
-  const locale = exactLocale(value)
-  if (!locale) return null
-
-  const next = locale === "root" ? `/docs${tail}` : `/docs/${locale}${tail}`
-  if (next === pathname) return null
-  return {
-    path: next,
-    locale,
-  }
+  return Option.fromNullOr(/^\/docs\/([^/]+)(\/.*)?$/.exec(pathname)).pipe(
+    Option.flatMap((hit) => {
+      const tail = hit[2] ?? ""
+      return exactLocale(hit[1] ?? "").pipe(
+        Option.map((locale) => ({
+          path: locale === "root" ? `/docs${tail}` : `/docs/${locale}${tail}`,
+          locale,
+        })),
+      )
+    }),
+    Option.filter((alias) => alias.path !== pathname),
+  )
 }
 
-function cookie(locale: string) {
-  const value = locale === "root" ? "en" : locale
-  return `oc_locale=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax`
-}
-
-function redirect(url: URL, path: string, locale?: string) {
-  const next = new URL(url.toString())
+function redirect(ctx: APIContext, path: string) {
+  const next = new URL(ctx.url.toString())
   next.pathname = path
-  const headers = new Headers({
-    Location: next.toString(),
-  })
-  if (locale) headers.set("Set-Cookie", cookie(locale))
-  return new Response(null, {
-    status: 302,
-    headers,
+  // Astro builds the 302 with an empty body and merges ctx.cookies into it as Set-Cookie headers.
+  return ctx.redirect(next.toString(), 302)
+}
+
+function setLocaleCookie(ctx: APIContext, locale: string) {
+  ctx.cookies.set("oc_locale", locale === "root" ? "en" : locale, {
+    path: "/",
+    maxAge: 31536000,
+    sameSite: "lax",
   })
 }
 
 function localeFromCookie(header: string | null) {
-  if (!header) return null
-  const raw = header
-    .split(";")
-    .map((x) => x.trim())
-    .find((x) => x.startsWith("oc_locale="))
-    ?.slice("oc_locale=".length)
-  if (!raw) return null
-  return matchLocale(raw)
+  return Option.fromNullOr(header).pipe(
+    Option.flatMap((value) =>
+      Array.findFirst(
+        value.split(";").map((x) => x.trim()),
+        (x) => x.startsWith("oc_locale="),
+      ),
+    ),
+    Option.map((x) => x.slice("oc_locale=".length)),
+    Option.filter((raw) => raw.length > 0),
+    Option.flatMap(matchLocale),
+  )
 }
 
 function localeFromAcceptLanguage(header: string | null) {
@@ -68,27 +68,25 @@ function localeFromAcceptLanguage(header: string | null) {
     })
     .sort((a, b) => b.q - a.q)
 
-  const locale = items
-    .map((item) => item.lang)
-    .filter((lang) => lang && lang !== "*")
-    .map((lang) => matchLocale(lang))
-    .find((lang) => lang)
-
-  return locale ?? "root"
+  return Array.findFirst(
+    items.map((item) => item.lang).filter((lang) => lang && lang !== "*"),
+    matchLocale,
+  ).pipe(Option.getOrElse(() => "root"))
 }
 
 export const onRequest = defineMiddleware((ctx, next) => {
   const alias = docsAlias(ctx.url.pathname)
-  if (alias) {
-    return redirect(ctx.url, alias.path, alias.locale)
+  if (Option.isSome(alias)) {
+    setLocaleCookie(ctx, alias.value.locale)
+    return redirect(ctx, alias.value.path)
   }
 
   if (ctx.url.pathname !== "/docs" && ctx.url.pathname !== "/docs/") return next()
 
-  const locale =
-    localeFromCookie(ctx.request.headers.get("cookie")) ??
-    localeFromAcceptLanguage(ctx.request.headers.get("accept-language"))
-  if (!locale || locale === "root") return next()
+  const locale = localeFromCookie(ctx.request.headers.get("cookie")).pipe(
+    Option.getOrElse(() => localeFromAcceptLanguage(ctx.request.headers.get("accept-language"))),
+  )
+  if (locale === "root") return next()
 
-  return redirect(ctx.url, `/docs/${locale}/`)
+  return redirect(ctx, `/docs/${locale}/`)
 })

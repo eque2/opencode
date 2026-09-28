@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { Effect, Schema, Stream } from "effect"
 import { HttpClientRequest } from "effect/unstable/http"
-import { LLM, LLMError, LLMEvent, Message, Model, ToolCallPart, Usage } from "../../src"
+import { LLM, LLMError, LLMEvent, Message, Model, ToolCallID, ToolCallPart, Usage } from "../../src"
 import * as Azure from "../../src/providers/azure"
 import * as OpenAI from "../../src/providers/openai"
 import * as OpenAIChat from "../../src/protocols/openai-chat"
@@ -239,7 +239,7 @@ describe("OpenAI Chat route", () => {
 
       expect(prepared.body.messages.at(-1)).toEqual({
         role: "tool",
-        tool_call_id: "call_1",
+        tool_call_id: OpenAIChat.ToolCallID.make("call_1"),
         content: ProviderShared.encodeJson(error),
       })
     }),
@@ -273,13 +273,13 @@ describe("OpenAI Chat route", () => {
           content: null,
           tool_calls: [
             {
-              id: "call_image",
+              id: OpenAIChat.ToolCallID.make("call_image"),
               type: "function",
               function: { name: "read", arguments: encodeJson({ path: "pixel.png" }) },
             },
           ],
         },
-        { role: "tool", tool_call_id: "call_image", content: "Image read successfully" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_image"), content: "Image read successfully" },
         {
           role: "user",
           content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAECAw==" } }],
@@ -304,7 +304,7 @@ describe("OpenAI Chat route", () => {
               content: [
                 {
                   type: "tool-result",
-                  id: "call_1",
+                  id: ToolCallID.make("call_1"),
                   name: "read",
                   result: {
                     type: "content",
@@ -313,7 +313,7 @@ describe("OpenAI Chat route", () => {
                 },
                 {
                   type: "tool-result",
-                  id: "call_2",
+                  id: ToolCallID.make("call_2"),
                   name: "read",
                   result: {
                     type: "content",
@@ -326,8 +326,8 @@ describe("OpenAI Chat route", () => {
         }),
       )
       expect(prepared.body.messages.slice(1)).toEqual([
-        { role: "tool", tool_call_id: "call_1", content: "" },
-        { role: "tool", tool_call_id: "call_2", content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_1"), content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_2"), content: "" },
         {
           role: "user",
           content: [
@@ -366,8 +366,8 @@ describe("OpenAI Chat route", () => {
         }),
       )
       expect(prepared.body.messages).toEqual([
-        { role: "tool", tool_call_id: "call_1", content: "" },
-        { role: "tool", tool_call_id: "call_2", content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_1"), content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_2"), content: "" },
         {
           role: "user",
           content: [
@@ -570,13 +570,13 @@ describe("OpenAI Chat route", () => {
 
       expect(response.events).toEqual([
         { type: "step-start", index: 0 },
-        { type: "tool-input-start", id: "call_1", name: "lookup", providerMetadata: undefined },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' },
-        { type: "tool-input-end", id: "call_1", name: "lookup", providerMetadata: undefined },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup", providerMetadata: undefined },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup", providerMetadata: undefined },
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -607,9 +607,9 @@ describe("OpenAI Chat route", () => {
 
       expect(events).toEqual([
         { type: "step-start", index: 0 },
-        { type: "tool-input-start", id: "call_1", name: "lookup", providerMetadata: undefined },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup", providerMetadata: undefined },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
       ])
       expect(events.filter(LLMEvent.is.toolCall)).toEqual([])
       expect(error.message).toContain("Provider stream ended without a terminal finish event")

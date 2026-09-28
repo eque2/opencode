@@ -41,8 +41,8 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
-import { Process } from "@/util/process"
-import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import { AppProcess } from "@opencode-ai/core/process"
+import { Array as Arr, Cause, Clock, Effect, Exit, HashSet, Latch, Layer, Option, Scope, Context, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -62,8 +62,9 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 
 const decodeMessageInfo = Schema.decodeUnknownExit(SessionV1.Info)
 const decodeMessagePart = Schema.decodeUnknownExit(SessionV1.Part)
+const decodeStructuredOutput = Schema.decodeUnknownEffect(Schema.MutableJson)
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
-const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
+const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = HashSet.fromIterable<string>([
   "application/pdf",
   "image/gif",
   "image/jpeg",
@@ -80,6 +81,26 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
+// The Read tool input that a synthetic text part echoes. Schema.Number keeps the
+// JSON.stringify output, including null for NaN, and optional keys stay omitted.
+const ReadToolInput = Schema.Struct({
+  filePath: Schema.optional(Schema.String),
+  offset: Schema.optional(Schema.Number),
+  limit: Schema.optional(Schema.Number),
+}).annotate({ identifier: "SessionPrompt.ReadToolInput" })
+const encodeReadToolInputJson = Schema.encodeEffect(Schema.fromJsonString(ReadToolInput))
+const encodeReadToolInput = (input: typeof ReadToolInput.Type) => encodeReadToolInputJson(input).pipe(Effect.orDie)
+
+// A state that the prompt service cannot reach. It surfaces as a defect.
+class PromptInvariantError extends Schema.TaggedError<PromptInvariantError>()("SessionPromptInvariantError", {
+  message: Schema.String,
+}) {}
+
+// An MCP server answered a resource read without content. It surfaces as a defect.
+class ResourceNotFoundError extends Schema.TaggedError<ResourceNotFoundError>()("SessionPromptResourceNotFoundError", {
+  message: Schema.String,
+}) {}
 
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
@@ -130,6 +151,7 @@ const layer = Layer.effect(
     const truncate = yield* Truncate.Service
     const image = yield* Image.Service
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const appProcess = yield* AppProcess.Service
     const scope = yield* Scope.Scope
     const instruction = yield* Instruction.Service
     const state = yield* SessionRunState.Service
@@ -141,12 +163,43 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
+    // The loop body runs once per provider turn, so build these contexts once here
+    // and provide them per call instead of rebuilding them on every iteration.
+    const reminderContext = Context.make(RuntimeFlags.Service, flags).pipe(
+      Context.add(FSUtil.Service, fsys),
+      Context.add(Session.Service, sessions),
+    )
+    const toolContext = Context.make(Plugin.Service, plugin).pipe(
+      Context.add(Permission.Service, permission),
+      Context.add(ToolRegistry.Service, registry),
+      Context.add(MCP.Service, mcp),
+      Context.add(Truncate.Service, truncate),
+      Context.add(RuntimeFlags.Service, flags),
+    )
+    const filterCompacted = (sessionID: SessionID) =>
+      MessageV2.filterCompactedEffect(sessionID).pipe(Effect.provideService(Database.Service, database))
+    const applyReminders = (input: Parameters<typeof SessionReminders.apply>[0]) =>
+      SessionReminders.apply(input).pipe(Effect.provideContext(reminderContext))
+    const resolveTools = (input: Parameters<typeof SessionTools.resolve>[0]) =>
+      SessionTools.resolve(input).pipe(Effect.provideContext(toolContext))
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
         resolvePromptParts: (template: string) => resolvePromptParts(template),
         prompt: (input: PromptInput) => prompt(input).pipe(Effect.catch(Effect.die)),
       } satisfies TaskPromptOps
+    })
+
+    // Publishes a session error that lists the visible agents, then dies with it.
+    const agentNotFound = Effect.fn("SessionPrompt.agentNotFound")(function* (
+      name: string | undefined,
+      sessionID: SessionID,
+    ) {
+      const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
+      const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
+      const error = new NamedError.Unknown({ message: `Agent not found: "${name}".${hint}` })
+      yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+      return yield* Effect.die(error)
     })
 
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
@@ -156,17 +209,10 @@ const layer = Layer.effect(
 
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
       const ctx = yield* InstanceState.context
-      const parts: Types.DeepMutable<PromptInput["parts"]> = [{ type: "text", text: template }]
-      const files = ConfigMarkdown.files(template)
-      const seen = new Set<string>()
-      yield* Effect.forEach(
-        files,
-        Effect.fnUntraced(function* (match) {
-          const name = match[1]
-          if (!name) return
-          if (seen.has(name)) return
-          seen.add(name)
-
+      const names = Arr.dedupe(ConfigMarkdown.files(template).flatMap((match) => (match[1] ? [match[1]] : [])))
+      const resolved = yield* Effect.forEach(
+        names,
+        Effect.fnUntraced(function* (name: string) {
           const filepath = name.startsWith("~/")
             ? path.join(os.homedir(), name.slice(2))
             : path.resolve(ctx.worktree, name)
@@ -174,19 +220,20 @@ const layer = Layer.effect(
           const info = yield* fsys.stat(filepath).pipe(Effect.option)
           if (Option.isNone(info)) {
             const found = yield* agents.get(name)
-            if (found) parts.push({ type: "agent", name: found.name })
-            return
+            return found ? [{ type: "agent" as const, name: found.name }] : []
           }
-          const stat = info.value
-          parts.push({
-            type: "file",
-            url: pathToFileURL(filepath).href,
-            filename: name,
-            mime: stat.type === "Directory" ? "application/x-directory" : "text/plain",
-          })
+          return [
+            {
+              type: "file" as const,
+              url: pathToFileURL(filepath).href,
+              filename: name,
+              mime: info.value.type === "Directory" ? "application/x-directory" : "text/plain",
+            },
+          ]
         }),
-        { concurrency: "unbounded", discard: true },
+        { concurrency: "unbounded" },
       )
+      const parts: PromptInput["parts"] = [{ type: "text", text: template }, ...resolved.flat()]
       return parts
     })
 
@@ -278,7 +325,7 @@ const layer = Layer.effect(
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         modelID: taskModel.id,
         providerID: taskModel.providerID,
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
       })
       let part: SessionV1.ToolPart = yield* sessions.updatePart({
         id: PartID.ascending(),
@@ -295,7 +342,7 @@ const layer = Layer.effect(
             subagent_type: task.agent,
             command: task.command,
           },
-          time: { start: Date.now() },
+          time: { start: yield* Clock.currentTimeMillis },
         },
       })
       const taskArgs = {
@@ -310,16 +357,9 @@ const layer = Layer.effect(
         { args: taskArgs },
       )
 
-      const taskAgent = yield* agents.get(task.agent)
-      if (!taskAgent) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-        throw error
-      }
+      const taskAgent = (yield* agents.get(task.agent)) ?? (yield* agentNotFound(task.agent, sessionID))
 
-      let error: Error | undefined
+      let failure = Option.none<string>()
       const taskAbort = new AbortController()
       const result = yield* taskTool
         .execute(taskArgs, {
@@ -350,9 +390,9 @@ const layer = Layer.effect(
         .pipe(
           Effect.catchCause((cause) => {
             const defect = Cause.squash(cause)
-            error = defect instanceof Error ? defect : new Error(String(defect))
+            failure = Option.some(defect instanceof Error ? defect.message : String(defect))
             return Effect.logError("subtask execution failed", {
-              error,
+              error: defect,
               agent: task.agent,
               description: task.description,
             })
@@ -361,7 +401,7 @@ const layer = Layer.effect(
             Effect.gen(function* () {
               taskAbort.abort()
               assistantMessage.finish = "tool-calls"
-              assistantMessage.time.completed = Date.now()
+              assistantMessage.time.completed = yield* Clock.currentTimeMillis
               yield* sessions.updateMessage(assistantMessage)
               if (part.state.status === "running") {
                 yield* sessions.updatePart({
@@ -369,7 +409,7 @@ const layer = Layer.effect(
                   state: {
                     status: "error",
                     error: "Cancelled",
-                    time: { start: part.state.time.start, end: Date.now() },
+                    time: { start: part.state.time.start, end: yield* Clock.currentTimeMillis },
                     metadata: part.state.metadata,
                     input: part.state.input,
                   },
@@ -393,7 +433,7 @@ const layer = Layer.effect(
       )
 
       assistantMessage.finish = "tool-calls"
-      assistantMessage.time.completed = Date.now()
+      assistantMessage.time.completed = yield* Clock.currentTimeMillis
       yield* sessions.updateMessage(assistantMessage)
 
       if (result && part.state.status === "running") {
@@ -406,7 +446,7 @@ const layer = Layer.effect(
             metadata: result.metadata,
             output: result.output,
             attachments,
-            time: { ...part.state.time, end: Date.now() },
+            time: { ...part.state.time, end: yield* Clock.currentTimeMillis },
           },
         } satisfies SessionV1.ToolPart)
       }
@@ -416,36 +456,40 @@ const layer = Layer.effect(
           ...part,
           state: {
             status: "error",
-            error: error ? `Tool execution failed: ${error.message}` : "Tool execution failed",
+            error: Option.match(failure, {
+              onNone: () => "Tool execution failed",
+              onSome: (message) => `Tool execution failed: ${message}`,
+            }),
             time: {
-              start: part.state.status === "running" ? part.state.time.start : Date.now(),
-              end: Date.now(),
+              start: part.state.status === "running" ? part.state.time.start : yield* Clock.currentTimeMillis,
+              end: yield* Clock.currentTimeMillis,
             },
-            metadata: part.state.status === "pending" ? undefined : part.state.metadata,
+            ...(part.state.status === "pending" ? {} : { metadata: part.state.metadata }),
             input: part.state.input,
           },
         } satisfies SessionV1.ToolPart)
       }
 
-      if (!task.command) return
-
-      const summaryUserMsg: SessionV1.User = {
-        id: MessageID.ascending(),
-        sessionID,
-        role: "user",
-        time: { created: Date.now() },
-        agent: lastUser.agent,
-        model: lastUser.model,
+      // A command subtask asks the model to summarize the task output next.
+      if (task.command) {
+        const summaryUserMsg: SessionV1.User = {
+          id: MessageID.ascending(),
+          sessionID,
+          role: "user",
+          time: { created: yield* Clock.currentTimeMillis },
+          agent: lastUser.agent,
+          model: lastUser.model,
+        }
+        yield* sessions.updateMessage(summaryUserMsg)
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: summaryUserMsg.id,
+          sessionID,
+          type: "text",
+          text: "Summarize the task tool output above and continue with your task.",
+          synthetic: true,
+        } satisfies SessionV1.TextPart)
       }
-      yield* sessions.updateMessage(summaryUserMsg)
-      yield* sessions.updatePart({
-        id: PartID.ascending(),
-        messageID: summaryUserMsg.id,
-        sessionID,
-        type: "text",
-        text: "Summarize the task tool output above and continue with your task.",
-        synthetic: true,
-      } satisfies SessionV1.TextPart)
     })
 
     const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, ready?: Latch.Latch) {
@@ -458,19 +502,12 @@ const layer = Layer.effect(
             if (session.revert) {
               yield* revert.cleanup(session)
             }
-            const agent = yield* agents.get(input.agent)
-            if (!agent) {
-              const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-              const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-              const error = new NamedError.Unknown({ message: `Agent not found: "${input.agent}".${hint}` })
-              yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-              throw error
-            }
+            const agent = (yield* agents.get(input.agent)) ?? (yield* agentNotFound(input.agent, input.sessionID))
             const model = input.model ?? agent.model ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
-              time: { created: Date.now() },
+              time: { created: yield* Clock.currentTimeMillis },
               role: "user",
               agent: input.agent,
               model: { providerID: model.providerID, modelID: model.modelID },
@@ -494,14 +531,14 @@ const layer = Layer.effect(
               agent: input.agent,
               cost: 0,
               path: { cwd: ctx.directory, root: ctx.worktree },
-              time: { created: Date.now() },
+              time: { created: yield* Clock.currentTimeMillis },
               role: "assistant",
               tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
               modelID: model.modelID,
               providerID: model.providerID,
             }
             yield* sessions.updateMessage(msg)
-            const started = Date.now()
+            const started = yield* Clock.currentTimeMillis
             const part: SessionV1.ToolPart = {
               type: "tool",
               id: PartID.ascending(),
@@ -520,7 +557,7 @@ const layer = Layer.effect(
           }).pipe(Effect.ensuring(markReady))
 
           const cfg = yield* config.get()
-          const sh = Shell.preferred(cfg.shell)
+          const sh = yield* Shell.preferred(cfg.shell)
           const args = Shell.args(sh, input.command, cwd)
           let output = ""
           let aborted = false
@@ -530,7 +567,7 @@ const layer = Layer.effect(
               if (aborted) {
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
               }
-              const completed = Date.now()
+              const completed = yield* Clock.currentTimeMillis
               if (!msg.time.completed) {
                 msg.time.completed = completed
                 yield* sessions.updateMessage(msg)
@@ -634,30 +671,35 @@ const layer = Layer.effect(
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent
-      const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
-      if (!ag) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
-      }
+      const ag =
+        (agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()) ??
+        (yield* agentNotFound(agentName, input.sessionID))
 
       const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
-          ? yield* provider
-              .getModel(model.providerID, model.modelID)
-              .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
-          : undefined
-      const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
+          ? yield* provider.getModel(model.providerID, model.modelID).pipe(
+              Effect.map(Option.some),
+              Effect.catchIf(
+                (error): error is Provider.ModelNotFoundError => Provider.ModelNotFoundError.isInstance(error),
+                () => Effect.succeedNone,
+              ),
+            )
+          : Option.none<Provider.Model>()
+      const variant =
+        input.variant ??
+        Option.getOrUndefined(
+          Option.filter(Option.fromNullishOr(ag.variant), (name) =>
+            Option.exists(full, (mdl) => Boolean(mdl.variants?.[name])),
+          ),
+        )
 
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),
         role: "user",
         sessionID: input.sessionID,
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
         tools: input.tools,
         agent: ag.name,
         model: {
@@ -670,11 +712,15 @@ const layer = Layer.effect(
       }
 
       const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+      // A stored "default" variant means the same as no variant on the message.
+      const currentVariant = current.model?.variant
+      const variantChanged =
+        currentVariant === "default" ? info.model.variant !== undefined : currentVariant !== info.model.variant
       if (
         current.agent !== info.agent ||
         current.model?.providerID !== info.model.providerID ||
         current.model?.id !== info.model.modelID ||
-        (current.model?.variant === "default" ? undefined : current.model?.variant) !== info.model.variant
+        variantChanged
       ) {
         yield* sessions.setAgentModel({
           sessionID: input.sessionID,
@@ -703,84 +749,76 @@ const layer = Layer.effect(
           if (part.source?.type === "resource") {
             const { clientName, uri } = part.source
             yield* Effect.logInfo("mcp resource", { clientName, uri, mime: part.mime })
-            const pieces: Draft<SessionV1.Part>[] = [
-              {
-                messageID: info.id,
-                sessionID: input.sessionID,
-                type: "text",
-                synthetic: true,
-                text: `Reading MCP resource: ${part.filename} (${uri})`,
-              },
-            ]
+            const reading: Draft<SessionV1.Part> = {
+              messageID: info.id,
+              sessionID: input.sessionID,
+              type: "text",
+              synthetic: true,
+              text: `Reading MCP resource: ${part.filename} (${uri})`,
+            }
             const exit = yield* mcp.readResource(clientName, uri).pipe(Effect.exit)
-            if (Exit.isSuccess(exit)) {
-              const content = exit.value
-              if (!content) throw new Error(`Resource not found: ${clientName}/${uri}`)
-              const items = Array.isArray(content.contents) ? content.contents : [content.contents]
-              for (const c of items) {
-                if (!c || typeof c !== "object") continue
-                if ("text" in c && typeof c.text === "string" && c.text) {
-                  pieces.push({
-                    messageID: info.id,
-                    sessionID: input.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: c.text,
-                  })
-                } else if ("blob" in c && typeof c.blob === "string" && c.blob) {
-                  const mime = "mimeType" in c && typeof c.mimeType === "string" ? c.mimeType : part.mime
-                  const filename = "uri" in c && typeof c.uri === "string" ? c.uri : part.filename
-                  const size = mcpResourceBase64Size(c.blob)
-                  if (!SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES.has(mime)) {
-                    pieces.push({
-                      messageID: info.id,
-                      sessionID: input.sessionID,
-                      type: "text",
-                      synthetic: true,
-                      text: `[Binary MCP resource omitted: ${filename ?? uri} (${mime}, ${formatMcpResourceBytes(size)}) is not a supported attachment type]`,
-                    })
-                    continue
-                  }
-                  if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
-                    pieces.push({
-                      messageID: info.id,
-                      sessionID: input.sessionID,
-                      type: "text",
-                      synthetic: true,
-                      text: `[Binary MCP resource omitted: ${filename ?? uri} (${mime}, ${formatMcpResourceBytes(size)}) exceeds ${formatMcpResourceBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
-                    })
-                    continue
-                  }
-                  pieces.push({
-                    messageID: info.id,
-                    sessionID: input.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: `[Binary MCP resource attached: ${filename ?? uri} (${mime})]`,
-                  })
-                  pieces.push({
-                    messageID: info.id,
-                    sessionID: input.sessionID,
-                    type: "file",
-                    mime,
-                    filename,
-                    url: `data:${mime};base64,${c.blob}`,
-                  })
-                }
-              }
-            } else {
+            if (Exit.isFailure(exit)) {
               const error = Cause.squash(exit.cause)
               yield* Effect.logError("failed to read MCP resource", { error, clientName, uri })
               const message = error instanceof Error ? error.message : String(error)
-              pieces.push({
-                messageID: info.id,
-                sessionID: input.sessionID,
-                type: "text",
-                synthetic: true,
-                text: `Failed to read MCP resource ${part.filename}: ${message}`,
-              })
+              return [
+                reading,
+                {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `Failed to read MCP resource ${part.filename}: ${message}`,
+                },
+              ]
             }
-            return pieces
+            const content = exit.value
+            if (!content)
+              return yield* Effect.die(
+                new ResourceNotFoundError({ message: `Resource not found: ${clientName}/${uri}` }),
+              )
+            const items = Array.isArray(content.contents) ? content.contents : [content.contents]
+            const synthetic = (text: string): Draft<SessionV1.Part> => ({
+              messageID: info.id,
+              sessionID: input.sessionID,
+              type: "text",
+              synthetic: true,
+              text,
+            })
+            const resourceParts = items.flatMap((c): Draft<SessionV1.Part>[] => {
+              if (!c || typeof c !== "object") return []
+              if ("text" in c && typeof c.text === "string" && c.text) return [synthetic(c.text)]
+              if (!("blob" in c && typeof c.blob === "string" && c.blob)) return []
+              const mime = "mimeType" in c && typeof c.mimeType === "string" ? c.mimeType : part.mime
+              const filename = "uri" in c && typeof c.uri === "string" ? c.uri : part.filename
+              const size = mcpResourceBase64Size(c.blob)
+              if (!HashSet.has(SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES, mime)) {
+                return [
+                  synthetic(
+                    `[Binary MCP resource omitted: ${filename ?? uri} (${mime}, ${formatMcpResourceBytes(size)}) is not a supported attachment type]`,
+                  ),
+                ]
+              }
+              if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
+                return [
+                  synthetic(
+                    `[Binary MCP resource omitted: ${filename ?? uri} (${mime}, ${formatMcpResourceBytes(size)}) exceeds ${formatMcpResourceBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
+                  ),
+                ]
+              }
+              return [
+                synthetic(`[Binary MCP resource attached: ${filename ?? uri} (${mime})]`),
+                {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "file",
+                  mime,
+                  filename,
+                  url: `data:${mime};base64,${c.blob}`,
+                },
+              ]
+            })
+            return [reading, ...resourceParts]
           }
           const url = new URL(part.url)
           switch (url.protocol) {
@@ -792,7 +830,7 @@ const layer = Layer.effect(
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Called the Read tool with the following input: ${JSON.stringify({ filePath: part.filename })}`,
+                    text: `Called the Read tool with the following input: ${yield* encodeReadToolInput({ filePath: part.filename })}`,
                   },
                   {
                     messageID: info.id,
@@ -830,12 +868,13 @@ const layer = Layer.effect(
               if (mime === "text/plain") {
                 let offset: number | undefined
                 let limit: number | undefined
-                const range = { start: url.searchParams.get("start"), end: url.searchParams.get("end") }
-                if (range.start != null) {
+                const rangeStart = Option.fromNullishOr(url.searchParams.get("start"))
+                const rangeEnd = url.searchParams.get("end")
+                if (Option.isSome(rangeStart)) {
                   const filePathURI = part.url.split("?")[0]
-                  let start = parseInt(range.start)
-                  let end = range.end ? parseInt(range.end) : undefined
-                  if (start === end) {
+                  let start = parseInt(rangeStart.value)
+                  let end = rangeEnd ? Option.some(parseInt(rangeEnd)) : Option.none<number>()
+                  if (Option.isSome(end) && end.value === start) {
                     const symbols = yield* lsp.documentSymbol(filePathURI).pipe(Effect.catch(() => Effect.succeed([])))
                     for (const symbol of symbols) {
                       let r: LSP.Range | undefined
@@ -843,51 +882,27 @@ const layer = Layer.effect(
                       else if ("location" in symbol) r = symbol.location.range
                       if (r?.start?.line && r?.start?.line === start) {
                         start = r.start.line
-                        end = r?.end?.line ?? start
+                        end = Option.some(r?.end?.line ?? start)
                         break
                       }
                     }
                   }
                   offset = Math.max(start, 1)
-                  if (end) limit = end - (offset - 1)
+                  if (Option.isSome(end) && end.value) limit = end.value - (offset - 1)
                 }
                 const args = { filePath: filepath, offset, limit }
-                const pieces: Draft<SessionV1.Part>[] = [
-                  {
-                    messageID: info.id,
-                    sessionID: input.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: `Called the Read tool with the following input: ${JSON.stringify(args)}`,
-                  },
-                ]
+                const readCall: Draft<SessionV1.Part> = {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `Called the Read tool with the following input: ${yield* encodeReadToolInput(args)}`,
+                }
                 const exit = yield* provider.getModel(info.model.providerID, info.model.modelID).pipe(
                   Effect.flatMap((mdl) => execRead(args, { model: mdl })),
                   Effect.exit,
                 )
-                if (Exit.isSuccess(exit)) {
-                  const result = exit.value
-                  pieces.push({
-                    messageID: info.id,
-                    sessionID: input.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: result.output,
-                  })
-                  if (result.attachments?.length) {
-                    pieces.push(
-                      ...result.attachments.map((a) => ({
-                        ...a,
-                        synthetic: true,
-                        filename: a.filename ?? part.filename,
-                        messageID: info.id,
-                        sessionID: input.sessionID,
-                      })),
-                    )
-                  } else {
-                    pieces.push({ ...part, mime, messageID: info.id, sessionID: input.sessionID })
-                  }
-                } else {
+                if (Exit.isFailure(exit)) {
                   const error = Cause.squash(exit.cause)
                   yield* Effect.logError("failed to read file", { error, filepath })
                   const message = error instanceof Error ? error.message : String(error)
@@ -895,15 +910,38 @@ const layer = Layer.effect(
                     sessionID: input.sessionID,
                     error: new NamedError.Unknown({ message }).toObject(),
                   })
-                  pieces.push({
+                  return [
+                    readCall,
+                    {
+                      messageID: info.id,
+                      sessionID: input.sessionID,
+                      type: "text",
+                      synthetic: true,
+                      text: `Read tool failed to read ${filepath} with the following error: ${message}`,
+                    },
+                  ]
+                }
+                const result = exit.value
+                const fileParts: Draft<SessionV1.Part>[] = result.attachments?.length
+                  ? result.attachments.map((a) => ({
+                      ...a,
+                      synthetic: true,
+                      filename: a.filename ?? part.filename,
+                      messageID: info.id,
+                      sessionID: input.sessionID,
+                    }))
+                  : [{ ...part, mime, messageID: info.id, sessionID: input.sessionID }]
+                return [
+                  readCall,
+                  {
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Read tool failed to read ${filepath} with the following error: ${message}`,
-                  })
-                }
-                return pieces
+                    text: result.output,
+                  },
+                  ...fileParts,
+                ]
               }
 
               if (mime === "application/x-directory") {
@@ -933,7 +971,7 @@ const layer = Layer.effect(
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Called the Read tool with the following input: ${JSON.stringify(args)}`,
+                    text: `Called the Read tool with the following input: ${yield* encodeReadToolInput(args)}`,
                   },
                   {
                     messageID: info.id,
@@ -1057,10 +1095,11 @@ const layer = Layer.effect(
       const message = yield* createUserMessage(input)
       yield* sessions.touch(input.sessionID)
 
-      const permissions: PermissionV1.Rule[] = []
-      for (const [t, enabled] of Object.entries(input.tools ?? {})) {
-        permissions.push({ permission: t, action: enabled ? "allow" : "deny", pattern: "*" })
-      }
+      const permissions: PermissionV1.Rule[] = Object.entries(input.tools ?? {}).map(([t, enabled]) => ({
+        permission: t,
+        action: enabled ? "allow" : "deny",
+        pattern: "*",
+      }))
       if (permissions.length > 0) {
         session.permission = permissions
         yield* sessions.setPermission({ sessionID: session.id, permission: permissions })
@@ -1075,7 +1114,7 @@ const layer = Layer.effect(
       if (Option.isSome(match)) return match.value
       const msgs = yield* sessions.messages({ sessionID, limit: 1 }).pipe(Effect.orDie)
       if (msgs.length > 0) return msgs[0]
-      throw new Error("Impossible")
+      return yield* Effect.die(new PromptInvariantError({ message: "Impossible" }))
     })
 
     const runLoop: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.run")(
@@ -1089,13 +1128,14 @@ const layer = Layer.effect(
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 
-          let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
-            Effect.provideService(Database.Service, database),
-          )
+          let msgs = yield* filterCompacted(sessionID)
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
-          if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+          if (!lastUser)
+            return yield* Effect.die(
+              new PromptInvariantError({ message: "No user message found in stream. This should never happen." }),
+            )
 
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -1139,7 +1179,7 @@ const layer = Layer.effect(
             }).pipe(Effect.ignore, Effect.forkIn(scope))
 
           const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
-          const task = tasks.pop()
+          const task = tasks.at(-1)
 
           if (task?.type === "subtask") {
             yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
@@ -1167,21 +1207,10 @@ const layer = Layer.effect(
             continue
           }
 
-          const agent = yield* agents.get(lastUser.agent)
-          if (!agent) {
-            const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-            const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-            const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
-            yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-            throw error
-          }
+          const agent = (yield* agents.get(lastUser.agent)) ?? (yield* agentNotFound(lastUser.agent, sessionID))
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
-          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
-            Effect.provideService(RuntimeFlags.Service, flags),
-            Effect.provideService(FSUtil.Service, fsys),
-            Effect.provideService(Session.Service, sessions),
-          )
+          msgs = yield* applyReminders({ messages: msgs, agent, session })
 
           const msg: SessionV1.Assistant = {
             id: MessageID.ascending(),
@@ -1195,7 +1224,7 @@ const layer = Layer.effect(
             tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
             modelID: model.id,
             providerID: model.providerID,
-            time: { created: Date.now() },
+            time: { created: yield* Clock.currentTimeMillis },
             sessionID,
           }
           yield* sessions.updateMessage(msg)
@@ -1206,7 +1235,7 @@ const layer = Layer.effect(
               providerID: msg.providerID,
               aborted: true,
             })
-            msg.time.completed = Date.now()
+            msg.time.completed = yield* Clock.currentTimeMillis
             yield* sessions.updateMessage(msg)
           })
 
@@ -1223,7 +1252,7 @@ const layer = Layer.effect(
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
 
-            const tools = yield* SessionTools.resolve({
+            const tools = yield* resolveTools({
               agent,
               session,
               model,
@@ -1231,14 +1260,7 @@ const layer = Layer.effect(
               bypassAgentCheck,
               messages: msgs,
               promptOps,
-            }).pipe(
-              Effect.provideService(Plugin.Service, plugin),
-              Effect.provideService(Permission.Service, permission),
-              Effect.provideService(ToolRegistry.Service, registry),
-              Effect.provideService(MCP.Service, mcp),
-              Effect.provideService(Truncate.Service, truncate),
-              Effect.provideService(RuntimeFlags.Service, flags),
-            )
+            })
 
             if (lastUser.format?.type === "json_schema") {
               tools["StructuredOutput"] = createStructuredOutputTool({
@@ -1282,11 +1304,11 @@ const layer = Layer.effect(
               ],
               tools,
               model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
+              ...(format.type === "json_schema" ? { toolChoice: "required" as const } : {}),
             })
 
             if (structured !== undefined) {
-              handle.message.structured = structured
+              handle.message.structured = yield* decodeStructuredOutput(structured).pipe(Effect.orDie)
               handle.message.finish = handle.message.finish ?? "stop"
               yield* sessions.updateMessage(handle.message)
               return "break" as const
@@ -1365,13 +1387,15 @@ const layer = Layer.effect(
         const hint = available.length ? ` Available commands: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Command not found: "${input.command}".${hint}` })
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
+        return yield* Effect.die(error)
       }
       const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
-      const templateCommand = yield* Effect.promise(async () => cmd.template)
+      // Read the template getter once; an MCP prompt template resolves lazily.
+      const source = cmd.template
+      const templateCommand = typeof source === "string" ? source : yield* Effect.promise(() => source)
 
       const placeholders = templateCommand.match(placeholderRegex) ?? []
       let last = 0
@@ -1397,11 +1421,16 @@ const layer = Layer.effect(
       const shellMatches = ConfigMarkdown.shell(template)
       if (shellMatches.length > 0) {
         const cfg = yield* config.get()
-        const sh = Shell.preferred(cfg.shell)
-        const results = yield* Effect.promise(() =>
-          Promise.all(
-            shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
-          ),
+        const sh = yield* Shell.preferred(cfg.shell)
+        const results = yield* Effect.forEach(
+          shellMatches,
+          ([, cmd]) =>
+            // A failed command contributes its stdout; one that cannot start contributes nothing.
+            appProcess.run(ChildProcess.make(cmd, [], { shell: sh, stdin: "ignore" })).pipe(
+              Effect.map((result) => result.stdout.toString()),
+              Effect.orElseSucceed(() => ""),
+            ),
+          { concurrency: "unbounded" },
         )
         let index = 0
         template = template.replace(bashRegex, () => results[index++])
@@ -1420,21 +1449,18 @@ const layer = Layer.effect(
 
       yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
 
-      const agent = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
-      if (!agent) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
-      }
+      const agent =
+        (agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()) ??
+        (yield* agentNotFound(agentName, input.sessionID))
 
       const templateParts = yield* resolvePromptParts(template)
-      const inputFiles = new Set(
-        input.parts?.filter((part) => new URL(part.url).protocol === "file:").map((part) => fileURLToPath(part.url)),
+      const inputFiles = HashSet.fromIterable(
+        (input.parts ?? [])
+          .filter((part) => new URL(part.url).protocol === "file:")
+          .map((part) => fileURLToPath(part.url)),
       )
       const uniqueTemplateParts = templateParts.filter(
-        (part) => part.type !== "file" || !inputFiles.has(fileURLToPath(part.url)),
+        (part) => part.type !== "file" || !HashSet.has(inputFiles, fileURLToPath(part.url)),
       )
       const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
       const parts = isSubtask
@@ -1494,7 +1520,7 @@ const layer = Layer.effect(
 const ModelRef = Schema.Struct({
   providerID: ProviderV2.ID,
   modelID: ModelV2.ID,
-})
+}).annotate({ description: "Provider and model that answer a prompt" })
 
 export const PromptInput = Schema.Struct({
   sessionID: SessionID,
@@ -1530,7 +1556,7 @@ export const ShellInput = Schema.Struct({
   agent: Schema.String,
   model: Schema.optional(ModelRef),
   command: Schema.String,
-})
+}).annotate({ description: "Shell command that a user runs in a session" })
 export type ShellInput = Schema.Schema.Type<typeof ShellInput>
 
 export const CommandInput = Schema.Struct({
@@ -1572,7 +1598,8 @@ export function createStructuredOutputTool(input: {
   return tool({
     description: STRUCTURED_OUTPUT_DESCRIPTION,
     inputSchema: jsonSchema(toolSchema as JSONSchema7),
-    async execute(args) {
+    // The AI SDK accepts a synchronous result and awaits it like a Promise.
+    execute(args) {
       // AI SDK validates args against inputSchema before calling execute()
       input.onSuccess(args)
       return {
@@ -1616,6 +1643,7 @@ export const node = LayerNode.make({
     Truncate.node,
     Image.node,
     CrossSpawnSpawner.node,
+    AppProcess.node,
     Instruction.node,
     SessionRunState.node,
     SessionRevert.node,

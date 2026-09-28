@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "./helper"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "./sync"
 import { useEvent } from "./event"
 import path from "path"
@@ -8,7 +8,8 @@ import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
-import { readJson, writeJsonAtomic } from "../util/persistence"
+import { Array, Effect, Equal, HashSet, Option, Schema } from "effect"
+import { fileSystemLayer, readJson, writeJsonAtomic } from "../util/persistence"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
@@ -24,6 +25,31 @@ export type LocalTheme = {
   info: RGBA
 }
 
+const ModelRef = Schema.Struct({
+  providerID: Schema.String,
+  modelID: Schema.String,
+}).annotate({ identifier: "TuiLocal.ModelRef" })
+
+// model.json keeps the recent and favorite models and the selected variant for each model.
+const ModelState = Schema.Struct({
+  recent: Schema.optional(Schema.mutable(Schema.Array(ModelRef))),
+  favorite: Schema.optional(Schema.mutable(Schema.Array(ModelRef))),
+  variant: Schema.optional(Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String))),
+}).annotate({ identifier: "TuiLocal.ModelState" })
+const ModelStateFile = Schema.fromJsonString(ModelState)
+
+// session.json keeps the pinned session IDs.
+const SessionState = Schema.Struct({
+  pinned: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+}).annotate({ identifier: "TuiLocal.SessionState" })
+const SessionStateFile = Schema.fromJsonString(SessionState)
+
+/** The server could not connect or disconnect an MCP server. The cause is the SDK rejection. */
+class McpToggleError extends Schema.TaggedError<McpToggleError>()("TuiLocal.McpToggleError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
   return {
@@ -36,14 +62,8 @@ export function recentModels(
   model: { providerID: string; modelID: string },
   recent: { providerID: string; modelID: string }[],
 ) {
-  const seen = new Set<string>()
-  return [model, ...recent]
-    .filter((item) => {
-      const key = `${item.providerID}/${item.modelID}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  // Keep the first occurrence of each model, so the given model moves to the front.
+  return Array.dedupeWith([model, ...recent], (a, b) => a.providerID === b.providerID && a.modelID === b.modelID)
     .slice(0, 10)
     .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
 }
@@ -61,24 +81,27 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const event = useEvent()
     const permission = usePermission()
 
+    // The theme proxy forwards `in` to a theme object, so its own keys are the theme entry names.
+    function isThemeKey(key: string): key is keyof typeof theme {
+      return key in theme
+    }
+
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((item) => item.id === model.providerID)
       return !!provider?.models[model.modelID]
     }
 
+    // The first candidate that is present and names a valid model.
     function getFirstValidModel(...modelFns: (() => { providerID: string; modelID: string } | undefined)[]) {
-      for (const modelFn of modelFns) {
-        const model = modelFn()
-        if (!model) continue
-        if (isModelValid(model)) return model
-      }
+      return Array.findFirst(modelFns, (modelFn) => Option.filter(Option.fromNullishOr(modelFn()), isModelValid))
     }
 
     function createAgent() {
       const agents = createMemo(() => sync.data.agent.filter((agent) => agent.mode !== "subagent" && !agent.hidden))
       const visibleAgents = createMemo(() => sync.data.agent.filter((agent) => !agent.hidden))
-      const [agentStore, setAgentStore] = createStore({
-        current: undefined as string | undefined,
+      // The selected agent name; none selects the first agent.
+      const [currentName, setCurrentName] = createSignal(Option.none<string>(), {
+        equals: (previous, next) => Equal.equals(previous, next),
       })
       const colors = createMemo(() => [
         theme.secondary,
@@ -94,7 +117,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return agents()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current) ?? agents().at(0)
+          return Option.flatMap(currentName(), (name) => Array.findFirst(agents(), (x) => x.name === name)).pipe(
+            Option.getOrElse(() => agents().at(0)),
+          )
         },
         set(name: string) {
           if (!agents().some((x) => x.name === name))
@@ -103,7 +128,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               message: `Agent not found: ${name}`,
               duration: 3000,
             })
-          setAgentStore("current", name)
+          setCurrentName(Option.some(name))
         },
         move(direction: 1 | -1) {
           batch(() => {
@@ -113,7 +138,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             if (next < 0) next = agents().length - 1
             if (next >= agents().length) next = 0
             const value = agents()[next]
-            setAgentStore("current", value.name)
+            setCurrentName(Option.some(value.name))
           })
         },
         color(name: string) {
@@ -124,8 +149,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (agent?.color) {
             const color = agent.color
             if (color.startsWith("#")) return RGBA.fromHex(color)
-            // already validated by config, just satisfying TS here
-            return theme[color as keyof typeof theme] as RGBA
+            // Config validates the theme color name; a name that is not a theme color uses the palette.
+            if (isThemeKey(color)) {
+              const value = theme[color]
+              if (value instanceof RGBA) return value
+            }
           }
           return colors()[index % colors().length]
         },
@@ -172,27 +200,38 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return
         }
         state.pending = false
-        void writeJsonAtomic(filePath, {
-          recent: modelStore.recent,
-          favorite: modelStore.favorite,
-          variant: modelStore.variant,
-        })
+        Effect.runFork(
+          writeJsonAtomic(filePath, ModelStateFile, {
+            recent: modelStore.recent,
+            favorite: modelStore.favorite,
+            variant: modelStore.variant,
+          }).pipe(
+            Effect.catchCause((cause) => Effect.logError("Failed to write model state", cause)),
+            Effect.provide(fileSystemLayer),
+          ),
+        )
       }
 
-      readJson<unknown>(filePath)
-        .then((x) => {
-          if (!x || typeof x !== "object") return
-          const value = x as Record<string, unknown>
-          if (Array.isArray(value.recent)) setModelStore("recent", value.recent)
-          if (Array.isArray(value.favorite)) setModelStore("favorite", value.favorite)
-          if (typeof value.variant === "object" && value.variant !== null)
-            setModelStore("variant", value.variant as Record<string, string | undefined>)
-        })
-        .catch(() => {})
-        .finally(() => {
-          setModelStore("ready", true)
-          if (state.pending) save()
-        })
+      // A missing or invalid model.json leaves the defaults in place.
+      Effect.runFork(
+        readJson(filePath, ModelStateFile).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              if (value.recent) setModelStore("recent", value.recent)
+              if (value.favorite) setModelStore("favorite", value.favorite)
+              if (value.variant) setModelStore("variant", value.variant)
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              setModelStore("ready", true)
+              if (state.pending) save()
+            }),
+          ),
+          Effect.provide(fileSystemLayer),
+        ),
+      )
 
       const fallbackModel = createMemo(() => {
         if (args.model) {
@@ -235,12 +274,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const currentModel = createMemo(() => {
         const a = agent.current()
-        return (
+        return Option.getOrUndefined(
           getFirstValidModel(
             () => a && modelStore.model[a.name],
             () => a && a.model,
             fallbackModel,
-          ) ?? undefined
+          ),
         )
       })
 
@@ -397,7 +436,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
             const index = variants.indexOf(current)
             if (index === -1 || index === variants.length - 1) {
-              this.set(undefined)
+              // set stores "default" for a missing value, which clears the variant.
+              this.set("default")
               return
             }
             this.set(variants[index + 1])
@@ -428,30 +468,38 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return
         }
         state.pending = false
-        void writeJsonAtomic(filePath, {
-          pinned: sessionStore.pinned,
-        })
+        Effect.runFork(
+          writeJsonAtomic(filePath, SessionStateFile, { pinned: sessionStore.pinned }).pipe(
+            Effect.catchCause((cause) => Effect.logError("Failed to write session state", cause)),
+            Effect.provide(fileSystemLayer),
+          ),
+        )
       }
 
-      readJson<unknown>(filePath)
-        .then((x) => {
-          if (!x || typeof x !== "object") return
-          const pinned = (x as Record<string, unknown>).pinned
-          if (Array.isArray(pinned))
-            setSessionStore(
-              "pinned",
-              pinned.filter((item): item is string => typeof item === "string"),
-            )
-        })
-        .catch(() => {})
-        .finally(() => {
-          setSessionStore("ready", true)
-          if (state.pending) save()
-        })
+      // A missing or invalid session.json leaves no pinned sessions.
+      Effect.runFork(
+        readJson(filePath, SessionStateFile).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              if (value.pinned) setSessionStore("pinned", value.pinned)
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              setSessionStore("ready", true)
+              if (state.pending) save()
+            }),
+          ),
+          Effect.provide(fileSystemLayer),
+        ),
+      )
 
       const slots = createMemo(() => {
-        const existing = new Set(sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id))
-        return sessionStore.pinned.filter((id) => existing.has(id)).slice(0, 9)
+        const existing = HashSet.fromIterable(
+          sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id),
+        )
+        return sessionStore.pinned.filter((id) => HashSet.has(existing, id)).slice(0, 9)
       })
 
       function prune(sessionID: string) {
@@ -507,15 +555,25 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const status = sync.data.mcp[name]
         return status?.status === "connected"
       },
-      async toggle(name: string) {
-        const status = sync.data.mcp[name]
-        if (status?.status === "connected") {
-          // Disable: disconnect the MCP
-          await sdk.client.mcp.disconnect({ name })
-        } else {
-          // Enable/Retry: connect the MCP (handles disabled, failed, and other states)
-          await sdk.client.mcp.connect({ name })
-        }
+      toggle(name: string) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const status = sync.data.mcp[name]
+            if (status?.status === "connected") {
+              // Disable: disconnect the MCP
+              yield* Effect.tryPromise({
+                try: () => sdk.client.mcp.disconnect({ name }),
+                catch: (cause) => new McpToggleError({ message: `Failed to disconnect MCP server ${name}`, cause }),
+              })
+              return
+            }
+            // Enable/Retry: connect the MCP (handles disabled, failed, and other states)
+            yield* Effect.tryPromise({
+              try: () => sdk.client.mcp.connect({ name }),
+              catch: (cause) => new McpToggleError({ message: `Failed to connect MCP server ${name}`, cause }),
+            })
+          }),
+        )
       },
     }
 

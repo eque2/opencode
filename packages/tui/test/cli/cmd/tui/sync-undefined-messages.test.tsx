@@ -35,7 +35,11 @@ describe("tui sync (#26560)", () => {
     }, tmp.path)
 
     try {
-      await expect(sync.session.sync(sessionID)).resolves.toBeUndefined()
+      const outcome = await sync.session.sync(sessionID).then(
+        (value) => ({ status: "resolved", value }),
+        (error: unknown) => ({ status: "rejected", error }),
+      )
+      expect(outcome).toStrictEqual({ status: "resolved", value: undefined })
     } finally {
       app.renderer.destroy()
     }

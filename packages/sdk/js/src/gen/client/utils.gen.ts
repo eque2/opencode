@@ -3,14 +3,19 @@
 import { getAuthToken } from "../core/auth.gen.js"
 import type { QuerySerializerOptions } from "../core/bodySerializer.gen.js"
 import { jsonBodySerializer } from "../core/bodySerializer.gen.js"
-import { serializeArrayParam, serializeObjectParam, serializePrimitiveParam } from "../core/pathSerializer.gen.js"
-import { getUrl } from "../core/utils.gen.js"
+import {
+  serializeArrayParam,
+  serializeObjectParam,
+  serializePrimitiveParam,
+  toParamString,
+} from "../core/pathSerializer.gen.js"
+import { getUrl, isRecord } from "../core/utils.gen.js"
 import type { Client, ClientOptions, Config, RequestOptions } from "./types.gen.js"
 
-export const createQuerySerializer = <T = unknown>({ allowReserved, array, object }: QuerySerializerOptions = {}) => {
-  const querySerializer = (queryParams: T) => {
+export const createQuerySerializer = ({ allowReserved, array, object }: QuerySerializerOptions = {}) => {
+  const querySerializer = (queryParams: unknown) => {
     const search: string[] = []
-    if (queryParams && typeof queryParams === "object") {
+    if (isRecord(queryParams)) {
       for (const name in queryParams) {
         const value = queryParams[name]
 
@@ -28,13 +33,13 @@ export const createQuerySerializer = <T = unknown>({ allowReserved, array, objec
             ...array,
           })
           if (serializedArray) search.push(serializedArray)
-        } else if (typeof value === "object") {
+        } else if (isRecord(value)) {
           const serializedObject = serializeObjectParam({
             allowReserved,
             explode: true,
             name,
             style: "deepObject",
-            value: value as Record<string, unknown>,
+            value,
             ...object,
           })
           if (serializedObject) search.push(serializedObject)
@@ -42,7 +47,7 @@ export const createQuerySerializer = <T = unknown>({ allowReserved, array, objec
           const serializedPrimitive = serializePrimitiveParam({
             allowReserved,
             name,
-            value: value as string,
+            value,
           })
           if (serializedPrimitive) search.push(serializedPrimitive)
         }
@@ -66,7 +71,7 @@ export const getParseAs = (contentType: string | null): Exclude<Config["parseAs"
   const cleanContent = contentType.split(";")[0]?.trim()
 
   if (!cleanContent) {
-    return
+    return undefined
   }
 
   if (cleanContent.startsWith("application/json") || cleanContent.endsWith("+json")) {
@@ -85,7 +90,7 @@ export const getParseAs = (contentType: string | null): Exclude<Config["parseAs"
     return "text"
   }
 
-  return
+  return undefined
 }
 
 const checkForExistence = (
@@ -143,7 +148,7 @@ export const setAuthParams = async ({
 
 export const buildUrl: Client["buildUrl"] = (options) =>
   getUrl({
-    baseUrl: options.baseUrl as string,
+    baseUrl: typeof options.baseUrl === "string" ? options.baseUrl : undefined,
     path: options.path,
     query: options.query,
     querySerializer:
@@ -169,19 +174,19 @@ export const mergeHeaders = (...headers: Array<Required<Config>["headers"] | und
       continue
     }
 
-    const iterator = header instanceof Headers ? header.entries() : Object.entries(header)
+    const iterator: Iterable<[string, unknown]> = header instanceof Headers ? header.entries() : Object.entries(header)
 
     for (const [key, value] of iterator) {
       if (value === null) {
         mergedHeaders.delete(key)
       } else if (Array.isArray(value)) {
         for (const v of value) {
-          mergedHeaders.append(key, v as string)
+          mergedHeaders.append(key, toParamString(v))
         }
       } else if (value !== undefined) {
         // assume object headers are meant to be JSON stringified, i.e. their
         // content value in OpenAPI specification is 'application/json'
-        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : (value as string))
+        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : toParamString(value))
       }
     }
   }

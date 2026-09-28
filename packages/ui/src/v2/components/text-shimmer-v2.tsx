@@ -1,11 +1,13 @@
-import { createEffect, createMemo, createSignal, onCleanup, type ValidComponent } from "solid-js"
+import { Duration, Effect } from "effect"
+import { createEffect, createMemo, createSignal, type ValidComponent } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { createFiberSlot } from "../../hooks/create-fiber-slot"
 import "./text-shimmer-v2.css"
 
-export const TextShimmerV2 = <T extends ValidComponent = "span">(props: {
+export const TextShimmerV2 = (props: {
   text: string
   class?: string
-  as?: T
+  as?: ValidComponent
   active?: boolean
   offset?: number
 }) => {
@@ -14,28 +16,17 @@ export const TextShimmerV2 = <T extends ValidComponent = "span">(props: {
   const offset = createMemo(() => props.offset ?? 0)
   const [run, setRun] = createSignal(active())
   const swap = 220
-  let timer: ReturnType<typeof setTimeout> | undefined
+  const swapDelay = createFiberSlot()
 
   createEffect(() => {
-    if (timer) {
-      clearTimeout(timer)
-      timer = undefined
-    }
+    swapDelay.interrupt()
 
     if (active()) {
       setRun(true)
       return
     }
 
-    timer = setTimeout(() => {
-      timer = undefined
-      setRun(false)
-    }, swap)
-  })
-
-  onCleanup(() => {
-    if (!timer) return
-    clearTimeout(timer)
+    swapDelay.run(Effect.sleep(Duration.millis(swap)).pipe(Effect.andThen(Effect.sync(() => setRun(false)))))
   })
 
   return (

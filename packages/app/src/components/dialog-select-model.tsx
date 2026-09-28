@@ -22,6 +22,8 @@ import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { matchesModelSearch } from "./dialog-select-model-search"
+import { Effect, MutableHashMap, Option } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -91,7 +93,12 @@ const ModelList: Component<{
         </Tooltip>
       )}
       onSelect={(x) => {
-        model.set(x ? { modelID: x.id, providerID: x.provider.id } : undefined, {
+        // List passes no item when nothing is active; model.set reads undefined as "clear the model".
+        const selected = Option.map(Option.fromNullishOr(x), (item) => ({
+          modelID: item.id,
+          providerID: item.provider.id,
+        }))
+        model.set(Option.getOrUndefined(selected), {
           recent: true,
         })
         props.onSelect()
@@ -124,24 +131,24 @@ export function ModelSelectorPopover(props: {
 }) {
   const [store, setStore] = createStore<{
     open: boolean
-    dismiss: Dismiss | null
+    dismiss: Option.Option<Dismiss>
   }>({
     open: false,
-    dismiss: null,
+    dismiss: Option.none(),
   })
   const dialog = useDialog()
   const local = useLocal()
   const directory = () => decode64(local.slug())
 
   const close = (dismiss: Dismiss) => {
-    setStore("dismiss", dismiss)
+    setStore("dismiss", Option.some(dismiss))
     setStore("open", false)
   }
 
   const handleManage = () => {
     close("manage")
     void import("./dialog-manage-models").then((x) => {
-      dialog.show(() => <x.DialogManageModels />)
+      void dialog.show(() => <x.DialogManageModels />)
     })
   }
 
@@ -157,7 +164,7 @@ export function ModelSelectorPopover(props: {
     <Kobalte
       open={store.open}
       onOpenChange={(next) => {
-        if (next) setStore("dismiss", null)
+        if (next) setStore("dismiss", Option.none())
         setStore("open", next)
       }}
       modal={false}
@@ -177,12 +184,15 @@ export function ModelSelectorPopover(props: {
           onFocusOutside={() => close("outside")}
           onCloseAutoFocus={(event) => {
             const dismiss = store.dismiss
-            if (dismiss === "outside") event.preventDefault()
-            if (dismiss === "escape" || dismiss === "select") {
-              event.preventDefault()
-              props.onClose?.(dismiss)
+            if (Option.isSome(dismiss)) {
+              const cause = dismiss.value
+              if (cause === "outside") event.preventDefault()
+              if (cause === "escape" || cause === "select") {
+                event.preventDefault()
+                props.onClose?.(cause)
+              }
             }
-            setStore("dismiss", null)
+            setStore("dismiss", Option.none())
           }}
         >
           <Kobalte.Title class="sr-only">{language.t("dialog.model.select.title")}</Kobalte.Title>
@@ -274,16 +284,15 @@ function createModelSelectorController(input: {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name))
     },
     groups: (models: ModelItem[]) => {
-      const byProvider = new Map<string, ModelItem[]>()
+      // String keys keep insertion order, so groups start in the order their first model appears.
+      const byProvider = MutableHashMap.empty<string, ModelItem[]>()
       for (const item of models) {
-        byProvider.set(item.provider.id, [...(byProvider.get(item.provider.id) ?? []), item])
+        const items = Option.getOrElse(MutableHashMap.get(byProvider, item.provider.id), (): ModelItem[] => [])
+        MutableHashMap.set(byProvider, item.provider.id, [...items, item])
       }
       return Array.from(byProvider, ([category, items]) => ({ category, items })).sort(sortModelGroups)
     },
-    current: () => {
-      const value = model.current()
-      return value ? modelKey(value) : undefined
-    },
+    current: () => Option.map(Option.fromNullishOr(model.current()), modelKey),
     select: (item: ModelItem) => {
       model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
       input.onSelect()
@@ -295,7 +304,7 @@ function ModelSelectorPopoverV2View(props: {
   trigger: ModelSelectorTrigger
   models: (search: string) => ModelItem[]
   groups: (models: ModelItem[]) => { category: string; items: ModelItem[] }[]
-  current: () => string | undefined
+  current: () => Option.Option<string>
   select: (item: ModelItem) => void
   onManage: () => void
   onClose: () => void
@@ -305,27 +314,46 @@ function ModelSelectorPopoverV2View(props: {
   let searchRef: HTMLInputElement | undefined
   let contentRef: HTMLDivElement | undefined
   const dismiss = createMenuDismissController(() => contentRef)
+  // Effect.yieldNow defers to the next macrotask in the browser, as setTimeout(fn) did.
+  const openFocus = createFiberSlot()
+  const hoverFocus = createFiberSlot()
+  const focusSearch = () => hoverFocus.run(Effect.yieldNow.pipe(Effect.andThen(Effect.sync(() => searchRef?.focus()))))
 
   const models = createMemo(() => props.models(store.search))
   const groups = createMemo(() => props.groups(models()))
   const keys = () => [...models().map(modelKey), manageKey]
   const initialActive = () => {
-    const selected = props.current()
     const options = keys()
-    if (selected && options.includes(selected)) return selected
-    return options[0] ?? ""
+    return Option.getOrElse(
+      Option.filter(props.current(), (selected) => selected !== "" && options.includes(selected)),
+      () => options[0] ?? "",
+    )
   }
-  const activeItem = () =>
-    store.active ? contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(store.active)}"]`) : undefined
+  const activeItem = (): Option.Option<HTMLElement> => {
+    if (!store.active) return Option.none()
+    return Option.fromNullishOr(
+      contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(store.active)}"]`),
+    )
+  }
+  const revealActive = () => {
+    const item = activeItem()
+    if (Option.isSome(item)) item.value.scrollIntoView({ block: "nearest" })
+  }
   const setOpen = (open: boolean) => {
     if (open) {
       dismiss.allowTriggerRestore()
       setStore({ open: true, active: initialActive() })
-      setTimeout(() =>
-        requestAnimationFrame(() => {
-          searchRef?.focus()
-          activeItem()?.scrollIntoView({ block: "nearest" })
-        }),
+      openFocus.run(
+        Effect.yieldNow.pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              requestAnimationFrame(() => {
+                searchRef?.focus()
+                revealActive()
+              }),
+            ),
+          ),
+        ),
       )
       return
     }
@@ -355,7 +383,7 @@ function ModelSelectorPopoverV2View(props: {
     const index = options.indexOf(store.active)
     const start = index === -1 ? 0 : index
     setStore("active", options[(start + delta + options.length) % options.length])
-    queueMicrotask(() => activeItem()?.scrollIntoView({ block: "nearest" }))
+    queueMicrotask(revealActive)
   }
   const setSearch = (value: string) => {
     const first = props.models(value)[0]
@@ -379,9 +407,9 @@ function ModelSelectorPopoverV2View(props: {
         <MenuV2.Content
           ref={(element: HTMLDivElement) => (contentRef = element)}
           class="w-[284px] overflow-hidden rounded-md border-0 bg-v2-background-bg-layer-01 !p-0 shadow-[var(--v2-elevation-floating)] focus:outline-none"
-          onPointerDownOutside={dismiss.preventTriggerRestore}
-          onFocusOutside={dismiss.preventTriggerRestore}
-          onCloseAutoFocus={dismiss.onCloseAutoFocus}
+          onPointerDownOutside={() => dismiss.preventTriggerRestore()}
+          onFocusOutside={() => dismiss.preventTriggerRestore()}
+          onCloseAutoFocus={(event) => dismiss.onCloseAutoFocus(event)}
         >
           <div class="flex flex-col p-0.5">
             <div class="flex h-7 items-center gap-2 rounded-sm pl-3 pr-2.5 text-v2-icon-icon-muted">
@@ -453,7 +481,7 @@ function ModelSelectorPopoverV2View(props: {
                       <MenuV2.GroupLabel class="sticky top-0 z-10 gap-2 bg-v2-background-bg-layer-01 px-3">
                         <span class="min-w-0 truncate">{group.items[0].provider.name}</span>
                       </MenuV2.GroupLabel>
-                      <MenuV2.RadioGroup value={props.current()}>
+                      <MenuV2.RadioGroup value={Option.getOrUndefined(props.current())}>
                         <For each={group.items}>
                           {(item) => (
                             <TooltipV2
@@ -473,12 +501,14 @@ function ModelSelectorPopoverV2View(props: {
                               <MenuV2.RadioItem
                                 value={modelKey(item)}
                                 data-option-key={modelKey(item)}
-                                data-selected-model={props.current() === modelKey(item) ? true : undefined}
+                                {...(Option.contains(props.current(), modelKey(item))
+                                  ? { "data-selected-model": true }
+                                  : {})}
                                 class="scroll-my-6 w-full"
                                 classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === modelKey(item) }}
                                 onMouseEnter={() => {
                                   setStore("active", modelKey(item))
-                                  setTimeout(() => searchRef?.focus())
+                                  focusSearch()
                                 }}
                                 onSelect={() => selectModel(item)}
                               >
@@ -507,7 +537,7 @@ function ModelSelectorPopoverV2View(props: {
               classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === manageKey }}
               onMouseEnter={() => {
                 setStore("active", manageKey)
-                setTimeout(() => searchRef?.focus())
+                focusSearch()
               }}
               onSelect={manage}
             >
@@ -535,7 +565,7 @@ export const DialogSelectModel: Component<{ provider?: string; model?: ModelStat
 
   const manage = () => {
     void import("./dialog-manage-models").then((x) => {
-      dialog.show(() => <x.DialogManageModels />)
+      void dialog.show(() => <x.DialogManageModels />)
     })
   }
 

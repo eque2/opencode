@@ -1,4 +1,5 @@
-import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
+import { Array as Arr } from "effect"
+import { createEffect, createMemo, For, Show, type JSX } from "solid-js"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -91,25 +92,25 @@ export function PromptInputV2(props: PromptInputV2Props) {
         <PromptInputV2Popover
           emptyLabel={i18n.t("ui.promptInput.noMatchingItems")}
           items={props.controller.suggestions()}
-          activeID={state.popover.type === "closed" ? undefined : state.popover.activeID}
-          search={
-            state.popover.type === "command-menu"
-              ? {
+          {...(state.popover.type === "closed" ? {} : { activeID: state.popover.activeID })}
+          {...(state.popover.type === "command-menu"
+            ? {
+                search: {
                   value: state.popover.query,
                   label: i18n.t("ui.promptInput.commands"),
                   placeholder: "/",
                   onValueChange: props.controller.setQuery,
                   onKeyDown: props.controller.onKeyDown,
-                }
-              : undefined
-          }
+                },
+              }
+            : {})}
           onActiveChange={(item) => props.controller.dispatch({ type: "popover.active", id: item.id })}
           onSelect={(item) => props.controller.dispatch({ type: "popover.select", item })}
         />
       </Show>
       <form
         data-component="prompt-input-v2"
-        data-dock-border-underlay={props.borderUnderlay ? "v2" : undefined}
+        {...(props.borderUnderlay ? { "data-dock-border-underlay": "v2" } : {})}
         class="group/prompt-input relative min-h-[96px] w-full overflow-clip rounded-xl bg-v2-background-bg-base"
         classList={{
           "shadow-[var(--v2-elevation-raised)]": !props.borderUnderlay,
@@ -199,7 +200,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
           <div
             class="flex min-w-0 flex-1 items-center gap-1"
             aria-hidden={state.mode === "shell"}
-            inert={state.mode === "shell" ? true : undefined}
+            inert={state.mode === "shell"}
             style={buttons()}
           >
             <PromptInputV2AddMenu
@@ -299,13 +300,18 @@ function renderPromptInputV2Editor(editor: HTMLDivElement, prompt: PromptInputV2
 }
 
 function parsePromptInputV2Editor(editor: HTMLDivElement) {
-  const parts: Exclude<PromptInputV2Prompt[number], PromptInputV2Attachment>[] = []
+  let parts: Exclude<PromptInputV2Prompt[number], PromptInputV2Attachment>[] = []
   let buffer = ""
   let position = 0
 
   const flush = () => {
     if (!buffer) return
-    parts.push({ type: "text", content: buffer, start: position, end: position + buffer.length })
+    parts = Arr.append(parts, {
+      type: "text" as const,
+      content: buffer,
+      start: position,
+      end: position + buffer.length,
+    })
     position += buffer.length
     buffer = ""
   }
@@ -313,8 +319,8 @@ function parsePromptInputV2Editor(editor: HTMLDivElement) {
     flush()
     const content = element.textContent ?? ""
     if (element.dataset.mention === "agent") {
-      parts.push({
-        type: "agent",
+      parts = Arr.append(parts, {
+        type: "agent" as const,
         name: element.dataset.name ?? content.slice(1),
         content,
         start: position,
@@ -323,8 +329,8 @@ function parsePromptInputV2Editor(editor: HTMLDivElement) {
       position += content.length
       return
     }
-    parts.push({
-      type: "file",
+    parts = Arr.append(parts, {
+      type: "file" as const,
       path: element.dataset.path ?? content.slice(1),
       content,
       start: position,
@@ -688,7 +694,7 @@ export function PromptInputV2SubmitButton(props: {
         data-action="prompt-submit"
         type="button"
         disabled={!props.stopping && props.disabled}
-        tabIndex={props.mode === "normal" ? undefined : -1}
+        {...(props.mode === "normal" ? {} : { tabIndex: -1 })}
         icon={props.stopping ? "stop" : props.mode === "shell" ? "arrow-undo-down" : "arrow-up"}
         variant="primary"
         class="size-7 rounded-md p-[6px] text-v2-icon-icon-muted shadow-[var(--v2-elevation-button-contrast)] disabled:opacity-50"
@@ -711,9 +717,9 @@ export function PromptInputV2SubmitButton(props: {
   )
 }
 
-function PromptInputV2SuggestionIcon(props: { item: PromptInputV2Suggestion }) {
+function PromptInputV2SuggestionIcon(props: { item: PromptInputV2Suggestion }): JSX.Element {
   if (props.item.kind === "agent") return <Icon name="brain" size="small" class="shrink-0 text-icon-info-active" />
-  if (props.item.kind === "command") return null
+  if (props.item.kind === "command") return undefined
   return (
     <FileIcon
       node={{ path: props.item.path ?? props.item.label, type: props.item.kind === "reference" ? "directory" : "file" }}

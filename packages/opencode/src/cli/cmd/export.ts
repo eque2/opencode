@@ -1,20 +1,30 @@
 import { Session } from "@/session/session"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { MessageV2 } from "../../session/message-v2"
 import { SessionID } from "../../session/schema"
 import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
-import { Effect } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 function redact(kind: string, id: string, value: string) {
   return value.trim() ? `[redacted:${kind}:${id}]` : value
 }
 
-function data(kind: string, id: string, value: Record<string, unknown> | undefined) {
+// Generic over the record type, so a Json metadata record keeps its type when it is not redacted.
+function data<Value extends object>(kind: string, id: string, value: Value | undefined) {
   if (!value) return value
   return Object.keys(value).length ? { redacted: `${kind}:${id}` } : value
+}
+
+// SessionV1 marks these fields optional, so an absent value stays absent in the export.
+function redactOptional(kind: string, id: string, value: string | undefined) {
+  return Option.fromUndefinedOr(value).pipe(
+    Option.map((item) => redact(kind, id, item)),
+    Option.getOrUndefined,
+  )
 }
 
 function span(id: string, value: { value: string; start: number; end: number }) {
@@ -27,8 +37,8 @@ function span(id: string, value: { value: string; start: number; end: number }) 
 function diff(kind: string, diffs: { file?: string; patch?: string }[] | undefined) {
   return diffs?.map((item, i) => ({
     ...item,
-    file: item.file === undefined ? undefined : redact(`${kind}-file`, String(i), item.file),
-    patch: item.patch === undefined ? undefined : redact(`${kind}-patch`, String(i), item.patch),
+    file: redactOptional(`${kind}-file`, String(i), item.file),
+    patch: redactOptional(`${kind}-patch`, String(i), item.patch),
   }))
 }
 
@@ -61,7 +71,7 @@ function filepart(part: SessionV1.FilePart): SessionV1.FilePart {
   return {
     ...part,
     url: redact("file-url", part.id, part.url),
-    filename: part.filename === undefined ? undefined : redact("file-name", part.id, part.filename),
+    filename: redactOptional("file-name", part.id, part.filename),
     source: source(part),
   }
 }
@@ -87,7 +97,7 @@ function part(part: SessionV1.Part): SessionV1.Part {
         ...part,
         prompt: redact("subtask-prompt", part.id, part.prompt),
         description: redact("subtask-description", part.id, part.description),
-        command: part.command === undefined ? undefined : redact("subtask-command", part.id, part.command),
+        command: redactOptional("subtask-command", part.id, part.command),
       }
     case "tool":
       return {
@@ -104,7 +114,7 @@ function part(part: SessionV1.Part): SessionV1.Part {
               ? {
                   ...part.state,
                   input: data("tool-input", part.id, part.state.input) ?? part.state.input,
-                  title: part.state.title === undefined ? undefined : redact("tool-title", part.id, part.state.title),
+                  title: redactOptional("tool-title", part.id, part.state.title),
                   metadata: data("tool-state-metadata", part.id, part.state.metadata),
                 }
               : part.state.status === "completed"
@@ -136,12 +146,12 @@ function part(part: SessionV1.Part): SessionV1.Part {
     case "step-start":
       return {
         ...part,
-        snapshot: part.snapshot === undefined ? undefined : redact("snapshot", part.id, part.snapshot),
+        snapshot: redactOptional("snapshot", part.id, part.snapshot),
       }
     case "step-finish":
       return {
         ...part,
-        snapshot: part.snapshot === undefined ? undefined : redact("snapshot", part.id, part.snapshot),
+        snapshot: redactOptional("snapshot", part.id, part.snapshot),
       }
     case "agent":
       return {
@@ -176,14 +186,8 @@ function sanitize(data: { info: Session.Info; messages: SessionV1.WithParts[] })
         ? data.info.revert
         : {
             ...data.info.revert,
-            snapshot:
-              data.info.revert.snapshot === undefined
-                ? undefined
-                : redact("revert-snapshot", data.info.id, data.info.revert.snapshot),
-            diff:
-              data.info.revert.diff === undefined
-                ? undefined
-                : redact("revert-diff", data.info.id, data.info.revert.diff),
+            snapshot: redactOptional("revert-snapshot", data.info.id, data.info.revert.snapshot),
+            diff: redactOptional("revert-diff", data.info.id, data.info.revert.diff),
           },
     },
     messages: data.messages.map((msg) => ({
@@ -191,19 +195,13 @@ function sanitize(data: { info: Session.Info; messages: SessionV1.WithParts[] })
         msg.info.role === "user"
           ? {
               ...msg.info,
-              system: msg.info.system === undefined ? undefined : redact("system", msg.info.id, msg.info.system),
+              system: redactOptional("system", msg.info.id, msg.info.system),
               summary: !msg.info.summary
                 ? msg.info.summary
                 : {
                     ...msg.info.summary,
-                    title:
-                      msg.info.summary.title === undefined
-                        ? undefined
-                        : redact("summary-title", msg.info.id, msg.info.summary.title),
-                    body:
-                      msg.info.summary.body === undefined
-                        ? undefined
-                        : redact("summary-body", msg.info.id, msg.info.summary.body),
+                    title: redactOptional("summary-title", msg.info.id, msg.info.summary.title),
+                    body: redactOptional("summary-body", msg.info.id, msg.info.summary.body),
                     diffs: diff("message-diff", msg.info.summary.diffs),
                   },
             }
@@ -239,54 +237,69 @@ export const ExportCommand = effectCmd({
 
 const run = Effect.fn("Cli.export.body")(function* (args: { sessionID?: string; sanitize?: boolean }) {
   const svc = yield* Session.Service
-  let sessionID = args.sessionID ? SessionID.make(args.sessionID) : undefined
-  process.stderr.write(`Exporting session: ${sessionID ?? "latest"}\n`)
+  const given = args.sessionID ? Option.some(SessionID.make(args.sessionID)) : Option.none<SessionID>()
+  process.stderr.write(`Exporting session: ${Option.getOrElse(given, () => "latest")}\n`)
 
-  if (!sessionID) {
-    UI.empty()
-    prompts.intro("Export session", { output: process.stderr })
-
-    const sessions = yield* svc.list()
-
-    if (sessions.length === 0) {
-      prompts.log.error("No sessions found", { output: process.stderr })
-      prompts.outro("Done", { output: process.stderr })
-      return
-    }
-
-    sessions.sort((a, b) => b.time.updated - a.time.updated)
-
-    const selectedSession = yield* Effect.promise(() =>
-      prompts.autocomplete({
-        message: "Select session to export",
-        maxItems: 10,
-        options: sessions.map((session) => ({
-          label: session.title,
-          value: session.id,
-          hint: `${new Date(session.time.updated).toLocaleString()} • ${session.id.slice(-8)}`,
-        })),
-        output: process.stderr,
-      }),
-    )
-
-    if (prompts.isCancel(selectedSession)) {
-      return yield* Effect.die(new UI.CancelledError())
-    }
-
-    sessionID = selectedSession
-
-    prompts.outro("Exporting session...", { output: process.stderr })
-  }
+  const selected = Option.isSome(given) ? given : yield* selectSession()
+  if (Option.isNone(selected)) return
+  const sessionID = selected.value
 
   // Match legacy try/catch — catches both typed failures and defects
   // (Session.Service.get throws NotFoundError as a defect, not a typed E).
-  return yield* Effect.gen(function* () {
-    const sessionInfo = yield* svc.get(sessionID!)
+  yield* Effect.gen(function* () {
+    const sessionInfo = yield* svc.get(sessionID)
     const messages = yield* svc.messages({ sessionID: sessionInfo.id })
 
     const exportData = { info: sessionInfo, messages }
 
-    process.stdout.write(JSON.stringify(args.sanitize ? sanitize(exportData) : exportData, null, 2))
+    process.stdout.write(yield* encodeJson(args.sanitize ? sanitize(exportData) : exportData).pipe(Effect.orDie))
     process.stdout.write(EOL)
-  }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID!}`)))
+  }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID}`)))
+})
+
+// The fields that Date.prototype.toLocaleString() prints by default.
+const localeDateTime = {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+} as const
+
+// Prompts for a session when none was given. None means there is nothing to export.
+const selectSession = Effect.fn("Cli.export.selectSession")(function* () {
+  const svc = yield* Session.Service
+  UI.empty()
+  prompts.intro("Export session", { output: process.stderr })
+
+  const sessions = yield* svc.list()
+
+  if (sessions.length === 0) {
+    prompts.log.error("No sessions found", { output: process.stderr })
+    prompts.outro("Done", { output: process.stderr })
+    return Option.none<SessionID>()
+  }
+
+  sessions.sort((a, b) => b.time.updated - a.time.updated)
+
+  const selectedSession = yield* Effect.promise(() =>
+    prompts.autocomplete({
+      message: "Select session to export",
+      maxItems: 10,
+      options: sessions.map((session) => ({
+        label: session.title,
+        value: session.id,
+        hint: `${DateTime.formatLocal(DateTime.makeUnsafe(session.time.updated), localeDateTime)} • ${session.id.slice(-8)}`,
+      })),
+      output: process.stderr,
+    }),
+  )
+
+  if (prompts.isCancel(selectedSession)) {
+    return yield* Effect.die(new UI.CancelledError())
+  }
+
+  prompts.outro("Exporting session...", { output: process.stderr })
+  return Option.some(selectedSession)
 })

@@ -1,5 +1,6 @@
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { AssistantMessage, Message, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
+import { Array as Arr, HashMap, Option } from "effect"
 import { createMemo, type Accessor } from "solid-js"
 import { reuseTimelineRows } from "./row-reconciliation"
 import { Timeline, TimelineRow } from "./rows"
@@ -15,24 +16,24 @@ export function createTimelineProjection(input: {
   showReasoningSummaries: Accessor<boolean>
   inlineComments: Accessor<boolean>
 }) {
-  const messageByID = createMemo(() => new Map(input.messages().map((message) => [message.id, message] as const)))
-  const assistantMessagesByParent = createMemo(() => {
-    const result = new Map<string, AssistantMessage[]>()
-    input.messages().forEach((message) => {
-      if (message.role !== "assistant") return
-      const messages = result.get(message.parentID)
-      if (messages) {
-        messages.push(message)
-        return
-      }
-      result.set(message.parentID, [message])
-    })
-    return result
-  })
+  const messageByID = createMemo(() =>
+    HashMap.fromIterable(input.messages().map((message) => [message.id, message] as const)),
+  )
+  // groupBy keeps the input order inside each group, so each parent lists its replies oldest first.
+  const assistantMessagesByParent = createMemo(() =>
+    HashMap.fromIterable(
+      Object.entries(
+        Arr.groupBy(
+          input.messages().filter((message): message is AssistantMessage => message.role === "assistant"),
+          (message) => message.parentID,
+        ),
+      ),
+    ),
+  )
   const projection = createMemo(() =>
     Timeline.constructSessionMessageRows(
       input.sessionMessages(),
-      (messageID) => messageByID().get(messageID) as UserMessage | AssistantMessage | undefined,
+      (messageID) => Option.getOrUndefined(HashMap.get(messageByID(), messageID)),
       input.parts,
       input.showReasoningSummaries(),
       input.status().type,
@@ -44,29 +45,27 @@ export function createTimelineProjection(input: {
   const rows = createMemo((previous: TimelineRow.TimelineRow[] | undefined) =>
     reuseTimelineRows(previous, projection().rows),
   )
-  const rowByKey = createMemo(() => new Map(rows().map((row) => [TimelineRow.key(row), row] as const)))
-  const messageRowIndex = createMemo(() => {
-    const result = new Map<string, number>()
-    rows().forEach((row, index) => {
-      if (!("userMessageID" in row) || result.has(row.userMessageID)) return
-      result.set(row.userMessageID, index)
-    })
-    return result
-  })
-  const messageLastRowIndex = createMemo(() => {
-    const result = new Map<string, number>()
-    rows().forEach((row, index) => {
-      if ("userMessageID" in row) result.set(row.userMessageID, index)
-    })
-    return result
-  })
-  const lastAssistantGroupKey = createMemo(() => {
-    const result = new Map<string, string>()
-    rows().forEach((row) => {
-      if (row._tag === "AssistantPart") result.set(row.userMessageID, row.group.key)
-    })
-    return result
-  })
+  const rowByKey = createMemo(() => HashMap.fromIterable(rows().map((row) => [TimelineRow.key(row), row] as const)))
+  // The first row of each user message wins.
+  const messageRowIndex = createMemo(() =>
+    HashMap.mutate(HashMap.empty<string, number>(), (result) =>
+      rows().forEach((row, index) => {
+        if (!("userMessageID" in row) || HashMap.has(result, row.userMessageID)) return
+        HashMap.set(result, row.userMessageID, index)
+      }),
+    ),
+  )
+  // fromIterable keeps the last entry for a repeated key, so the last row of each user message wins.
+  const messageLastRowIndex = createMemo(() =>
+    HashMap.fromIterable(
+      rows().flatMap((row, index) => ("userMessageID" in row ? [[row.userMessageID, index] as const] : [])),
+    ),
+  )
+  const lastAssistantGroupKey = createMemo(() =>
+    HashMap.fromIterable(
+      rows().flatMap((row) => (row._tag === "AssistantPart" ? [[row.userMessageID, row.group.key] as const] : [])),
+    ),
+  )
 
   return {
     activeMessageID,

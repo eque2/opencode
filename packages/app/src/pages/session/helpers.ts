@@ -1,8 +1,11 @@
-import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
+import { batch, createMemo, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { Array as Arr, Effect, Option, Schema } from "effect"
 import { same } from "@/utils/same"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
+import type { SelectedLineRange } from "@/context/file"
 
 export { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
 
@@ -22,6 +25,28 @@ type TabsInput = {
   fileBrowser?: Accessor<boolean>
 }
 
+const SelectionSide = Schema.Literals(["additions", "deletions"])
+
+const SelectedLineRangeSchema = Schema.Struct({
+  start: Schema.Number,
+  end: Schema.Number,
+  side: Schema.optional(SelectionSide),
+  endSide: Schema.optional(SelectionSide),
+}).annotate({
+  identifier: "SessionHelpers.SelectedLineRange",
+})
+
+const isSelectedLineRange = Schema.is(SelectedLineRangeSchema)
+
+/**
+ * Reads a selected line range from a file view value.
+ *
+ * The file context returns stored selections as `unknown`. This returns None
+ * when the value is absent or is not a line range.
+ */
+export const readSelectedLineRange = (value: unknown): Option.Option<SelectedLineRange> =>
+  isSelectedLineRange(value) ? Option.some(value) : Option.none()
+
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
 
 export function shouldShowFileTree(input: { visible: boolean; opened: boolean }) {
@@ -39,20 +64,17 @@ export const createSessionTabs = (input: TabsInput) => {
       (input.tabs().active() === SESSION_OPEN_FILE_TAB || input.tabs().all().includes(SESSION_OPEN_FILE_TAB)),
   )
   const panelTabs = createMemo(
-    () => {
-      const seen = new Set<string>()
-      return input
-        .tabs()
-        .all()
-        .flatMap((tab) => {
-          if (tab === "context" || tab === "review") return []
-          if (tab === SESSION_OPEN_FILE_TAB && !fileBrowser()) return []
-          const value = input.pathFromTab(tab) ? input.normalizeTab(tab) : tab
-          if (seen.has(value)) return []
-          seen.add(value)
-          return [value]
-        })
-    },
+    () =>
+      Arr.dedupe(
+        input
+          .tabs()
+          .all()
+          .flatMap((tab) => {
+            if (tab === "context" || tab === "review") return []
+            if (tab === SESSION_OPEN_FILE_TAB && !fileBrowser()) return []
+            return [input.pathFromTab(tab) ? input.normalizeTab(tab) : tab]
+          }),
+      ),
     emptyTabs,
     { equals: same },
   )
@@ -74,14 +96,14 @@ export const createSessionTabs = (input: TabsInput) => {
   })
   const activeFileTab = createMemo(() => {
     const active = activeTab()
-    if (!openedTabs().includes(active)) return
+    if (!openedTabs().includes(active)) return undefined
     return active
   })
   const closableTab = createMemo(() => {
     const active = activeTab()
     if (active === "context") return active
     if (active === SESSION_OPEN_FILE_TAB && openFileOpen()) return active
-    if (!openedTabs().includes(active)) return
+    if (!openedTabs().includes(active)) return undefined
     return active
   })
 
@@ -121,7 +143,7 @@ export const createOpenReviewFile = (input: {
   tabForPath: (path: string) => string
   openTab: (tab: string) => void
   setActive: (tab: string) => void
-  loadFile: (path: string) => any | Promise<void>
+  loadFile: (path: string) => unknown
 }) => {
   return (path: string) => {
     batch(() => {
@@ -168,21 +190,16 @@ export const getTabReorderIndex = (tabs: readonly string[], from: string, to: st
 
 export const createSizing = () => {
   const [state, setState] = createStore({ active: false })
-  let t: number | undefined
+  // The pending delayed stop. The slot interrupts it when the owner cleans up.
+  const settle = createFiberSlot()
 
   const stop = () => {
-    if (t !== undefined) {
-      clearTimeout(t)
-      t = undefined
-    }
+    settle.interrupt()
     setState("active", false)
   }
 
   const start = () => {
-    if (t !== undefined) {
-      clearTimeout(t)
-      t = undefined
-    }
+    settle.interrupt()
     setState("active", true)
   }
 
@@ -192,16 +209,12 @@ export const createSizing = () => {
     makeEventListener(window, "blur", stop)
   })
 
-  onCleanup(() => {
-    if (t !== undefined) clearTimeout(t)
-  })
-
   return {
     active: () => state.active,
     start,
     touch() {
       start()
-      t = window.setTimeout(stop, 120)
+      settle.run(Effect.sleep("120 millis").pipe(Effect.andThen(Effect.sync(() => setState("active", false)))))
     },
   }
 }

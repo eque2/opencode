@@ -1,20 +1,22 @@
+import fs from "fs/promises"
 import path from "path"
 
 import { createPlugTask, type PlugCtx, type PlugDeps } from "../../src/cli/cmd/plug"
-import { Filesystem } from "@/util/filesystem"
+import { Option, Schema } from "effect"
 
-type Msg = {
-  dir: string
-  target: string
-  mod: string
-  global?: boolean
-  force?: boolean
-  globalDir?: string
-  vcs?: string
-  worktree?: string
-  directory?: string
-  holdMs?: number
-}
+const Msg = Schema.Struct({
+  dir: Schema.String,
+  target: Schema.String,
+  mod: Schema.String,
+  global: Schema.optional(Schema.Boolean),
+  force: Schema.optional(Schema.Boolean),
+  globalDir: Schema.optional(Schema.String),
+  vcs: Schema.optional(Schema.String),
+  worktree: Schema.optional(Schema.String),
+  directory: Schema.optional(Schema.String),
+  holdMs: Schema.optional(Schema.Number),
+})
+type Msg = typeof Msg.Type
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
@@ -28,12 +30,15 @@ function input() {
     throw new Error("Missing plug worker input")
   }
 
-  const msg = JSON.parse(raw) as Partial<Msg>
-  if (!msg.dir || !msg.target || !msg.mod) {
+  // dir, target and mod must be non-empty strings, as the former truthiness check required.
+  const msg = Schema.decodeUnknownOption(Schema.fromJsonString(Msg))(raw).pipe(
+    Option.filter((value) => value.dir !== "" && value.target !== "" && value.mod !== ""),
+  )
+  if (Option.isNone(msg)) {
     throw new Error("Invalid plug worker input")
   }
 
-  return msg as Msg
+  return msg.value
 }
 
 function deps(msg: Msg): PlugDeps {
@@ -48,14 +53,15 @@ function deps(msg: Msg): PlugDeps {
       success() {},
     },
     resolve: async () => msg.target,
-    readText: (file) => Filesystem.readText(file),
+    readText: (file) => fs.readFile(file, "utf-8"),
     write: async (file, text) => {
       if (msg.holdMs && msg.holdMs > 0) {
         await sleep(msg.holdMs)
       }
-      await Filesystem.write(file, text)
+      // Bun.write creates the parent directory when it is missing.
+      await Bun.write(file, text)
     },
-    exists: (file) => Filesystem.exists(file),
+    exists: (file) => Bun.file(file).exists(),
     files: (dir, name) => [path.join(dir, `${name}.jsonc`), path.join(dir, `${name}.json`)],
     global: msg.globalDir ?? path.join(msg.dir, ".global"),
   }

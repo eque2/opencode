@@ -1,6 +1,19 @@
 import { Platform, usePlatform } from "@/context/platform"
 import { makePersisted, type AsyncStorage, type SyncStorage } from "@solid-primitives/storage"
 import { checksum } from "@opencode-ai/core/util/encode"
+import {
+  Array as Arr,
+  Data,
+  Effect,
+  Iterable,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Order,
+  Predicate,
+  Result,
+  Schema,
+} from "effect"
 import { createResource, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import { pathKey } from "@/utils/path-key"
@@ -24,32 +37,36 @@ type PersistTarget = {
   migrate?: (value: unknown) => unknown
 }
 
+type StorageFactory = NonNullable<Platform["storage"]>
+type DraftStore = NonNullable<Platform["draftStore"]>
+
 const LEGACY_STORAGE = "default.dat"
 const GLOBAL_STORAGE = "opencode.global.dat"
 const WINDOW_STORAGE = "opencode.window"
 const LOCAL_PREFIX = "opencode."
-const fallback = new Map<string, boolean>()
+const fallback = MutableHashSet.empty<string>()
 
 const CACHE_MAX_ENTRIES = 500
 const CACHE_MAX_BYTES = 8 * 1024 * 1024
 
 type CacheEntry = { value: string; bytes: number }
-const cache = new Map<string, CacheEntry>()
+// MutableHashMap iterates in insertion order, so the first key is the least recently used entry.
+const cache = MutableHashMap.empty<string, CacheEntry>()
 const cacheTotal = { bytes: 0 }
 
 function cacheDelete(key: string) {
-  const entry = cache.get(key)
-  if (!entry) return
-  cacheTotal.bytes -= entry.bytes
-  cache.delete(key)
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isNone(entry)) return
+  cacheTotal.bytes -= entry.value.bytes
+  MutableHashMap.remove(cache, key)
 }
 
 function cachePrune() {
   for (;;) {
-    if (cache.size <= CACHE_MAX_ENTRIES && cacheTotal.bytes <= CACHE_MAX_BYTES) return
-    const oldest = cache.keys().next().value as string | undefined
-    if (!oldest) return
-    cacheDelete(oldest)
+    if (MutableHashMap.size(cache) <= CACHE_MAX_ENTRIES && cacheTotal.bytes <= CACHE_MAX_BYTES) return
+    const oldest = Iterable.head(MutableHashMap.keys(cache))
+    if (Option.isNone(oldest)) return
+    cacheDelete(oldest.value)
   }
 }
 
@@ -60,28 +77,28 @@ function cacheSet(key: string, value: string) {
     return
   }
 
-  const entry = cache.get(key)
-  if (entry) cacheTotal.bytes -= entry.bytes
-  cache.delete(key)
-  cache.set(key, { value, bytes })
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isSome(entry)) cacheTotal.bytes -= entry.value.bytes
+  MutableHashMap.remove(cache, key)
+  MutableHashMap.set(cache, key, { value, bytes })
   cacheTotal.bytes += bytes
   cachePrune()
 }
 
-function cacheGet(key: string) {
-  const entry = cache.get(key)
-  if (!entry) return
-  cache.delete(key)
-  cache.set(key, entry)
-  return entry.value
+function cacheGet(key: string): Option.Option<string> {
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isNone(entry)) return Option.none()
+  MutableHashMap.remove(cache, key)
+  MutableHashMap.set(cache, key, entry.value)
+  return Option.some(entry.value.value)
 }
 
 function fallbackDisabled(scope: string) {
-  return fallback.get(scope) === true
+  return MutableHashSet.has(fallback, scope)
 }
 
 function fallbackSet(scope: string) {
-  fallback.set(scope, true)
+  MutableHashSet.add(fallback, scope)
 }
 
 function quota(error: unknown) {
@@ -109,87 +126,89 @@ function quota(error: unknown) {
 
 type Evict = { key: string; size: number }
 
-function evict(storage: Storage, keep: string, value: string) {
-  const total = storage.length
-  const indexes = Array.from({ length: total }, (_, index) => index)
-  const items: Evict[] = []
+const largestFirst = Order.flip(Order.mapInput(Order.Number, (item: Evict) => item.size))
 
-  for (const index of indexes) {
-    const name = storage.key(index)
-    if (!name) continue
-    if (!name.startsWith(LOCAL_PREFIX)) continue
-    if (name === keep) continue
-    const stored = storage.getItem(name)
-    items.push({ key: name, size: stored?.length ?? 0 })
-  }
-
-  items.sort((a, b) => b.size - a.size)
-
-  for (const item of items) {
-    storage.removeItem(item.key)
-    cacheDelete(item.key)
-
-    try {
-      storage.setItem(keep, value)
-      cacheSet(keep, value)
-      return true
-    } catch (error) {
-      if (!quota(error)) throw error
-    }
-  }
-
-  return false
+function evictionCandidates(storage: Storage, keep: string): ReadonlyArray<Evict> {
+  const names = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+  const candidates = names
+    .filter(Predicate.isNotNull)
+    .filter((name) => name.startsWith(LOCAL_PREFIX) && name !== keep)
+    .map((name) => ({ key: name, size: storage.getItem(name)?.length ?? 0 }))
+  return Arr.sort(candidates, largestFirst)
 }
 
-function write(storage: Storage, key: string, value: string) {
-  try {
-    storage.setItem(key, value)
-    cacheSet(key, value)
-    return true
-  } catch (error) {
-    if (!quota(error)) throw error
-  }
-
-  try {
-    storage.removeItem(key)
-    cacheDelete(key)
-    storage.setItem(key, value)
-    cacheSet(key, value)
-    return true
-  } catch (error) {
-    if (!quota(error)) throw error
-  }
-
-  const ok = evict(storage, key, value)
-  return ok
+function storeValue(storage: Storage, key: string, value: string) {
+  storage.setItem(key, value)
+  cacheSet(key, value)
 }
 
-function snapshot(value: unknown) {
-  return JSON.parse(JSON.stringify(value)) as unknown
+// Success(true): the value is written. Success(false): the storage quota is full. Failure: another storage error.
+function attemptWrite(run: () => void): Result.Result<boolean, unknown> {
+  return Result.try(run).pipe(
+    Result.map(() => true),
+    Result.orElse((error) => (quota(error) ? Result.succeed(false) : Result.fail(error))),
+  )
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+function evict(storage: Storage, keep: string, value: string): Result.Result<boolean, unknown> {
+  return Result.flatMap(
+    Result.try(() => evictionCandidates(storage, keep)),
+    (candidates) => {
+      for (const item of candidates) {
+        const written = Result.try(() => storage.removeItem(item.key)).pipe(
+          Result.flatMap(() => {
+            cacheDelete(item.key)
+            return attemptWrite(() => storeValue(storage, keep, value))
+          }),
+        )
+        if (Result.isFailure(written) || written.success) return written
+      }
+      return Result.succeed(false)
+    },
+  )
+}
+
+function write(storage: Storage, key: string, value: string): Result.Result<boolean, unknown> {
+  return attemptWrite(() => storeValue(storage, key, value)).pipe(
+    Result.flatMap((written) =>
+      written
+        ? Result.succeed(true)
+        : attemptWrite(() => {
+            storage.removeItem(key)
+            cacheDelete(key)
+            storeValue(storage, key, value)
+          }),
+    ),
+    Result.flatMap((written) => (written ? Result.succeed(true) : evict(storage, key, value))),
+  )
+}
+
+const JsonText = Schema.fromJsonString(Schema.Unknown)
+const decodeJson = Schema.decodeUnknownOption(JsonText)
+const encodeJson = Schema.encodeUnknownOption(JsonText)
+
+function snapshot(value: unknown): Option.Option<unknown> {
+  return Option.flatMap(encodeJson(value), (text) => decodeJson(text))
 }
 
 function merge(defaults: unknown, value: unknown): unknown {
   if (value === undefined) return defaults
-  if (value === null) return value
+  if (Predicate.isNull(value)) return value
 
   if (Array.isArray(defaults)) {
     if (Array.isArray(value)) return value
     return defaults
   }
 
-  if (isRecord(defaults)) {
-    if (!isRecord(value)) return defaults
+  if (Predicate.isObject(defaults)) {
+    if (!Predicate.isObject(value)) return defaults
 
     const result: Record<string, unknown> = { ...defaults }
     for (const key of Object.keys(value)) {
       if (key in defaults) {
-        result[key] = merge((defaults as Record<string, unknown>)[key], (value as Record<string, unknown>)[key])
+        result[key] = merge(defaults[key], value[key])
       } else {
-        result[key] = (value as Record<string, unknown>)[key]
+        result[key] = value[key]
       }
     }
     return result
@@ -198,152 +217,139 @@ function merge(defaults: unknown, value: unknown): unknown {
   return value
 }
 
-function parse(value: string) {
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return undefined
-  }
+function normalize(defaults: unknown, raw: string, migrate?: (value: unknown) => unknown): Option.Option<string> {
+  return decodeJson(raw).pipe(
+    Option.map((parsed) => (migrate ? migrate(parsed) : parsed)),
+    Option.flatMap((migrated) => encodeJson(merge(defaults, migrated))),
+  )
 }
 
-function normalize(defaults: unknown, raw: string, migrate?: (value: unknown) => unknown) {
-  const parsed = parse(raw)
-  if (parsed === undefined) return
-  const migrated = migrate ? migrate(parsed) : parsed
-  const merged = merge(defaults, migrated)
-  return JSON.stringify(merged)
-}
-
-function readCurrent(input: {
-  storage: SyncStorage
+type ReadInput<S> = {
+  storage: S
   key: string
   defaults: unknown
   migrate?: (value: unknown) => unknown
-}) {
-  const raw = input.storage.getItem(input.key)
-  if (raw === null) return
-  const next = normalize(input.defaults, raw, input.migrate)
-  if (next === undefined) {
-    input.storage.removeItem(input.key)
-    return null
-  }
-  if (raw !== next) input.storage.setItem(input.key, next)
-  return next
 }
 
-function migrateLegacy(input: {
-  current: SyncStorage
-  legacyStore?: SyncStorage
-  stores: SyncStorage[]
-  keys: string[]
+type MigrateInput<S> = {
+  current: S
+  legacyStore: S
+  stores: ReadonlyArray<S>
+  keys: ReadonlyArray<string>
   key: string
   defaults: unknown
   migrate?: (value: unknown) => unknown
-}) {
-  for (const store of input.stores) {
-    const raw = store.getItem(input.key)
-    if (raw === null) continue
+}
 
+// None: nothing is stored. Some(None): the stored value was invalid and is removed. Some(Some): the normalized value.
+function readCurrent(input: ReadInput<SyncStorage>): Option.Option<Option.Option<string>> {
+  return Option.map(Option.fromNullOr(input.storage.getItem(input.key)), (raw) => {
     const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      store.removeItem(input.key)
-      continue
-    }
-    input.current.setItem(input.key, next)
-    store.removeItem(input.key)
+    if (Option.isNone(next)) input.storage.removeItem(input.key)
+    else if (raw !== next.value) input.storage.setItem(input.key, next.value)
     return next
-  }
+  })
+}
 
-  if (!input.legacyStore) return null
+function moveLegacy(from: SyncStorage, fromKey: string, input: MigrateInput<SyncStorage>): Option.Option<string> {
+  return Option.flatMap(Option.fromNullOr(from.getItem(fromKey)), (raw) => {
+    const next = normalize(input.defaults, raw, input.migrate)
+    if (Option.isSome(next)) input.current.setItem(input.key, next.value)
+    from.removeItem(fromKey)
+    return next
+  })
+}
+
+function migrateLegacy(input: MigrateInput<SyncStorage>): Option.Option<string> {
+  for (const store of input.stores) {
+    const moved = moveLegacy(store, input.key, input)
+    if (Option.isSome(moved)) return moved
+  }
 
   for (const key of input.keys) {
-    const raw = input.legacyStore.getItem(key)
-    if (raw === null) continue
-
-    const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      input.legacyStore.removeItem(key)
-      continue
-    }
-    input.current.setItem(input.key, next)
-    input.legacyStore.removeItem(key)
-    return next
+    const moved = moveLegacy(input.legacyStore, key, input)
+    if (Option.isSome(moved)) return moved
   }
 
-  return null
+  return Option.none()
 }
 
-async function readCurrentAsync(input: {
-  storage: AsyncStorage
-  key: string
-  defaults: unknown
-  migrate?: (value: unknown) => unknown
-}) {
-  const raw = await input.storage.getItem(input.key)
-  if (raw === null) return
-  const next = normalize(input.defaults, raw, input.migrate)
-  if (next === undefined) {
-    await input.storage.removeItem(input.key).catch(() => undefined)
-    return null
-  }
-  if (raw !== next) await input.storage.setItem(input.key, next)
-  return next
+class PersistStorageError extends Data.TaggedError("App.PersistStorageError")<{ readonly cause: unknown }> {}
+
+const storageError = (cause: unknown) => new PersistStorageError({ cause })
+
+type EffectStorage = {
+  readonly getItem: (key: string) => Effect.Effect<Option.Option<string>, PersistStorageError>
+  readonly setItem: (key: string, value: string) => Effect.Effect<void, PersistStorageError>
+  readonly removeItem: (key: string) => Effect.Effect<void, PersistStorageError>
 }
 
-async function removeAsync(storage: AsyncStorage, key: string) {
-  try {
-    await storage.removeItem(key)
-  } catch {}
+function settleItem(item: string | null | PromiseLike<string | null>) {
+  if (Predicate.isPromiseLike(item)) return Effect.tryPromise({ try: () => item, catch: storageError })
+  return Effect.succeed(item)
 }
 
-function toAsyncStorage(storage: SyncStorage | AsyncStorage): AsyncStorage {
+function settleDone(result: unknown): Effect.Effect<void, PersistStorageError> {
+  if (Predicate.isPromiseLike(result))
+    return Effect.asVoid(Effect.tryPromise({ try: () => result, catch: storageError }))
+  return Effect.void
+}
+
+// Platform storage can be sync or async; both become Effects that fail with PersistStorageError.
+function effectStorage(storage: SyncStorage | AsyncStorage): EffectStorage {
   return {
-    getItem: async (key) => storage.getItem(key),
-    setItem: async (key, value) => storage.setItem(key, value),
-    removeItem: async (key) => storage.removeItem(key),
+    getItem: (key) =>
+      Effect.try({ try: () => storage.getItem(key), catch: storageError }).pipe(
+        Effect.flatMap(settleItem),
+        Effect.map(Option.fromNullOr),
+      ),
+    setItem: (key, value) =>
+      Effect.try({ try: () => storage.setItem(key, value), catch: storageError }).pipe(Effect.flatMap(settleDone)),
+    removeItem: (key) =>
+      Effect.try({ try: () => storage.removeItem(key), catch: storageError }).pipe(Effect.flatMap(settleDone)),
   }
 }
 
-async function migrateLegacyAsync(input: {
-  current: AsyncStorage
-  legacyStore?: AsyncStorage
-  stores: AsyncStorage[]
-  keys: string[]
-  key: string
-  defaults: unknown
-  migrate?: (value: unknown) => unknown
-}) {
-  for (const store of input.stores) {
-    const raw = await store.getItem(input.key)
-    if (raw === null) continue
+function readCurrentAsync(input: ReadInput<EffectStorage>) {
+  return Effect.gen(function* () {
+    const raw = yield* input.storage.getItem(input.key)
+    if (Option.isNone(raw)) return Option.none<Option.Option<string>>()
+    const next = normalize(input.defaults, raw.value, input.migrate)
+    if (Option.isNone(next)) yield* Effect.ignore(input.storage.removeItem(input.key))
+    else if (raw.value !== next.value) yield* input.storage.setItem(input.key, next.value)
+    return Option.some(next)
+  })
+}
 
-    const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      await removeAsync(store, input.key)
-      continue
+function moveLegacyAsync(from: EffectStorage, fromKey: string, input: MigrateInput<EffectStorage>) {
+  return Effect.gen(function* () {
+    const raw = yield* from.getItem(fromKey)
+    if (Option.isNone(raw)) return Option.none<string>()
+    const next = normalize(input.defaults, raw.value, input.migrate)
+    if (Option.isNone(next)) {
+      yield* Effect.ignore(from.removeItem(fromKey))
+      return next
     }
-    await input.current.setItem(input.key, next)
-    await store.removeItem(input.key)
+    yield* input.current.setItem(input.key, next.value)
+    yield* from.removeItem(fromKey)
     return next
-  }
+  })
+}
 
-  if (!input.legacyStore) return null
-
-  for (const key of input.keys) {
-    const raw = await input.legacyStore.getItem(key)
-    if (raw === null) continue
-
-    const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      await removeAsync(input.legacyStore, key)
-      continue
+function migrateLegacyAsync(input: MigrateInput<EffectStorage>) {
+  return Effect.gen(function* () {
+    for (const store of input.stores) {
+      const moved = yield* moveLegacyAsync(store, input.key, input)
+      if (Option.isSome(moved)) return moved
     }
-    await input.current.setItem(input.key, next)
-    await input.legacyStore.removeItem(key)
-    return next
-  }
 
-  return null
+    for (const key of input.keys) {
+      const moved = yield* moveLegacyAsync(input.legacyStore, key, input)
+      if (Option.isSome(moved)) return moved
+    }
+
+    return Option.none<string>()
+  })
 }
 
 function workspaceStorage(dir: string) {
@@ -363,21 +369,17 @@ function windowStorage(windowID: string) {
   return `${WINDOW_STORAGE}.${safe}.dat`
 }
 
-function legacyWorkspaceStorage(dir: string) {
-  const storage = workspaceStorage(pathKey(dir))
-  const result = new Set<string>()
-  const raw = workspaceStorage(dir)
-  if (raw !== storage) result.add(raw)
-
+function legacyWorkspaceStorage(dir: string): string[] | undefined {
   const key = pathKey(dir)
+  const storage = workspaceStorage(key)
   const drive = key.length >= 3 && key[1] === ":" && key[2] === "/"
-  if (drive) {
-    const backslash = workspaceStorage(key.replaceAll("/", "\\"))
-    if (backslash !== storage) result.add(backslash)
-  }
+  const candidates = drive
+    ? [workspaceStorage(dir), workspaceStorage(key.replaceAll("/", "\\"))]
+    : [workspaceStorage(dir)]
+  const result = Arr.dedupe(candidates.filter((name) => name !== storage))
 
-  if (result.size === 0) return
-  return [...result]
+  if (result.length === 0) return undefined
+  return result
 }
 
 function serverWorkspaceTarget(scope: ServerScopeValue, dir: string, key: string, legacy?: string[]): PersistTarget {
@@ -385,91 +387,52 @@ function serverWorkspaceTarget(scope: ServerScopeValue, dir: string, key: string
   return { storage: workspaceStorage(pathKey(dir)), legacyStorageNames: legacyWorkspaceStorage(dir), key, legacy }
 }
 
-function localStorageWithPrefix(prefix: string): SyncStorage {
-  const base = `${prefix}:`
-  const scope = `prefix:${prefix}`
-  const item = (key: string) => base + key
+function readLocal(scope: string, key: string): Option.Option<string> {
+  const read = Result.try(() => localStorage.getItem(key))
+  if (Result.isFailure(read)) fallbackSet(scope)
+  return Option.flatMap(Result.getSuccess(read), Option.fromNullOr)
+}
+
+function writeLocal(key: string, value: string): boolean {
+  return Result.try(() => localStorage).pipe(
+    Result.flatMap((storage) => write(storage, key, value)),
+    Result.getOrElse(() => false),
+  )
+}
+
+function localStorageScoped(scope: string, name: (key: string) => string): SyncStorage {
   return {
     getItem: (key) => {
-      const name = item(key)
-      const cached = cacheGet(name)
-      if (fallbackDisabled(scope)) return cached ?? null
+      const item = name(key)
+      const cached = cacheGet(item)
+      if (fallbackDisabled(scope)) return Option.getOrNull(cached)
 
-      const stored = (() => {
-        try {
-          return localStorage.getItem(name)
-        } catch {
-          fallbackSet(scope)
-          return null
-        }
-      })()
-      if (stored === null) return cached ?? null
-      cacheSet(name, stored)
-      return stored
+      const stored = readLocal(scope, item)
+      if (Option.isNone(stored)) return Option.getOrNull(cached)
+      cacheSet(item, stored.value)
+      return stored.value
     },
     setItem: (key, value) => {
-      const name = item(key)
+      const item = name(key)
       if (fallbackDisabled(scope)) return
-      try {
-        if (write(localStorage, name, value)) return
-      } catch {
-        fallbackSet(scope)
-        return
-      }
+      if (writeLocal(item, value)) return
       fallbackSet(scope)
     },
     removeItem: (key) => {
-      const name = item(key)
-      cacheDelete(name)
+      const item = name(key)
+      cacheDelete(item)
       if (fallbackDisabled(scope)) return
-      try {
-        localStorage.removeItem(name)
-      } catch {
-        fallbackSet(scope)
-      }
+      if (Result.isFailure(Result.try(() => localStorage.removeItem(item)))) fallbackSet(scope)
     },
   }
 }
 
-function localStorageDirect(): SyncStorage {
-  const scope = "direct"
-  return {
-    getItem: (key) => {
-      const cached = cacheGet(key)
-      if (fallbackDisabled(scope)) return cached ?? null
+function localStorageWithPrefix(prefix: string): SyncStorage {
+  return localStorageScoped(`prefix:${prefix}`, (key) => `${prefix}:${key}`)
+}
 
-      const stored = (() => {
-        try {
-          return localStorage.getItem(key)
-        } catch {
-          fallbackSet(scope)
-          return null
-        }
-      })()
-      if (stored === null) return cached ?? null
-      cacheSet(key, stored)
-      return stored
-    },
-    setItem: (key, value) => {
-      if (fallbackDisabled(scope)) return
-      try {
-        if (write(localStorage, key, value)) return
-      } catch {
-        fallbackSet(scope)
-        return
-      }
-      fallbackSet(scope)
-    },
-    removeItem: (key) => {
-      cacheDelete(key)
-      if (fallbackDisabled(scope)) return
-      try {
-        localStorage.removeItem(key)
-      } catch {
-        fallbackSet(scope)
-      }
-    },
-  }
+function localStorageDirect(): SyncStorage {
+  return localStorageScoped("direct", (key) => key)
 }
 
 const DRAFT_PERSISTED_KEYS = ["prompt", "comments", "file-view", "layout"]
@@ -565,6 +528,106 @@ export function removePersisted(
   }
 }
 
+// Web storage without a draft store: localStorage, read and written synchronously.
+function syncPersistStorage(config: PersistTarget, defaults: unknown): SyncStorage {
+  const current = config.storage ? localStorageWithPrefix(config.storage) : localStorageDirect()
+  const legacyStore = localStorageDirect()
+  const stores = (config.legacyStorageNames ?? []).map(localStorageWithPrefix)
+  const keys = config.legacy ?? []
+
+  return {
+    getItem: (key) => {
+      const value = readCurrent({ storage: current, key, defaults, migrate: config.migrate })
+      const migrated = Option.getOrElse(value, () =>
+        migrateLegacy({ current, legacyStore, stores, keys, key, defaults, migrate: config.migrate }),
+      )
+      return Option.getOrNull(migrated)
+    },
+    setItem: (key, value) => {
+      current.setItem(key, value)
+    },
+    removeItem: (key) => {
+      current.removeItem(key)
+    },
+  }
+}
+
+// Desktop storage or a draft store: the storage calls return promises.
+function asyncPersistStorage(input: {
+  config: PersistTarget
+  defaults: unknown
+  desktop: Option.Option<StorageFactory>
+  draft: Option.Option<DraftStore>
+}): AsyncStorage {
+  const { config, defaults, desktop, draft } = input
+  const open = (name: string | undefined) =>
+    Option.match(desktop, {
+      onSome: (factory) => factory(name),
+      onNone: () => (name ? localStorageWithPrefix(name) : localStorageDirect()),
+    })
+  const openLegacy = (name: string) =>
+    Option.match(desktop, {
+      onSome: (factory) => factory(name),
+      onNone: () => localStorageWithPrefix(name),
+    })
+
+  const current = Option.match(draft, {
+    onSome: (store) => {
+      const prefix = `${config.storage ?? "default"}:`
+      return effectStorage({
+        getItem: (key: string) => store.getItem(prefix + key),
+        setItem: (key: string, value: string) => store.setItem(prefix + key, value),
+        removeItem: (key: string) => store.removeItem(prefix + key),
+      } satisfies AsyncStorage)
+    },
+    onNone: () => effectStorage(open(config.storage)),
+  })
+  const legacyStore = effectStorage(
+    Option.match(desktop, {
+      onSome: (factory) => (config.storage ? factory(LEGACY_STORAGE) : factory()),
+      onNone: () => localStorageDirect(),
+    }),
+  )
+  const oldCurrent = Option.map(draft, () => open(config.storage))
+  const stores = [...Option.toArray(oldCurrent), ...(config.legacyStorageNames ?? []).map(openLegacy)].map(
+    effectStorage,
+  )
+  const keys = config.legacy ?? []
+  let draftLatest = Option.none<string>()
+
+  return {
+    getItem: (key) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const value = yield* readCurrentAsync({ storage: current, key, defaults, migrate: config.migrate })
+          if (Option.isSome(value)) return Option.getOrNull(value.value)
+          const migrated = yield* migrateLegacyAsync({
+            current,
+            legacyStore,
+            stores,
+            keys,
+            key,
+            defaults,
+            migrate: config.migrate,
+          })
+          const latest = draftLatest
+          if (Option.isNone(latest)) {
+            if (Option.isNone(draft) || Option.isNone(migrated)) return Option.getOrNull(migrated)
+            const stored = yield* current.getItem(key)
+            return Option.getOrNull(Option.orElse(stored, () => migrated))
+          }
+          yield* current.setItem(key, latest.value)
+          return latest.value
+        }),
+      ),
+    setItem: (key, value) => {
+      if (Option.isSome(draft)) draftLatest = Option.some(value)
+      return Effect.runPromise(current.setItem(key, value))
+    },
+    removeItem: (key) => Effect.runPromise(current.removeItem(key)),
+  }
+}
+
 export function persisted<T>(
   target: string | PersistTarget,
   store: [Store<T>, SetStoreFunction<T>],
@@ -573,132 +636,38 @@ export function persisted<T>(
   const platform = platformOverride ?? usePlatform()
   const config = resolveTarget(typeof target === "string" ? { key: target } : target, platform)
 
-  const defaults = snapshot(store[0])
-  const legacy = config.legacy ?? []
+  const defaults = Option.getOrUndefined(snapshot(store[0]))
+  const desktop = Option.fromNullishOr(platform.storage).pipe(Option.filter(() => platform.platform === "desktop"))
+  const draft = Option.fromNullishOr(platform.draftStore).pipe(Option.filter(() => config.draft === true))
 
-  const isDesktop = platform.platform === "desktop" && !!platform.storage
-  const draft = config.draft ? platform.draftStore : undefined
-
-  const currentStorage = (() => {
-    if (draft) {
-      const prefix = `${config.storage ?? "default"}:`
-      return {
-        getItem: (key: string) => draft.getItem(prefix + key),
-        setItem: (key: string, value: string) => draft.setItem(prefix + key, value),
-        removeItem: (key: string) => draft.removeItem(prefix + key),
-      } satisfies AsyncStorage
-    }
-    if (isDesktop) return platform.storage?.(config.storage)
-    if (!config.storage) return localStorageDirect()
-    return localStorageWithPrefix(config.storage)
-  })()
-
-  const legacyStorage = (() => {
-    if (!isDesktop) return localStorageDirect()
-    if (!config.storage) return platform.storage?.()
-    return platform.storage?.(LEGACY_STORAGE)
-  })()
-
-  const legacyStorageNames = config.legacyStorageNames ?? []
-
-  const storage = (() => {
-    if (!isDesktop && !draft) {
-      const current = currentStorage as SyncStorage
-      const legacyStore = legacyStorage as SyncStorage
-      const legacyStores = legacyStorageNames.map(localStorageWithPrefix)
-
-      const api: SyncStorage = {
-        getItem: (key) => {
-          const value = readCurrent({ storage: current, key, defaults, migrate: config.migrate })
-          if (value !== undefined) return value
-          return migrateLegacy({
-            current,
-            legacyStore,
-            stores: legacyStores,
-            keys: legacy,
-            key,
-            defaults,
-            migrate: config.migrate,
-          })
-        },
-        setItem: (key, value) => {
-          current.setItem(key, value)
-        },
-        removeItem: (key) => {
-          current.removeItem(key)
-        },
-      }
-
-      return api
-    }
-
-    const current = currentStorage as AsyncStorage
-    const legacyStore = legacyStorage as AsyncStorage | undefined
-    const oldCurrent = draft
-      ? isDesktop
-        ? platform.storage?.(config.storage)
-        : config.storage
-          ? localStorageWithPrefix(config.storage)
-          : localStorageDirect()
-      : undefined
-    const legacyStores = [
-      oldCurrent,
-      ...legacyStorageNames.map((name) => (isDesktop ? platform.storage?.(name) : localStorageWithPrefix(name))),
-    ]
-      .filter((x) => !!x)
-      .map(toAsyncStorage)
-    let draftLatest: string | undefined
-
-    const api: AsyncStorage = {
-      getItem: async (key) => {
-        const value = await readCurrentAsync({ storage: current, key, defaults, migrate: config.migrate })
-        if (value !== undefined) return value
-        const migrated = await migrateLegacyAsync({
-          current,
-          legacyStore,
-          stores: legacyStores,
-          keys: legacy,
-          key,
-          defaults,
-          migrate: config.migrate,
-        })
-        if (draftLatest === undefined) {
-          if (draft && migrated !== null) return (await current.getItem(key)) ?? migrated
-          return migrated
-        }
-        await current.setItem(key, draftLatest)
-        return draftLatest
-      },
-      setItem: async (key, value) => {
-        if (draft) draftLatest = value
-        await current.setItem(key, value)
-      },
-      removeItem: async (key) => {
-        await current.removeItem(key)
-      },
-    }
-
-    return api
-  })()
+  const storage =
+    Option.isNone(desktop) && Option.isNone(draft)
+      ? syncPersistStorage(config, defaults)
+      : asyncPersistStorage({ config, defaults, desktop, draft })
 
   const [state, setState, init] = makePersisted(store, { name: config.key, storage })
 
-  const isAsync = init instanceof Promise
+  const initPromise = init instanceof Promise ? Option.some(init) : Option.none<Promise<string>>()
   const [ready] = createResource(
     () => init,
-    async (initValue) => {
-      if (initValue instanceof Promise) await initValue
-      return true
-    },
-    { initialValue: !isAsync },
+    (initValue) =>
+      Effect.runPromise(
+        initValue instanceof Promise
+          ? Effect.as(
+              Effect.promise(() => initValue),
+              true,
+            )
+          : Effect.succeed(true),
+      ),
+    { initialValue: Option.isNone(initPromise) },
   )
 
   return [
     state,
     setState,
     init,
-    Object.assign(() => (ready.loading ? false : ready.latest === true), {
-      promise: init instanceof Promise ? init : undefined,
+    Object.assign(() => !ready.loading && ready.latest, {
+      promise: Option.getOrUndefined(initPromise),
     }),
   ]
 }

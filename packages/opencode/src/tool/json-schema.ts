@@ -1,5 +1,5 @@
 import type { JSONSchema7 } from "@ai-sdk/provider"
-import { JsonSchema, Schema } from "effect"
+import { HashSet, JsonSchema, Option, Predicate, Schema } from "effect"
 import type * as Tool from "./tool"
 
 type JsonObject = Record<string, unknown>
@@ -10,13 +10,14 @@ export function fromSchema(schema: Schema.Top): JSONSchema7 {
   if (cached) return cached
 
   const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "ignore" })
-  const result = normalize({
+  // The document is an object, and each step below maps an object to an object, so the
+  // result is always a JSON Schema object.
+  const result = normalizeObject({
     $schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
     ...document.schema,
     ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
   })
-  const inlined = dropDefinitionsIfResolved(inlineLocalReferences(result))
-  if (!isJsonSchema(inlined)) throw new Error("tool JSON Schema helper produced a non-schema value")
+  const inlined = dropDefinitionsIfResolved(inlineObjectReferences(result))
   cache.set(schema, inlined)
   return inlined
 }
@@ -28,10 +29,11 @@ export function fromTool(tool: Tool.Def): JSONSchema7 {
 function normalize(value: unknown, options: { stripNull?: boolean } = {}): unknown {
   if (Array.isArray(value)) return value.map((item) => normalize(item))
   if (!isRecord(value)) return value
+  return normalizeObject(value, options)
+}
 
-  const required = Array.isArray(value.required)
-    ? new Set(value.required.filter((item) => typeof item === "string"))
-    : undefined
+function normalizeObject(value: JsonObject, options: { stripNull?: boolean } = {}): JsonObject {
+  const required = HashSet.fromIterable(Array.isArray(value.required) ? value.required.filter(Predicate.isString) : [])
   const schema = Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
@@ -39,7 +41,7 @@ function normalize(value: unknown, options: { stripNull?: boolean } = {}): unkno
         ? Object.fromEntries(
             Object.entries(item).map(([name, property]) => [
               name,
-              normalize(property, { stripNull: !required?.has(name) }),
+              normalize(property, { stripNull: !HashSet.has(required, name) }),
             ]),
           )
         : normalize(item),
@@ -50,7 +52,7 @@ function normalize(value: unknown, options: { stripNull?: boolean } = {}): unkno
 
   if (options.stripNull && Array.isArray(schema.anyOf)) {
     const withoutNull = schema.anyOf.filter((item) => !isRecord(item) || item.type !== "null")
-    if (withoutNull.length !== schema.anyOf.length) return normalize({ ...schema, anyOf: withoutNull })
+    if (withoutNull.length !== schema.anyOf.length) return normalizeObject({ ...schema, anyOf: withoutNull })
   }
 
   if (Array.isArray(schema.anyOf)) {
@@ -61,23 +63,23 @@ function normalize(value: unknown, options: { stripNull?: boolean } = {}): unkno
     )
     if (number && nonFinite.length === withoutNull.length - 1) {
       const { anyOf: _, ...rest } = schema
-      return normalize({ ...number, ...rest })
+      return normalizeObject({ ...number, ...rest })
     }
 
     if (isEmptyStructUnion(withoutNull)) {
       const { anyOf: _, ...rest } = schema
-      return normalize({ type: "object", properties: {}, ...rest })
+      return normalizeObject({ type: "object", properties: {}, ...rest })
     }
 
     if (withoutNull.length === 1 && isRecord(withoutNull[0])) {
       const { anyOf: _, ...rest } = schema
-      return normalize({ ...withoutNull[0], ...rest })
+      return normalizeObject({ ...withoutNull[0], ...rest })
     }
   }
 
   if (Array.isArray(schema.allOf) && schema.allOf.every(isRecord) && canFlattenAllOf(schema.allOf, schema)) {
     const { allOf, ...rest } = schema
-    return normalize({ ...Object.assign({}, ...allOf), ...rest })
+    return normalizeObject({ ...Object.assign({}, ...allOf), ...rest })
   }
 
   if (schema.type === "integer" && schema.maximum === undefined) {
@@ -88,11 +90,7 @@ function normalize(value: unknown, options: { stripNull?: boolean } = {}): unkno
 }
 
 function isRecord(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function isJsonSchema(value: unknown): value is JSONSchema7 {
-  return typeof value === "boolean" || isRecord(value)
+  return Predicate.isObject(value)
 }
 
 function isNonFiniteNumber(value: unknown) {
@@ -107,32 +105,39 @@ function isEmptyStructUnion(items: unknown[]) {
   )
 }
 
+// allOf members can be merged into the parent only when no key appears twice across them.
 function canFlattenAllOf(allOf: JsonObject[], parent: JsonObject) {
-  const keys = new Set(Object.keys(parent).filter((key) => key !== "allOf"))
-  return allOf.every((item) =>
-    Object.keys(item).every((key) => {
-      if (keys.has(key)) return false
-      keys.add(key)
-      return true
-    }),
-  )
+  const keys = [...Object.keys(parent).filter((key) => key !== "allOf"), ...allOf.flatMap((item) => Object.keys(item))]
+  return HashSet.size(HashSet.fromIterable(keys)) === keys.length
 }
 
-function inlineLocalReferences(value: unknown, definitions?: JsonObject, seen = new Set<string>()): unknown {
+function inlineLocalReferences(
+  value: unknown,
+  definitions: Option.Option<JsonObject>,
+  seen: HashSet.HashSet<string>,
+): unknown {
   if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, definitions, seen))
   if (!isRecord(value)) return value
+  return inlineObjectReferences(value, definitions, seen)
+}
 
-  const localDefinitions = definitions ?? (isRecord(value.$defs) ? value.$defs : undefined)
-  if (typeof value.$ref === "string" && localDefinitions) {
+function inlineObjectReferences(
+  value: JsonObject,
+  definitions: Option.Option<JsonObject> = Option.none(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
+): JsonObject {
+  // The root object's $defs apply to every nested reference.
+  const localDefinitions = Option.orElse(definitions, () => Option.liftPredicate(isRecord)(value.$defs))
+  if (typeof value.$ref === "string" && Option.isSome(localDefinitions)) {
     const name = value.$ref.match(/^#\/\$defs\/(.+)$/)?.[1] ?? value.$ref.match(/^#\/definitions\/(.+)$/)?.[1]
-    if (name && !seen.has(name)) {
-      const target = localDefinitions[name]
+    if (name && !HashSet.has(seen, name)) {
+      const target = localDefinitions.value[name]
       if (target) {
         const { $ref: _, ...rest } = value
-        return inlineLocalReferences(
+        return inlineObjectReferences(
           { ...(isRecord(target) ? target : {}), ...rest },
           localDefinitions,
-          new Set(seen).add(name),
+          HashSet.add(seen, name),
         )
       }
     }
@@ -143,8 +148,8 @@ function inlineLocalReferences(value: unknown, definitions?: JsonObject, seen = 
   )
 }
 
-function dropDefinitionsIfResolved(value: unknown): unknown {
-  if (!isRecord(value) || hasLocalReference(value)) return value
+function dropDefinitionsIfResolved(value: JsonObject): JsonObject {
+  if (hasLocalReference(value)) return value
   const { $defs: _, definitions: __, ...rest } = value
   return rest
 }

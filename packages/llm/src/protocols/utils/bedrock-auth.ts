@@ -24,8 +24,8 @@ const signRequest = (input: {
   readonly credentials: Credentials
 }) =>
   Effect.tryPromise({
-    try: async () => {
-      const signed = await new AwsV4Signer({
+    try: () =>
+      new AwsV4Signer({
         url: input.url,
         method: "POST",
         headers: Object.entries(input.headers),
@@ -35,17 +35,15 @@ const signRequest = (input: {
         secretAccessKey: input.credentials.secretAccessKey,
         sessionToken: input.credentials.sessionToken,
         service: "bedrock",
-      }).sign()
-      return Object.fromEntries(signed.headers.entries())
-    },
+      }).sign(),
     catch: (error) =>
       ProviderShared.invalidRequest(
         `Bedrock Converse SigV4 signing failed: ${error instanceof Error ? error.message : String(error)}`,
       ),
-  })
+  }).pipe(Effect.map((signed) => Object.fromEntries(signed.headers.entries())))
 
 /** Sign the exact JSON bytes with SigV4 using credentials configured on the route. */
-export const sigV4 = (credentials: Credentials | undefined) =>
+export const sigV4 = (credentials?: Credentials) =>
   Auth.custom((input: AuthInput) => {
     return Effect.gen(function* () {
       if (!credentials) {
@@ -65,6 +63,6 @@ export const sigV4 = (credentials: Credentials | undefined) =>
   })
 
 /** Bedrock route auth defaults to SigV4 and expects credentials from route configuration. */
-export const auth = sigV4(undefined)
+export const auth = sigV4()
 
 export * as BedrockAuth from "./bedrock-auth"

@@ -14,7 +14,7 @@ import copyLogoSvgDark from "../asset/lander/opencode-logo-dark.svg"
 import copyWordmarkSvgLight from "../asset/lander/opencode-wordmark-light.svg"
 import copyWordmarkSvgDark from "../asset/lander/opencode-wordmark-dark.svg"
 import { A, useNavigate } from "@solidjs/router"
-import { createMemo, Match, Show, Switch } from "solid-js"
+import { Match, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createEffect, onCleanup } from "solid-js"
 import { config } from "~/config"
@@ -74,9 +74,9 @@ export function Header(props: { zen?: boolean; go?: boolean; hideGetStarted?: bo
     }
   })
 
-  const handleLogoContextMenu = (event: MouseEvent) => {
+  const handleLogoContextMenu = (event: MouseEvent & { currentTarget: HTMLElement }) => {
     event.preventDefault()
-    const logoElement = (event.currentTarget as HTMLElement).querySelector("a")
+    const logoElement = event.currentTarget.querySelector("a")
     if (logoElement) {
       const rect = logoElement.getBoundingClientRect()
       setStore("contextMenuPosition", {

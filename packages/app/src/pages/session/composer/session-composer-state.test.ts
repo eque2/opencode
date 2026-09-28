@@ -3,17 +3,25 @@ import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/s
 import { todoDockAtBoundary, todoState } from "./session-composer-state"
 import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
 
-const session = (input: { id: string; parentID?: string }) =>
-  ({
-    id: input.id,
-    parentID: input.parentID,
-  }) as Session
+const session = (input: { id: string; parentID?: string }): Session => ({
+  id: input.id,
+  slug: input.id,
+  projectID: "project",
+  directory: "/repo",
+  title: input.id,
+  version: "test",
+  time: { created: 0, updated: 0 },
+  ...(input.parentID ? { parentID: input.parentID } : {}),
+})
 
-const permission = (id: string, sessionID: string) =>
-  ({
-    id,
-    sessionID,
-  }) as PermissionRequest
+const permission = (id: string, sessionID: string): PermissionRequest => ({
+  id,
+  sessionID,
+  permission: "read",
+  patterns: [],
+  metadata: {},
+  always: [],
+})
 
 const question = (id: string, sessionID: string) =>
   ({

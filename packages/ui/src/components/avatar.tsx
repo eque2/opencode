@@ -1,14 +1,16 @@
+import { Option } from "effect"
 import { type ComponentProps, splitProps, Show } from "solid-js"
 
-const segmenter =
+const segmenter: Option.Option<Intl.Segmenter> =
   typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-    : undefined
+    ? // ECMA-402 defaults to the runtime default locale and to "grapheme" granularity.
+      Option.some(new Intl.Segmenter())
+    : Option.none()
 
 function first(value: string) {
   if (!value) return ""
-  if (!segmenter) return Array.from(value)[0] ?? ""
-  return segmenter.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
+  if (Option.isNone(segmenter)) return Array.from(value)[0] ?? ""
+  return segmenter.value.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
 }
 
 export interface AvatarProps extends ComponentProps<"div"> {
@@ -36,7 +38,7 @@ export function Avatar(props: AvatarProps) {
       {...rest}
       data-component="avatar"
       data-size={split.size || "normal"}
-      data-has-image={src ? "" : undefined}
+      bool:data-has-image={!!src}
       classList={{
         ...split.classList,
         [split.class ?? ""]: !!split.class,

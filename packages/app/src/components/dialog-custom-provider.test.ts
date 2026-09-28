@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { HashSet, Option } from "effect"
 import { validateCustomProvider } from "./dialog-custom-provider-form"
 
 const t = (key: string) => key
+const none = Option.none<string>()
 
 describe("validateCustomProvider", () => {
   test("builds trimmed config payload", () => {
@@ -11,22 +13,22 @@ describe("validateCustomProvider", () => {
         name: " Custom Provider ",
         baseURL: "https://api.example.com ",
         apiKey: " {env: CUSTOM_PROVIDER_KEY} ",
-        models: [{ row: "m0", id: " model-a ", name: " Model A ", err: {} }],
+        models: [{ row: "m0", id: " model-a ", name: " Model A ", err: { id: none, name: none } }],
         headers: [
-          { row: "h0", key: " X-Test ", value: " enabled ", err: {} },
-          { row: "h1", key: "", value: "", err: {} },
+          { row: "h0", key: " X-Test ", value: " enabled ", err: { key: none, value: none } },
+          { row: "h1", key: "", value: "", err: { key: none, value: none } },
         ],
-        err: {},
+        err: { providerID: none, name: none, baseURL: none },
       },
       t,
       disabledProviders: [],
-      existingProviderIDs: new Set(),
+      existingProviderIDs: HashSet.empty(),
     })
 
     expect(result.result).toEqual({
       providerID: "custom-provider",
       name: "Custom Provider",
-      key: undefined,
+      key: Option.none(),
       config: {
         npm: "@ai-sdk/openai-compatible",
         name: "Custom Provider",
@@ -52,29 +54,29 @@ describe("validateCustomProvider", () => {
         baseURL: "https://api.example.com",
         apiKey: "secret",
         models: [
-          { row: "m0", id: "model-a", name: "Model A", err: {} },
-          { row: "m1", id: "model-a", name: "Model A 2", err: {} },
+          { row: "m0", id: "model-a", name: "Model A", err: { id: none, name: none } },
+          { row: "m1", id: "model-a", name: "Model A 2", err: { id: none, name: none } },
         ],
         headers: [
-          { row: "h0", key: "Authorization", value: "one", err: {} },
-          { row: "h1", key: "authorization", value: "two", err: {} },
+          { row: "h0", key: "Authorization", value: "one", err: { key: none, value: none } },
+          { row: "h1", key: "authorization", value: "two", err: { key: none, value: none } },
         ],
-        err: {},
+        err: { providerID: none, name: none, baseURL: none },
       },
       t,
       disabledProviders: ["custom-provider"],
-      existingProviderIDs: new Set(["custom-provider"]),
+      existingProviderIDs: HashSet.make("custom-provider"),
     })
 
     expect(result.result).toBeUndefined()
-    expect(result.err.providerID).toBeUndefined()
+    expect(result.err.providerID).toEqual(Option.none())
     expect(result.models[1]).toEqual({
-      id: "provider.custom.error.duplicate",
-      name: undefined,
+      id: Option.some("provider.custom.error.duplicate"),
+      name: Option.none(),
     })
     expect(result.headers[1]).toEqual({
-      key: "provider.custom.error.duplicate",
-      value: undefined,
+      key: Option.some("provider.custom.error.duplicate"),
+      value: Option.none(),
     })
   })
 })

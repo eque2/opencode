@@ -1,4 +1,4 @@
-import { Brand, Context, Layer } from "effect"
+import { Array, Brand, Context, Effect, Layer, MutableHashMap, MutableHashSet, Option, Result, Schema } from "effect"
 
 type AnyNode = Node<unknown, unknown, any>
 type RuntimeLayer = Layer.Layer<never, unknown, unknown>
@@ -30,6 +30,21 @@ export interface Node<A, E = never, T extends Tag | undefined = undefined> {
   readonly [$ErrorType]?: () => E
 }
 
+/** A placeholder node that a replacement must bind before the graph compiles. */
+export interface UnboundNode<A, T extends Tag = Tag> extends Node<A, never, T> {
+  readonly kind: "unbound"
+}
+
+/**
+ * A layer graph that cannot compile: a dependency cycle, an unbound node, an invalid
+ * replacement, or conflicting hoisted implementations. The compiled layer dies with it.
+ */
+export class GraphError extends Schema.TaggedError<GraphError>()("LayerNode.GraphError", {
+  message: Schema.String,
+}) {}
+
+const graphError = (message: string) => Result.fail(new GraphError({ message }))
+
 type NodeIdentity =
   | { readonly service: Context.Service.Any; readonly name?: never }
   | { readonly name: string; readonly service?: never }
@@ -57,12 +72,17 @@ export interface Tags<Config extends TagConfig> {
 export function tags<const Config extends { readonly [Name in keyof Config]: readonly (keyof Config & string)[] }>(
   config: Config,
 ): Tags<Config> {
-  const names = Object.keys(config) as TagNames<Config>[]
-  const values = Object.fromEntries(names.map((name) => [name, makeTag(name)])) as Tags<Config>["values"]
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the platform Object.fromEntries signature returns { [k: string]: T } and cannot type the key-dependent { [Name]: Tag<Name> }; each value is makeTag of its own key
+  const values = Object.fromEntries(Object.keys(config).map((name) => [name, makeTag(name)])) as Tags<Config>["values"]
   return {
     values,
-    make: ((name: TagNames<Config>) => (input: DistributiveOmit<MakeInput<Layer.Any, NodeList, Tag>, "tag">) =>
-      make({ ...input, tag: values[name] })) as Tags<Config>["make"],
+    make:
+      <Name extends TagNames<Config>>(name: Name) =>
+      <const Implementation extends Layer.Any, const Items extends NodeList>(
+        input: DistributiveOmit<MakeInput<Implementation, Items, Tag<Name>>, "tag"> &
+          CheckTags<Items, Name | Extract<Config[Name][number], string>>,
+      ) =>
+        make<Implementation, Items, Tag<Name>>({ ...input, tag: values[name] }),
   }
 }
 
@@ -95,7 +115,7 @@ export function make<
   }
 }
 
-export function unbound<R, Shape, const T extends Tag>(service: Context.Key<R, Shape>, tag: T): Node<R, never, T> {
+export function unbound<R, Shape, const T extends Tag>(service: Context.Key<R, Shape>, tag: T): UnboundNode<R, T> {
   return {
     kind: "unbound",
     name: service.key,
@@ -121,7 +141,7 @@ type CheckReplacementErrors<SourceError, ReplacementError> = [Exclude<Replacemen
 type CheckReplacement<Item> = Item extends readonly [Node<infer A, infer E, infer T>, infer Replacement]
   ? Replacement extends Node<NoInfer<A>, infer E2, T>
     ? CheckReplacementErrors<E, NoInfer<E2>>
-    : Replacement extends Layer.Layer<NoInfer<A>, infer E2, never>
+    : Replacement extends Layer.Layer<NoInfer<A>, infer E2>
       ? CheckReplacementErrors<E, NoInfer<E2>>
       : { readonly "Invalid replacement": Replacement }
   : { readonly "Invalid replacement": Item }
@@ -132,22 +152,18 @@ type CheckReplacements<Items extends Replacements> = {
 
 type ValidReplacements<Items extends Replacements> = Items & CheckReplacements<Items>
 
-function replacementNode(source: AnyNode, replacement: AnyNode | Layer.Any) {
-  const replacementNode = isNode(replacement)
+function replacementNode(source: AnyNode, replacement: AnyNode | Layer.Any): Result.Result<AnyNode, GraphError> {
+  const node = isNode(replacement)
     ? replacement
     : make({
         ...nodeMakeIdentity(source),
-        layer: replacement as Layer.Layer<unknown, unknown>,
+        layer: replacement,
         deps: [],
         tag: source.tag,
       })
-  if (source.name !== replacementNode.name) {
-    throw new Error(`Cannot replace ${source.name} with ${replacementNode.name}`)
-  }
-  if (source.tag !== replacementNode.tag) {
-    throw new Error(`Cannot replace ${source.name} across tags`)
-  }
-  return replacementNode
+  if (source.name !== node.name) return graphError(`Cannot replace ${source.name} with ${node.name}`)
+  if (source.tag !== node.tag) return graphError(`Cannot replace ${source.name} across tags`)
+  return Result.succeed(node)
 }
 
 function nodeMakeIdentity(node: AnyNode): NodeIdentity {
@@ -159,171 +175,206 @@ function isNode(input: Layer.Any | AnyNode): input is AnyNode {
   return "kind" in input && "dependencies" in input
 }
 
-// Tree -----------------------------------------------------------------------
-
-type Visit<Result> = (node: AnyNode, context: VisitContext<Result>) => Result
-
-type VisitContext<Result> = {
-  readonly cache: Map<AnyNode, Result>
-  readonly visit: (node: AnyNode) => Result
+// A node whose layer dies with the graph error, so an invalid graph still has the node shape.
+function failedNode(error: GraphError): Node<never> {
+  return {
+    kind: "layer",
+    name: error._tag,
+    implementation: Layer.effectDiscard(Effect.die(error)),
+    dependencies: [],
+  }
 }
 
-function walk<Result>(
+// Tree -----------------------------------------------------------------------
+
+type Visit<Out> = (node: AnyNode, context: VisitContext<Out>) => Result.Result<Out, GraphError>
+
+type VisitContext<Out> = {
+  readonly cache: MutableHashMap.MutableHashMap<AnyNode, Out>
+  readonly visit: (node: AnyNode) => Result.Result<Out, GraphError>
+}
+
+function walk<Out>(
   root: AnyNode,
-  visit: Visit<Result>,
+  visit: Visit<Out>,
   options: {
-    readonly cache?: Map<AnyNode, Result>
+    readonly cache?: MutableHashMap.MutableHashMap<AnyNode, Out>
     readonly resolve?: (node: AnyNode) => AnyNode
-    readonly detectCycles?: boolean
   } = {},
-) {
-  const cache = options.cache ?? new Map<AnyNode, Result>()
-  const visiting = new Set<AnyNode>()
+): Result.Result<Out, GraphError> {
+  const cache = options.cache ?? MutableHashMap.empty<AnyNode, Out>()
   const stack: AnyNode[] = []
 
-  const recur = (node: AnyNode): Result => {
+  const recur = (node: AnyNode): Result.Result<Out, GraphError> => {
     const target = options.resolve?.(node) ?? node
-    const cached = cache.get(target)
-    if (cached !== undefined || cache.has(target)) return cached!
+    const cached = MutableHashMap.get(cache, target)
+    if (Option.isSome(cached)) return Result.succeed(cached.value)
+    if (stack.includes(target)) return cycle(stack, target)
 
-    if (options.detectCycles !== false && visiting.has(target)) {
-      const start = stack.indexOf(target)
-      throw new Error(
-        `Cycle detected in layer tree: ${[...stack.slice(start), target].map((item) => item.name).join(" -> ")}`,
-      )
-    }
-
-    visiting.add(target)
     stack.push(target)
-    try {
-      const result = visit(target, { cache, visit: recur })
-      if (!cache.has(target)) cache.set(target, result)
-      return result
-    } finally {
-      stack.pop()
-      visiting.delete(target)
-    }
+    const result = visit(target, { cache, visit: recur })
+    stack.pop()
+    if (Result.isSuccess(result) && !MutableHashMap.has(cache, target))
+      MutableHashMap.set(cache, target, result.success)
+    return result
   }
 
   return recur(root)
 }
 
-export function hoist<A, E, T extends Tag, const Items extends Replacements = readonly []>(
+function cycle(stack: readonly AnyNode[], target: AnyNode) {
+  const path = [...stack.slice(stack.indexOf(target)), target]
+  return graphError(`Cycle detected in layer tree: ${path.map((item) => item.name).join(" -> ")}`)
+}
+
+function visitAll<Out>(nodes: readonly AnyNode[], visit: (node: AnyNode) => Result.Result<Out, GraphError>) {
+  return Result.all(nodes.map(visit))
+}
+
+export function hoist<A, E, const Items extends Replacements = readonly []>(
   root: Node<A, E, any>,
-  tag: T,
+  tag: Tag,
   replacements?: ValidReplacements<Items>,
 ): {
   readonly node: Node<A, E>
   readonly hoisted: Node<unknown, E>
 } {
-  const hoisted = new Map<string, AnyNode>()
-  const replacementMap = replacementMapFrom(replacements)
-
-  const node = walk<AnyNode>(
-    root,
-    (node, context) => {
-      if (node.kind === "group") {
-        return { ...node, dependencies: node.dependencies.map(context.visit) }
-      }
-      if (node.tag === tag) {
-        const existing = hoisted.get(node.name)
-        if (existing && existing !== node) {
-          throw new Error(`Tag ${tag} has conflicting implementations for ${node.name}`)
-        }
-        hoisted.set(node.name, rewriteReplacementDependencies(node, replacementMap))
-        return group([])
-      }
-      if (node.kind === "unbound") {
-        return node
-      }
-      return { ...node, dependencies: node.dependencies.map(context.visit) }
-    },
-    { resolve: (node) => replacementMap.get(node.name) ?? node },
-  )
-
-  return {
-    node: node as Node<A, E>,
-    hoisted: group(Array.from(hoisted.values())) as Node<unknown, E>,
+  const result = hoistGraph(root, tag, replacements)
+  if (Result.isFailure(result)) {
+    const failed = failedNode(result.failure)
+    return { node: failed, hoisted: failed }
   }
+  return {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- the graph walk erases the Node phantom types; the hoisted tree provides the root's services and errors
+    node: result.success.node as Node<A, E>,
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- the graph walk erases the Node phantom types; hoisted nodes are dependencies of the root, so their errors are in E
+    hoisted: result.success.hoisted as Node<unknown, E>,
+  }
+}
+
+function hoistGraph(root: AnyNode, tag: Tag, replacements: Replacements = []) {
+  return Result.gen(function* () {
+    const replacementMap = yield* replacementMapFrom(replacements)
+    const hoisted = MutableHashMap.empty<string, AnyNode>()
+
+    const node = yield* walk<AnyNode>(
+      root,
+      (node, context) =>
+        Result.gen(function* () {
+          if (node.kind === "group") {
+            return { ...node, dependencies: yield* visitAll(node.dependencies, context.visit) }
+          }
+          if (node.tag === tag) {
+            const existing = MutableHashMap.get(hoisted, node.name)
+            if (Option.isSome(existing) && existing.value !== node) {
+              return yield* graphError(`Tag ${tag} has conflicting implementations for ${node.name}`)
+            }
+            MutableHashMap.set(hoisted, node.name, yield* rewriteReplacementDependencies(node, replacementMap))
+            return group([])
+          }
+          if (node.kind === "unbound") {
+            return node
+          }
+          return { ...node, dependencies: yield* visitAll(node.dependencies, context.visit) }
+        }),
+      { resolve: (node) => resolveReplacement(replacementMap, node) },
+    )
+
+    return { node, hoisted: group(Array.fromIterable(MutableHashMap.values(hoisted))) }
+  })
 }
 
 export function compile<A, E, const Items extends Replacements = readonly []>(
   root: Node<A, E, any>,
   replacements?: ValidReplacements<Items>,
 ): Layer.Layer<A, E> {
-  const replacementMap = replacementMapFrom(replacements)
-  const cache = new Map<AnyNode, RuntimeLayer>()
-  const compileNode = (node: AnyNode) =>
-    walk<RuntimeLayer>(
-      node,
-      (node, context) => {
-        if (node.kind === "unbound") throw new Error(`Unbound layer node: ${node.name}`)
-        const dependencies = node.dependencies.flatMap(flatten).map(context.visit)
-        const implementation = node.implementation! as RuntimeLayer
-        return dependencies.length === 0
-          ? implementation
-          : implementation.pipe(Layer.provide(dependencies as [RuntimeLayer, ...RuntimeLayer[]]))
-      },
-      { cache, resolve: (node) => replacementMap.get(node.name) ?? node },
-    )
-  const layers = flatten(root).map((node) => compileNode(node))
-  const layer = layers.reduce<RuntimeLayer>((result, layer) => layer.pipe(Layer.provideMerge(result)), Layer.empty)
-  return layer as Layer.Layer<A, E>
+  // The graph compiles when the layer is built, so an invalid graph is a defect of the build.
+  return Layer.suspend(() => {
+    const result = compileGraph(root, replacements)
+    if (Result.isFailure(result)) return Layer.effectContext(Effect.die(result.failure))
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the effect Layer.isLayer, Layer.provide, and Layer.provideMerge signatures type this runtime fold of layers as Layer<never, unknown, unknown>; the root Node<A, E>, checked by make and CheckReplacements, carries the real types
+    return result.success as Layer.Layer<A, E>
+  })
 }
 
-function replacementMapFrom(replacements?: Replacements) {
-  return (
-    replacements?.reduce((map, [source, replacement]) => {
-      const normalized = rewriteReplacementDependencies(replacementNode(source, replacement), map)
-      const current = new Map([[source.name, normalized]])
-      for (const [name, node] of map) map.set(name, rewriteReplacementDependencies(node, current))
-      map.set(source.name, normalized)
-      return map
-    }, new Map<string, AnyNode>()) ?? new Map<string, AnyNode>()
-  )
+function compileGraph(root: AnyNode, replacements: Replacements = []) {
+  return Result.gen(function* () {
+    const replacementMap = yield* replacementMapFrom(replacements)
+    const cache = MutableHashMap.empty<AnyNode, RuntimeLayer>()
+    const compileNode = (node: AnyNode) =>
+      walk<RuntimeLayer>(
+        node,
+        (node, context) =>
+          Result.gen(function* () {
+            if (node.kind === "unbound") return yield* graphError(`Unbound layer node: ${node.name}`)
+            const implementation = node.implementation
+            if (!Layer.isLayer(implementation)) return yield* graphError(`Layer node has no layer: ${node.name}`)
+            const dependencies = yield* visitAll(node.dependencies.flatMap(flatten), context.visit)
+            return Array.isArrayNonEmpty(dependencies) ? Layer.provide(implementation, dependencies) : implementation
+          }),
+        { cache, resolve: (node) => resolveReplacement(replacementMap, node) },
+      )
+    const layers = yield* visitAll(flatten(root), compileNode)
+    return layers.reduce<RuntimeLayer>((result, layer) => layer.pipe(Layer.provideMerge(result)), Layer.empty)
+  })
 }
 
-function rewriteReplacementDependencies(root: AnyNode, replacements: ReadonlyMap<string, AnyNode>) {
-  if (replacements.size === 0) return root
-  const cache = new Map<AnyNode, AnyNode>()
-  const visiting = new Set<AnyNode>()
+function resolveReplacement(replacements: MutableHashMap.MutableHashMap<string, AnyNode>, node: AnyNode) {
+  return Option.getOrElse(MutableHashMap.get(replacements, node.name), () => node)
+}
+
+function replacementMapFrom(replacements: Replacements = []) {
+  return Result.gen(function* () {
+    const map = MutableHashMap.empty<string, AnyNode>()
+    for (const [source, replacement] of replacements) {
+      const normalized = yield* rewriteReplacementDependencies(yield* replacementNode(source, replacement), map)
+      const current = MutableHashMap.make([source.name, normalized])
+      for (const [name, node] of map)
+        MutableHashMap.set(map, name, yield* rewriteReplacementDependencies(node, current))
+      MutableHashMap.set(map, source.name, normalized)
+    }
+    return map
+  })
+}
+
+function rewriteReplacementDependencies(
+  root: AnyNode,
+  replacements: MutableHashMap.MutableHashMap<string, AnyNode>,
+): Result.Result<AnyNode, GraphError> {
+  if (MutableHashMap.isEmpty(replacements)) return Result.succeed(root)
+  const cache = MutableHashMap.empty<AnyNode, AnyNode>()
   const stack: AnyNode[] = []
 
-  const recur = (node: AnyNode, isRoot = false): AnyNode => {
-    const target = isRoot ? node : (replacements.get(node.name) ?? node)
-    const cached = cache.get(target)
-    if (cached !== undefined || cache.has(target)) return cached!
-    if (visiting.has(target)) {
-      const start = stack.indexOf(target)
-      throw new Error(
-        `Cycle detected in layer tree: ${[...stack.slice(start), target].map((item) => item.name).join(" -> ")}`,
-      )
-    }
+  const recur = (node: AnyNode, isRoot = false): Result.Result<AnyNode, GraphError> => {
+    const target = isRoot ? node : resolveReplacement(replacements, node)
+    const cached = MutableHashMap.get(cache, target)
+    if (Option.isSome(cached)) return Result.succeed(cached.value)
+    if (stack.includes(target)) return cycle(stack, target)
 
-    visiting.add(target)
     stack.push(target)
-    try {
-      const dependencies = target.dependencies.map((dependency) => recur(dependency))
+    const dependencies = visitAll(target.dependencies, (dependency) => recur(dependency))
+    stack.pop()
+    return Result.map(dependencies, (dependencies) => {
       const result = dependencies.every((dependency, index) => dependency === target.dependencies[index])
         ? target
         : { ...target, dependencies }
-      cache.set(target, result)
+      MutableHashMap.set(cache, target, result)
       return result
-    } finally {
-      stack.pop()
-      visiting.delete(target)
-    }
+    })
   }
 
   return recur(root, true)
 }
 
-export function hasUnbound(root: Node<unknown, unknown, any>, source: AnyNode): boolean {
-  if (source.kind !== "unbound") throw new Error(`Cannot check non-unbound layer node: ${source.name}`)
-  return walk<boolean>(root, (node, context) => {
+export function hasUnbound(root: Node<unknown, unknown, any>, source: UnboundNode<unknown>): boolean {
+  const visited = MutableHashSet.empty<AnyNode>()
+  const reaches = (node: AnyNode): boolean => {
     if (node === source) return true
-    return node.dependencies.some(context.visit)
-  })
+    if (MutableHashSet.has(visited, node)) return false
+    MutableHashSet.add(visited, node)
+    return node.dependencies.some(reaches)
+  }
+  return reaches(root)
 }
 
 function flatten(node: AnyNode): readonly AnyNode[] {

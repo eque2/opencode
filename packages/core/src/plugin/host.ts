@@ -1,7 +1,7 @@
 export * as PluginHost from "./host"
 
 import type { PluginContext as Interface } from "@opencode-ai/plugin/v2/effect"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { AISDK } from "../aisdk"
 import { Catalog } from "../catalog"
@@ -15,6 +15,10 @@ import { Reference } from "../reference"
 import type { DeepMutable } from "../schema"
 import { SkillV2 } from "../skill"
 
+// The plugin API hands plugins the live draft and hook objects. Core types them read-only;
+// the plugin types use the generated SDK types, whose arrays are mutable. A copy would
+// detach plugin writes from the draft, so the host passes the same objects through.
+// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) @opencode-ai/plugin v2 draft and hook signatures use generated @opencode-ai/sdk types with mutable arrays for the live core objects
 const mutable = <T>(value: T) => value as DeepMutable<T>
 
 export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Interface) {
@@ -35,7 +39,10 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
           callback({
             list: () => mutable(draft.list()),
             get: (id) => mutable(draft.get(AgentV2.ID.make(id))),
-            default: (id) => draft.default(id === undefined ? undefined : AgentV2.ID.make(id)),
+            default: (id) =>
+              draft.default(
+                Option.getOrUndefined(Option.map(Option.fromUndefinedOr(id), (value) => AgentV2.ID.make(value))),
+              ),
             update: (id, update) => draft.update(AgentV2.ID.make(id), update),
             remove: (id) => draft.remove(AgentV2.ID.make(id)),
           }),
@@ -200,8 +207,8 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
         reference.transform((draft) =>
           callback({
             add: (name, source) => draft.add(name, Schema.decodeUnknownSync(Reference.Source)(source)),
-            remove: draft.remove,
-            list: draft.list,
+            remove: (name) => draft.remove(name),
+            list: () => draft.list(),
           }),
         ),
     },

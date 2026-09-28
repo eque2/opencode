@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
@@ -13,6 +13,11 @@ export const Parameters = Schema.Struct({
     description: `The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.`,
   }),
 })
+
+/** A glob call the tool refuses: its message tells the model how to correct the call. */
+export class GlobError extends Schema.TaggedError<GlobError>()("GlobTool.GlobError", {
+  message: Schema.String,
+}) {}
 
 export const GlobTool = Tool.define(
   "glob",
@@ -31,15 +36,15 @@ export const GlobTool = Tool.define(
             always: ["*"],
             metadata: {
               pattern: params.pattern,
-              path: params.path,
+              ...(params.path === undefined ? {} : { path: params.path }),
             },
           })
 
           let search = params.path ?? ins.directory
           search = path.isAbsolute(search) ? search : path.resolve(ins.directory, search)
-          const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
-          if (info?.type === "File") {
-            throw new Error(`glob path must be a directory: ${search}`)
+          const info = yield* fs.stat(search).pipe(Effect.option)
+          if (Option.exists(info, (stat) => stat.type === "File")) {
+            return yield* new GlobError({ message: `glob path must be a directory: ${search}` })
           }
           yield* assertExternalDirectoryEffect(ctx, search, {
             bypass: false,
@@ -70,7 +75,7 @@ export const GlobTool = Tool.define(
             },
             output: output.join("\n"),
           }
-        }).pipe(Effect.orDie),
+        }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

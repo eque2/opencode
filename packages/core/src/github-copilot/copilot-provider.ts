@@ -1,5 +1,6 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider"
+import { InvalidArgumentError, type LanguageModelV3 } from "@ai-sdk/provider"
 import { type FetchFunction, withoutTrailingSlash, withUserAgentSuffix } from "@ai-sdk/provider-utils"
+import { Option } from "effect"
 import { OpenAICompatibleChatLanguageModel } from "./chat/openai-compatible-chat-language-model"
 import { OpenAIResponsesLanguageModel } from "./responses/openai-responses-language-model"
 
@@ -50,11 +51,12 @@ export interface OpenaiCompatibleProvider {
  * Create an OpenAI Compatible provider instance.
  */
 export function createOpenaiCompatible(options: OpenaiCompatibleProviderSettings = {}): OpenaiCompatibleProvider {
-  const baseURL = withoutTrailingSlash(options.baseURL ?? "https://api.openai.com/v1")
-
-  if (!baseURL) {
-    throw new Error("baseURL is required")
-  }
+  // Provider factories are synchronous, so an unusable baseURL still throws here, now as the AI SDK's
+  // InvalidArgumentError with the same message.
+  const baseURL = Option.fromNullishOr(withoutTrailingSlash(options.baseURL ?? "https://api.openai.com/v1")).pipe(
+    Option.filter((url) => url.length > 0),
+    Option.getOrThrowWith(() => new InvalidArgumentError({ argument: "baseURL", message: "baseURL is required" })),
+  )
 
   // Merge headers: defaults first, then user overrides
   const headers = {

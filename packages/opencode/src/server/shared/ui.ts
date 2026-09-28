@@ -1,10 +1,8 @@
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect, Stream } from "effect"
+import { Effect, MutableRef, Option, Schema, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { createHash } from "node:crypto"
 import { ProxyUtil } from "../proxy-util"
-
-let embeddedUIPromise: Promise<Record<string, string> | null> | undefined
 
 export const UI_UPSTREAM = new URL("https://app.opencode.ai")
 
@@ -24,7 +22,11 @@ export function cspForHtml(body: string) {
 function requestBody(request: HttpServerRequest.HttpServerRequest) {
   if (request.method === "GET" || request.method === "HEAD") return HttpBody.empty
   const len = request.headers["content-length"]
-  return HttpBody.stream(request.stream, request.headers["content-type"], len === undefined ? undefined : Number(len))
+  return HttpBody.stream(
+    request.stream,
+    request.headers["content-type"],
+    Option.getOrUndefined(Option.map(Option.fromNullishOr(len), Number)),
+  )
 }
 
 function proxyResponseHeaders(headers: Record<string, string>) {
@@ -41,11 +43,27 @@ export function upstreamURL(path: string) {
   return new URL(path, UI_UPSTREAM).toString()
 }
 
+const EmbeddedUIFiles = Schema.Record(Schema.String, Schema.String)
+type EmbeddedUIFiles = typeof EmbeddedUIFiles.Type
+
+// The build generates this module; in development and tests the import fails
+// and the UI falls back to the upstream proxy. The first result is kept.
+const embeddedUIFiles = MutableRef.make(Option.none<Option.Option<EmbeddedUIFiles>>())
+
+const loadEmbeddedUI = Effect.tryPromise(
+  // @ts-expect-error - generated file at build time
+  () => import("opencode-web-ui.gen.ts"),
+).pipe(
+  Effect.map((module) => Schema.decodeUnknownOption(EmbeddedUIFiles)(module.default)),
+  Effect.orElseSucceed(() => Option.none<EmbeddedUIFiles>()),
+  Effect.tap((files) => Effect.sync(() => MutableRef.set(embeddedUIFiles, Option.some(files)))),
+)
+
 export function embeddedUI(disableEmbeddedWebUi: boolean) {
-  if (disableEmbeddedWebUi) return Promise.resolve(null)
-  return (embeddedUIPromise ??=
-    // @ts-expect-error - generated file at build time
-    import("opencode-web-ui.gen.ts").then((module) => module.default as Record<string, string>).catch(() => null))
+  if (disableEmbeddedWebUi) return Effect.succeed(Option.none<EmbeddedUIFiles>())
+  return Effect.suspend(() =>
+    Option.match(MutableRef.get(embeddedUIFiles), { onNone: () => loadEmbeddedUI, onSome: Effect.succeed }),
+  )
 }
 
 function notFound() {
@@ -66,7 +84,7 @@ export function serveEmbeddedUIEffect(
   fs: FSUtil.Interface,
   embeddedWebUI: Record<string, string>,
 ) {
-  const file = embeddedWebUI[requestPath.replace(/^\//, "")] ?? embeddedWebUI["index.html"] ?? null
+  const file = embeddedWebUI[requestPath.replace(/^\//, "")] ?? embeddedWebUI["index.html"]
   if (!file) return Effect.succeed(notFound())
 
   return fs.readFile(file).pipe(
@@ -80,10 +98,10 @@ export function serveUIEffect(
   services: { fs: FSUtil.Interface; client: HttpClient.HttpClient; disableEmbeddedWebUi: boolean },
 ) {
   return Effect.gen(function* () {
-    const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
+    const embeddedWebUI = yield* embeddedUI(services.disableEmbeddedWebUi)
     const path = new URL(request.url, "http://localhost").pathname
 
-    if (embeddedWebUI) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI)
+    if (Option.isSome(embeddedWebUI)) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI.value)
 
     const response = yield* services.client.execute(
       HttpClientRequest.make(request.method)(upstreamURL(path), {

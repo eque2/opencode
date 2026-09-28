@@ -1,3 +1,4 @@
+import { DateTime } from "effect"
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core"
 import { ProjectTable } from "../project/sql"
 import { ProjectV2 } from "../project"
@@ -16,5 +17,5 @@ export const WorkspaceTable = sqliteTable("workspace", {
     .references(() => ProjectTable.id, { onDelete: "cascade" }),
   time_used: integer()
     .notNull()
-    .$default(() => Date.now()),
+    .$default(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
 })

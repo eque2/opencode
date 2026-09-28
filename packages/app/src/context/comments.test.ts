@@ -1,25 +1,30 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { createRoot } from "solid-js"
+import { DateTime, Effect, Option } from "effect"
 import type { LineComment } from "./comments"
 
 let createCommentSessionForTest: typeof import("./comments").createCommentSessionForTest
 
-beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
-    useNavigate: () => () => undefined,
-    useParams: () => ({}),
-    useLocation: () => ({}),
-    useSearchParams: () => [{}, () => undefined],
-  }))
-  mock.module("@opencode-ai/ui/context", () => ({
-    createSimpleContext: () => ({
-      use: () => undefined,
-      provider: () => undefined,
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@solidjs/router", () => ({
+        useNavigate: () => () => {},
+        useParams: () => ({}),
+        useLocation: () => ({}),
+        useSearchParams: () => [{}, () => {}],
+      }))
+      mock.module("@opencode-ai/ui/context", () => ({
+        createSimpleContext: () => ({
+          use: () => {},
+          provider: () => {},
+        }),
+      }))
+      const mod = yield* Effect.promise(() => import("./comments"))
+      createCommentSessionForTest = mod.createCommentSessionForTest
     }),
-  }))
-  const mod = await import("./comments")
-  createCommentSessionForTest = mod.createCommentSessionForTest
-})
+  ),
+)
 
 function line(file: string, id: string, time: number): LineComment {
   return {
@@ -34,7 +39,7 @@ function line(file: string, id: string, time: number): LineComment {
 describe("comments session indexing", () => {
   test("keeps file list behavior and aggregate chronological order", () => {
     createRoot((dispose) => {
-      const now = Date.now()
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
       const comments = createCommentSessionForTest({
         "a.ts": [line("a.ts", "a-late", now + 20_000), line("a.ts", "a-early", now + 1_000)],
         "b.ts": [line("b.ts", "b-mid", now + 10_000)],
@@ -136,14 +141,14 @@ describe("comments session indexing", () => {
 
       comments.setFocus({ file: "a.ts", id: "a1" })
       comments.setFocus((current) => {
-        expect(current).toEqual({ file: "a.ts", id: "a1" })
-        return { file: "b.ts", id: "b1" }
+        expect(current).toEqual(Option.some({ file: "a.ts", id: "a1" }))
+        return Option.some({ file: "b.ts", id: "b1" })
       })
 
       comments.setActive({ file: "c.ts", id: "c1" })
       comments.setActive((current) => {
-        expect(current).toEqual({ file: "c.ts", id: "c1" })
-        return null
+        expect(current).toEqual(Option.some({ file: "c.ts", id: "c1" }))
+        return Option.none()
       })
 
       expect(comments.focus()).toEqual({ file: "b.ts", id: "b1" })

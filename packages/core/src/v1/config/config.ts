@@ -22,7 +22,7 @@ export type Layout = ConfigLayoutV1.Layout
 export const WellKnown = Schema.Struct({
   config: Schema.optional(Schema.Json),
   remote_config: Schema.optional(Schema.Json),
-})
+}).annotate({ identifier: "WellKnownConfig" })
 
 const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate({
   identifier: "LogLevel",

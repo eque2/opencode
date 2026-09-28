@@ -1,4 +1,5 @@
-import { marked, type Tokens } from "marked"
+import { Option } from "effect"
+import { marked, type Token, type Tokens } from "marked"
 import remend from "remend"
 import { completedProjection } from "./markdown-projection"
 
@@ -20,8 +21,10 @@ function refs(text: string) {
   return /^[ \t]{0,3}\[[^\]]+\]:[ \t]*(?:\S+|\r?\n[ \t]+\S+)/m.test(text)
 }
 
-function language(value: string | undefined) {
-  return value?.trim().split(/\s+/, 1)[0] || undefined
+// A fence without a language leaves the key out of the block.
+function language(value: string | undefined): Pick<Block, "language"> {
+  const name = value?.trim().split(/\s+/, 1)[0]
+  return name ? { language: name } : {}
 }
 
 function openCode(raw: string) {
@@ -46,6 +49,12 @@ function closesFence(raw: string, suffix: string) {
   return `${raw.slice(-(mark.length - 1))}${suffix}`.includes(mark)
 }
 
+// marked's Token union also has a Generic member with a string `type`, so the type check alone
+// does not narrow to Tokens.Code. The text check confirms the field that the code path reads.
+function isCodeToken(token: Token): token is Tokens.Code {
+  return token.type === "code" && typeof token.text === "string"
+}
+
 function heal(text: string) {
   return remend(text, { linkMode: "text-only" })
 }
@@ -64,10 +73,9 @@ export function stream(text: string, live: boolean): Block[] {
     const token = tokens[index]
     if (!token || token.type === "space") continue
     let raw = token.raw
-    while (tokens[index + 1]?.type === "space" && index + 1 < tail) raw += tokens[++index]!.raw
-    if (token.type === "code") {
-      const code = token as Tokens.Code
-      result.push({ raw, src: code.text, mode: "code", language: language(code.lang), complete: true })
+    while (tokens[index + 1]?.type === "space" && index + 1 < tail) raw += tokens[++index].raw
+    if (isCodeToken(token)) {
+      result.push({ raw, src: token.text, mode: "code", ...language(token.lang), complete: true })
       continue
     }
     result.push({ raw, src: raw, mode: "full" })
@@ -77,41 +85,38 @@ export function stream(text: string, live: boolean): Block[] {
     .slice(tail)
     .map((token) => token.raw)
     .join("")
-  if (last.type !== "code") return [...result, { raw, src: heal(raw), mode: "live" }]
+  if (!isCodeToken(last)) return [...result, { raw, src: heal(raw), mode: "live" }]
 
-  const code = last as Tokens.Code
-  if (!open(code.raw))
-    return [...result, { raw, src: code.text, mode: "code", language: language(code.lang), complete: true }]
-  return [...result, { raw, src: openCode(code.raw), mode: "code", language: language(code.lang) }]
+  if (!open(last.raw)) return [...result, { raw, src: last.text, mode: "code", ...language(last.lang), complete: true }]
+  return [...result, { raw, src: openCode(last.raw), mode: "code", ...language(last.lang) }]
 }
 
-export function project(previous: Projection | undefined, text: string, live: boolean): Projection {
+export function project(previous: Option.Option<Projection>, text: string, live: boolean): Projection {
   if (!live) {
-    const current =
-      previous?.text === text
-        ? previous
-        : previous && text.startsWith(previous.text)
-          ? project(previous, text, true)
-          : undefined
-    if (!current) return completedProjection(text)
+    const current = Option.flatMap(previous, (value) => {
+      if (value.text === text) return Option.some(value)
+      if (text.startsWith(value.text)) return Option.some(project(previous, text, true))
+      return Option.none()
+    })
+    if (Option.isNone(current)) return completedProjection(text)
     return {
       text,
-      blocks: current.blocks.map((block) => {
+      blocks: current.value.blocks.map((block) => {
         if (block.mode === "live") return { raw: block.raw, src: block.raw, mode: "full" }
         if (block.mode === "code" && !block.complete) return { ...block, complete: true }
         return block
       }),
     }
   }
-  if (!previous || !text.startsWith(previous.text)) return { text, blocks: stream(text, live) }
-  const tail = previous.blocks.at(-1)
-  const suffix = text.slice(previous.text.length)
+  if (Option.isNone(previous) || !text.startsWith(previous.value.text)) return { text, blocks: stream(text, live) }
+  const tail = previous.value.blocks.at(-1)
+  const suffix = text.slice(previous.value.text.length)
   if (!suffix || tail?.mode !== "code" || tail.complete || closesFence(tail.raw, suffix))
     return { text, blocks: stream(text, live) }
   return {
     text,
     blocks: [
-      ...previous.blocks.slice(0, -1),
+      ...previous.value.blocks.slice(0, -1),
       {
         ...tail,
         raw: tail.raw + suffix,

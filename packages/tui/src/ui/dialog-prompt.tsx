@@ -1,7 +1,8 @@
 import { TextareaRenderable, TextAttributes } from "@opentui/core"
+import { Effect, Fiber, Option } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
-import { Show, createEffect, createSignal, onMount, type JSX } from "solid-js"
+import { Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import { Spinner } from "../component/spinner"
 import { useTuiConfig } from "../config"
 import { useBindings, useCommandShortcut } from "../keymap"
@@ -48,11 +49,21 @@ export function DialogPrompt(props: DialogPromptProps) {
 
   onMount(() => {
     dialog.setSize("medium")
-    setTimeout(() => {
-      if (!textarea || textarea.isDestroyed) return
-      if (props.busy) return
-      textarea.focus()
-    }, 1)
+    // Focus after the dialog finishes mounting; the pending focus stops if the dialog closes first.
+    const focus = Effect.runFork(
+      Effect.sleep("1 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!textarea || textarea.isDestroyed) return
+            if (props.busy) return
+            textarea.focus()
+          }),
+        ),
+      ),
+    )
+    onCleanup(() => {
+      Effect.runFork(Fiber.interrupt(focus))
+    })
     textarea.gotoLineEnd()
   })
 
@@ -115,13 +126,24 @@ export function DialogPrompt(props: DialogPromptProps) {
   )
 }
 
-DialogPrompt.show = (dialog: DialogContext, title: string, options?: Omit<DialogPromptProps, "title">) => {
-  return new Promise<string | null>((resolve) => {
-    dialog.replace(
-      () => (
-        <DialogPrompt title={title} {...options} onConfirm={(value) => resolve(value)} onCancel={() => resolve(null)} />
-      ),
-      () => resolve(null),
-    )
-  })
-}
+// Resolves with the entered text, or null when the prompt is cancelled or closed.
+DialogPrompt.show = (
+  dialog: DialogContext,
+  title: string,
+  options?: Omit<DialogPromptProps, "title">,
+): Promise<string | null> =>
+  Effect.runPromise(
+    Effect.callback<Option.Option<string>>((resume) => {
+      dialog.replace(
+        () => (
+          <DialogPrompt
+            title={title}
+            {...options}
+            onConfirm={(value) => resume(Effect.succeedSome(value))}
+            onCancel={() => resume(Effect.succeedNone)}
+          />
+        ),
+        () => resume(Effect.succeedNone),
+      )
+    }).pipe(Effect.map(Option.getOrNull)),
+  )

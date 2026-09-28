@@ -15,6 +15,18 @@ export const ID = Schema.String.check(Schema.isStartsWith("msg_")).pipe(
 )
 export type ID = typeof ID.Type
 
+/** Provider tool call id shared by an assistant tool part and its session.next.tool.* events. */
+export const ToolCallID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
+
+/** Provider text block id shared by an assistant text part and its session.next.text.* events. */
+export const TextID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.TextID"))
+export type TextID = typeof TextID.Type
+
+/** Provider reasoning block id shared by an assistant reasoning part and its session.next.reasoning.* events. */
+export const ReasoningID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.ReasoningID"))
+export type ReasoningID = typeof ReasoningID.Type
+
 export interface UnknownError extends Schema.Schema.Type<typeof UnknownError> {}
 export const UnknownError = Schema.Struct({
   type: Schema.Literal("unknown"),
@@ -23,7 +35,7 @@ export const UnknownError = Schema.Struct({
 
 const Base = {
   id: ID,
-  metadata: Schema.Record(Schema.String, Schema.Unknown).pipe(optional),
+  metadata: Schema.JsonObject.pipe(optional),
   time: Schema.Struct({ created: DateTimeUtcFromMillis }),
 }
 
@@ -87,30 +99,30 @@ export const ToolStatePending = Schema.Struct({
 export interface ToolStateRunning extends Schema.Schema.Type<typeof ToolStateRunning> {}
 export const ToolStateRunning = Schema.Struct({
   status: Schema.Literal("running"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
+  structured: Schema.JsonObject,
   content: ToolContent.pipe(Schema.Array),
 }).annotate({ identifier: "Session.Message.ToolState.Running" })
 
 export interface ToolStateCompleted extends Schema.Schema.Type<typeof ToolStateCompleted> {}
 export const ToolStateCompleted = Schema.Struct({
   status: Schema.Literal("completed"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
   attachments: FileAttachment.pipe(Schema.Array, optional),
   content: ToolContent.pipe(Schema.Array),
   outputPaths: Schema.Array(Schema.String).pipe(optional),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
-  result: Schema.Unknown.pipe(optional),
+  structured: Schema.JsonObject,
+  result: Schema.Json.pipe(optional),
 }).annotate({ identifier: "Session.Message.ToolState.Completed" })
 
 export interface ToolStateError extends Schema.Schema.Type<typeof ToolStateError> {}
 export const ToolStateError = Schema.Struct({
   status: Schema.Literal("error"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
   content: ToolContent.pipe(Schema.Array),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
+  structured: Schema.JsonObject,
   error: UnknownError,
-  result: Schema.Unknown.pipe(optional),
+  result: Schema.Json.pipe(optional),
 }).annotate({ identifier: "Session.Message.ToolState.Error" })
 
 export const ToolState = Schema.Union([ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError]).pipe(
@@ -121,7 +133,7 @@ export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted
 export interface AssistantTool extends Schema.Schema.Type<typeof AssistantTool> {}
 export const AssistantTool = Schema.Struct({
   type: Schema.Literal("tool"),
-  id: Schema.String,
+  id: ToolCallID,
   name: Schema.String,
   provider: Schema.Struct({
     executed: Schema.Boolean,
@@ -140,14 +152,14 @@ export const AssistantTool = Schema.Struct({
 export interface AssistantText extends Schema.Schema.Type<typeof AssistantText> {}
 export const AssistantText = Schema.Struct({
   type: Schema.Literal("text"),
-  id: Schema.String,
+  id: TextID,
   text: Schema.String,
 }).annotate({ identifier: "Session.Message.Assistant.Text" })
 
 export interface AssistantReasoning extends Schema.Schema.Type<typeof AssistantReasoning> {}
 export const AssistantReasoning = Schema.Struct({
   type: Schema.Literal("reasoning"),
-  id: Schema.String,
+  id: ReasoningID,
   text: Schema.String,
   providerMetadata: ProviderMetadata.pipe(optional),
   time: Schema.Struct({

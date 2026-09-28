@@ -1,7 +1,6 @@
-import { Effect } from "effect"
+import { Console, DateTime, Effect, Option } from "effect"
 import { effectCmd } from "../effect-cmd"
 import { Session } from "@/session/session"
-import { NotFoundError } from "@/storage/storage"
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { Project } from "@/project/project"
@@ -67,16 +66,16 @@ export const StatsCommand = effectCmd({
         type: "string",
       }),
   handler: Effect.fn("Cli.stats")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
-    const stats = yield* aggregateSessionStats(args.days, args.project, ctx.project)
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const stats = yield* aggregateSessionStats(instance.value.project, args.days, args.project)
     let modelLimit: number | undefined
     if (args.models === true) {
       modelLimit = Infinity
     } else if (typeof args.models === "number") {
       modelLimit = args.models
     }
-    displayStats(stats, args.tools, modelLimit)
+    yield* displayStats(stats, args.tools, modelLimit)
   }),
 })
 
@@ -86,40 +85,31 @@ const getAllSessions = Effect.fnUntraced(function* () {
 })
 
 const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
+  currentProject: Project.Info,
   days?: number,
   projectFilter?: string,
-  currentProject?: Project.Info,
 ) {
   const svc = yield* Session.Service
   const sessions = yield* getAllSessions()
   const MS_IN_DAY = 24 * 60 * 60 * 1000
+  const now = yield* DateTime.now
+  const nowMillis = DateTime.toEpochMillis(now)
 
-  const cutoffTime = (() => {
-    if (days === undefined) return 0
-    if (days === 0) {
-      const now = new Date()
-      now.setHours(0, 0, 0, 0)
-      return now.getTime()
-    }
-    return Date.now() - days * MS_IN_DAY
-  })()
+  // `--days 0` means "today": from local midnight, not from 24 hours ago.
+  const cutoffTime =
+    days === undefined
+      ? 0
+      : days === 0
+        ? DateTime.toEpochMillis(DateTime.startOf(DateTime.setZone(now, DateTime.zoneMakeLocal()), "day"))
+        : nowMillis - days * MS_IN_DAY
 
-  const windowDays = (() => {
-    if (days === undefined) return
-    if (days === 0) return 1
-    return days
-  })()
+  const windowDays = days === undefined ? Option.none<number>() : Option.some(days === 0 ? 1 : days)
 
-  let filteredSessions = cutoffTime > 0 ? sessions.filter((session) => session.time.updated >= cutoffTime) : sessions
-
-  if (projectFilter !== undefined) {
-    if (projectFilter === "") {
-      if (!currentProject) throw new Error("currentProject required when projectFilter is empty string")
-      filteredSessions = filteredSessions.filter((session) => session.projectID === currentProject.id)
-    } else {
-      filteredSessions = filteredSessions.filter((session) => session.projectID === projectFilter)
-    }
-  }
+  const recentSessions = cutoffTime > 0 ? sessions.filter((session) => session.time.updated >= cutoffTime) : sessions
+  // An empty `--project` selects the current project.
+  const projectID = projectFilter === "" ? currentProject.id : projectFilter
+  const filteredSessions =
+    projectID === undefined ? recentSessions : recentSessions.filter((session) => session.projectID === projectID)
 
   const stats: SessionStats = {
     totalSessions: filteredSessions.length,
@@ -137,8 +127,8 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
     toolUsage: {},
     modelUsage: {},
     dateRange: {
-      earliest: Date.now(),
-      latest: Date.now(),
+      earliest: nowMillis,
+      latest: nowMillis,
     },
     days: 0,
     costPerDay: 0,
@@ -147,18 +137,13 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
   }
 
   if (filteredSessions.length > 1000) {
-    console.log(`Large dataset detected (${filteredSessions.length} sessions). This may take a while...`)
+    yield* Console.log(`Large dataset detected (${filteredSessions.length} sessions). This may take a while...`)
   }
 
   if (filteredSessions.length === 0) {
-    stats.days = windowDays ?? 0
+    stats.days = Option.getOrElse(windowDays, () => 0)
     return stats
   }
-
-  let earliestTime = Date.now()
-  let latestTime = 0
-
-  const sessionTotalTokens: number[] = []
 
   const results = yield* Effect.forEach(
     filteredSessions,
@@ -166,7 +151,7 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
       Effect.gen(function* () {
         const messages = yield* svc
           .messages({ sessionID: session.id })
-          .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed([])))
+          .pipe(Effect.catchTag("NotFoundError", () => Effect.succeed([])))
 
         const sessionCost = session.cost ?? 0
         const sessionTokens = session.tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
@@ -228,11 +213,11 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
     { concurrency: 20 },
   )
 
-  for (const result of results) {
-    earliestTime = Math.min(earliestTime, result.earliestTime)
-    latestTime = Math.max(latestTime, result.latestTime)
-    sessionTotalTokens.push(result.sessionTotalTokens)
+  const earliestTime = results.reduce((min, result) => Math.min(min, result.earliestTime), nowMillis)
+  const latestTime = results.reduce((max, result) => Math.max(max, result.latestTime), 0)
+  const sessionTotalTokens = results.map((result) => result.sessionTotalTokens).sort((a, b) => a - b)
 
+  for (const result of results) {
     stats.totalMessages += result.messageCount
     stats.totalCost += result.sessionCost
     stats.totalTokens.input += result.sessionTokens.input
@@ -263,7 +248,7 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
   }
 
   const rangeDays = Math.max(1, Math.ceil((latestTime - earliestTime) / MS_IN_DAY))
-  const effectiveDays = windowDays ?? rangeDays
+  const effectiveDays = Option.getOrElse(windowDays, () => rangeDays)
   stats.dateRange = {
     earliest: earliestTime,
     latest: latestTime,
@@ -277,7 +262,6 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
     stats.totalTokens.cache.read +
     stats.totalTokens.cache.write
   stats.tokensPerSession = filteredSessions.length > 0 ? totalTokens / filteredSessions.length : 0
-  sessionTotalTokens.sort((a, b) => a - b)
   const mid = Math.floor(sessionTotalTokens.length / 2)
   stats.medianTokensPerSession =
     sessionTotalTokens.length === 0
@@ -289,7 +273,11 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
   return stats
 })
 
-export function displayStats(stats: SessionStats, toolLimit?: number, modelLimit?: number) {
+// Prints the report to stdout, as the former console.log calls did. Each entry of `lines` is one output line.
+export const displayStats = (stats: SessionStats, toolLimit?: number, modelLimit?: number) =>
+  Console.log(statsLines(stats, toolLimit, modelLimit).join("\n"))
+
+function statsLines(stats: SessionStats, toolLimit?: number, modelLimit?: number): string[] {
   const width = 56
 
   function renderRow(label: string, value: string): string {
@@ -299,88 +287,87 @@ export function displayStats(stats: SessionStats, toolLimit?: number, modelLimit
     return `│${label}${" ".repeat(padding)}${value} │`
   }
 
-  // Overview section
-  console.log("┌────────────────────────────────────────────────────────┐")
-  console.log("│                       OVERVIEW                         │")
-  console.log("├────────────────────────────────────────────────────────┤")
-  console.log(renderRow("Sessions", stats.totalSessions.toLocaleString()))
-  console.log(renderRow("Messages", stats.totalMessages.toLocaleString()))
-  console.log(renderRow("Days", stats.days.toString()))
-  console.log("└────────────────────────────────────────────────────────┘")
-  console.log()
-
-  // Cost & Tokens section
-  console.log("┌────────────────────────────────────────────────────────┐")
-  console.log("│                    COST & TOKENS                       │")
-  console.log("├────────────────────────────────────────────────────────┤")
   const cost = isNaN(stats.totalCost) ? 0 : stats.totalCost
   const costPerDay = isNaN(stats.costPerDay) ? 0 : stats.costPerDay
   const tokensPerSession = isNaN(stats.tokensPerSession) ? 0 : stats.tokensPerSession
-  console.log(renderRow("Total Cost", `$${cost.toFixed(2)}`))
-  console.log(renderRow("Avg Cost/Day", `$${costPerDay.toFixed(2)}`))
-  console.log(renderRow("Avg Tokens/Session", formatNumber(Math.round(tokensPerSession))))
   const medianTokensPerSession = isNaN(stats.medianTokensPerSession) ? 0 : stats.medianTokensPerSession
-  console.log(renderRow("Median Tokens/Session", formatNumber(Math.round(medianTokensPerSession))))
-  console.log(renderRow("Input", formatNumber(stats.totalTokens.input)))
-  console.log(renderRow("Output", formatNumber(stats.totalTokens.output)))
-  console.log(renderRow("Cache Read", formatNumber(stats.totalTokens.cache.read)))
-  console.log(renderRow("Cache Write", formatNumber(stats.totalTokens.cache.write)))
-  console.log("└────────────────────────────────────────────────────────┘")
-  console.log()
 
-  // Model Usage section
-  if (modelLimit !== undefined && Object.keys(stats.modelUsage).length > 0) {
+  const overview = [
+    "┌────────────────────────────────────────────────────────┐",
+    "│                       OVERVIEW                         │",
+    "├────────────────────────────────────────────────────────┤",
+    renderRow("Sessions", stats.totalSessions.toLocaleString()),
+    renderRow("Messages", stats.totalMessages.toLocaleString()),
+    renderRow("Days", stats.days.toString()),
+    "└────────────────────────────────────────────────────────┘",
+    "",
+  ]
+
+  const costAndTokens = [
+    "┌────────────────────────────────────────────────────────┐",
+    "│                    COST & TOKENS                       │",
+    "├────────────────────────────────────────────────────────┤",
+    renderRow("Total Cost", `$${cost.toFixed(2)}`),
+    renderRow("Avg Cost/Day", `$${costPerDay.toFixed(2)}`),
+    renderRow("Avg Tokens/Session", formatNumber(Math.round(tokensPerSession))),
+    renderRow("Median Tokens/Session", formatNumber(Math.round(medianTokensPerSession))),
+    renderRow("Input", formatNumber(stats.totalTokens.input)),
+    renderRow("Output", formatNumber(stats.totalTokens.output)),
+    renderRow("Cache Read", formatNumber(stats.totalTokens.cache.read)),
+    renderRow("Cache Write", formatNumber(stats.totalTokens.cache.write)),
+    "└────────────────────────────────────────────────────────┘",
+    "",
+  ]
+
+  const modelUsage = (() => {
+    if (modelLimit === undefined || Object.keys(stats.modelUsage).length === 0) return []
     const sortedModels = Object.entries(stats.modelUsage).sort(([, a], [, b]) => b.messages - a.messages)
     const modelsToDisplay = modelLimit === Infinity ? sortedModels : sortedModels.slice(0, modelLimit)
+    return [
+      "┌────────────────────────────────────────────────────────┐",
+      "│                      MODEL USAGE                       │",
+      "├────────────────────────────────────────────────────────┤",
+      ...modelsToDisplay.flatMap(([model, usage]) => [
+        `│ ${model.padEnd(54)} │`,
+        renderRow("  Messages", usage.messages.toLocaleString()),
+        renderRow("  Input Tokens", formatNumber(usage.tokens.input)),
+        renderRow("  Output Tokens", formatNumber(usage.tokens.output)),
+        renderRow("  Cache Read", formatNumber(usage.tokens.cache.read)),
+        renderRow("  Cache Write", formatNumber(usage.tokens.cache.write)),
+        renderRow("  Cost", `$${usage.cost.toFixed(4)}`),
+        "├────────────────────────────────────────────────────────┤",
+      ]),
+      // The escape moves the cursor up one line, so the bottom border replaces the last separator.
+      "\x1B[1A└────────────────────────────────────────────────────────┘",
+    ]
+  })()
 
-    console.log("┌────────────────────────────────────────────────────────┐")
-    console.log("│                      MODEL USAGE                       │")
-    console.log("├────────────────────────────────────────────────────────┤")
-
-    for (const [model, usage] of modelsToDisplay) {
-      console.log(`│ ${model.padEnd(54)} │`)
-      console.log(renderRow("  Messages", usage.messages.toLocaleString()))
-      console.log(renderRow("  Input Tokens", formatNumber(usage.tokens.input)))
-      console.log(renderRow("  Output Tokens", formatNumber(usage.tokens.output)))
-      console.log(renderRow("  Cache Read", formatNumber(usage.tokens.cache.read)))
-      console.log(renderRow("  Cache Write", formatNumber(usage.tokens.cache.write)))
-      console.log(renderRow("  Cost", `$${usage.cost.toFixed(4)}`))
-      console.log("├────────────────────────────────────────────────────────┤")
-    }
-    // Remove last separator and add bottom border
-    process.stdout.write("\x1B[1A") // Move up one line
-    console.log("└────────────────────────────────────────────────────────┘")
-  }
-  console.log()
-
-  // Tool Usage section
-  if (Object.keys(stats.toolUsage).length > 0) {
+  const toolUsage = (() => {
+    if (Object.keys(stats.toolUsage).length === 0) return []
     const sortedTools = Object.entries(stats.toolUsage).sort(([, a], [, b]) => b - a)
     const toolsToDisplay = toolLimit ? sortedTools.slice(0, toolLimit) : sortedTools
-
-    console.log("┌────────────────────────────────────────────────────────┐")
-    console.log("│                      TOOL USAGE                        │")
-    console.log("├────────────────────────────────────────────────────────┤")
-
     const maxCount = Math.max(...toolsToDisplay.map(([, count]) => count))
     const totalToolUsage = Object.values(stats.toolUsage).reduce((a, b) => a + b, 0)
+    const maxToolLength = 18
+    return [
+      "┌────────────────────────────────────────────────────────┐",
+      "│                      TOOL USAGE                        │",
+      "├────────────────────────────────────────────────────────┤",
+      ...toolsToDisplay.map(([tool, count]) => {
+        const barLength = Math.max(1, Math.floor((count / maxCount) * 20))
+        const bar = "█".repeat(barLength)
+        const percentage = ((count / totalToolUsage) * 100).toFixed(1)
+        const truncatedTool = tool.length > maxToolLength ? tool.substring(0, maxToolLength - 2) + ".." : tool
+        const toolName = truncatedTool.padEnd(maxToolLength)
+        const content = ` ${toolName} ${bar.padEnd(20)} ${count.toString().padStart(3)} (${percentage.padStart(4)}%)`
+        const padding = Math.max(0, width - content.length - 1)
+        return `│${content}${" ".repeat(padding)} │`
+      }),
+      "└────────────────────────────────────────────────────────┘",
+    ]
+  })()
 
-    for (const [tool, count] of toolsToDisplay) {
-      const barLength = Math.max(1, Math.floor((count / maxCount) * 20))
-      const bar = "█".repeat(barLength)
-      const percentage = ((count / totalToolUsage) * 100).toFixed(1)
-
-      const maxToolLength = 18
-      const truncatedTool = tool.length > maxToolLength ? tool.substring(0, maxToolLength - 2) + ".." : tool
-      const toolName = truncatedTool.padEnd(maxToolLength)
-
-      const content = ` ${toolName} ${bar.padEnd(20)} ${count.toString().padStart(3)} (${percentage.padStart(4)}%)`
-      const padding = Math.max(0, width - content.length - 1)
-      console.log(`│${content}${" ".repeat(padding)} │`)
-    }
-    console.log("└────────────────────────────────────────────────────────┘")
-  }
-  console.log()
+  return [...overview, ...costAndTokens, ...modelUsage, "", ...toolUsage, ""]
 }
 
 function formatNumber(num: number): string {

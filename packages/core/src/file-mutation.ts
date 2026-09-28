@@ -1,7 +1,7 @@
 export * as FileMutation from "./file-mutation"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { dirname } from "path"
 import { KeyedMutex } from "./effect/keyed-mutex"
 import { FSUtil } from "./fs-util"
@@ -109,14 +109,15 @@ const layer = Layer.effect(
       withTargetLock(input.target)(
         Effect.gen(function* () {
           const next = splitBom(input.content)
-          const current = yield* fs
-            .readFile(input.target.canonical)
-            .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))
+          const current = yield* fs.readFile(input.target.canonical).pipe(
+            Effect.map(Option.some),
+            Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+          )
           yield* fs.writeWithDirs(
             input.target.canonical,
-            joinBom(next.text, Boolean(current && hasUtf8Bom(current)) || next.bom),
+            joinBom(next.text, Option.exists(current, hasUtf8Bom) || next.bom),
           )
-          return writeResult(input.target, current !== undefined)
+          return writeResult(input.target, Option.isSome(current))
         }),
       ),
     )

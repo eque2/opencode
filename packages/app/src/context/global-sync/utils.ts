@@ -5,35 +5,48 @@ import type {
   PermissionV2Request,
   ProviderListOutput,
 } from "@opencode-ai/client/promise"
-import type { Agent, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
+import type {
+  Agent,
+  Model,
+  PermissionRequest,
+  Project,
+  Provider,
+  ProviderListResponse,
+} from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import { DateTime, HashMap, Option, Predicate } from "effect"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
+const isAppAgentList = (input: AgentListOutput["data"] | Agent[]): input is Agent[] =>
+  input.every((agent) => !("request" in agent))
+
 export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Agent[] {
-  if (input.every((agent) => !("request" in agent))) return input as Agent[]
-  return (input as AgentListOutput["data"]).map((agent) => ({
-    name: agent.id,
-    description: agent.description,
-    mode: agent.mode,
-    hidden: agent.hidden,
-    temperature:
-      typeof agent.request.settings.temperature === "number" ? agent.request.settings.temperature : undefined,
-    topP: typeof agent.request.settings.topP === "number" ? agent.request.settings.topP : undefined,
-    color: agent.color,
-    permission: agent.permissions.map((rule) => ({
-      permission: rule.action,
-      pattern: rule.resource,
-      action: rule.effect,
-    })),
-    model: agent.model && { providerID: agent.model.providerID, modelID: agent.model.id },
-    variant: agent.model?.variant,
-    prompt: agent.system,
-    options: agent.request.settings,
-    steps: agent.steps,
-  }))
+  if (isAppAgentList(input)) return input
+  return input.map((agent) => {
+    const { temperature, topP } = agent.request.settings
+    return {
+      name: agent.id,
+      description: agent.description,
+      mode: agent.mode,
+      hidden: agent.hidden,
+      ...(Predicate.isNumber(temperature) ? { temperature } : {}),
+      ...(Predicate.isNumber(topP) ? { topP } : {}),
+      color: agent.color,
+      permission: agent.permissions.map((rule) => ({
+        permission: rule.action,
+        pattern: rule.resource,
+        action: rule.effect,
+      })),
+      model: agent.model && { providerID: agent.model.providerID, modelID: agent.model.id },
+      variant: agent.model?.variant,
+      prompt: agent.system,
+      options: agent.request.settings,
+      steps: agent.steps,
+    }
+  })
 }
 
 export function normalizePermissionRequest(input: PermissionV2Request | PermissionRequest): PermissionRequest {
@@ -45,8 +58,59 @@ export function normalizePermissionRequest(input: PermissionV2Request | Permissi
     patterns: input.resources,
     always: input.save ?? [],
     metadata: input.metadata ?? {},
-    tool:
-      input.source?.type === "tool" ? { messageID: input.source.messageID, callID: input.source.callID } : undefined,
+    ...(input.source?.type === "tool"
+      ? { tool: { messageID: input.source.messageID, callID: input.source.callID } }
+      : {}),
+  }
+}
+
+function toProviderModel(model: ModelListOutput["data"][number], providerID: string): Model {
+  const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
+  return {
+    id: model.id,
+    providerID: model.providerID,
+    api: {
+      id: model.modelID,
+      url: "",
+      npm: model.package ?? providerID,
+    },
+    name: model.name,
+    family: model.family,
+    capabilities: {
+      temperature: false,
+      reasoning: false,
+      attachment: model.capabilities.input.some((item) => item !== "text"),
+      toolcall: model.capabilities.tools,
+      input: {
+        text: model.capabilities.input.includes("text"),
+        audio: model.capabilities.input.includes("audio"),
+        image: model.capabilities.input.includes("image"),
+        video: model.capabilities.input.includes("video"),
+        pdf: model.capabilities.input.includes("pdf"),
+      },
+      output: {
+        text: model.capabilities.output.includes("text"),
+        audio: model.capabilities.output.includes("audio"),
+        image: model.capabilities.output.includes("image"),
+        video: model.capabilities.output.includes("video"),
+        pdf: model.capabilities.output.includes("pdf"),
+      },
+      interleaved: false,
+    },
+    cost: {
+      input: cost?.input ?? 0,
+      output: cost?.output ?? 0,
+      cache: {
+        read: cost?.cache.read ?? 0,
+        write: cost?.cache.write ?? 0,
+      },
+    },
+    limit: model.limit,
+    status: model.status,
+    options: model.settings ?? {},
+    headers: model.headers ?? {},
+    release_date: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(model.time.released)),
+    variants: Object.fromEntries(model.variants.map((variant) => [variant.id, variant.settings ?? {}])),
   }
 }
 
@@ -58,7 +122,7 @@ export function normalizeProviderList(
   if (!Array.isArray(providers)) {
     return {
       ...providers,
-      all: new Map(
+      all: HashMap.fromIterable<string, Provider>(
         providers.all.map((provider) => [
           provider.id,
           {
@@ -71,75 +135,31 @@ export function normalizeProviderList(
       ),
     }
   }
-  const all = new Map<string, Provider>()
-
-  for (const provider of providers) {
-    all.set(provider.id, {
-      id: provider.id,
-      name: provider.name,
-      source: "custom",
-      env: [],
-      options: provider.settings ?? {},
-      models: {},
-    })
-  }
-
-  for (const model of models ?? []) {
-    const provider = all.get(model.providerID)
-    if (!provider || model.status === "deprecated") continue
-    const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
-    provider.models[model.id] = {
-      id: model.id,
-      providerID: model.providerID,
-      api: {
-        id: model.modelID,
-        url: "",
-        npm: model.package ?? provider.id,
+  const catalogModels = (models ?? []).filter((model) => model.status !== "deprecated")
+  const all = HashMap.fromIterable<string, Provider>(
+    providers.map((provider) => [
+      provider.id,
+      {
+        id: provider.id,
+        name: provider.name,
+        source: "custom",
+        env: [],
+        options: provider.settings ?? {},
+        models: Object.fromEntries(
+          catalogModels
+            .filter((model) => model.providerID === provider.id)
+            .map((model) => [model.id, toProviderModel(model, provider.id)]),
+        ),
       },
-      name: model.name,
-      family: model.family,
-      capabilities: {
-        temperature: false,
-        reasoning: false,
-        attachment: model.capabilities.input.some((item) => item !== "text"),
-        toolcall: model.capabilities.tools,
-        input: {
-          text: model.capabilities.input.includes("text"),
-          audio: model.capabilities.input.includes("audio"),
-          image: model.capabilities.input.includes("image"),
-          video: model.capabilities.input.includes("video"),
-          pdf: model.capabilities.input.includes("pdf"),
-        },
-        output: {
-          text: model.capabilities.output.includes("text"),
-          audio: model.capabilities.output.includes("audio"),
-          image: model.capabilities.output.includes("image"),
-          video: model.capabilities.output.includes("video"),
-          pdf: model.capabilities.output.includes("pdf"),
-        },
-        interleaved: false,
-      },
-      cost: {
-        input: cost?.input ?? 0,
-        output: cost?.output ?? 0,
-        cache: {
-          read: cost?.cache.read ?? 0,
-          write: cost?.cache.write ?? 0,
-        },
-      },
-      limit: model.limit,
-      status: model.status,
-      options: model.settings ?? {},
-      headers: model.headers ?? {},
-      release_date: new Date(model.time.released).toISOString().slice(0, 10),
-      variants: Object.fromEntries(model.variants.map((variant) => [variant.id, variant.settings ?? {}])),
-    }
-  }
+    ]),
+  )
 
   return {
     all,
     connected: providers.map((provider) => provider.id),
-    defaultModel: defaultModel ? { providerID: defaultModel.providerID, modelID: defaultModel.id } : null,
+    defaultModel: Option.getOrNull(
+      Option.map(Option.fromNullishOr(defaultModel), (model) => ({ providerID: model.providerID, modelID: model.id })),
+    ),
     default: Object.fromEntries(
       providers.flatMap((provider) => {
         const model =
@@ -154,19 +174,11 @@ export function normalizeProviderList(
 
 export function sanitizeProject(project: Project) {
   if (!project.icon?.url && !project.icon?.override) return project
-  return {
-    ...project,
-    icon: {
-      ...project.icon,
-      url: undefined,
-      override: undefined,
-    },
-  }
+  const { url: _url, override: _override, ...icon } = project.icon ?? {}
+  return { ...project, icon }
 }
 
 export function normalizeProjectInfo(project: Project | CurrentProject): Project {
-  return {
-    ...project,
-    vcs: project.vcs === "git" ? "git" : undefined,
-  }
+  const { vcs, ...rest } = project
+  return { ...rest, ...(vcs === "git" ? { vcs } : {}) }
 }

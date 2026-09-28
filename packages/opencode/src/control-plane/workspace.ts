@@ -1,8 +1,22 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Context, Effect, FiberMap, Iterable, Layer, Schema, Stream } from "effect"
+import {
+  Clock,
+  Config,
+  Context,
+  Effect,
+  FiberMap,
+  Iterable,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
 import { asc } from "drizzle-orm"
 import { eq } from "drizzle-orm"
@@ -25,15 +39,15 @@ import { Session } from "@/session/session"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionID } from "@/session/schema"
-import { NotFoundError } from "@/storage/storage"
 import { errorData } from "@/util/error"
-import { waitEvent } from "./util"
+import { waitEvent, type WaitEventError } from "./util"
 import { WorkspaceRef } from "@/effect/instance-ref"
 import { Vcs } from "@/project/vcs"
 import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
 import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 
 export const Info = Schema.Struct({
   ...WorkspaceInfoSchema.fields,
@@ -65,14 +79,14 @@ export const CreateInput = Schema.Struct({
   branch: Info.fields.branch,
   projectID: ProjectV2.ID,
   extra: Schema.optional(Info.fields.extra),
-})
+}).annotate({ identifier: "WorkspaceCreateInput" })
 export type CreateInput = Schema.Schema.Type<typeof CreateInput>
 
 export const SessionWarpInput = Schema.Struct({
   workspaceID: Schema.NullOr(WorkspaceV2.ID),
   sessionID: SessionID,
   copyChanges: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "WorkspaceSessionWarpInput" })
 export type SessionWarpInput = Schema.Schema.Type<typeof SessionWarpInput>
 
 export class SyncHttpError extends Schema.TaggedError<SyncHttpError>()("WorkspaceSyncHttpError", {
@@ -81,13 +95,10 @@ export class SyncHttpError extends Schema.TaggedError<SyncHttpError>()("Workspac
   body: Schema.optional(Schema.String),
 }) {}
 
-export class WorkspaceNotFoundError extends Schema.TaggedError<WorkspaceNotFoundError>()(
-  "WorkspaceNotFoundError",
-  {
-    message: Schema.String,
-    workspaceID: WorkspaceV2.ID,
-  },
-) {}
+export class WorkspaceNotFoundError extends Schema.TaggedError<WorkspaceNotFoundError>()("WorkspaceNotFoundError", {
+  message: Schema.String,
+  workspaceID: WorkspaceV2.ID,
+}) {}
 
 export class SessionEventsNotFoundError extends Schema.TaggedError<SessionEventsNotFoundError>()(
   "WorkspaceSessionEventsNotFoundError",
@@ -97,16 +108,13 @@ export class SessionEventsNotFoundError extends Schema.TaggedError<SessionEvents
   },
 ) {}
 
-export class SessionWarpHttpError extends Schema.TaggedError<SessionWarpHttpError>()(
-  "WorkspaceSessionWarpHttpError",
-  {
-    message: Schema.String,
-    workspaceID: WorkspaceV2.ID,
-    sessionID: SessionID,
-    status: Schema.Number,
-    body: Schema.String,
-  },
-) {}
+export class SessionWarpHttpError extends Schema.TaggedError<SessionWarpHttpError>()("WorkspaceSessionWarpHttpError", {
+  message: Schema.String,
+  workspaceID: WorkspaceV2.ID,
+  sessionID: SessionID,
+  status: Schema.Number,
+  body: Schema.String,
+}) {}
 
 export class SyncTimeoutError extends Schema.TaggedError<SyncTimeoutError>()("WorkspaceSyncTimeoutError", {
   message: Schema.String,
@@ -118,7 +126,7 @@ export class SyncAbortedError extends Schema.TaggedError<SyncAbortedError>()("Wo
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
-type CreateError = Auth.AuthError
+type CreateError = Auth.AuthError | WaitEventError
 type SessionWarpError =
   | WorkspaceNotFoundError
   | SessionEventsNotFoundError
@@ -162,16 +170,18 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const fs = yield* FSUtil.Service
     const { db } = yield* Database.Service
-    const connections = new Map<WorkspaceV2.ID, ConnectionStatus>()
+    const connections = MutableHashMap.empty<WorkspaceV2.ID, ConnectionStatus>()
     const syncFibers = yield* FiberMap.make<WorkspaceV2.ID, void, SyncLoopError>()
 
-    const setStatus = (id: WorkspaceV2.ID, status: ConnectionStatus["status"]) => {
-      const prev = connections.get(id)
-      if (prev?.status === status) return
-      const next = { workspaceID: id, status }
-      connections.set(id, next)
+    const isErrored = (id: WorkspaceV2.ID) =>
+      Option.exists(MutableHashMap.get(connections, id), (connection) => connection.status === "error")
 
-      GlobalBus.emit("event", {
+    const setStatus = (id: WorkspaceV2.ID, status: ConnectionStatus["status"]) => {
+      if (Option.exists(MutableHashMap.get(connections, id), (prev) => prev.status === status)) return
+      const next = { workspaceID: id, status }
+      MutableHashMap.set(connections, id, next)
+
+      GlobalBus.publishUnsafe({
         directory: "global",
         workspace: id,
         payload: {
@@ -208,7 +218,8 @@ const layer = Layer.effect(
         Stream.decodeText(),
         Stream.splitLines,
         Stream.mapAccum(
-          () => ({ data: [] as string[], id: undefined as string | undefined, retry: 1000 }),
+          // An empty id means the stream sent no id, as in the SSE spec.
+          () => ({ data: [] as string[], id: "", retry: 1000 }),
           (state, line) => {
             if (line === "") {
               if (!state.data.length) return [state, []]
@@ -232,38 +243,34 @@ const layer = Layer.effect(
               state.data.length ? [{ data: state.data.join("\n"), id: state.id, retry: state.retry }] : [],
           },
         ),
-        Stream.map((event) => {
-          try {
-            return JSON.parse(event.data) as unknown
-          } catch {
-            return {
-              type: "sse.message",
-              properties: {
-                data: event.data,
-                id: event.id || undefined,
-                retry: event.retry,
-              },
-            }
-          }
-        }),
+        Stream.map((event) =>
+          Option.getOrElse(decodeSSEData(event.data), () => ({
+            type: "sse.message",
+            properties: {
+              data: event.data,
+              ...(event.id ? { id: event.id } : {}),
+              retry: event.retry,
+            },
+          })),
+        ),
         Stream.runForEach(onEvent),
       )
     })
 
-    const runInWorkspace = <A, E, R>(input: {
-      workspaceID?: WorkspaceV2.ID
+    const runInWorkspace = <A, E, R, E2>(input: {
+      workspaceID: Option.Option<WorkspaceV2.ID>
       local: () => Effect.Effect<A, E, R>
       remote: (input: {
         workspace: Info
         target: Extract<Target, { type: "remote" }>
       }) => HttpClientRequest.HttpClientRequest
+      read: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E2>
       fallback: A
-      response?: "json" | "text"
     }) =>
       Effect.gen(function* () {
-        if (!input.workspaceID) return yield* input.local()
+        if (Option.isNone(input.workspaceID)) return yield* input.local()
 
-        const workspace = yield* get(input.workspaceID)
+        const workspace = yield* get(input.workspaceID.value)
         if (!workspace) return input.fallback
 
         const target = yield* WorkspaceAdapterRuntime.target(workspace)
@@ -273,15 +280,17 @@ const layer = Layer.effect(
           return yield* store.provide({ directory: target.directory }, input.local())
         }
 
-        const response = yield* http.execute(input.remote({ workspace, target })).pipe(
+        const sent = yield* http.execute(input.remote({ workspace, target })).pipe(
+          Effect.map(Option.some),
           Effect.catch((error) =>
             Effect.logWarning("workspace target request failed", {
               workspaceID: workspace.id,
               error: errorData(error),
-            }).pipe(Effect.as(undefined)),
+            }).pipe(Effect.as(Option.none())),
           ),
         )
-        if (!response) return input.fallback
+        if (Option.isNone(sent)) return input.fallback
+        const response = sent.value
         if (response.status < 200 || response.status >= 300) {
           const body = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")))
           yield* Effect.logWarning("workspace target request failed", {
@@ -292,9 +301,7 @@ const layer = Layer.effect(
           return input.fallback
         }
 
-        const body = input.response === "text" ? response.text : response.json
-        return yield* body.pipe(
-          Effect.map((result) => result as A),
+        return yield* input.read(response).pipe(
           Effect.catch((error) =>
             Effect.logWarning("workspace target response decode failed", {
               workspaceID: workspace.id,
@@ -342,15 +349,15 @@ const layer = Layer.effect(
         })
       }
 
-      const history = (yield* response.json) as HistoryEvent[]
+      const history = yield* HttpClientResponse.schemaBodyJson(Schema.Array(HistoryEvent))(response)
 
-      yield* Effect.forEach(
+      return yield* Effect.forEach(
         history,
         (event) =>
           events
             .replay(
               {
-                id: EventV2.ID.make(event.id),
+                id: event.id,
                 aggregateID: event.aggregate_id,
                 seq: event.seq,
                 type: event.type,
@@ -358,7 +365,7 @@ const layer = Layer.effect(
               },
               { publish: true, ownerID: space.id },
             )
-            .pipe(Effect.provideService(WorkspaceRef, space.id)),
+            .pipe(Effect.provideService(WorkspaceRef, Option.some(space.id))),
         { discard: true },
       )
     })
@@ -375,6 +382,7 @@ const layer = Layer.effect(
 
         const stream = yield* connectSSE(target.url, target.headers).pipe(
           Effect.tap(() => syncHistory(space, target.url, target.headers)),
+          Effect.map(Option.some),
           Effect.catch((err) =>
             Effect.gen(function* () {
               setStatus(space.id, "error")
@@ -382,24 +390,26 @@ const layer = Layer.effect(
                 workspace: space.name,
                 error: errorData(err),
               })
-              return null
+              return Option.none()
             }),
           ),
         )
 
-        if (stream) {
+        if (Option.isSome(stream)) {
           attempt = 0
 
           setStatus(space.id, "connected")
 
-          yield* parseSSE(stream, (evt) =>
+          yield* parseSSE(stream.value, (evt) =>
             Effect.gen(function* () {
-              if (!evt || typeof evt !== "object" || !("payload" in evt)) return
-              const payload = evt.payload as { type?: string; syncEvent?: EventV2.SerializedEvent }
-              if (payload.type === "server.heartbeat") return
+              if (!Predicate.hasProperty(evt, "payload")) return
+              const payload = evt.payload
+              const type = Option.map(decodeRemotePayloadType(payload), (decoded) => decoded.type)
+              if (Option.contains(type, "server.heartbeat")) return
 
-              if (payload.type === "sync" && payload.syncEvent) {
-                const failed = yield* events.replay(payload.syncEvent, { publish: true, ownerID: space.id }).pipe(
+              if (Option.contains(type, "sync") && Predicate.hasProperty(payload, "syncEvent") && payload.syncEvent) {
+                const failed = yield* Schema.decodeUnknownEffect(RemoteSyncEvent)(payload.syncEvent).pipe(
+                  Effect.flatMap((syncEvent) => events.replay(syncEvent, { publish: true, ownerID: space.id })),
                   Effect.as(false),
                   Effect.catchCause((error) =>
                     Effect.logWarning("failed to replay global event", error).pipe(
@@ -411,20 +421,14 @@ const layer = Layer.effect(
                 if (failed) return
               }
 
-              try {
-                const event = evt as { directory?: string; project?: string; payload: unknown }
-                GlobalBus.emit("event", {
-                  directory: event.directory,
-                  project: event.project,
-                  workspace: space.id,
-                  payload: event.payload,
-                })
-              } catch (error) {
-                yield* Effect.logWarning("failed to emit global event", {
-                  workspaceID: space.id,
-                  error: errorData(error),
-                })
-              }
+              const envelope = Option.getOrElse(decodeRemoteEnvelope(evt), (): typeof RemoteEnvelope.Type => ({}))
+              // Subscribers take from their own queue, so they cannot end the sync stream.
+              yield* GlobalBus.publish({
+                directory: envelope.directory,
+                project: envelope.project,
+                workspace: space.id,
+                payload,
+              })
             }),
           )
 
@@ -441,7 +445,8 @@ const layer = Layer.effect(
     const startSync = Effect.fn("Workspace.startSync")(function* (space: Info) {
       if (!flags.experimentalWorkspaces) return
 
-      const target = yield* WorkspaceAdapterRuntime.target(space).pipe(
+      const resolved = yield* WorkspaceAdapterRuntime.target(space).pipe(
+        Effect.map(Option.some),
         Effect.catch((error) =>
           Effect.gen(function* () {
             setStatus(space.id, "error")
@@ -449,11 +454,12 @@ const layer = Layer.effect(
               workspaceID: space.id,
               error: errorData(error),
             })
-            return null
+            return Option.none()
           }),
         ),
       )
-      if (!target) return
+      if (Option.isNone(resolved)) return
+      const target = resolved.value
 
       if (target.type === "local") {
         setStatus(space.id, (yield* fs.existsSafe(target.directory)) ? "connected" : "error")
@@ -461,7 +467,7 @@ const layer = Layer.effect(
       }
 
       const exists = yield* FiberMap.has(syncFibers, space.id)
-      if (exists && connections.get(space.id)?.status !== "error") return
+      if (exists && !isErrored(space.id)) return
 
       setStatus(space.id, "disconnected")
 
@@ -486,29 +492,31 @@ const layer = Layer.effect(
 
     const stopSync = Effect.fn("Workspace.stopSync")(function* (id: WorkspaceV2.ID) {
       yield* FiberMap.remove(syncFibers, id)
-      connections.delete(id)
+      MutableHashMap.remove(connections, id)
     })
 
     const create = Effect.fn("Workspace.create")(function* (input: CreateInput) {
       const id = WorkspaceV2.ID.ascending(input.id)
-      const adapter = getAdapter(input.projectID, input.type)
+      const adapter = yield* getAdapter(input.projectID, input.type)
       const config = yield* WorkspaceAdapterRuntime.configure(adapter, {
         ...input,
         id,
-        name: Slug.create(),
+        name: yield* Slug.make,
+        // eslint-disable-next-line effect/no-null-use-option -- (b) foreign value domain: WorkspaceInfo.directory is Schema.NullOr, stored as SQL NULL and sent as JSON null; adapters receive null before they choose a directory
         directory: null,
-        extra: input.extra ?? null,
+        extra: Option.getOrNull(Option.fromNullishOr(input.extra)),
       })
 
+      // WorkspaceInfo keeps absent fields as null (SQL NULL, JSON null on the HTTP API).
       const info: Info = {
         id,
         type: config.type,
-        branch: config.branch ?? null,
-        name: config.name ?? null,
-        directory: config.directory ?? null,
-        extra: config.extra ?? null,
+        branch: Option.getOrNull(Option.fromNullishOr(config.branch)),
+        name: config.name,
+        directory: Option.getOrNull(Option.fromNullishOr(config.directory)),
+        extra: Option.getOrNull(Option.fromNullishOr(config.extra)),
         projectID: input.projectID,
-        timeUsed: Date.now(),
+        timeUsed: yield* Clock.currentTimeMillis,
       }
 
       yield* db
@@ -527,12 +535,12 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
 
       const env = {
-        OPENCODE_AUTH_CONTENT: JSON.stringify(yield* auth.all()),
+        OPENCODE_AUTH_CONTENT: yield* encodeAuthContent(yield* auth.all()).pipe(Effect.orDie),
         OPENCODE_WORKSPACE_ID: config.id,
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
-        OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
-        OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-        OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
+        OTEL_EXPORTER_OTLP_HEADERS: yield* forwardedEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+        OTEL_EXPORTER_OTLP_ENDPOINT: yield* forwardedEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        OTEL_RESOURCE_ATTRIBUTES: yield* forwardedEnv("OTEL_RESOURCE_ATTRIBUTES"),
       }
 
       yield* WorkspaceAdapterRuntime.create(adapter, config, env)
@@ -564,6 +572,7 @@ const layer = Layer.effect(
           .where(eq(SessionTable.id, input.sessionID))
           .get()
           .pipe(Effect.orDie)
+        const targetID = Option.fromNullishOr(input.workspaceID)
 
         if (current?.workspaceID) {
           const previous = yield* get(current.workspaceID)
@@ -593,14 +602,14 @@ const layer = Layer.effect(
         const sourcePatch =
           input.copyChanges && current?.workspaceID
             ? yield* runInWorkspace({
-                workspaceID: current?.workspaceID ?? undefined,
+                workspaceID: Option.fromNullishOr(current?.workspaceID),
                 local: () => vcs.diffRaw(),
                 remote: ({ target }) =>
                   HttpClientRequest.get(route(target.url, "/vcs/diff/raw"), {
                     headers: new Headers(target.headers),
                   }),
+                read: (response) => response.text,
                 fallback: "",
-                response: "text",
               }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
             : ""
 
@@ -609,24 +618,26 @@ const layer = Layer.effect(
           // We intentionally do first so if it fails we don't warp
           // the session.
           yield* runInWorkspace({
-            workspaceID: input.workspaceID ?? undefined,
+            workspaceID: targetID,
             local: () => vcs.apply({ patch: sourcePatch }),
             remote: ({ target }) =>
               HttpClientRequest.post(route(target.url, "/vcs/apply"), {
                 headers: new Headers(target.headers),
                 body: HttpBody.jsonUnsafe({ patch: sourcePatch }),
               }),
+            read: HttpClientResponse.schemaBodyJson(Vcs.ApplyResult),
             fallback: { applied: false },
           }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
         }
 
-        if (input.workspaceID === null) {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: undefined })
-
-          return
+        if (Option.isNone(targetID)) {
+          return yield* session.setWorkspace({
+            sessionID: input.sessionID,
+            workspaceID: Option.getOrUndefined(targetID),
+          })
         }
 
-        const workspaceID = input.workspaceID
+        const workspaceID = targetID.value
         const space = yield* get(workspaceID)
         if (!space)
           return yield* new WorkspaceNotFoundError({
@@ -637,9 +648,7 @@ const layer = Layer.effect(
         const target = yield* WorkspaceAdapterRuntime.target(space)
 
         if (target.type === "local") {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
-
-          return
+          return yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
         }
 
         const rows = yield* db
@@ -662,13 +671,12 @@ const layer = Layer.effect(
           })
 
         const batches = Iterable.chunksOf(rows, 10)
-        const total = Iterable.size(batches)
 
         yield* Effect.forEach(
           batches,
-          (events, i) =>
-            Effect.gen(function* () {
-              const response = yield* http.execute(
+          (events) =>
+            http
+              .execute(
                 HttpClientRequest.post(route(target.url, "/sync/replay"), {
                   headers: new Headers(target.headers),
                   body: HttpBody.jsonUnsafe({
@@ -677,18 +685,25 @@ const layer = Layer.effect(
                   }),
                 }),
               )
-
-              if (response.status < 200 || response.status >= 300) {
-                const body = yield* response.text
-                return yield* new SessionWarpHttpError({
-                  message: `Failed to warp session ${input.sessionID} into workspace ${workspaceID}: HTTP ${response.status} ${body}`,
-                  workspaceID,
-                  sessionID: input.sessionID,
-                  status: response.status,
-                  body,
-                })
-              }
-            }),
+              .pipe(
+                Effect.flatMap((response) =>
+                  response.status >= 200 && response.status < 300
+                    ? Effect.void
+                    : response.text.pipe(
+                        Effect.flatMap((body) =>
+                          Effect.fail(
+                            new SessionWarpHttpError({
+                              message: `Failed to warp session ${input.sessionID} into workspace ${workspaceID}: HTTP ${response.status} ${body}`,
+                              workspaceID,
+                              sessionID: input.sessionID,
+                              status: response.status,
+                              body,
+                            }),
+                          ),
+                        ),
+                      ),
+                ),
+              ),
           { discard: true },
         )
 
@@ -709,7 +724,7 @@ const layer = Layer.effect(
           })
         }
 
-        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+        return yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
       })
     })
 
@@ -726,7 +741,7 @@ const layer = Layer.effect(
     })
 
     const syncList = Effect.fn("Workspace.syncList")(function* (project: Project.Info) {
-      const names = new Set((yield* list(project)).map((workspace) => workspace.name))
+      const names = MutableHashSet.fromIterable((yield* list(project)).map((workspace) => workspace.name))
       const discovered = yield* Effect.forEach(
         registeredAdapters(project.id),
         ([type, adapter]) =>
@@ -742,8 +757,8 @@ const layer = Layer.effect(
         discovered,
         (item) =>
           Effect.gen(function* () {
-            if (names.has(item.name)) return
-            names.add(item.name)
+            if (MutableHashSet.has(names, item.name)) return
+            MutableHashSet.add(names, item.name)
 
             const info: Info = {
               id: WorkspaceV2.ID.ascending(),
@@ -753,7 +768,7 @@ const layer = Layer.effect(
               directory: item.directory,
               extra: item.extra,
               projectID: item.projectID,
-              timeUsed: Date.now(),
+              timeUsed: yield* Clock.currentTimeMillis,
             }
 
             yield* db
@@ -779,8 +794,7 @@ const layer = Layer.effect(
 
     const get = Effect.fn("Workspace.get")(function* (id: WorkspaceV2.ID) {
       const row = yield* db.select().from(WorkspaceTable).where(eq(WorkspaceTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) return
-      return fromRow(row)
+      return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), fromRow))
     })
 
     const remove = Effect.fn("Workspace.remove")(function* (id: WorkspaceV2.ID) {
@@ -790,16 +804,17 @@ const layer = Layer.effect(
         .where(eq(SessionTable.workspace_id, id))
         .all()
         .pipe(Effect.orDie)
-      const sessionIDs = new Set(sessions.map((sessionInfo) => sessionInfo.id))
+      const sessionIDs = MutableHashSet.fromIterable(sessions.map((sessionInfo) => sessionInfo.id))
       yield* Effect.forEach(
-        sessions.filter((sessionInfo) => !sessionInfo.parentID || !sessionIDs.has(sessionInfo.parentID)),
-        (sessionInfo) =>
-          session.remove(sessionInfo.id).pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.void)),
+        sessions.filter(
+          (sessionInfo) => !sessionInfo.parentID || !MutableHashSet.has(sessionIDs, sessionInfo.parentID),
+        ),
+        (sessionInfo) => session.remove(sessionInfo.id).pipe(Effect.catchTag("NotFoundError", () => Effect.void)),
         { discard: true },
       )
 
       const row = yield* db.select().from(WorkspaceTable).where(eq(WorkspaceTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) return
+      if (!row) return undefined
 
       yield* stopSync(id)
 
@@ -816,12 +831,12 @@ const layer = Layer.effect(
     })
 
     const status = Effect.fn("Workspace.status")(function* () {
-      return [...connections.values()]
+      return Array.from(MutableHashMap.values(connections))
     })
 
     const isSyncing = Effect.fn("Workspace.isSyncing")(function* (workspaceID: WorkspaceV2.ID) {
       const exists = yield* FiberMap.has(syncFibers, workspaceID)
-      return exists && connections.get(workspaceID)?.status !== "error"
+      return exists && !isErrored(workspaceID)
     })
 
     const waitForSync = Effect.fn("Workspace.waitForSync")(function* (
@@ -844,7 +859,7 @@ const layer = Layer.effect(
               )
             : Effect.fail(
                 new SyncTimeoutError({
-                  message: `Timed out waiting for sync fence: ${JSON.stringify(state)}`,
+                  message: `Timed out waiting for sync fence: ${encodeSyncFence(state)}`,
                   state,
                 }),
               ),
@@ -862,7 +877,7 @@ const layer = Layer.effect(
 
       for (const { workspace } of rows) {
         yield* startSync(fromRow(workspace)).pipe(
-          Effect.catch((error) =>
+          Effect.catch(() =>
             Effect.sync(() => {
               setStatus(workspace.id, "error")
             }),
@@ -889,13 +904,47 @@ const layer = Layer.effect(
 
 const TIMEOUT = 5000
 
-type HistoryEvent = {
-  id: string
-  aggregate_id: string
-  seq: number
-  type: string
-  data: Record<string, unknown>
-}
+// Auth.all() returns decoded Auth.Info values, so encoding them cannot fail.
+const encodeAuthContent = Schema.encodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Auth.Info)))
+const encodeSyncFence = Schema.encodeSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)))
+
+// The adapter hands this env to the workspace server it starts, where an
+// unset variable stays undefined. Each read takes a fresh env snapshot.
+const forwardedEnv = (name: string) =>
+  readEnvSnapshot(Config.option(Config.String(name))).pipe(Effect.map(Option.getOrUndefined))
+
+// Wire shape of the remote /sync/history response, as HistoryEvent in
+// server/routes/instance/httpapi/groups/sync.ts declares it (importing that
+// group here would close a module cycle through the workspace routing
+// middleware). The payloads arrive as JSON.
+const HistoryEvent = Schema.Struct({
+  id: EventV2.ID,
+  aggregate_id: Schema.String.pipe(Schema.brand("AggregateID")),
+  seq: Schema.Number,
+  type: Schema.String,
+  data: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "WorkspaceHistoryEvent" })
+
+// Wire shape of a sync event forwarded on the remote /global/event stream.
+const RemoteSyncEvent = Schema.Struct({
+  id: EventV2.ID,
+  aggregateID: Schema.String,
+  seq: Schema.Number,
+  type: Schema.String,
+  data: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "WorkspaceRemoteSyncEvent" })
+
+// SSE data that is not JSON is forwarded as an "sse.message" event instead.
+const decodeSSEData = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
+
+const RemotePayloadType = Schema.Struct({ type: Schema.String }).annotate({ identifier: "WorkspaceRemotePayloadType" })
+const decodeRemotePayloadType = Schema.decodeUnknownOption(RemotePayloadType)
+
+const RemoteEnvelope = Schema.Struct({
+  directory: Schema.optional(Schema.String),
+  project: Schema.optional(Schema.String),
+}).annotate({ identifier: "WorkspaceRemoteEnvelope" })
+const decodeRemoteEnvelope = Schema.decodeUnknownOption(RemoteEnvelope)
 
 function waitUntilSynced(input: {
   db: Database.Interface["db"]
@@ -903,7 +952,7 @@ function waitUntilSynced(input: {
   state: Record<string, number>
   signal?: AbortSignal
   timeout: number
-}): Effect.Effect<void, unknown> {
+}): Effect.Effect<void, WaitEventError> {
   return Effect.suspend(() =>
     waitEvent({
       timeout: input.timeout,
@@ -913,7 +962,7 @@ function waitUntilSynced(input: {
       },
     }).pipe(
       Effect.andThen(synced(input.db, input.state)),
-      Effect.flatMap((done): Effect.Effect<void, unknown> => (done ? Effect.void : waitUntilSynced(input))),
+      Effect.flatMap((done): Effect.Effect<void, WaitEventError> => (done ? Effect.void : waitUntilSynced(input))),
     ),
   )
 }

@@ -7,7 +7,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 
 export class Service extends Context.Service<Service, EventV2.Interface>()("@opencode/EventV2Bridge") {}
 
@@ -19,14 +19,16 @@ const layer = Layer.effect(
     const publish: EventV2.Interface["publish"] = (definition, data, options) =>
       Effect.gen(function* () {
         if (options?.location) return yield* events.publish(definition, data, options)
-        const ctx = yield* InstanceRef
-        if (!ctx) return yield* events.publish(definition, data, options)
-        const workspaceID = yield* WorkspaceRef
+        const instance = yield* InstanceRef
+        if (Option.isNone(instance)) return yield* events.publish(definition, data, options)
+        const ctx = instance.value
+        // An empty workspace ID means no workspace, as the earlier truthiness check treated it.
+        const workspaceID = Option.filter(yield* WorkspaceRef, (id) => id !== "")
         return yield* events.publish(definition, data, {
           ...options,
           location: new Location.Info({
             directory: AbsolutePath.make(ctx.directory),
-            ...(workspaceID ? { workspaceID } : {}),
+            ...Option.match(workspaceID, { onNone: () => ({}), onSome: (id) => ({ workspaceID: id }) }),
             project: { id: Project.ID.make(ctx.project.id), directory: AbsolutePath.make(ctx.worktree) },
           }),
         })
@@ -34,16 +36,16 @@ const layer = Layer.effect(
 
     const unsubscribe = yield* events.listen((event) =>
       Effect.gen(function* () {
-        const ctx = yield* InstanceRef
-        const workspaceID = (yield* WorkspaceRef) ?? event.location?.workspaceID
-        GlobalBus.emit("event", {
+        const ctx = Option.getOrUndefined(yield* InstanceRef)
+        const workspaceID = Option.getOrElse(yield* WorkspaceRef, () => event.location?.workspaceID)
+        yield* GlobalBus.publish({
           directory: event.location?.directory ?? ctx?.directory,
           project: ctx?.project.id,
           workspace: workspaceID,
           payload: { id: event.id, type: event.type, properties: event.data },
         })
         if (event.durable === undefined) return
-        GlobalBus.emit("event", {
+        yield* GlobalBus.publish({
           directory: event.location?.directory ?? ctx?.directory,
           project: ctx?.project.id,
           workspace: workspaceID,

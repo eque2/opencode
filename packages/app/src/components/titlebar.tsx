@@ -1,4 +1,5 @@
 import {
+  type Accessor,
   createEffect,
   createMemo,
   createResource,
@@ -27,18 +28,18 @@ import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { WindowsAppMenu } from "./windows-app-menu"
-import { applyPath, backPath, forwardPath } from "./titlebar-history"
+import { applyPath, backPath, forwardPath, type TitlebarHistory } from "./titlebar-history"
 import { TitlebarTabStrip } from "@/components/titlebar-tab-strip"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
 import { useGlobal } from "@/context/global"
 import { ServerConnection, useServer } from "@/context/server"
-import { tabKey, useTabs } from "@/context/tabs"
-import type { PromptSession } from "@/context/prompt"
+import { tabKey, useTabs, type Tab } from "@/context/tabs"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 import { normalizeSessionInfo } from "@/utils/session"
+import { Data, Effect, Equivalence, Option } from "effect"
 
 const legacyTitlebarHeight = 40
 const v2TitlebarHeight = 36
@@ -46,19 +47,41 @@ const minTitlebarZoom = 0.25
 const windowsControlsBaseWidth = 138 // 3 native Windows caption buttons at 46px each.
 const macTrafficLightsBaseWidth = 84
 
+/** A new draft tab that failed to open. `cause` is the original rejection. */
+class TitlebarDraftError extends Data.TaggedError("App.TitlebarDraftError")<{ readonly cause: unknown }> {}
+
+/** The session lookup of the titlebar that rejected. `cause` is the original rejection. */
+class TitlebarSessionError extends Data.TaggedError("App.TitlebarSessionError")<{ readonly cause: unknown }> {}
+
+/**
+ * Runs titlebar work in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 export type TitlebarUpdate = {
   version: () => string | undefined
   installing: () => boolean
   install: () => void
 }
 
-export function useTitlebarRightMount() {
+/** Compares two optional mount elements by identity, as the signal compared the elements before. */
+const sameMount = Option.makeEquivalence(Equivalence.strictEqual<HTMLElement>())
+
+/**
+ * The titlebar slot element that other views portal into. The accessor gives
+ * null while the slot is not in the DOM, the value the Portal mount props of
+ * its consumers take.
+ */
+export function useTitlebarRightMount(): Accessor<HTMLElement | null> {
   const language = useLanguage()
-  const [mount, setMount] = createSignal<HTMLElement | null>(null)
-  const sync = () => setMount(document.getElementById("opencode-titlebar-right"))
+  const [mount, setMount] = createSignal(Option.none<HTMLElement>(), { equals: sameMount })
+  const sync = () => setMount(Option.fromNullishOr(document.getElementById("opencode-titlebar-right")))
   onMount(sync)
   createEffect(on(language.direction, sync, { defer: true }))
-  return mount
+  return () => Option.getOrNull(mount())
 }
 
 export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visible: boolean; toggle: () => void } }) {
@@ -91,10 +114,10 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
   }
   const windowsControlsWidth = () => `${windowsControlsBaseWidth / Math.max(titlebarZoom(), 1)}px`
 
-  const [history, setHistory] = createStore({
-    stack: [] as string[],
+  const [history, setHistory] = createStore<TitlebarHistory>({
+    stack: [],
     index: 0,
-    action: undefined as "back" | "forward" | undefined,
+    action: Option.none(),
   })
 
   const path = () => `${location.pathname}${location.search}${location.hash}`
@@ -129,7 +152,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
       installing,
       label: language.t("titlebar.update"),
       ariaLabel: language.t("toast.update.action.installRestart"),
-      title: version ? language.t("titlebar.updateVersion", { version }) : undefined,
+      ...(version ? { title: language.t("titlebar.updateVersion", { version }) } : {}),
       onInstall: () => props.update?.install(),
     }
   })
@@ -170,7 +193,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
 
   return (
     <header
-      data-slot={useV2Titlebar() ? "titlebar-v2" : undefined}
+      {...(useV2Titlebar() ? { "data-slot": "titlebar-v2" } : {})}
       classList={{
         "shrink-0 relative flex flex-row": true,
         "h-9 bg-v2-background-bg-deep overflow-visible": useV2Titlebar(),
@@ -181,10 +204,14 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
         "min-height": minHeight(),
         // Keep native macOS traffic lights clear even when the desktop window is narrow.
         "padding-left": macTrafficLights() ? `${macTrafficLightsBaseWidth / zoom()}px` : 0,
-        width: windows() ? `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))` : undefined,
-        "max-width": windows() ? `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))` : undefined,
-        // Native Windows caption controls remain on the physical right in both writing directions.
-        "margin-right": windows() ? "auto" : undefined,
+        ...(windows()
+          ? {
+              width: `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))`,
+              "max-width": `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))`,
+              // Native Windows caption controls remain on the physical right in both writing directions.
+              "margin-right": "auto",
+            }
+          : {}),
       }}
       data-tauri-drag-region
     >
@@ -197,24 +224,32 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
             const tabs = useTabs()
             const tabsStore = tabs.store
             const tabsStoreActions = tabs
-            const [session] = createResource(
+            // The session of the current route. A lookup that fails reads as no session, as it did before.
+            const [sessionLookup] = createResource(
               () => {
                 const route = layout.route()
                 if (route.type !== "session") return undefined
                 const conn = global.servers
                   .list()
                   .find((item) => ServerConnection.key(item) === (route.server ?? server.key))
-                return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
+                if (!conn) return undefined
+                return { route, sdk: global.ensureServerCtx(conn).sdk }
               },
               ({ route, sdk }) =>
-                sdk.api.session
-                  .get({ sessionID: route.sessionId })
-                  .then(normalizeSessionInfo)
-                  .catch(() => {}),
+                Effect.runPromise(
+                  Effect.tryPromise({
+                    try: () => sdk.api.session.get({ sessionID: route.sessionId }),
+                    catch: (cause) => new TitlebarSessionError({ cause }),
+                  }).pipe(
+                    Effect.map((info) => Option.some(normalizeSessionInfo(info))),
+                    Effect.catchCause(() => Effect.succeed(Option.none())),
+                  ),
+                ),
             )
+            const session = () => sessionLookup() ?? Option.none()
 
             const matchRoute = (route: LayoutRoute) => {
-              if (route.type === "home") return
+              if (route.type === "home") return undefined
               if (route.type === "draft") {
                 return tabsStore.find((item) => item.type === "draft" && item.draftID === route.draftID)
               }
@@ -225,14 +260,15 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                 )
                 if (main) return main
                 const s = session()
-                if (s?.parentID) {
-                  const parentID = s.parentID
+                if (Option.isSome(s) && s.value.parentID) {
+                  const parentID = s.value.parentID
                   const parent = tabsStore.find(
                     (item) => item.type === "session" && item.server === route.server && item.sessionId === parentID,
                   )
                   if (parent) return parent
                 }
               }
+              return undefined
             }
 
             const currentTab = () => matchRoute(layout.route())
@@ -248,12 +284,24 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
 
               if (route.type === "session") {
                 const s = session()
-                if (!s) return
-                const sessionId = s.parentID ?? s.id
+                if (Option.isNone(s)) return
+                const sessionId = s.value.parentID ?? s.value.id
                 const next = { server: route.server ?? server.key, sessionId }
                 tabsStoreActions.addSessionTab(next)
               }
             })
+
+            // A new draft starts with the model of the tab it opens from; newDraft takes it as an optional argument.
+            const draftModel = (tab: Tab) =>
+              Option.getOrUndefined(Option.map(tabs.stateValue(tab, "prompt"), (prompt) => prompt.model.current()))
+
+            const openDraft = (...args: Parameters<typeof tabs.newDraft>) =>
+              runDetached(
+                Effect.tryPromise({
+                  try: () => tabs.newDraft(...args),
+                  catch: (cause) => new TitlebarDraftError({ cause }),
+                }),
+              )
 
             makeEventListener(window, SESSION_TABS_REMOVED_EVENT, (event) => {
               const detail = readSessionTabsRemovedDetail(event)
@@ -264,42 +312,44 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
             const openNewTab = () => {
               const route = layout.route()
               const activeSession = session()
-              if (route.type === "session" && activeSession) {
+              if (route.type === "session" && Option.isSome(activeSession)) {
                 const sessionTab = {
                   type: "session" as const,
                   server: route.server ?? server.key,
-                  sessionId: activeSession.id,
+                  sessionId: activeSession.value.id,
                 }
-                const model = tabs.stateValue<PromptSession>(sessionTab, "prompt")?.model.current()
-                tabs.newDraft({ server: sessionTab.server, directory: activeSession.directory }, "", model)
+                openDraft(
+                  { server: sessionTab.server, directory: activeSession.value.directory },
+                  "",
+                  draftModel(sessionTab),
+                )
                 return
               }
 
               const activeTab = currentTab()
               if (activeTab?.type === "draft") {
-                const model = tabs.stateValue<PromptSession>(activeTab, "prompt")?.model.current()
-                tabs.newDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
+                openDraft({ server: activeTab.server, directory: activeTab.directory }, "", draftModel(activeTab))
                 return
               }
 
               if (route.type === "home") {
                 const selection = layout.home.selection()
                 const conn = global.servers.list().find((item) => ServerConnection.key(item) === selection.server)
-                const project = conn
-                  ? global
-                      .ensureServerCtx(conn)
-                      .projects.list()
-                      .find((item) => item.worktree === selection.directory)
-                  : undefined
+                const project =
+                  conn &&
+                  global
+                    .ensureServerCtx(conn)
+                    .projects.list()
+                    .find((item) => item.worktree === selection.directory)
                 if (conn && project) {
-                  tabs.newDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
+                  openDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
                   return
                 }
               }
 
               const current = layout.projects.list()[0]
               if (current) {
-                tabs.newDraft({ server: server.key, directory: current.worktree }, "")
+                openDraft({ server: server.key, directory: current.worktree }, "")
                 return
               }
 
@@ -309,7 +359,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
               })[0]
               if (!fallback) return
 
-              tabs.newDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
+              openDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
             }
             const toggleHome = () => tabs.toggleHome({ home: layout.route().type === "home", current: currentTab() })
 
@@ -388,7 +438,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                     size="large"
                     class="!w-9 shrink-0"
                     icon={<IconV2 name="grid-plus" />}
-                    state={layout.route().type === "home" ? "pressed" : undefined}
+                    {...(layout.route().type === "home" ? { state: "pressed" as const } : {})}
                     onClick={toggleHome}
                     aria-label={language.t("home.title")}
                     aria-pressed={layout.route().type === "home"}
@@ -402,7 +452,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   onOverflowChange={setTabsAreOverflowing}
                   onNavigate={(tab, el) => {
                     tabs.select(tab)
-                    el?.scrollIntoView({ behavior: "instant" })
+                    if (Option.isSome(el)) el.value.scrollIntoView({ behavior: "instant" })
                   }}
                   onClose={(tab) => {
                     const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
@@ -455,7 +505,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                     icon="menu"
                     variant="ghost"
                     class="titlebar-icon rounded-md"
-                    onClick={layout.mobileSidebar.toggle}
+                    onClick={() => layout.mobileSidebar.toggle()}
                     aria-label={language.t("sidebar.menu.toggle")}
                     aria-expanded={layout.mobileSidebar.opened()}
                   />
@@ -467,7 +517,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                     icon="menu"
                     variant="ghost"
                     class="titlebar-icon rounded-md"
-                    onClick={layout.mobileSidebar.toggle}
+                    onClick={() => layout.mobileSidebar.toggle()}
                     aria-label={language.t("sidebar.menu.toggle")}
                     aria-expanded={layout.mobileSidebar.opened()}
                   />
@@ -483,7 +533,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   <Button
                     variant="ghost"
                     class="group/sidebar-toggle titlebar-icon w-8 h-6 p-0 box-border"
-                    onClick={layout.sidebar.toggle}
+                    onClick={() => layout.sidebar.toggle()}
                     aria-label={language.t("command.sidebar.toggle")}
                     aria-expanded={layout.sidebar.opened()}
                   >
@@ -494,7 +544,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   <Show when={params.dir}>
                     <div
                       class="flex items-center shrink-0 w-8 mr-1"
-                      aria-hidden={layout.sidebar.opened() ? "true" : undefined}
+                      {...(layout.sidebar.opened() ? { "aria-hidden": "true" as const } : {})}
                     >
                       <div
                         class="transition-opacity"
@@ -513,13 +563,13 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                             variant="ghost"
                             class="titlebar-icon w-8 h-6 p-0 box-border"
                             disabled={layout.sidebar.opened()}
-                            tabIndex={layout.sidebar.opened() ? -1 : undefined}
+                            {...(layout.sidebar.opened() ? { tabIndex: -1 } : {})}
                             onClick={() => {
                               if (!params.dir) return
                               navigate(`/${params.dir}/session`)
                             }}
                             aria-label={language.t("command.session.new")}
-                            aria-current={creating() ? "page" : undefined}
+                            {...(creating() ? { "aria-current": "page" as const } : {})}
                           >
                             <IconV2 name="edit" size="small" />
                           </Button>

@@ -229,14 +229,15 @@ async function printWorkspace(workspaceID: string) {
       tx
         .select({
           date: sql<string>`DATE(${UsageTable.timeCreated})`.as("date"),
-          requests: sql<number>`COUNT(*)`.as("requests"),
-          inputTokens: sql<number>`SUM(${UsageTable.inputTokens})`.as("input_tokens"),
-          outputTokens: sql<number>`SUM(${UsageTable.outputTokens})`.as("output_tokens"),
-          reasoningTokens: sql<number>`SUM(${UsageTable.reasoningTokens})`.as("reasoning_tokens"),
-          cacheReadTokens: sql<number>`SUM(${UsageTable.cacheReadTokens})`.as("cache_read_tokens"),
-          cacheWrite5mTokens: sql<number>`SUM(${UsageTable.cacheWrite5mTokens})`.as("cache_write_5m_tokens"),
-          cacheWrite1hTokens: sql<number>`SUM(${UsageTable.cacheWrite1hTokens})`.as("cache_write_1h_tokens"),
-          cost: sql<number>`SUM(${UsageTable.cost})`.as("cost"),
+          // The PlanetScale driver returns COUNT and SUM results as strings.
+          requests: sql<string>`COUNT(*)`.as("requests"),
+          inputTokens: sql<string>`SUM(${UsageTable.inputTokens})`.as("input_tokens"),
+          outputTokens: sql<string>`SUM(${UsageTable.outputTokens})`.as("output_tokens"),
+          reasoningTokens: sql<string>`SUM(${UsageTable.reasoningTokens})`.as("reasoning_tokens"),
+          cacheReadTokens: sql<string>`SUM(${UsageTable.cacheReadTokens})`.as("cache_read_tokens"),
+          cacheWrite5mTokens: sql<string>`SUM(${UsageTable.cacheWrite5mTokens})`.as("cache_write_5m_tokens"),
+          cacheWrite1hTokens: sql<string>`SUM(${UsageTable.cacheWrite1hTokens})`.as("cache_write_1h_tokens"),
+          cost: sql<string>`SUM(${UsageTable.cost})`.as("cost"),
         })
         .from(UsageTable)
         .where(
@@ -249,20 +250,20 @@ async function printWorkspace(workspaceID: string) {
         .orderBy(sql`DATE(${UsageTable.timeCreated}) DESC`)
         .then((rows) => {
           const totalCost = rows.reduce((sum, r) => sum + Number(r.cost), 0)
-          const mapped = rows.map((row) => ({
+          const mapped: { [K in keyof (typeof rows)[number]]: string | null }[] = rows.map((row) => ({
             ...row,
             cost: `$${(Number(row.cost) / 100000000).toFixed(2)}`,
           }))
           if (mapped.length > 0) {
             mapped.push({
               date: "TOTAL",
-              requests: null as any,
-              inputTokens: null as any,
-              outputTokens: null as any,
-              reasoningTokens: null as any,
-              cacheReadTokens: null as any,
-              cacheWrite5mTokens: null as any,
-              cacheWrite1hTokens: null as any,
+              requests: null,
+              inputTokens: null,
+              outputTokens: null,
+              reasoningTokens: null,
+              cacheReadTokens: null,
+              cacheWrite5mTokens: null,
+              cacheWrite1hTokens: null,
               cost: `$${(totalCost / 100000000).toFixed(2)}`,
             })
           }
@@ -368,7 +369,7 @@ function getSubscriptionStatus(row: {
 function printHeader(title: string) {
   console.log()
   console.log("─".repeat(title.length))
-  console.log(`${title}`)
+  console.log(title)
   console.log("─".repeat(title.length))
 }
 

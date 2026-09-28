@@ -65,9 +65,7 @@ const defaults = (input: Config) => {
 const auth = (input: Config) => {
   if ("auth" in input && input.auth) return input.auth
   return Auth.remove("authorization").andThen(
-    Auth.optional("apiKey" in input ? input.apiKey : undefined, "apiKey")
-      .orElse(Auth.config("AZURE_OPENAI_API_KEY"))
-      .pipe(Auth.header("api-key")),
+    Auth.optional(input.apiKey, "apiKey").orElse(Auth.config("AZURE_OPENAI_API_KEY")).pipe(Auth.header("api-key")),
   )
 }
 

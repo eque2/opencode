@@ -1,4 +1,15 @@
-const projects = ["packages/effect-sqlite-node/tsconfig.json", "packages/protocol/tsconfig.json"] as const
+// Every package whose tsconfig registers @effect/language-service.
+const root = import.meta.dir + "/.."
+const candidates = await Array.fromAsync(new Bun.Glob("packages/*/tsconfig.json").scan({ cwd: root }))
+const projects = (
+  await Promise.all(
+    candidates.map(async (project) =>
+      (await Bun.file(`${root}/${project}`).text()).includes("@effect/language-service") ? project : undefined,
+    ),
+  )
+)
+  .filter((project) => project !== undefined)
+  .sort()
 
 let status = 0
 

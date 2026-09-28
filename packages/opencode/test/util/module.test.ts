@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import { Module } from "@opencode-ai/core/util/module"
-import { Filesystem } from "@/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
 describe("util.module", () => {
@@ -9,8 +8,11 @@ describe("util.module", () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, "proj")
     const file = path.join(root, "node_modules/typescript/lib/tsserver.js")
-    await Filesystem.write(file, "export {}\n")
-    await Filesystem.writeJson(path.join(root, "node_modules/typescript/package.json"), { name: "typescript" })
+    await Bun.write(file, "export {}\n")
+    await Bun.write(
+      path.join(root, "node_modules/typescript/package.json"),
+      JSON.stringify({ name: "typescript" }, null, 2),
+    )
 
     expect(Module.resolve("typescript/lib/tsserver.js", root)).toBe(file)
   })
@@ -20,12 +22,19 @@ describe("util.module", () => {
     const root = path.join(tmp.path, "proj")
     const cwd = path.join(root, "apps/web")
     const file = path.join(root, "node_modules/eslint/lib/api.js")
-    await Filesystem.write(file, "export {}\n")
-    await Filesystem.writeJson(path.join(root, "node_modules/eslint/package.json"), {
-      name: "eslint",
-      main: "lib/api.js",
-    })
-    await Filesystem.write(path.join(cwd, ".keep"), "")
+    await Bun.write(file, "export {}\n")
+    await Bun.write(
+      path.join(root, "node_modules/eslint/package.json"),
+      JSON.stringify(
+        {
+          name: "eslint",
+          main: "lib/api.js",
+        },
+        null,
+        2,
+      ),
+    )
+    await Bun.write(path.join(cwd, ".keep"), "")
 
     expect(Module.resolve("eslint", cwd)).toBe(file)
   })
@@ -36,16 +45,30 @@ describe("util.module", () => {
     const b = path.join(tmp.path, "b")
     const left = path.join(a, "node_modules/biome/index.js")
     const right = path.join(b, "node_modules/biome/index.js")
-    await Filesystem.write(left, "export {}\n")
-    await Filesystem.write(right, "export {}\n")
-    await Filesystem.writeJson(path.join(a, "node_modules/biome/package.json"), {
-      name: "biome",
-      main: "index.js",
-    })
-    await Filesystem.writeJson(path.join(b, "node_modules/biome/package.json"), {
-      name: "biome",
-      main: "index.js",
-    })
+    await Bun.write(left, "export {}\n")
+    await Bun.write(right, "export {}\n")
+    await Bun.write(
+      path.join(a, "node_modules/biome/package.json"),
+      JSON.stringify(
+        {
+          name: "biome",
+          main: "index.js",
+        },
+        null,
+        2,
+      ),
+    )
+    await Bun.write(
+      path.join(b, "node_modules/biome/package.json"),
+      JSON.stringify(
+        {
+          name: "biome",
+          main: "index.js",
+        },
+        null,
+        2,
+      ),
+    )
 
     expect(Module.resolve("biome", a)).toBe(left)
     expect(Module.resolve("biome", b)).toBe(right)

@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, Fiber, Layer, Schema } from "effect"
+import { Effect, Fiber, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
@@ -78,8 +78,8 @@ const createLocalWorkspace = (input: { projectID: Project.Info["id"]; type: stri
   )
 
 const probeInstanceContext = Effect.gen(function* () {
-  const instance = yield* InstanceRef
-  const workspaceID = yield* WorkspaceRef
+  const instance = Option.getOrUndefined(yield* InstanceRef)
+  const workspaceID = Option.getOrUndefined(yield* WorkspaceRef)
   return {
     directory: instance?.directory,
     worktree: instance?.worktree,
@@ -117,8 +117,8 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
       "dispose",
       Effect.fn("InstanceContextProbe.dispose")(function* () {
         const instance = yield* InstanceRef
-        if (!instance) return false
-        yield* markInstanceForDisposal(instance)
+        if (Option.isNone(instance)) return false
+        yield* markInstanceForDisposal(instance.value)
         return true
       }),
     ),

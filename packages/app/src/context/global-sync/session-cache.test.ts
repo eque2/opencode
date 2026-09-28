@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Message, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
+import { MutableHashSet } from "effect"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 
 const msg = (id: string, sessionID: string) =>
@@ -89,7 +90,7 @@ describe("app session cache", () => {
   })
 
   test("pickSessionCacheEvictions preserves requested sessions", () => {
-    const seen = new Set(["ses_1", "ses_2", "ses_3"])
+    const seen = MutableHashSet.make("ses_1", "ses_2", "ses_3")
 
     const stale = pickSessionCacheEvictions({
       seen,

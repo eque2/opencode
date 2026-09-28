@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Layer, Schema, Context } from "effect"
+import { Deferred, Effect, Layer, Schema, Context, MutableHashMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID } from "@/session/schema"
 import { QuestionID } from "./schema"
@@ -40,7 +40,7 @@ interface PendingEntry {
 }
 
 interface State {
-  pending: Map<QuestionID, PendingEntry>
+  pending: MutableHashMap.MutableHashMap<QuestionID, PendingEntry>
 }
 
 // Service
@@ -68,15 +68,15 @@ const layer = Layer.effect(
     const state = yield* InstanceState.make<State>(
       Effect.fn("Question.state")(function* () {
         const state = {
-          pending: new Map<QuestionID, PendingEntry>(),
+          pending: MutableHashMap.empty<QuestionID, PendingEntry>(),
         }
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            for (const item of state.pending.values()) {
+            for (const item of MutableHashMap.values(state.pending)) {
               yield* Deferred.fail(item.deferred, new RejectedError())
             }
-            state.pending.clear()
+            MutableHashMap.clear(state.pending)
           }),
         )
 
@@ -100,13 +100,13 @@ const layer = Layer.effect(
         questions: input.questions,
         tool: input.tool,
       }
-      pending.set(id, { info, deferred })
+      MutableHashMap.set(pending, id, { info, deferred })
       yield* events.publish(Event.Asked, info)
 
       return yield* Effect.ensuring(
         Deferred.await(deferred),
         Effect.sync(() => {
-          pending.delete(id)
+          MutableHashMap.remove(pending, id)
         }),
       )
     })
@@ -116,12 +116,11 @@ const layer = Layer.effect(
       answers: ReadonlyArray<Answer>
     }) {
       const pending = (yield* InstanceState.get(state)).pending
-      const existing = pending.get(input.requestID)
-      if (!existing) {
-        yield* Effect.logWarning("reply for unknown request", { requestID: input.requestID })
-        return yield* new NotFoundError({ requestID: input.requestID })
-      }
-      pending.delete(input.requestID)
+      const existing = yield* Effect.fromOption(
+        MutableHashMap.get(pending, input.requestID),
+        () => new NotFoundError({ requestID: input.requestID }),
+      ).pipe(Effect.tapError(() => Effect.logWarning("reply for unknown request", { requestID: input.requestID })))
+      MutableHashMap.remove(pending, input.requestID)
       yield* Effect.logInfo("replied", { requestID: input.requestID, answers: input.answers })
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
@@ -133,12 +132,11 @@ const layer = Layer.effect(
 
     const reject = Effect.fn("Question.reject")(function* (requestID: QuestionID) {
       const pending = (yield* InstanceState.get(state)).pending
-      const existing = pending.get(requestID)
-      if (!existing) {
-        yield* Effect.logWarning("reject for unknown request", { requestID })
-        return yield* new NotFoundError({ requestID })
-      }
-      pending.delete(requestID)
+      const existing = yield* Effect.fromOption(
+        MutableHashMap.get(pending, requestID),
+        () => new NotFoundError({ requestID }),
+      ).pipe(Effect.tapError(() => Effect.logWarning("reject for unknown request", { requestID })))
+      MutableHashMap.remove(pending, requestID)
       yield* Effect.logInfo("rejected", { requestID })
       yield* events.publish(Event.Rejected, {
         sessionID: existing.info.sessionID,
@@ -149,7 +147,7 @@ const layer = Layer.effect(
 
     const list = Effect.fn("Question.list")(function* () {
       const pending = (yield* InstanceState.get(state)).pending
-      return Array.from(pending.values(), (x) => x.info)
+      return Array.from(MutableHashMap.values(pending), (x) => x.info)
     })
 
     return Service.of({ ask, reply, reject, list })

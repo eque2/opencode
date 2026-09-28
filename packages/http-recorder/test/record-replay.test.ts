@@ -1,7 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Exit, Layer, Scope, Stream } from "effect"
-import { Headers, HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { Cause, Effect, Exit, Layer } from "effect"
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { Socket } from "effect/unstable/socket"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -41,20 +41,6 @@ const runWith = <A, E>(
   options: HttpRecorder.RecorderOptions,
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,
 ) => Effect.runPromise(effect.pipe(Effect.provide(HttpRecorder.http(name, options))))
-
-const runRecorder = <A, E>(effect: Effect.Effect<A, E, HttpRecorderInternal.Cassette.Service | Scope.Scope>) =>
-  Effect.runPromise(
-    Effect.scoped(
-      effect.pipe(
-        Effect.provide(
-          HttpRecorderInternal.Cassette.fileSystem({
-            directory: fs.mkdtempSync(path.join(os.tmpdir(), "http-recorder-")),
-          }),
-        ),
-        Effect.provide(NodeFileSystem.layer),
-      ),
-    ),
-  )
 
 const failureText = (exit: Exit.Exit<unknown, unknown>) => {
   if (Exit.isSuccess(exit)) return ""

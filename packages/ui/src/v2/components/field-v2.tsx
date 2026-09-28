@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import {
   createContext,
   createEffect,
@@ -11,6 +12,7 @@ import {
   type ComponentProps,
   type ParentProps,
 } from "solid-js"
+import { MissingProviderError } from "../../context/errors"
 import { TooltipV2 } from "./tooltip-v2"
 import "./field-v2.css"
 
@@ -24,7 +26,7 @@ type FieldContextValue = {
   unregisterPrefix: () => void
   registerSuffix: () => void
   unregisterSuffix: () => void
-  getDescribedBy: () => string | undefined
+  getDescribedBy: () => Option.Option<string>
 }
 
 const FieldContext = createContext<FieldContextValue>()
@@ -32,7 +34,8 @@ const FieldContext = createContext<FieldContextValue>()
 function useField() {
   const ctx = useContext(FieldContext)
   if (!ctx) {
-    throw new Error("Field subcomponents must be used within <Field>")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "Field subcomponents must be used within <Field>" })
   }
   return ctx
 }
@@ -71,10 +74,8 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
     registerSuffix: () => setSuffixCount((n) => n + 1),
     unregisterSuffix: () => setSuffixCount((n) => Math.max(0, n - 1)),
     getDescribedBy: () => {
-      const ids: string[] = []
-      if (prefixCount() > 0) ids.push(prefixId)
-      if (suffixCount() > 0) ids.push(suffixId)
-      return ids.length > 0 ? ids.join(" ") : undefined
+      const ids = [...(prefixCount() > 0 ? [prefixId] : []), ...(suffixCount() > 0 ? [suffixId] : [])]
+      return ids.length > 0 ? Option.some(ids.join(" ")) : Option.none()
     },
   }
 
@@ -82,22 +83,20 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
     const root = rootRef
     if (!root) return
 
-    const control = root.querySelector(CONTROL_SELECTOR) as HTMLInputElement | HTMLTextAreaElement | null
+    const control = root.querySelector(CONTROL_SELECTOR)
     if (!control) return
 
     const shell = control.closest(
       "[data-component='text-input-v2'], [data-component='textarea-v2'], [data-component='inline-input-v2']",
-    ) as HTMLElement | null
+    )
 
     control.id = controlId
     control.setAttribute("aria-labelledby", labelId)
 
-    const describedBy = ctx.getDescribedBy()
-    if (describedBy) {
-      control.setAttribute("aria-describedby", describedBy)
-    } else {
-      control.removeAttribute("aria-describedby")
-    }
+    Option.match(ctx.getDescribedBy(), {
+      onNone: () => control.removeAttribute("aria-describedby"),
+      onSome: (describedBy) => control.setAttribute("aria-describedby", describedBy),
+    })
 
     if (ctx.invalid()) {
       control.setAttribute("aria-invalid", "true")
@@ -125,7 +124,7 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
         {...rest}
         ref={rootRef}
         data-component="field-v2"
-        data-invalid={local.invalid ? "" : undefined}
+        bool:data-invalid={!!local.invalid}
         classList={{
           ...local.classList,
           [local.class ?? ""]: !!local.class,

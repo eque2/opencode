@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it, spyOn } from "bun:test"
 import type {
   AgentSideConnection,
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionUpdate,
 } from "@agentclientprotocol/sdk"
-import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
+import { OpencodeClient, type Event } from "@opencode-ai/sdk/v2"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { createTwoFilesPatch } from "diff"
 import { Effect, ManagedRuntime } from "effect"
@@ -37,6 +37,20 @@ const pollUntil = async (
   }
 }
 
+function ok<T>(data: T) {
+  return Promise.resolve({
+    data,
+    error: undefined,
+    request: new Request("https://opencode.test"),
+    response: new Response(),
+  })
+}
+
+// A declared Promise<never> return keeps a stubbed SDK call from inferring the response type.
+function rejected(reason: unknown): Promise<never> {
+  return Promise.reject(reason)
+}
+
 function makeSessionService() {
   return ManagedRuntime.make(LayerNode.compile(ACPSession.node)).runSync(
     ACPSession.Service.use((service) => Effect.succeed(service)),
@@ -51,17 +65,13 @@ function createHarness(
   const requests: RequestPermissionRequest[] = []
   const updates: SessionUpdateParams[] = []
   const session = makeSessionService()
-  const sdk = {
-    permission: {
-      reply: (params: PermissionReplyParams) => {
-        replies.push(params)
-        return Promise.resolve({ data: true })
-      },
-    },
-    session: {
-      message: () => Promise.resolve({ data: undefined }),
-    },
-  } as unknown as OpencodeClient
+  const sdk = new OpencodeClient()
+  spyOn(sdk.permission, "reply").mockImplementation((params) => {
+    replies.push(params)
+    return ok(true)
+  })
+  // No message fixture exists; the event bridge treats a failed lookup as unknown metadata.
+  spyOn(sdk.session, "message").mockImplementation(() => rejected(new Error("no message fixture")))
   const connection = {
     requestPermission: (params: RequestPermissionRequest) => {
       requests.push(params)
@@ -160,7 +170,9 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_1", { tool: { messageID: "msg_1", callID: "call_1" } }))
+    await harness.subscription.handle(
+      permissionAsked("ses_a", "perm_1", { tool: { messageID: "msg_1", callID: "call_1" } }),
+    )
 
     await pollUntil(() => harness.replies.length === 1, "permission was never replied")
 
@@ -187,7 +199,7 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(
+    await harness.subscription.handle(
       permissionAsked("ses_a", "perm_fetch", {
         permission: "webfetch",
         metadata: {
@@ -213,7 +225,7 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(
+    await harness.subscription.handle(
       permissionAsked("ses_a", "perm_edit", {
         permission: "edit",
         metadata: {
@@ -248,7 +260,7 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(
+    await harness.subscription.handle(
       permissionAsked("ses_a", "perm_patch", {
         permission: "edit",
         metadata: {
@@ -297,7 +309,7 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(
+    await harness.subscription.handle(
       permissionAsked("ses_a", "perm_external", {
         permission: "external_directory",
         metadata: {
@@ -333,7 +345,7 @@ describe("acp permissions", () => {
     const harness = createHarness(() => Promise.resolve({ outcome: { outcome: "cancelled" } }))
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_cancelled"))
+    await harness.subscription.handle(permissionAsked("ses_a", "perm_cancelled"))
 
     await pollUntil(() => harness.replies.length === 1, "cancelled permission was never replied")
 
@@ -344,7 +356,7 @@ describe("acp permissions", () => {
     const harness = createHarness(() => Promise.reject(new Error("client permission UI failed")))
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_failed"))
+    await harness.subscription.handle(permissionAsked("ses_a", "perm_failed"))
 
     await pollUntil(() => harness.replies.length === 1, "failed permission was never rejected")
 
@@ -361,7 +373,7 @@ describe("acp permissions", () => {
     await createSession(harness.session, "ses_b")
     await createKnownTextPart(harness.session, "ses_b", "msg_b", "part_b")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_blocked"))
+    await harness.subscription.handle(permissionAsked("ses_a", "perm_blocked"))
     await pollUntil(() => harness.requests.length === 1, "blocked permission was never requested")
 
     await harness.subscription.handle(textDelta("ses_b", "msg_b", "part_b", "session_b_message"))
@@ -383,8 +395,8 @@ describe("acp permissions", () => {
     )
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_1"))
-    harness.subscription.handle(permissionAsked("ses_a", "perm_2"))
+    await harness.subscription.handle(permissionAsked("ses_a", "perm_1"))
+    await harness.subscription.handle(permissionAsked("ses_a", "perm_2"))
 
     await pollUntil(() => harness.requests.length === 1, "first permission was never requested")
     expect(harness.requests.map((request) => request.toolCall.toolCallId)).toEqual(["perm_1"])

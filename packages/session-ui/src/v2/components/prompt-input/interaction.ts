@@ -1,3 +1,4 @@
+import { Effect, HashSet, Option, Predicate } from "effect"
 import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
@@ -85,36 +86,41 @@ export function createPromptInputV2Controller(input: {
     draft.addText(part.content)
     return true
   }
-  const attachments = input.attachments
-    ? createPromptInputV2Attachments({
-        ...input.attachments,
-        capture: () => ({
-          current: () => draft.state.prompt,
-          cursor: () => draft.state.cursor,
-          set: draft.setPrompt,
-        }),
-        editor: () => editor,
-        focusEditor: () => editor?.focus(),
-        addPart,
-        setDraggingType: (type) => dispatch({ type: type ? "drag.enter" : "drag.leave" }),
-      })
-    : undefined
+  const attachments = Option.map(Option.fromNullishOr(input.attachments), (config) =>
+    createPromptInputV2Attachments({
+      ...config,
+      capture: () => ({
+        current: () => draft.state.prompt,
+        cursor: () => draft.state.cursor,
+        set: draft.setPrompt,
+      }),
+      editor: () => editor,
+      focusEditor: () => editor?.focus(),
+      addPart,
+      setDraggingType: (type) => dispatch({ type: Option.isSome(type) ? "drag.enter" : "drag.leave" }),
+    }),
+  )
   const attach = () => {
-    if (!attachments) {
+    if (Option.isNone(attachments)) {
       input.view.add?.onAttach()
       return
     }
-    attachments.pick(() => fileInput?.click())
+    attachments.value.pick(() => fileInput?.click())
   }
   const contextList = useFilteredList<PromptInputV2Suggestion>({
-    items: async (query) => {
-      const fixed = input.context().filter((item) => item.kind !== "file")
-      const recent = input.context().filter((item) => item.kind === "file" && item.recent)
-      if (!query.trim()) return [...fixed, ...recent]
-      const seen = new Set(recent.map((item) => item.id))
-      const files = (await input.searchContextFiles(query)).filter((item) => !seen.has(item.id))
-      return [...fixed, ...recent, ...files]
-    },
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const fixed = input.context().filter((item) => item.kind !== "file")
+          const recent = input.context().filter((item) => item.kind === "file" && item.recent)
+          if (!query.trim()) return [...fixed, ...recent]
+          const seen = HashSet.fromIterable(recent.map((item) => item.id))
+          const found = input.searchContextFiles(query)
+          const searched = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          const files = searched.filter((item) => !HashSet.has(seen, item.id))
+          return [...fixed, ...recent, ...files]
+        }),
+      ),
     key: (item) => item.id,
     filterKeys: ["label"],
     skipFilter: (item) => item.kind === "file" && !item.recent,
@@ -159,13 +165,18 @@ export function createPromptInputV2Controller(input: {
     if (command.type === "focus.editor") requestAnimationFrame(() => editor?.focus())
   }
 
+  const suggestionAction = (item: PromptInputV2Suggestion): Option.Option<() => void> => {
+    const action = input.onSuggestionSelect?.(item)
+    return typeof action === "function" ? Option.some(action) : Option.none()
+  }
+
   function dispatch(event: PromptInputV2InteractionEvent) {
     const mode = state.mode
     const result = transitionPromptInputV2(state, event, draft.state)
-    const action = event.type === "popover.select" ? input.onSuggestionSelect?.(event.item) : undefined
+    const action = event.type === "popover.select" ? suggestionAction(event.item) : Option.none()
     if (event.type === "popover.select") {
-      if (!action || state.popover.type !== "command-menu") result.commands.forEach(execute)
-      if (action && event.item.kind === "command" && state.popover.type !== "command-menu") {
+      if (Option.isNone(action) || state.popover.type !== "command-menu") result.commands.forEach(execute)
+      if (Option.isSome(action) && event.item.kind === "command" && state.popover.type !== "command-menu") {
         draft.setPrompt(
           draft.state.prompt.filter((part): part is PromptInputV2Attachment => part.type === "image"),
           0,
@@ -179,8 +190,8 @@ export function createPromptInputV2Controller(input: {
       if (result.state.mode === "normal") input.view.shell?.onClose()
     }
     if (event.type === "popover.select") {
-      if (!action) return result.handled
-      action()
+      if (Option.isNone(action)) return result.handled
+      action.value()
     }
     return result.handled
   }
@@ -266,25 +277,31 @@ export function createPromptInputV2Controller(input: {
     if (direction === "up") {
       if (entries.length === 0 || state.historyIndex >= entries.length - 1) return false
       if (state.historyIndex === -1) {
-        setState("savedHistory", {
-          prompt: clonePrompt(draft.state.prompt),
-          metadata: input.history.capture?.(),
-        })
+        setState(
+          "savedHistory",
+          Option.some({
+            prompt: clonePrompt(draft.state.prompt),
+            metadata: input.history.capture?.(),
+          }),
+        )
       }
       const index = state.historyIndex + 1
       setState("historyIndex", index)
-      applyHistory(entries[index]!, "start")
+      applyHistory(entries[index], "start")
       return true
     }
     if (state.historyIndex < 0) return false
     if (state.historyIndex > 0) {
       const index = state.historyIndex - 1
       setState("historyIndex", index)
-      applyHistory(entries[index]!, "end")
+      applyHistory(entries[index], "end")
       return true
     }
-    const saved = state.savedHistory ?? { prompt: [{ type: "text", content: "", start: 0, end: 0 }] }
-    setState({ historyIndex: -1, savedHistory: undefined })
+    const saved = Option.getOrElse(
+      state.savedHistory,
+      (): PromptInputV2HistoryEntry => ({ prompt: [{ type: "text", content: "", start: 0, end: 0 }] }),
+    )
+    setState({ historyIndex: -1, savedHistory: Option.none() })
     applyHistory(saved, "end")
     return true
   }
@@ -295,89 +312,89 @@ export function createPromptInputV2Controller(input: {
     suggestions,
     dispatch,
     onKeyDown,
-    value() {
+    value: () => {
       return draft.state.prompt.map((part) => ("content" in part ? part.content : "")).join("")
     },
-    parts() {
+    parts: () => {
       return draft.state.prompt
     },
     addPart,
-    contextItem(id: string) {
+    contextItem: (id: string) => {
       return draft.state.context.items.find((item) => item.key === id)
     },
-    comments() {
+    comments: () => {
       return draft.state.context.items.filter((item) => !!item.comment?.trim())
     },
-    attachments(): PromptInputV2Attachment[] {
+    attachments: (): PromptInputV2Attachment[] => {
       return draft.state.prompt.filter((part): part is PromptInputV2Attachment => part.type === "image")
     },
-    toggleContext(id: string) {
+    toggleContext: (id: string) => {
       dispatch({ type: "context.active", id })
       input.openContext?.(id)
     },
-    removeContext(id: string) {
+    removeContext: (id: string) => {
       const item = draft.state.context.items.find((entry) => entry.key === id)
       if (item) input.onContextRemove?.(item)
       draft.removeContext(id)
       if (state.activeContextID === id) dispatch({ type: "context.active", id })
     },
-    openAttachment(attachment: PromptInputV2Attachment) {
+    openAttachment: (attachment: PromptInputV2Attachment) => {
       input.openAttachment?.(attachment)
     },
-    removeAttachment(id: string) {
+    removeAttachment: (id: string) => {
       draft.removeAttachment(id)
     },
-    canSubmit() {
+    canSubmit: () => {
       const persisted = draft.state
       if (persisted.prompt.some((part) => part.type === "image")) return true
       if (persisted.context.items.some((item) => !!item.comment?.trim())) return true
       return persisted.prompt.some((part) => "content" in part && !!part.content.trim())
     },
-    setEditor(element: HTMLElement) {
+    setEditor: (element: HTMLElement) => {
       editor = element
       input.onEditor?.(element)
     },
     restoreFocus,
-    onInput(value: string, prompt?: PromptInputV2PersistedState["prompt"], cursor?: number) {
+    onInput: (value: string, prompt?: PromptInputV2PersistedState["prompt"], cursor?: number) => {
       if (prompt) draft.setPrompt(prompt, cursor)
       dispatch({ type: "input.changed", value, persist: !prompt })
     },
-    onCursor(cursor: number) {
+    onCursor: (cursor: number) => {
       draft.setCursor(cursor)
     },
-    openCommands() {
+    openCommands: () => {
       dispatch({ type: "commands.open" })
     },
-    openContext() {
+    openContext: () => {
       dispatch({ type: "context.open" })
     },
-    openShell() {
+    openShell: () => {
       dispatch({ type: "mode.shell" })
     },
-    closeShell() {
+    closeShell: () => {
       dispatch({ type: "mode.normal" })
     },
-    submit() {
+    submit: () => {
       input.view.submit.onSubmit()
       dispatch({ type: "popover.close" })
     },
-    stop() {
+    stop: () => {
       input.view.submit.onStop()
     },
-    addHistory(prompt: PromptInputV2PersistedState["prompt"], mode: "normal" | "shell") {
+    addHistory: (prompt: PromptInputV2PersistedState["prompt"], mode: "normal" | "shell") => {
       input.history?.add(prompt, mode)
-      setState({ historyIndex: -1, savedHistory: undefined })
+      setState({ historyIndex: -1, savedHistory: Option.none() })
     },
-    resetHistory() {
-      setState({ historyIndex: -1, savedHistory: undefined })
+    resetHistory: () => {
+      setState({ historyIndex: -1, savedHistory: Option.none() })
     },
-    onPaste(event: ClipboardEvent) {
+    onPaste: (event: ClipboardEvent) => {
       const clipboard = event.clipboardData
       if (
-        attachments &&
+        Option.isSome(attachments) &&
         (Array.from(clipboard?.items ?? []).some((item) => item.kind === "file") || !clipboard?.getData("text/plain"))
       ) {
-        void attachments.handlePaste(event)
+        void attachments.value.handlePaste(event)
         return
       }
       input.view.onPaste?.(event)
@@ -399,34 +416,34 @@ export function createPromptInputV2Controller(input: {
       selection.addRange(range)
       target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste", data: text }))
     },
-    onDragEnter(event: DragEvent) {
+    onDragEnter: (event: DragEvent) => {
       event.preventDefault()
       dispatch({ type: "drag.enter" })
     },
-    onDragOver(event: DragEvent) {
+    onDragOver: (event: DragEvent) => {
       event.preventDefault()
     },
-    onDragLeave() {
+    onDragLeave: () => {
       dispatch({ type: "drag.leave" })
     },
-    onDrop(event: DragEvent) {
+    onDrop: (event: DragEvent) => {
       event.preventDefault()
       dispatch({ type: "drag.leave" })
-      if (attachments) {
+      if (Option.isSome(attachments)) {
         event.stopPropagation()
-        void attachments.handleDrop(event)
+        void attachments.value.handleDrop(event)
         return
       }
       input.view.onDrop?.(event)
     },
     attach,
-    setFileInput(element: HTMLInputElement) {
+    setFileInput: (element: HTMLInputElement) => {
       fileInput = element
     },
-    addAttachments(files: File[]) {
-      if (attachments) void attachments.addAttachments(files)
+    addAttachments: (files: File[]) => {
+      if (Option.isSome(attachments)) void attachments.value.addAttachments(files)
     },
-    setQuery(value: string) {
+    setQuery: (value: string) => {
       dispatch({ type: "popover.query", value })
     },
   }
@@ -443,7 +460,7 @@ function canNavigateHistory(direction: "up" | "down", text: string, cursor: numb
 
 function clonePrompt(prompt: PromptInputV2PersistedState["prompt"]): PromptInputV2PersistedState["prompt"] {
   return prompt.map((part) =>
-    part.type === "file" ? { ...part, selection: part.selection ? { ...part.selection } : undefined } : { ...part },
+    part.type === "file" ? { ...part, ...(part.selection ? { selection: { ...part.selection } } : {}) } : { ...part },
   )
 }
 

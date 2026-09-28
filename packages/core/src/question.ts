@@ -1,7 +1,7 @@
 export * as QuestionV2 from "./question"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect, Layer, Schema } from "effect"
+import { Context, Deferred, Effect, Layer, MutableHashMap, Schema } from "effect"
 import { Question } from "@opencode-ai/schema/question"
 import { EventV2 } from "./event"
 import { SessionSchema } from "./session/schema"
@@ -76,15 +76,15 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const events = yield* EventV2.Service
-    const pending = new Map<ID, Pending>()
+    const pending = MutableHashMap.empty<ID, Pending>()
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(pending.values(), (item) => Deferred.fail(item.deferred, new RejectedError()), {
+      Effect.forEach(MutableHashMap.values(pending), (item) => Deferred.fail(item.deferred, new RejectedError()), {
         discard: true,
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            pending.clear()
+            MutableHashMap.clear(pending)
           }),
         ),
       ),
@@ -96,12 +96,12 @@ const layer = Layer.effect(
           const id = ID.ascending()
           const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
           const request: Request = { id, ...input }
-          pending.set(id, { request, deferred })
+          MutableHashMap.set(pending, id, { request, deferred })
           return yield* events.publish(Event.Asked, request).pipe(
             Effect.andThen(restore(Deferred.await(deferred))),
             Effect.ensuring(
               Effect.sync(() => {
-                pending.delete(id)
+                MutableHashMap.remove(pending, id)
               }),
             ),
           )
@@ -109,18 +109,20 @@ const layer = Layer.effect(
       ),
     )
 
+    const lookup = (requestID: ID) =>
+      Effect.fromOption(MutableHashMap.get(pending, requestID), () => new NotFoundError({ requestID }))
+
     const reply = Effect.fn("QuestionV2.reply")((input: ReplyInput) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          const existing = pending.get(input.requestID)
-          if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+          const existing = yield* lookup(input.requestID)
           yield* events.publish(Event.Replied, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
             answers: input.answers.map((answer) => [...answer]),
           })
           yield* Deferred.succeed(existing.deferred, input.answers)
-          pending.delete(input.requestID)
+          MutableHashMap.remove(pending, input.requestID)
         }),
       ),
     )
@@ -128,20 +130,19 @@ const layer = Layer.effect(
     const reject = Effect.fn("QuestionV2.reject")((requestID: ID) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          const existing = pending.get(requestID)
-          if (!existing) return yield* new NotFoundError({ requestID })
+          const existing = yield* lookup(requestID)
           yield* events.publish(Event.Rejected, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
           })
           yield* Deferred.fail(existing.deferred, new RejectedError())
-          pending.delete(requestID)
+          MutableHashMap.remove(pending, requestID)
         }),
       ),
     )
 
     const list = Effect.fn("QuestionV2.list")(function* () {
-      return Array.from(pending.values(), (item) => item.request)
+      return Array.from(MutableHashMap.values(pending), (item) => item.request)
     })
 
     return Service.of({ ask, reply, reject, list })

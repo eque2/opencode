@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node"
 import * as Http from "node:http"
-import { Deferred, Effect, Layer, Context, Stream } from "effect"
+import { Deferred, Effect, Exit, Layer, Context, Option, Predicate, Stream } from "effect"
 import * as HttpServer from "effect/unstable/http/HttpServer"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 
@@ -57,13 +57,15 @@ function line(input: unknown) {
   return `data: ${JSON.stringify(input)}\n\n`
 }
 
+// An absent usage stays an absent `usage` field in the serialized chunk.
 function tokens(input?: Usage) {
-  if (!input) return
-  return {
-    prompt_tokens: input.input,
-    completion_tokens: input.output,
-    total_tokens: input.input + input.output,
-  }
+  return input
+    ? {
+        prompt_tokens: input.input,
+        completion_tokens: input.output,
+        total_tokens: input.input + input.output,
+      }
+    : undefined
 }
 
 function chunk(input: { delta?: Record<string, unknown>; finish?: string; usage?: Usage }) {
@@ -281,11 +283,9 @@ function responseToolDone(tool: { id: string; item: string; name: string; args: 
 }
 
 function choices(part: unknown) {
-  if (!part || typeof part !== "object") return
-  if (!("choices" in part) || !Array.isArray(part.choices)) return
-  const choice = part.choices[0]
-  if (!choice || typeof choice !== "object") return
-  return choice
+  const choice: unknown =
+    part && typeof part === "object" && "choices" in part && Array.isArray(part.choices) ? part.choices[0] : undefined
+  return choice && typeof choice === "object" ? choice : undefined
 }
 
 function flow(item: Sse) {
@@ -317,8 +317,13 @@ function flow(item: Sse) {
     }
 
     if (part && typeof part === "object" && "usage" in part && part.usage && typeof part.usage === "object") {
-      const raw = part.usage as Record<string, unknown>
-      if (typeof raw.prompt_tokens === "number" && typeof raw.completion_tokens === "number") {
+      const raw = part.usage
+      if (
+        "prompt_tokens" in raw &&
+        typeof raw.prompt_tokens === "number" &&
+        "completion_tokens" in raw &&
+        typeof raw.completion_tokens === "number"
+      ) {
         out.push({
           type: "usage",
           usage: { input: raw.prompt_tokens, output: raw.completion_tokens },
@@ -600,7 +605,7 @@ function item(input: Item | Reply) {
 function hit(url: string, body: unknown) {
   return {
     url: new URL(url, "http://localhost"),
-    body: body && typeof body === "object" ? (body as Record<string, unknown>) : {},
+    body: Predicate.isObject(body) ? body : {},
   } satisfies Hit
 }
 
@@ -658,15 +663,15 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         const ready = waits.filter((item) => hits.length >= item.count)
         if (!ready.length) return
         waits = waits.filter((item) => hits.length < item.count)
-        yield* Effect.forEach(ready, (item) => Deferred.succeed(item.ready, void 0))
+        yield* Effect.forEach(ready, (item) => Deferred.done(item.ready, Exit.void))
       })
 
       const pull = (hit: Hit) => {
         const index = list.findIndex((entry) => !entry.match || entry.match(hit))
-        if (index === -1) return
+        if (index === -1) return Option.none<Item>()
         const first = list[index]
         list = [...list.slice(0, index), ...list.slice(index + 1)]
-        return first.item
+        return Option.some(first.item)
       }
 
       const handle = Effect.fn("TestLLMServer.handle")(function* (mode: "chat" | "responses") {
@@ -680,22 +685,20 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
-        const next = pull(current)
-        if (!next) {
+        const pulled = pull(current)
+        if (Option.isNone(pulled)) {
           hits = [...hits, current]
           yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("ok"), finishLine("stop")] }
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
+        const next = pulled.value
         hits = [...hits, current]
         yield* notify()
         if (next.type !== "sse") return fail(next)
         if (mode === "responses") return send(responses(next, modelFrom(body)))
-        if (next.reset) {
-          yield* reset(next)
-          return HttpServerResponse.empty()
-        }
+        if (next.reset) return yield* reset(next)
         return send(next)
       })
 

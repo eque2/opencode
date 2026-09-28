@@ -1,6 +1,6 @@
 import path from "path"
 import { fileURLToPath } from "url"
-import { Schema } from "effect"
+import { Config, ConfigProvider, Effect, Option, Result, Schema } from "effect"
 
 type BaseReference = {
   readonly host: string
@@ -54,60 +54,89 @@ export function isError(error: unknown): error is Error {
   )
 }
 
-export function parse(input: string): Reference | undefined {
+/** OPENCODE_REPO_CLONE_GITHUB_BASE_URL replaces https://github.com/ as the clone base for GitHub references. */
+export const GithubCloneBase = Config.option(Config.String("OPENCODE_REPO_CLONE_GITHUB_BASE_URL"))
+
+/**
+ * Reads GithubCloneBase from a fresh snapshot of the process environment, so a value set
+ * after startup still applies. An empty value counts as unset.
+ */
+export const githubCloneBase = Effect.suspend(() => GithubCloneBase.parse(ConfigProvider.fromEnv())).pipe(Effect.orDie)
+
+export interface ParseOptions {
+  /** The GitHub clone base (see githubCloneBase). Omitted or None clones from https://github.com/. */
+  readonly githubCloneBase?: Option.Option<string>
+}
+
+export function parse(input: string, options: ParseOptions = {}): Option.Option<Reference> {
   const cleaned = normalizeInput(input)
-  if (!cleaned) return
+  if (!cleaned) return Option.none()
+  const base = options.githubCloneBase ?? Option.none()
 
   const githubPrefixed = cleaned.match(/^github:([^/\s]+)\/([^/\s]+)$/)
-  if (githubPrefixed) return buildRemote({ host: "github.com", segments: [githubPrefixed[1], githubPrefixed[2]] })
+  if (githubPrefixed) return buildRemote({ host: "github.com", segments: [githubPrefixed[1], githubPrefixed[2]] }, base)
 
   if (!cleaned.includes("://")) {
     const scp = cleaned.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
-    if (scp) return buildRemote({ host: scp[1], segments: parts(scp[2]), remote: cleaned })
+    if (scp) return buildRemote({ host: scp[1], segments: parts(scp[2]), remote: cleaned }, base)
 
     const direct = parts(cleaned)
-    if (direct.length >= 2 && hostLike(direct[0])) return buildRemote({ host: direct[0], segments: direct.slice(1) })
-    if (direct.length === 2) return buildRemote({ host: "github.com", segments: direct })
+    if (direct.length >= 2 && hostLike(direct[0]))
+      return buildRemote({ host: direct[0], segments: direct.slice(1) }, base)
+    if (direct.length === 2) return buildRemote({ host: "github.com", segments: direct }, base)
   }
 
-  try {
-    const url = new URL(cleaned)
+  return Option.flatMap(parseUrl(cleaned), (url): Option.Option<Reference> => {
     if (url.protocol === "file:") return buildFile({ url, remote: cleaned })
     const segments = parts(url.pathname)
-    return buildRemote({
-      host: url.host,
-      segments,
-      remote: url.host === "github.com" ? githubRemote(segments.join("/")) : cleaned,
-      protocol: url.protocol,
-    })
-  } catch {
-    return
-  }
-}
-
-export function parseRemote(input: string): RemoteReference {
-  const reference = parse(input)
-  if (!reference) {
-    throw new InvalidReferenceError({
-      repository: input,
-      message: "Repository must be a git URL, host/path reference, or GitHub owner/repo shorthand",
-    })
-  }
-  if (!isRemote(reference)) {
-    throw new UnsupportedLocalRepositoryError({
-      repository: input,
-      message: "Local file repositories are not supported",
-    })
-  }
-  return reference
-}
-
-export function validateBranch(branch: string): void {
-  if (/^[A-Za-z0-9/_.-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..")) return
-  throw new InvalidBranchError({
-    branch,
-    message: "Branch must contain only alphanumeric characters, /, _, ., and -, and cannot start with - or contain ..",
+    return buildRemote(
+      {
+        host: url.host,
+        segments,
+        remote: url.host === "github.com" ? githubRemote(segments.join("/"), base) : cleaned,
+        protocol: url.protocol,
+      },
+      base,
+    )
   })
+}
+
+export function parseRemote(
+  input: string,
+  options: ParseOptions = {},
+): Result.Result<RemoteReference, InvalidReferenceError | UnsupportedLocalRepositoryError> {
+  return Option.match(parse(input, options), {
+    onNone: () =>
+      Result.fail(
+        new InvalidReferenceError({
+          repository: input,
+          message: "Repository must be a git URL, host/path reference, or GitHub owner/repo shorthand",
+        }),
+      ),
+    onSome: (reference) =>
+      isRemote(reference)
+        ? Result.succeed(reference)
+        : Result.fail(
+            new UnsupportedLocalRepositoryError({
+              repository: input,
+              message: "Local file repositories are not supported",
+            }),
+          ),
+  })
+}
+
+/** Succeeds with the branch when it is a safe Git branch name. */
+export function validateBranch(branch: string): Result.Result<string, InvalidBranchError> {
+  if (/^[A-Za-z0-9/_.-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..")) {
+    return Result.succeed(branch)
+  }
+  return Result.fail(
+    new InvalidBranchError({
+      branch,
+      message:
+        "Branch must contain only alphanumeric characters, /, _, ., and -, and cannot start with - or contain ..",
+    }),
+  )
 }
 
 export function isFile(reference: Reference): reference is FileReference {
@@ -171,44 +200,54 @@ function withSlash(input: string) {
   return input.endsWith("/") ? input : `${input}/`
 }
 
-function githubRemote(pathname: string) {
-  const base = process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-  if (!base) return `https://github.com/${pathname}.git`
-  return new URL(`${pathname}.git`, withSlash(base)).href
+function githubRemote(pathname: string, base: Option.Option<string>) {
+  return Option.match(base, {
+    onNone: () => `https://github.com/${pathname}.git`,
+    onSome: (value) => new URL(`${pathname}.git`, withSlash(value)).href,
+  })
 }
 
-function buildRemote(input: { host: string; segments: string[]; remote?: string; protocol?: string }) {
+// Input that is not an absolute URL has no URL form.
+function parseUrl(input: string): Option.Option<URL> {
+  return Result.getSuccess(Result.try(() => new URL(input)))
+}
+
+function buildRemote(
+  input: { host: string; segments: string[]; remote?: string; protocol?: string },
+  base: Option.Option<string>,
+): Option.Option<RemoteReference> {
   const segments = input.segments.map(trimGitSuffix).filter(Boolean)
-  if (!safeHost(input.host) || !segments.length || segments.some((segment) => !safeSegment(segment))) return
+  if (!safeHost(input.host) || !segments.length || segments.some((segment) => !safeSegment(segment)))
+    return Option.none()
   const repositoryPath = segments.join("/")
   const host = input.host.toLowerCase()
-  return {
+  return Option.some({
     host,
     path: repositoryPath,
     segments,
-    owner: segments.length === 2 ? segments[0] : undefined,
+    ...(segments.length === 2 ? { owner: segments[0] } : {}),
     repo: segments[segments.length - 1],
     remote:
-      input.remote ?? (host === "github.com" ? githubRemote(repositoryPath) : `https://${host}/${repositoryPath}.git`),
+      input.remote ??
+      (host === "github.com" ? githubRemote(repositoryPath, base) : `https://${host}/${repositoryPath}.git`),
     label: host === "github.com" && segments.length === 2 ? repositoryPath : `${host}/${repositoryPath}`,
     protocol: input.protocol,
-  } satisfies RemoteReference
+  } satisfies RemoteReference)
 }
 
-function buildFile(input: { url: URL; remote: string }) {
+function buildFile(input: { url: URL; remote: string }): Option.Option<FileReference> {
   const filePath = path.normalize(fileURLToPath(input.url))
   const segments = filePath.split(/[\\/]+/).filter(Boolean)
-  if (!segments.length) return
-  return {
+  if (!segments.length) return Option.none()
+  return Option.some({
     host: "file",
     path: filePath,
     segments: segments.map((segment) => segment.replace(/:$/, "")),
-    owner: undefined,
     repo: trimGitSuffix(segments[segments.length - 1]),
     remote: input.remote,
     label: filePath,
     protocol: "file:",
-  } satisfies FileReference
+  } satisfies FileReference)
 }
 
 export * as Repository from "./repository"

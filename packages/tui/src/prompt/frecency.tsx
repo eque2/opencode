@@ -1,26 +1,34 @@
 import path from "path"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
-import { appendText, readText, writeText } from "../util/persistence"
+import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
 
-type FrecencyEntry = { path: string; frequency: number; lastOpen: number }
+const FrecencyEntry = Schema.Struct({
+  path: Schema.String,
+  frequency: Schema.Number,
+  lastOpen: Schema.Number,
+}).annotate({ identifier: "TuiFrecency.Entry" })
+type FrecencyEntry = typeof FrecencyEntry.Type
+
+const FrecencyLine = Schema.fromJsonString(FrecencyEntry)
+const decodeFrecencyLine = Schema.decodeUnknownOption(FrecencyLine)
+const encodeFrecencyLine = Schema.encodeSync(FrecencyLine)
+
+function formatFrecency(entries: readonly FrecencyEntry[]) {
+  return entries.map((entry) => `${encodeFrecencyLine(entry)}\n`).join("")
+}
 
 export const MAX_FRECENCY_ENTRIES = 1000
 
+// A line that is not JSON, or not a frecency entry, is skipped. The last line for a path wins.
 export function parseFrecency(text: string) {
   const latest = text
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as FrecencyEntry
-      } catch {
-        return undefined
-      }
-    })
-    .filter((line): line is FrecencyEntry => line !== undefined)
+    .flatMap((line) => Option.toArray(decodeFrecencyLine(line)))
     .reduce<Record<string, FrecencyEntry>>((result, entry) => {
       result[entry.path] = entry
       return result
@@ -32,7 +40,7 @@ export function parseFrecency(text: string) {
 
 function calculateFrecency(entry?: { frequency: number; lastOpen: number }) {
   if (!entry) return 0
-  return entry.frequency / (1 + (Date.now() - entry.lastOpen) / 86400000)
+  return entry.frequency / (1 + (DateTime.toEpochMillis(DateTime.nowUnsafe()) - entry.lastOpen) / 86400000)
 }
 
 export const { use: useFrecency, provider: FrecencyProvider } = createSimpleContext({
@@ -40,35 +48,44 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
   init: () => {
     const paths = useTuiPaths()
     const frecencyPath = path.join(paths.state, "frecency.jsonl")
-    onMount(async () => {
-      const lines = parseFrecency(await readText(frecencyPath).catch(() => ""))
-      setStore(
-        "data",
-        Object.fromEntries(
-          lines.map((entry) => [entry.path, { frequency: entry.frequency, lastOpen: entry.lastOpen }]),
-        ),
+    onMount(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          const lines = parseFrecency(yield* readText(frecencyPath).pipe(Effect.orElseSucceed(() => "")))
+          setStore(
+            "data",
+            Object.fromEntries(
+              lines.map((entry) => [entry.path, { frequency: entry.frequency, lastOpen: entry.lastOpen }]),
+            ),
+          )
+          if (lines.length > 0) yield* writeText(frecencyPath, formatFrecency(lines)).pipe(Effect.ignore)
+        }).pipe(Effect.provide(fileSystemLayer)),
       )
-      if (lines.length > 0)
-        writeText(frecencyPath, lines.map((entry) => JSON.stringify(entry)).join("\n") + "\n").catch(() => {})
     })
 
     const [store, setStore] = createStore({ data: {} as Record<string, { frequency: number; lastOpen: number }> })
 
     function updateFrecency(filePath: string) {
       const absolutePath = path.resolve(paths.cwd, filePath)
-      const newEntry = { frequency: (store.data[absolutePath]?.frequency || 0) + 1, lastOpen: Date.now() }
+      const newEntry = {
+        frequency: (store.data[absolutePath]?.frequency || 0) + 1,
+        lastOpen: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+      }
       setStore("data", absolutePath, newEntry)
-      appendText(frecencyPath, JSON.stringify({ path: absolutePath, ...newEntry }) + "\n").catch(() => {})
+      Effect.runFork(
+        appendText(frecencyPath, formatFrecency([{ path: absolutePath, ...newEntry }])).pipe(
+          Effect.ignore,
+          Effect.provide(fileSystemLayer),
+        ),
+      )
 
       if (Object.keys(store.data).length <= MAX_FRECENCY_ENTRIES) return
       const sorted = Object.entries(store.data)
         .sort(([, a], [, b]) => b.lastOpen - a.lastOpen)
         .slice(0, MAX_FRECENCY_ENTRIES)
       setStore("data", Object.fromEntries(sorted))
-      writeText(
-        frecencyPath,
-        sorted.map(([entryPath, entry]) => JSON.stringify({ path: entryPath, ...entry })).join("\n") + "\n",
-      ).catch(() => {})
+      const text = formatFrecency(sorted.map(([entryPath, entry]) => ({ path: entryPath, ...entry })))
+      Effect.runFork(writeText(frecencyPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
     }
 
     return {

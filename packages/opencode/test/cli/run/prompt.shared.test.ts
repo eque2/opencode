@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import {
   createPromptHistory,
   isExitCommand,
@@ -17,7 +18,7 @@ describe("run prompt shared", () => {
     const out = createPromptHistory([prompt("   "), prompt("one"), prompt("one"), prompt("two"), prompt("one")])
 
     expect(out.items.map((item) => item.text)).toEqual(["one", "two", "one"])
-    expect(out.index).toBeNull()
+    expect(out.index).toEqual(Option.none())
     expect(out.draft).toBe("")
   })
 
@@ -41,26 +42,26 @@ describe("run prompt shared", () => {
     expect(up.apply).toBe(true)
     expect(up.text).toBe("two")
     expect(up.cursor).toBe(0)
-    expect(up.state.index).toBe(1)
+    expect(up.state.index).toEqual(Option.some(1))
     expect(up.state.draft).toBe("draft")
 
     const older = movePromptHistory(up.state, -1, "two", 0)
     expect(older.apply).toBe(true)
     expect(older.text).toBe("one")
     expect(older.cursor).toBe(0)
-    expect(older.state.index).toBe(0)
+    expect(older.state.index).toEqual(Option.some(0))
 
     const newer = movePromptHistory(older.state, 1, "one", 3)
     expect(newer.apply).toBe(true)
     expect(newer.text).toBe("two")
     expect(newer.cursor).toBe(3)
-    expect(newer.state.index).toBe(1)
+    expect(newer.state.index).toEqual(Option.some(1))
 
     const draft = movePromptHistory(newer.state, 1, "two", 3)
     expect(draft.apply).toBe(true)
     expect(draft.text).toBe("draft")
     expect(draft.cursor).toBe(5)
-    expect(draft.state.index).toBeNull()
+    expect(draft.state.index).toEqual(Option.none())
   })
 
   test("uses display-width cursors for history restoration", () => {

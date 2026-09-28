@@ -1,27 +1,28 @@
+import { Option } from "effect"
 import { createComputed, on, type Accessor } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { PromptHistoryEntry } from "./history"
 
 export type PromptInputTransientState = {
-  popover: "at" | "slash" | null
+  popover: Option.Option<"at" | "slash">
   slashMenu: boolean
   slashMenuQuery: string
   historyIndex: number
-  savedPrompt: PromptHistoryEntry | null
+  savedPrompt: Option.Option<PromptHistoryEntry>
   placeholder: number
-  draggingType: "image" | "@mention" | null
+  draggingType: Option.Option<"image" | "@mention">
   mode: "normal" | "shell"
   applyingHistory: boolean
 }
 
 function resetPromptInputTransientState(setStore: SetStoreFunction<PromptInputTransientState>) {
   setStore({
-    popover: null,
+    popover: Option.none(),
     slashMenu: false,
     slashMenuQuery: "",
     historyIndex: -1,
-    savedPrompt: null,
-    draggingType: null,
+    savedPrompt: Option.none(),
+    draggingType: Option.none(),
     mode: "normal",
     applyingHistory: false,
   })
@@ -29,13 +30,13 @@ function resetPromptInputTransientState(setStore: SetStoreFunction<PromptInputTr
 
 export function createPromptInputTransientState(identity: Accessor<unknown>, placeholder: number) {
   const [store, setStore] = createStore<PromptInputTransientState>({
-    popover: null,
+    popover: Option.none(),
     slashMenu: false,
     slashMenuQuery: "",
     historyIndex: -1,
-    savedPrompt: null,
+    savedPrompt: Option.none(),
     placeholder,
-    draggingType: null,
+    draggingType: Option.none(),
     mode: "normal",
     applyingHistory: false,
   })

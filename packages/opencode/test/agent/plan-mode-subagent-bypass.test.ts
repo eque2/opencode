@@ -1,7 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { deriveSubagentSessionPermission } from "../../src/agent/subagent-permissions"
 import { Permission } from "../../src/permission"
@@ -36,21 +36,21 @@ it.instance("subagent permissions take precedence over parent agent restrictions
     // Sanity: the plan agent itself blocks edit. (Note: `write` and
     // `apply_patch` route through the `edit` permission at the runtime
     // tool layer — see Permission.disabled / EDIT_TOOLS.)
-    expect(Permission.evaluate("edit", "/some/file.ts", planAgent!.permission).action).toBe("deny")
+    expect(Permission.evaluate("edit", "/some/file.ts", planAgent.permission).action).toBe("deny")
 
     const parentSessionPermission: PermissionV1.Ruleset = []
 
     const subagentSessionPermission = deriveSubagentSessionPermission({
       parentSessionPermission,
-      subagent: generalAgent!,
+      subagent: generalAgent,
     })
 
     // Mirror the runtime evaluation in session/prompt.ts (~line 410, 639):
     //   ruleset: Permission.merge(agent.permission, session.permission ?? [])
-    const effective = Permission.merge(generalAgent!.permission, subagentSessionPermission)
+    const effective = Permission.merge(generalAgent.permission, subagentSessionPermission)
 
     expect(Permission.evaluate("edit", "/some/file.ts", effective).action).not.toBe("deny")
-    expect(Permission.disabled(["edit", "write", "apply_patch"], effective)).toEqual(new Set())
+    expect(HashSet.size(Permission.disabled(["edit", "write", "apply_patch"], effective))).toBe(0)
   }),
 )
 
@@ -62,9 +62,9 @@ it.instance("subagent's own read-only restriction remains effective", () =>
     const parentSessionPermission: PermissionV1.Ruleset = []
     const subagentSessionPermission = deriveSubagentSessionPermission({
       parentSessionPermission,
-      subagent: explore!,
+      subagent: explore,
     })
-    const effective = Permission.merge(explore!.permission, subagentSessionPermission)
+    const effective = Permission.merge(explore.permission, subagentSessionPermission)
 
     expect(Permission.evaluate("edit", "/x.ts", effective).action).toBe("deny")
   }),
@@ -82,13 +82,13 @@ it.instance(
       const parentSessionPermission: PermissionV1.Ruleset = []
       const subagentSessionPermission = deriveSubagentSessionPermission({
         parentSessionPermission,
-        subagent: my!,
+        subagent: my,
       })
-      const effective = Permission.merge(my!.permission, subagentSessionPermission)
+      const effective = Permission.merge(my.permission, subagentSessionPermission)
 
-      expect(Permission.evaluate("edit", "/some/file.ts", planAgent!.permission).action).toBe("deny")
+      expect(Permission.evaluate("edit", "/some/file.ts", planAgent.permission).action).toBe("deny")
       expect(Permission.evaluate("edit", "/some/file.ts", effective).action).toBe("allow")
-      expect(Permission.disabled(["edit", "write", "apply_patch"], effective)).toEqual(new Set())
+      expect(HashSet.size(Permission.disabled(["edit", "write", "apply_patch"], effective))).toBe(0)
     }),
   {
     config: {
@@ -134,7 +134,7 @@ it.effect("subagent self permissions are preserved", () =>
     expect(Permission.evaluate("bash", "git status", effective).action).toBe("allow")
     expect(Permission.evaluate("task", "worker", effective).action).toBe("allow")
     expect(Permission.evaluate("task", "other", effective).action).toBe("deny")
-    expect(Permission.disabled(["edit", "write", "apply_patch"], effective)).toEqual(new Set())
+    expect(HashSet.size(Permission.disabled(["edit", "write", "apply_patch"], effective))).toBe(0)
   }),
 )
 

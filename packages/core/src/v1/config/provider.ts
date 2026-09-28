@@ -5,6 +5,14 @@ import { PositiveInt } from "../../schema"
 
 export const ModelStatus = Schema.Literals(["alpha", "beta", "deprecated", "active"])
 
+// Provider, model, variant and agent option bags. opencode passes them unchecked to the
+// AI SDK provider package named by `npm`, and @opencode-ai/plugin exposes them to plugins
+// as Record<string, any> (ProviderContext.options, chat.params output.options, the v2
+// aisdk hooks). opencode reads them with that typing, so Schema.Json would break those
+// reads. This is the one unchecked boundary for all five option fields.
+// eslint-disable-next-line effect/no-schema-any-unknown -- (a) the bags pass unchecked to the AI SDK package named by npm; @opencode-ai/plugin types them Record<string, any> (ProviderContext.options, chat.params)
+export const Options = Schema.Record(Schema.String, Schema.Any)
+
 const InterleavedField = Schema.Union([
   Schema.Literals(["reasoning", "reasoning_content", "reasoning_text"]),
   Schema.String,
@@ -64,7 +72,7 @@ export const Model = Schema.Struct({
   provider: Schema.optional(
     Schema.Struct({ npm: Schema.optional(Schema.String), api: Schema.optional(Schema.String) }),
   ),
-  options: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  options: Schema.optional(Options),
   headers: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   variants: Schema.optional(
     Schema.Record(
@@ -73,7 +81,7 @@ export const Model = Schema.Struct({
         Schema.Struct({
           disabled: Schema.optional(Schema.Boolean).annotate({ description: "Disable this variant for the model" }),
         }),
-        [Schema.Record(Schema.String, Schema.Any)],
+        [Options],
       ),
     ).annotate({ description: "Variant-specific configuration" }),
   ),
@@ -124,7 +132,7 @@ export const Info = Schema.Struct({
             "Timeout in milliseconds between streamed SSE chunks for this provider (default: 300000). If no chunk arrives within this window, the request is aborted. Set to false to disable timeout.",
         }),
       }),
-      [Schema.Record(Schema.String, Schema.Any)],
+      [Options],
     ),
   ),
   models: Schema.optional(Schema.Record(Schema.String, Model)),

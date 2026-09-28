@@ -34,9 +34,7 @@ export interface Config {
    *
    * {@link https://developer.mozilla.org/docs/Web/API/Headers/Headers#init See more}
    */
-  headers?:
-    | RequestInit["headers"]
-    | Record<string, string | number | boolean | (string | number | boolean)[] | null | undefined | unknown>
+  headers?: RequestInit["headers"] | Record<string, unknown>
   /**
    * The request method.
    *
@@ -75,7 +73,7 @@ export interface Config {
 
 type IsExactlyNeverOrNeverUndefined<T> = [T] extends [never]
   ? true
-  : [T] extends [never | undefined]
+  : [T] extends [undefined]
     ? [undefined] extends [T]
       ? false
       : true

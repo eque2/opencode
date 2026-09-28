@@ -11,6 +11,5 @@ export class ConsoleState extends Schema.Class<ConsoleState>("ConsoleState")({
 
 export const emptyConsoleState: ConsoleState = ConsoleState.make({
   consoleManagedProviders: [],
-  activeOrgName: undefined,
   switchableOrgCount: 0,
 })

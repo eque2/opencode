@@ -65,7 +65,8 @@ const itSecret = testEffect(apiLayer.pipe(Layer.provide(secretLayer)))
 const itKitSecret = testEffect(apiLayer.pipe(Layer.provide(kitSecretLayer)))
 const itV2Secret = testEffect(v2ApiLayer.pipe(Layer.provide(secretLayer)))
 
-const basic = (username: string, password: string) => ServerAuth.header({ username, password }) ?? ""
+const basic = (username: string, password: string) =>
+  ServerAuth.header({ username, password }).pipe(Effect.map((header) => header ?? ""))
 
 const token = (username: string, password: string) => Buffer.from(`${username}:${password}`).toString("base64")
 
@@ -90,8 +91,8 @@ describe("HttpApi authorization middleware", () => {
       const [missing, badPassword, good] = yield* Effect.all(
         [
           getProbe(),
-          getProbe({ authorization: basic("opencode", "wrong") }),
-          getProbe({ authorization: basic("opencode", "secret") }),
+          getProbe({ authorization: yield* basic("opencode", "wrong") }),
+          getProbe({ authorization: yield* basic("opencode", "secret") }),
         ],
         { concurrency: "unbounded" },
       )
@@ -107,7 +108,10 @@ describe("HttpApi authorization middleware", () => {
   itKitSecret.live("respects configured basic auth username", () =>
     Effect.gen(function* () {
       const [defaultUser, configuredUser] = yield* Effect.all(
-        [getProbe({ authorization: basic("opencode", "secret") }), getProbe({ authorization: basic("kit", "secret") })],
+        [
+          getProbe({ authorization: yield* basic("opencode", "secret") }),
+          getProbe({ authorization: yield* basic("kit", "secret") }),
+        ],
         { concurrency: "unbounded" },
       )
 
@@ -128,7 +132,7 @@ describe("HttpApi authorization middleware", () => {
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.get(
         `/probe?auth_token=${encodeURIComponent(token("opencode", "secret"))}`,
-      ).pipe(HttpClientRequest.setHeader("authorization", basic("opencode", "wrong")), HttpClient.execute)
+      ).pipe(HttpClientRequest.setHeader("authorization", yield* basic("opencode", "wrong")), HttpClient.execute)
 
       expect(response.status).toBe(200)
     }),
@@ -137,7 +141,7 @@ describe("HttpApi authorization middleware", () => {
   itSecret.live("preserves handler errors when basic auth succeeds", () =>
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.get("/missing").pipe(
-        HttpClientRequest.setHeader("authorization", basic("opencode", "secret")),
+        HttpClientRequest.setHeader("authorization", yield* basic("opencode", "secret")),
         HttpClient.execute,
       )
 

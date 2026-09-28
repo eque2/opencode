@@ -1,9 +1,10 @@
-import { createContext, useContext, type ParentProps, Show } from "solid-js"
-import { createStore } from "solid-js/store"
+import { Effect, Fiber, Option } from "effect"
+import { createContext, createSignal, onCleanup, useContext, type ParentProps, Show } from "solid-js"
 import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
 import { SplitBorder } from "./border"
 import { TextAttributes } from "@opentui/core"
+import { MissingProviderError } from "../context/errors"
 export type ToastOptions = {
   title?: string
   message: string
@@ -18,7 +19,7 @@ export function Toast() {
   const dimensions = useTerminalDimensions()
 
   return (
-    <Show when={toast.currentToast}>
+    <Show when={Option.getOrUndefined(toast.currentToast)}>
       {(current) => (
         <box
           position="absolute"
@@ -51,20 +52,32 @@ export function Toast() {
 }
 
 function init() {
-  const [store, setStore] = createStore({
-    currentToast: null as ToastOptions | null,
-  })
+  const [currentToast, setCurrentToast] = createSignal(Option.none<ToastOptions>())
 
-  let timeoutHandle: NodeJS.Timeout | null = null
+  // Hides the current toast after its duration. A new toast restarts the delay.
+  let hideTimer: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelHide = () => {
+    if (Option.isSome(hideTimer)) Effect.runFork(Fiber.interrupt(hideTimer.value))
+    hideTimer = Option.none()
+  }
+  onCleanup(cancelHide)
 
   const toast = {
     show(options: ToastInput) {
       const toastOptions = { ...options, duration: options.duration ?? 5000 }
-      setStore("currentToast", toastOptions)
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-      timeoutHandle = setTimeout(() => {
-        setStore("currentToast", null)
-      }, toastOptions.duration).unref()
+      setCurrentToast(Option.some(toastOptions))
+      cancelHide()
+      hideTimer = Option.some(
+        Effect.runFork(
+          Effect.sleep(toastOptions.duration).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                setCurrentToast(Option.none())
+              }),
+            ),
+          ),
+        ),
+      )
     },
     error: (err: any) => {
       if (err instanceof Error)
@@ -77,8 +90,8 @@ function init() {
         message: "An unknown error has occurred",
       })
     },
-    get currentToast(): ToastOptions | null {
-      return store.currentToast
+    get currentToast(): Option.Option<ToastOptions> {
+      return currentToast()
     },
   }
   return toast
@@ -96,7 +109,8 @@ export function ToastProvider(props: ParentProps) {
 export function useToast() {
   const value = useContext(ctx)
   if (!value) {
-    throw new Error("useToast must be used within a ToastProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useToast must be used within a ToastProvider" })
   }
   return value
 }

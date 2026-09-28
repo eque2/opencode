@@ -17,14 +17,18 @@ export type ModelID = typeof ModelID.Type
 export const ProviderID = Schema.String.pipe(Schema.brand("LLM.ProviderID"))
 export type ProviderID = typeof ProviderID.Type
 
+/** Identifier of a prepared or sent LLM request. */
+export const RequestID = Schema.String.pipe(Schema.brand("LLM.RequestID"))
+export type RequestID = typeof RequestID.Type
+
 export const ResponseID = Schema.String
 export type ResponseID = Schema.Schema.Type<typeof ResponseID>
 
 export const ContentBlockID = Schema.String
 export type ContentBlockID = Schema.Schema.Type<typeof ContentBlockID>
 
-export const ToolCallID = Schema.String
-export type ToolCallID = Schema.Schema.Type<typeof ToolCallID>
+export const ToolCallID = Schema.String.pipe(Schema.brand("LLM.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
 
 export const ReasoningEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export const ReasoningEffort = Schema.Literals(ReasoningEfforts)
@@ -39,5 +43,5 @@ export type MessageRole = Schema.Schema.Type<typeof MessageRole>
 export const FinishReason = Schema.Literals(["stop", "length", "tool-calls", "content-filter", "error", "unknown"])
 export type FinishReason = Schema.Schema.Type<typeof FinishReason>
 
-export const JsonSchema = Schema.Record(Schema.String, Schema.Unknown)
+export const JsonSchema = Schema.JsonObject
 export type JsonSchema = Schema.Schema.Type<typeof JsonSchema>

@@ -1,5 +1,6 @@
+import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import type { Event, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2"
-import { bootstrapSessionData, createSessionData, reduceSessionData, type SessionData } from "./session-data"
+import { bootstrapSessionData, createSessionData, lookup, reduceSessionData, type SessionData } from "./session-data"
 import { messagePrompt, type SessionMessages } from "./session.shared"
 import { messageTurnSummaryCommit } from "./turn-summary"
 import type { FooterPatch, LocalReplayRow, RunProvider, StreamCommit } from "./types"
@@ -16,7 +17,7 @@ type ReplayInput = {
 type ReplayConfig = {
   limits: Record<string, number>
   providers?: RunProvider[]
-  summaries: ReadonlySet<string>
+  summaries: HashSet.HashSet<string>
 }
 
 export type SessionReplay = {
@@ -42,23 +43,18 @@ function apply(data: SessionData, event: Event, sessionID: string, thinking: boo
   })
 }
 
-function mergePatch(left: FooterPatch | undefined, right: FooterPatch | undefined) {
-  if (!left) {
-    return right
+// Later patches override earlier ones; a lone patch passes through unchanged.
+function mergePatches(patches: ReadonlyArray<FooterPatch | undefined>): FooterPatch | undefined {
+  const defined = patches.filter((item): item is FooterPatch => !!item)
+  if (defined.length === 0) {
+    return undefined
   }
 
-  if (!right) {
-    return left
-  }
-
-  return {
-    ...left,
-    ...right,
-  }
+  return defined.reduce((left, right) => ({ ...left, ...right }))
 }
 
 function active(data: SessionData) {
-  return data.part.size > 0 || data.tools.size > 0
+  return MutableHashMap.size(data.part) > 0 || MutableHashSet.size(data.tools) > 0
 }
 
 function replayPatch(data: SessionData, patch: FooterPatch | undefined) {
@@ -112,18 +108,18 @@ function isShellSyntheticUser(message: SessionMessages[number]) {
   )
 }
 
-function isShellSyntheticAssistant(message: SessionMessages[number], shellParents: ReadonlySet<string>) {
+function isShellSyntheticAssistant(message: SessionMessages[number], shellParents: HashSet.HashSet<string>) {
   return (
     message.info.role === "assistant" &&
-    shellParents.has(message.info.parentID) &&
+    HashSet.has(shellParents, message.info.parentID) &&
     message.parts.some((part) => part.type === "tool" && part.tool === "bash")
   )
 }
 
-function summaryMessageIDs(messages: SessionMessages): ReadonlySet<string> {
-  const shellParents = new Set(messages.filter(isShellSyntheticUser).map((message) => message.info.id))
-  const parents = new Set<string>()
-  const summaries = new Set<string>()
+function summaryMessageIDs(messages: SessionMessages): HashSet.HashSet<string> {
+  const shellParents = HashSet.fromIterable(messages.filter(isShellSyntheticUser).map((message) => message.info.id))
+  const parents = MutableHashSet.empty<string>()
+  const summaries = MutableHashSet.empty<string>()
 
   for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
     const message = messages[idx]
@@ -135,19 +131,19 @@ function summaryMessageIDs(messages: SessionMessages): ReadonlySet<string> {
       continue
     }
 
-    if (parents.has(message.info.parentID)) {
+    if (MutableHashSet.has(parents, message.info.parentID)) {
       continue
     }
 
-    parents.add(message.info.parentID)
+    MutableHashSet.add(parents, message.info.parentID)
 
     const completed = message.info.time.completed
     if (typeof completed === "number" && completed > message.info.time.created) {
-      summaries.add(message.info.id)
+      MutableHashSet.add(summaries, message.info.id)
     }
   }
 
-  return summaries
+  return HashSet.fromIterable(summaries)
 }
 
 function replayMessage(
@@ -177,9 +173,6 @@ function replayMessage(
     }
   }
 
-  const commits: StreamCommit[] = []
-  let patch: FooterPatch | undefined
-
   const info = apply(
     data,
     {
@@ -194,11 +187,9 @@ function replayMessage(
     thinking,
     config.limits,
   )
-  commits.push(...info.commits)
-  patch = mergePatch(patch, info.footer?.patch)
-
-  for (const part of message.parts) {
-    const next = apply(
+  // apply() mutates `data`, so the parts reduce in message order.
+  const parts = message.parts.map((part) =>
+    apply(
       data,
       {
         id: `bootstrap:part:${part.id}`,
@@ -212,28 +203,22 @@ function replayMessage(
       message.info.sessionID,
       thinking,
       config.limits,
-    )
-    patch = mergePatch(patch, next.footer?.patch)
-    commits.push(...next.commits)
-  }
+    ),
+  )
+  const outputs = [info, ...parts]
 
-  const summary = config.summaries.has(message.info.id)
-    ? messageTurnSummaryCommit(message, config.providers)
-    : undefined
-  if (summary) {
-    commits.push(summary)
-  }
+  const summary = HashSet.has(config.summaries, message.info.id)
+    ? Option.fromNullishOr(messageTurnSummaryCommit(message, config.providers))
+    : Option.none()
 
   return {
-    commits,
-    patch,
+    commits: [...outputs.flatMap((item) => item.commits), ...Option.toArray(summary)],
+    patch: mergePatches(outputs.map((item) => item.footer?.patch)),
   }
 }
 
 export function replaySession(input: ReplayInput): SessionReplay {
   const data = createSessionData()
-  const commits: StreamCommit[] = []
-  let patch: FooterPatch | undefined
   const summaries = summaryMessageIDs(input.messages)
 
   bootstrapSessionData({
@@ -243,20 +228,19 @@ export function replaySession(input: ReplayInput): SessionReplay {
     questions: input.questions,
   })
 
-  for (const message of input.messages) {
-    const next = replayMessage(data, message, input.thinking, {
+  // replayMessage() mutates `data`, so the messages replay in order.
+  const replayed = input.messages.map((message) =>
+    replayMessage(data, message, input.thinking, {
       limits: input.limits,
       providers: input.providers,
       summaries,
-    })
-    commits.push(...next.commits)
-    patch = mergePatch(patch, next.patch)
-  }
+    }),
+  )
 
   return {
     data,
-    commits,
-    patch: replayPatch(data, patch),
+    commits: replayed.flatMap((item) => item.commits),
+    patch: replayPatch(data, mergePatches(replayed.map((item) => item.patch))),
   }
 }
 
@@ -265,10 +249,10 @@ export function replayLocalRows(
   commits: StreamCommit[],
   rows: LocalReplayRow[],
 ): StreamCommit[] {
-  const persisted = new Set(messages.map((message) => message.info.id))
+  const persisted = HashSet.fromIterable(messages.map((message) => message.info.id))
   return rows.reduce((out, local) => {
     const row = local.commit
-    if (row.kind === "user" && row.messageID && persisted.has(row.messageID)) {
+    if (row.kind === "user" && row.messageID && HashSet.has(persisted, row.messageID)) {
       return out
     }
 
@@ -327,31 +311,31 @@ export function replayLocalRows(
 }
 
 export function replayActiveText(data: SessionData, current: SessionData): StreamCommit[] {
-  return [...current.part.entries()].flatMap(([partID, kind]) => {
-    if (kind === "user" || current.end.has(partID) || data.ids.has(partID)) {
+  return [...current.part].flatMap(([partID, kind]) => {
+    if (kind === "user" || MutableHashSet.has(current.end, partID) || MutableHashSet.has(data.ids, partID)) {
       return []
     }
 
-    const text = current.text.get(partID) ?? ""
-    const existing = data.text.get(partID) ?? ""
-    const sent = current.sent.get(partID) ?? 0
-    const existingSent = data.sent.get(partID) ?? 0
-    const visible = current.visible.get(partID) ?? ""
-    const existingVisible = data.visible.get(partID) ?? ""
+    const text = lookup(current.text, partID, "")
+    const existing = lookup(data.text, partID, "")
+    const sent = lookup(current.sent, partID, 0)
+    const existingSent = lookup(data.sent, partID, 0)
+    const visible = lookup(current.visible, partID, "")
+    const existingVisible = lookup(data.visible, partID, "")
     if (!text.startsWith(existing) || existingSent > sent || !visible.startsWith(existingVisible)) {
       return []
     }
 
-    data.part.set(partID, kind)
-    data.text.set(partID, text)
-    data.sent.set(partID, sent)
-    data.visible.set(partID, visible)
-    const messageID = current.msg.get(partID)
+    MutableHashMap.set(data.part, partID, kind)
+    MutableHashMap.set(data.text, partID, text)
+    MutableHashMap.set(data.sent, partID, sent)
+    MutableHashMap.set(data.visible, partID, visible)
+    const messageID = lookup(current.msg, partID, "")
     if (messageID) {
-      data.msg.set(partID, messageID)
-      const role = current.role.get(messageID)
-      if (role) {
-        data.role.set(messageID, role)
+      MutableHashMap.set(data.msg, partID, messageID)
+      const role = MutableHashMap.get(current.role, messageID)
+      if (Option.isSome(role)) {
+        MutableHashMap.set(data.role, messageID, role.value)
       }
     }
 

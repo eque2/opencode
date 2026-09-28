@@ -14,7 +14,7 @@ export function DialogVariant() {
         title: "Default",
         onSelect: () => {
           dialog.clear()
-          local.model.variant.set(undefined)
+          local.model.variant.set("default")
         },
       },
       ...local.model.variant.list().map((variant) => ({

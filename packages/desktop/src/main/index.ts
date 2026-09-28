@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
@@ -8,7 +7,8 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
 
-import { Deferred, Effect, Fiber } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, Config, ConfigProvider, Data, Deferred, Effect, Fiber, FileSystem, Option } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -26,7 +26,7 @@ import {
 } from "./onboarding"
 import {
   getDefaultServerUrl,
-  preferAppEnv,
+  loadAppEnv,
   setDefaultServerUrl,
   spawnLocalServer,
   type SidecarListener,
@@ -35,6 +35,7 @@ import { setupAutoUpdater, showUpdaterDialog } from "./updater"
 import { safeWebContentsURL } from "./window-state"
 import {
   getLastFocusedWindow,
+  loadRendererDevUrl,
   registerRendererProtocol,
   setRelaunchHandler,
   setAppQuitting,
@@ -45,7 +46,7 @@ import {
 import { createWslServersController } from "./wsl/servers"
 import { registerWslIpcHandlers } from "./wsl/ipc"
 import { spawnWslSidecar } from "./wsl/sidecar"
-import { migrate } from "./migrate"
+import { runTauriMigration } from "./migrate"
 import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
 import { setNativeTranslations } from "./native-translations"
@@ -60,98 +61,127 @@ const APP_IDS: Record<string, string> = {
   beta: "ai.opencode.desktop.beta",
   prod: "ai.opencode.desktop",
 }
-const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
-const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
-let logger: ReturnType<typeof initLogging>
-let server: SidecarListener | null = null
+class PortError extends Data.TaggedError("PortError")<{ readonly message: string }> {}
+class StartupStepError extends Data.TaggedError("StartupStepError")<{ readonly cause: unknown }> {}
 
-const pendingDeepLinks: string[] = []
+let logger: Effect.Success<typeof initLogging>
+let server: Option.Option<SidecarListener> = Option.none()
 
-function useEnvProxy() {
-  try {
-    // Electron 41.2 runs Node 24.14.1; latest @types/node@24 is 24.12.2.
-    ;(http as any).setGlobalProxyFromEnv()
-  } catch (error) {
-    logger.warn("failed to load proxy environment", error)
-  }
-}
+let pendingDeepLinks: ReadonlyArray<string> = []
+
+// Electron 41.2 runs Node 24.14.1, which has http.setGlobalProxyFromEnv; latest @types/node@24
+// is 24.12.2 and does not declare it.
+const hasEnvProxy = (module: typeof http): module is typeof http & { setGlobalProxyFromEnv: () => void } =>
+  "setGlobalProxyFromEnv" in module && typeof module.setGlobalProxyFromEnv === "function"
+
+const useEnvProxy = Effect.suspend(() => {
+  // A namespace import does not narrow, so the guard checks a local binding.
+  const module = http
+  return hasEnvProxy(module)
+    ? Effect.try({ try: () => module.setGlobalProxyFromEnv(), catch: (cause) => new StartupStepError({ cause }) })
+    : Effect.fail(new StartupStepError({ cause: "http.setGlobalProxyFromEnv is not available" }))
+}).pipe(
+  Effect.catch((error) =>
+    Effect.sync(() => {
+      logger.warn("failed to load proxy environment", error.cause)
+    }),
+  ),
+)
 
 function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
-  pendingDeepLinks.push(...urls)
+  pendingDeepLinks = [...pendingDeepLinks, ...urls]
   const win = getLastFocusedWindow()
   if (win) sendDeepLinks(win, urls)
 }
 
-async function killSidecar() {
-  if (!server) return
-  const current = server
-  server = null
-  await current.stop()
-}
+const killSidecar = Effect.suspend(() => {
+  if (Option.isNone(server)) return Effect.void
+  const current = server.value
+  server = Option.none()
+  return Effect.promise(() => current.stop())
+})
 
-function ensureLoopbackNoProxy() {
-  const loopback = ["127.0.0.1", "localhost", "::1"]
-  const upsert = (key: string) => {
-    const items = (process.env[key] ?? "")
-      .split(",")
-      .map((value: string) => value.trim())
-      .filter((value: string) => Boolean(value))
+// Reads one environment variable when the Effect runs. The default ConfigProvider keeps a
+// copy of process.env, but startup writes process.env (loadAppEnv, ensureLoopbackNoProxy).
+// The provider reads process.env itself, which keeps Windows case-insensitive lookups.
+const readEnv = (name: string) =>
+  Config.option(Config.String(name)).parse(ConfigProvider.fromEnvRecord(process.env)).pipe(Effect.orDie)
 
-    for (const host of loopback) {
-      if (items.some((value: string) => value.toLowerCase() === host)) continue
-      items.push(host)
-    }
+// NO_PROXY and no_proxy run in order: on Windows they name one variable, and the second
+// pass must read the value that the first pass wrote.
+const ensureLoopbackNoProxy = Effect.forEach(
+  ["NO_PROXY", "no_proxy"],
+  (key) =>
+    readEnv(key).pipe(
+      Effect.map((value) => {
+        const loopback = ["127.0.0.1", "localhost", "::1"]
+        const items = Option.getOrElse(value, () => "")
+          .split(",")
+          .map((value: string) => value.trim())
+          .filter((value: string) => Boolean(value))
+        const missing = loopback.filter((host) => !items.some((value: string) => value.toLowerCase() === host))
 
-    process.env[key] = items.join(",")
-  }
+        Object.assign(process.env, { [key]: [...items, ...missing].join(",") })
+      }),
+    ),
+  { discard: true },
+)
 
-  upsert("NO_PROXY")
-  upsert("no_proxy")
-}
+// Creates the throwaway data folders for the onboarding E2E run and points the app and the
+// sidecar at them through process.env. A filesystem failure stops startup, as the thrown error did.
+const createOnboardingTestRoot = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
+  yield* fs.remove(root, { recursive: true, force: true }).pipe(Effect.orDie)
+  yield* Effect.forEach(
+    ["data", "config", "cache", "state", "desktop", "session"],
+    (dir) => fs.makeDirectory(join(root, dir), { recursive: true }).pipe(Effect.orDie),
+    { discard: true },
+  )
+  Object.assign(process.env, {
+    OPENCODE_DB: ":memory:",
+    XDG_DATA_HOME: join(root, "data"),
+    XDG_CONFIG_HOME: join(root, "config"),
+    XDG_CACHE_HOME: join(root, "cache"),
+    XDG_STATE_HOME: join(root, "state"),
+  })
+  return root
+})
 
 const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
 
   // on macOS apps run in `/` which can cause issues with ripgrep
-  try {
-    process.chdir(homedir())
-  } catch {}
+  yield* Effect.try({ try: () => process.chdir(homedir()), catch: (cause) => new StartupStepError({ cause }) }).pipe(
+    Effect.ignore,
+  )
 
-  process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+  Object.assign(process.env, { OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true" })
+  const testOnboarding = Option.contains(yield* readEnv("OPENCODE_TEST_ONBOARDING"), "1")
+  const sidecarVersion = Option.contains(yield* readEnv("OPENCODE_SIDECAR_V2"), "1") ? "v2" : "v1"
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
-  const onboardingTestRoot = ((): string | undefined => {
-    if (!TEST_ONBOARDING) return
-
-    const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
-    rmSync(root, { recursive: true, force: true })
-    ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
-      mkdirSync(join(root, dir), { recursive: true }),
-    )
-    process.env.OPENCODE_DB = ":memory:"
-    process.env.XDG_DATA_HOME = join(root, "data")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    process.env.XDG_CACHE_HOME = join(root, "cache")
-    process.env.XDG_STATE_HOME = join(root, "state")
-    return root
-  })()
+  const onboardingTestRoot = testOnboarding ? Option.some(yield* createOnboardingTestRoot) : Option.none<string>()
   app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
   app.setAppUserModelId(appId)
   app.setPath(
     "userData",
-    onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
+    Option.match(onboardingTestRoot, {
+      onNone: () => join(app.getPath("appData"), appId),
+      onSome: (root) => join(root, "desktop"),
+    }),
   )
-  if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
-  initializeOldLayoutEligibility(app.getPath("userData"))
-  logger = initLogging()
-  initCrashReporter()
+  if (Option.isSome(onboardingTestRoot)) app.setPath("sessionData", join(onboardingTestRoot.value, "session"))
+  yield* initializeOldLayoutEligibility(app.getPath("userData"))
+  logger = yield* initLogging
+  yield* initCrashReporter
 
   const wslServers = createWslServersController(
     app.getVersion(),
-    async (distro) => {
+    (distro) => {
       logger.log("spawning wsl sidecar", { distro })
       return spawnWslSidecar(distro, {
         onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
@@ -164,32 +194,40 @@ const main = Effect.gen(function* () {
       },
     },
   )
-  const stopSidecars = async () => {
-    await killSidecar()
-    wslServers.stopAll()
-  }
+  const stopSidecars = killSidecar.pipe(Effect.andThen(Effect.sync(() => wslServers.stopAll())))
   const relaunch = () => {
     setAppQuitting()
-    void stopSidecars().finally(() => {
-      app.relaunch()
-      app.quit()
-    })
+    Effect.runFork(
+      stopSidecars.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            app.relaunch()
+            app.quit()
+          }),
+        ),
+      ),
+    )
   }
 
-  try {
-    setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])])
-  } catch (error) {
-    logger.warn("failed to load system certificates", error)
-  }
+  yield* Effect.try({
+    try: () => setDefaultCACertificates(Arr.dedupe([...getCACertificates("default"), ...getCACertificates("system")])),
+    catch: (cause) => new StartupStepError({ cause }),
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logger.warn("failed to load system certificates", error.cause)
+      }),
+    ),
+  )
 
   logger.log("app starting", {
     version: app.getVersion(),
     packaged: app.isPackaged,
-    onboardingTest: Boolean(onboardingTestRoot),
+    onboardingTest: Option.isSome(onboardingTestRoot),
   })
 
-  ensureLoopbackNoProxy()
-  useEnvProxy()
+  yield* ensureLoopbackNoProxy
+  yield* useEnvProxy
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)
@@ -200,7 +238,8 @@ const main = Effect.gen(function* () {
     return
   }
 
-  const shellEnv = preferAppEnv(app.getPath("userData"))
+  const shellEnv = yield* loadAppEnv(app.getPath("userData"))
+  yield* loadRendererDevUrl
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
@@ -223,12 +262,12 @@ const main = Effect.gen(function* () {
 
   app.on("before-quit", () => {
     setAppQuitting()
-    void stopSidecars()
+    Effect.runFork(stopSidecars)
   })
 
   app.on("will-quit", () => {
     setAppQuitting()
-    void stopSidecars()
+    Effect.runFork(stopSidecars)
   })
 
   app.on("child-process-gone", (_event, details) => {
@@ -246,7 +285,7 @@ const main = Effect.gen(function* () {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       setAppQuitting()
-      void stopSidecars().finally(() => app.quit())
+      Effect.runFork(stopSidecars.pipe(Effect.ensuring(Effect.sync(() => app.quit()))))
     })
   }
 
@@ -254,7 +293,8 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
-  if (!TEST_ONBOARDING) migrate()
+  // A migration failure stops startup, as the rejected Promise did.
+  if (!testOnboarding) yield* runTauriMigration().pipe(Effect.orDie)
   yield* Effect.promise(() => cleanupStoreFiles(app.getPath("userData"))).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
@@ -271,7 +311,7 @@ const main = Effect.gen(function* () {
   app.setAsDefaultProtocolClient("opencode")
   registerRendererProtocol()
   setDockIcon()
-  const updater = setupAutoUpdater(stopSidecars)
+  const updater = setupAutoUpdater(() => Effect.runPromise(stopSidecars))
   const menuDeps = {
     trigger: (id: string) => {
       const win = getLastFocusedWindow()
@@ -281,7 +321,7 @@ const main = Effect.gen(function* () {
     relaunch,
   }
   registerIpcHandlers({
-    killSidecar: () => killSidecar(),
+    killSidecar: () => Effect.runPromise(killSidecar),
     relaunch,
     awaitInitialization: Effect.fnUntraced(
       function* () {
@@ -292,16 +332,28 @@ const main = Effect.gen(function* () {
       },
       (e) => Effect.runPromise(e),
     ),
-    consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
+    consumeInitialDeepLinks: () => {
+      const links = [...pendingDeepLinks]
+      pendingDeepLinks = []
+      return links
+    },
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
     isFirstLaunchOnboardingPending,
     finishFirstLaunchOnboarding,
     isOldLayoutEligible,
-    getDisplayBackend: async () => null,
-    setDisplayBackend: async () => undefined,
+    // The desktop app keeps no Linux display backend setting, so the IPC reply is always absent.
+    getDisplayBackend: () => Effect.runPromise(Effect.succeed(Option.getOrNull(Option.none<string>()))),
+    setDisplayBackend: () => {},
     checkAppExists: (appName) => checkAppExists(appName),
-    resolveAppPath: async (appName) => resolveAppPath(appName),
+    // resolveAppPath answers synchronously off Windows and with a Promise on Windows.
+    resolveAppPath: (appName) =>
+      Effect.runPromise(
+        Effect.suspend(() => {
+          const path = resolveAppPath(appName)
+          return typeof path === "string" ? Effect.succeed(path) : Effect.promise(() => path)
+        }),
+      ),
     updater,
     showUpdater: () => showUpdaterDialog(updater, true),
     setBackgroundColor: (color) => setBackgroundColor(color),
@@ -313,9 +365,15 @@ const main = Effect.gen(function* () {
   })
   registerWslIpcHandlers(wslServers)
   void updater.start()
-  const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
-  updateTimer.unref()
-  app.once("will-quit", () => clearInterval(updateTimer))
+  // Checks for updates every ten minutes after startup, until the app quits.
+  const updateChecks = yield* Effect.sleep("10 minutes").pipe(
+    Effect.andThen(Effect.sync(() => void updater.check())),
+    Effect.forever,
+    Effect.forkDetach,
+  )
+  app.once("will-quit", () => {
+    Effect.runFork(Fiber.interrupt(updateChecks))
+  })
   yield* Effect.promise(() => startNetLog()).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
@@ -325,12 +383,12 @@ const main = Effect.gen(function* () {
   )
 
   const loadingTask = yield* Effect.gen(function* () {
-    logger.log("sidecar connection started", { version: SIDECAR_VERSION })
+    logger.log("sidecar connection started", { version: sidecarVersion })
 
-    ensureLoopbackNoProxy()
-    useEnvProxy()
+    yield* ensureLoopbackNoProxy
+    yield* useEnvProxy
 
-    if (SIDECAR_VERSION === "v2") {
+    if (sidecarVersion === "v2") {
       logger.log("spawning v2 sidecar")
       const sidecar = yield* Effect.promise(() => startBackgroundCli(logger, shellEnv?.XDG_STATE_HOME))
       yield* Deferred.succeed(serverReady, {
@@ -348,24 +406,29 @@ const main = Effect.gen(function* () {
     }
 
     const port = yield* Effect.gen(function* () {
-      const fromEnv = process.env.OPENCODE_PORT
-      if (fromEnv) {
-        const parsed = Number.parseInt(fromEnv, 10)
+      const fromEnv = yield* readEnv("OPENCODE_PORT")
+      if (Option.isSome(fromEnv)) {
+        const parsed = Number.parseInt(fromEnv.value, 10)
         if (!Number.isNaN(parsed)) return parsed
       }
 
       const res = yield* Deferred.make<number, unknown>()
       const socket = createServer()
-      socket.on("error", (e) => Deferred.failSync(res, () => e))
+      // Node calls these listeners outside the fiber, so each one completes the Deferred directly.
+      socket.on("error", (e) => {
+        Deferred.doneUnsafe(res, Effect.fail(e))
+      })
       socket.listen(0, "127.0.0.1", () => {
         const address = socket.address()
         if (typeof address !== "object" || !address) {
           socket.close()
-          Deferred.failSync(res, () => new Error("Failed to get port"))
+          Deferred.doneUnsafe(res, Effect.fail(new PortError({ message: "Failed to get port" })))
           return
         }
         const port = address.port
-        socket.close(() => Effect.runSync(Deferred.succeed(res, port)))
+        socket.close(() => {
+          Deferred.doneUnsafe(res, Effect.succeed(port))
+        })
       })
 
       return yield* Deferred.await(res)
@@ -383,7 +446,7 @@ const main = Effect.gen(function* () {
         onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
       }),
     )
-    server = listener
+    server = Option.some(listener)
     yield* Deferred.succeed(serverReady, {
       url,
       username: "opencode",
@@ -421,4 +484,4 @@ const main = Effect.gen(function* () {
   if (windows.length) createMenu(menuDeps)
 })
 
-Effect.runFork(main)
+Effect.runFork(main.pipe(Effect.provide(NodeFileSystem.layer)))

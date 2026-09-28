@@ -1,3 +1,4 @@
+import { Data, Option } from "effect"
 import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../prompt/history"
@@ -27,34 +28,51 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   init: (props: { initialRoute?: Route }) => {
     const startup = useTuiStartup()
     const [store, setStore] = createStore<Route>(
-      props.initialRoute ?? initialRoute(startup.initialRoute) ?? { type: "home" },
+      props.initialRoute ?? initialRoute(startup.initialRoute).pipe(Option.getOrElse((): Route => ({ type: "home" }))),
     )
 
     return {
       get data() {
         return store
       },
-      navigate(route: Route) {
+      navigate: (route: Route) => {
         setStore(reconcile(route))
       },
     }
   },
 })
 
-function initialRoute(value: unknown): Route | undefined {
-  if (!value || typeof value !== "object" || !("type" in value)) return
-  if (value.type === "home") return { type: "home" }
+function initialRoute(value: unknown): Option.Option<Route> {
+  if (!value || typeof value !== "object" || !("type" in value)) return Option.none()
+  if (value.type === "home") return Option.some({ type: "home" })
   if (value.type === "session" && "sessionID" in value && typeof value.sessionID === "string") {
-    return { type: "session", sessionID: value.sessionID }
+    return Option.some({ type: "session", sessionID: value.sessionID })
   }
   if (value.type === "plugin" && "id" in value && typeof value.id === "string") {
-    return { type: "plugin", id: value.id }
+    return Option.some({ type: "plugin", id: value.id })
   }
+  return Option.none()
 }
 
 export type RouteContext = ReturnType<typeof useRoute>
 
-export function useRouteData<T extends Route["type"]>(type: T) {
+export function useRouteData<T extends Route["type"]>(type: T): Extract<Route, { type: T }> {
   const route = useRoute()
-  return route.data as Extract<Route, { type: typeof type }>
+  // The Match that mounts each route view checks the type first, so a mismatch is a defect.
+  return Option.liftPredicate(
+    route.data,
+    (data: Route): data is Extract<Route, { type: T }> => data.type === type,
+  ).pipe(
+    Option.getOrThrowWith(
+      () =>
+        new RouteMismatchError({
+          message: `useRouteData("${type}") needs a ${type} route, but the route is ${route.data.type}`,
+        }),
+    ),
+  )
 }
+
+/** Raised when a route view reads its route data while another route type is active. */
+class RouteMismatchError extends Data.TaggedError("RouteMismatchError")<{
+  readonly message: string
+}> {}

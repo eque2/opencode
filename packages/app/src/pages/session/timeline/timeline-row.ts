@@ -1,6 +1,6 @@
 import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import type { PartGroup } from "@opencode-ai/session-ui/message-part"
-import { Data, Equal } from "effect"
+import { absurd, Data, Equal } from "effect"
 
 export type SummaryDiff = SnapshotFileDiff & { file: string }
 
@@ -71,6 +71,8 @@ export namespace TimelineRow {
         return `error:${row.userMessageID}`
       case "Retry":
         return `retry:${row.userMessageID}`
+      default:
+        return absurd<string>(row)
     }
   }
 

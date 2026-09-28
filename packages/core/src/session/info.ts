@@ -8,23 +8,23 @@ import { AbsolutePath, RelativePath } from "../schema"
 import { WorkspaceV2 } from "../workspace"
 import { SessionSchema } from "./schema"
 import { SessionTable } from "./sql"
-import { SessionMessage } from "./message"
-import { Snapshot } from "../snapshot"
 
 export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.Info {
   return SessionSchema.Info.make({
     id: SessionSchema.ID.make(row.id),
     projectID: ProjectV2.ID.make(row.project_id),
     title: row.title,
-    parentID: row.parent_id ? SessionSchema.ID.make(row.parent_id) : undefined,
-    agent: row.agent ? AgentV2.ID.make(row.agent) : undefined,
-    model: row.model
+    ...(row.parent_id ? { parentID: SessionSchema.ID.make(row.parent_id) } : {}),
+    ...(row.agent ? { agent: AgentV2.ID.make(row.agent) } : {}),
+    ...(row.model
       ? {
-          id: ModelV2.ID.make(row.model.id),
-          providerID: ProviderV2.ID.make(row.model.providerID),
-          variant: ModelV2.VariantID.make(row.model.variant ?? "default"),
+          model: {
+            id: ModelV2.ID.make(row.model.id),
+            providerID: ProviderV2.ID.make(row.model.providerID),
+            variant: ModelV2.VariantID.make(row.model.variant ?? "default"),
+          },
         }
-      : undefined,
+      : {}),
     cost: row.cost,
     tokens: {
       input: row.tokens_input,
@@ -37,14 +37,15 @@ export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.In
     },
     location: Location.Ref.make({
       directory: AbsolutePath.make(row.directory),
-      workspaceID: row.workspace_id ? WorkspaceV2.ID.make(row.workspace_id) : undefined,
+      ...(row.workspace_id ? { workspaceID: WorkspaceV2.ID.make(row.workspace_id) } : {}),
     }),
-    subpath: row.path ? RelativePath.make(row.path) : undefined,
-    revert: row.revert ? { ...row.revert, messageID: SessionMessage.ID.make(row.revert.messageID) } : undefined,
+    ...(row.path ? { subpath: RelativePath.make(row.path) } : {}),
+    // The column holds a Revert.State; Info.make validates its message ID brand.
+    ...(row.revert ? { revert: row.revert } : {}),
     time: {
       created: DateTime.makeUnsafe(row.time_created),
       updated: DateTime.makeUnsafe(row.time_updated),
-      archived: row.time_archived ? DateTime.makeUnsafe(row.time_archived) : undefined,
+      ...(row.time_archived ? { archived: DateTime.makeUnsafe(row.time_archived) } : {}),
     },
   })
 }

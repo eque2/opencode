@@ -1,6 +1,8 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { effectCmd } from "../../effect-cmd"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const ConfigCommand = effectCmd({
   command: "config",
@@ -9,6 +11,6 @@ export const ConfigCommand = effectCmd({
   handler: Effect.fn("Cli.debug.config")(function* () {
     const { Config } = yield* Effect.promise(() => import("@/config/config"))
     const config = yield* Config.Service.use((cfg) => cfg.get())
-    process.stdout.write(JSON.stringify(config, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(config).pipe(Effect.orDie)) + EOL)
   }),
 })

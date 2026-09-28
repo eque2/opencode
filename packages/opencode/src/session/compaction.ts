@@ -10,9 +10,8 @@ import { SessionProcessor } from "./processor"
 import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
-import { NotFoundError } from "@/storage/storage"
 
-import { Effect, Layer, Context } from "effect"
+import { Clock, Context, Effect, HashMap, HashSet, Layer, Option, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow, usable } from "./overflow"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -45,8 +44,20 @@ type Tail = {
 type CompletedCompaction = {
   userIndex: number
   assistantIndex: number
-  summary: string | undefined
+  summary: Option.Option<string>
 }
+
+/** A compaction ran for a message that is not a user message. This is a caller defect. */
+export class InvalidParentError extends Schema.TaggedError<InvalidParentError>()(
+  "SessionCompaction.InvalidParentError",
+  {
+    message: Schema.String,
+  },
+) {}
+
+// Tool input and model messages are plain JSON data.
+const encodeJsonSync = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
 const truncate = (value: string) =>
   value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
@@ -68,7 +79,7 @@ const serialize = (message: SessionV1.WithParts) => {
       if (part.type === "text") return part.text ? [`[Assistant]: ${part.text}`] : []
       if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
       if (part.type !== "tool") return []
-      const call = `[Assistant tool call]: ${part.tool}(${JSON.stringify(part.state.input)})`
+      const call = `[Assistant tool call]: ${part.tool}(${encodeJsonSync(part.state.input)})`
       if (part.state.status === "completed") {
         const attachments = (part.state.attachments ?? []).map(
           (item) => `[Attached ${item.mime}: ${item.filename ?? "file"}]`,
@@ -91,24 +102,24 @@ function summaryText(message: SessionV1.WithParts) {
     .filter(Boolean)
     .join("\n\n")
     .trim()
-  return text || undefined
+  return text ? Option.some(text) : Option.none()
 }
 
 function completedCompactions(messages: SessionV1.WithParts[]) {
-  const users = new Map<MessageID, number>()
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]
-    if (msg.info.role !== "user") continue
-    if (!msg.parts.some((part) => part.type === "compaction")) continue
-    users.set(msg.info.id, i)
-  }
+  const users = HashMap.fromIterable(
+    messages.flatMap(
+      (msg, index): Array<readonly [MessageID, number]> =>
+        msg.info.role === "user" && msg.parts.some((part) => part.type === "compaction") ? [[msg.info.id, index]] : [],
+    ),
+  )
 
   return messages.flatMap((msg, assistantIndex): CompletedCompaction[] => {
     if (msg.info.role !== "assistant") return []
     if (!msg.info.summary || !msg.info.finish || msg.info.error) return []
-    const userIndex = users.get(msg.info.parentID)
-    if (userIndex === undefined) return []
-    return [{ userIndex, assistantIndex, summary: summaryText(msg) }]
+    return Option.match(HashMap.get(users, msg.info.parentID), {
+      onNone: () => [],
+      onSome: (userIndex) => [{ userIndex, assistantIndex, summary: summaryText(msg) }],
+    })
   })
 }
 
@@ -155,11 +166,28 @@ function splitTurn(input: {
       if (size > input.budget) continue
       return {
         start,
-        id: input.messages[start]!.info.id,
+        id: input.messages[start].info.id,
       } satisfies Tail
     }
     return undefined
   })
+}
+
+/**
+ * Finds the latest real user turn before the parent. The split keeps the messages before
+ * that turn, and it is none when no earlier real user turn remains to summarize.
+ */
+function replaySplit(messages: SessionV1.WithParts[], parentID: MessageID) {
+  const isRealUser = (msg: SessionV1.WithParts) =>
+    msg.info.role === "user" && !msg.parts.some((part) => part.type === "compaction")
+  const idx = messages.findIndex((msg) => msg.info.id === parentID)
+  const index = messages.slice(0, Math.max(idx, 0)).findLastIndex(isRealUser)
+  if (index < 0) return Option.none()
+  const msg = messages[index]
+  if (msg.info.role !== "user") return Option.none()
+  const before = messages.slice(0, index)
+  if (!before.some(isRealUser)) return Option.none()
+  return Option.some({ replay: { info: msg.info, parts: msg.parts }, messages: before })
 }
 
 export interface Interface {
@@ -217,7 +245,7 @@ const layer = Layer.effect(
       model: Provider.Model
     }) {
       const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model)
-      return Token.estimate(JSON.stringify(msgs))
+      return Token.estimate(yield* encodeJson(msgs).pipe(Effect.orDie))
     })
 
     const select = Effect.fn("SessionCompaction.select")(function* (input: {
@@ -226,16 +254,16 @@ const layer = Layer.effect(
       model: Provider.Model
     }) {
       const limit = input.cfg.compaction?.tail_turns
-      if (limit !== undefined && limit <= 0) return { head: input.messages, tail_start_id: undefined }
+      if (limit !== undefined && limit <= 0) return { head: input.messages, tail_start_id: Option.none<MessageID>() }
       const budget = preserveRecentBudget({ cfg: input.cfg, model: input.model })
       const all = turns(input.messages)
-      if (!all.length) return { head: input.messages, tail_start_id: undefined }
+      if (!all.length) return { head: input.messages, tail_start_id: Option.none<MessageID>() }
       const recent = limit === undefined ? all : all.slice(-limit)
 
       let total = 0
       let keep: Tail | undefined
       for (let i = recent.length - 1; i >= 0; i--) {
-        const turn = recent[i]!
+        const turn = recent[i]
         // estimate lazily so cost stays proportional to the retained tail, not the whole session
         const size = yield* estimate({
           messages: input.messages.slice(turn.start, turn.end),
@@ -261,10 +289,10 @@ const layer = Layer.effect(
         break
       }
 
-      if (!keep || keep.start === 0) return { head: input.messages, tail_start_id: undefined }
+      if (!keep || keep.start === 0) return { head: input.messages, tail_start_id: Option.none<MessageID>() }
       return {
         head: input.messages.slice(0, keep.start),
-        tail_start_id: keep.id,
+        tail_start_id: Option.some(keep.id),
       }
     })
 
@@ -275,10 +303,12 @@ const layer = Layer.effect(
       if (!cfg.compaction?.prune) return
       yield* Effect.logInfo("pruning")
 
-      const msgs = yield* session
-        .messages({ sessionID: input.sessionID })
-        .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)))
-      if (!msgs) return
+      const found = yield* session.messages({ sessionID: input.sessionID }).pipe(
+        Effect.map(Option.some),
+        Effect.catchTag("NotFoundError", () => Effect.succeedNone),
+      )
+      if (Option.isNone(found)) return
+      const msgs = found.value
 
       let total = 0
       let pruned = 0
@@ -308,7 +338,7 @@ const layer = Layer.effect(
       if (pruned > PRUNE_MINIMUM) {
         for (const part of toPrune) {
           if (part.state.status === "completed") {
-            part.state.time.compacted = Date.now()
+            part.state.time.compacted = yield* Clock.currentTimeMillis
             yield* session.updatePart(part)
           }
         }
@@ -325,35 +355,21 @@ const layer = Layer.effect(
     }) {
       const parent = input.messages.findLast((m) => m.info.id === input.parentID)
       if (!parent || parent.info.role !== "user") {
-        throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
+        return yield* Effect.die(
+          new InvalidParentError({ message: `Compaction parent must be a user message: ${input.parentID}` }),
+        )
       }
       const userMessage = parent.info
       const compactionPart = parent.parts.find((part): part is SessionV1.CompactionPart => part.type === "compaction")
 
-      let messages = input.messages
-      let replay:
-        | {
-            info: SessionV1.User
-            parts: SessionV1.Part[]
-          }
-        | undefined
-      if (input.overflow) {
-        const idx = input.messages.findIndex((m) => m.info.id === input.parentID)
-        for (let i = idx - 1; i >= 0; i--) {
-          const msg = input.messages[i]
-          if (msg.info.role === "user" && !msg.parts.some((p) => p.type === "compaction")) {
-            replay = { info: msg.info, parts: msg.parts }
-            messages = input.messages.slice(0, i)
-            break
-          }
-        }
-        const hasContent =
-          replay && messages.some((m) => m.info.role === "user" && !m.parts.some((p) => p.type === "compaction"))
-        if (!hasContent) {
-          replay = undefined
-          messages = input.messages
-        }
-      }
+      // On overflow, replay the latest real user turn before the parent after the summary,
+      // but only when older user content remains to summarize.
+      const overflowSplit = input.overflow ? replaySplit(input.messages, input.parentID) : Option.none()
+      const replay = Option.map(overflowSplit, (split) => split.replay)
+      const messages = Option.match(overflowSplit, {
+        onNone: () => input.messages,
+        onSome: (split) => split.messages,
+      })
 
       const agent = yield* agents.get("compaction")
       const model = agent.model
@@ -362,18 +378,19 @@ const layer = Layer.effect(
       const cfg = yield* config.get()
       const history = compactionPart && messages.at(-1)?.info.id === input.parentID ? messages.slice(0, -1) : messages
       const prior = completedCompactions(history)
-      const hidden = new Set(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
-      const previousSummary = prior.at(-1)?.summary
+      const hidden = HashSet.fromIterable(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
+      const previousSummary = Option.flatMap(Option.fromNullishOr(prior.at(-1)), (item) => item.summary)
       const selected = yield* select({
-        messages: history.filter((_, index) => !hidden.has(index)),
+        messages: history.filter((_, index) => !HashSet.has(hidden, index)),
         cfg,
         model,
       })
       // Allow plugins to inject context or replace compaction prompt.
+      const compactingOutput: { context: string[]; prompt?: string } = { context: [] }
       const compacting = yield* plugin.trigger(
         "experimental.session.compacting",
         { sessionID: input.sessionID },
-        { context: [], prompt: undefined },
+        compactingOutput,
       )
       const msgs = structuredClone(selected.head)
       yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
@@ -382,7 +399,7 @@ const layer = Layer.effect(
         compacting.prompt ??
         [
           buildPrompt({
-            previousSummary,
+            previousSummary: Option.getOrUndefined(previousSummary),
             context: [conversation],
           }),
           ...compacting.context,
@@ -413,7 +430,7 @@ const layer = Layer.effect(
         modelID: model.id,
         providerID: model.providerID,
         time: {
-          created: Date.now(),
+          created: yield* Clock.currentTimeMillis,
         },
       }
       yield* session.updateMessage(msg)
@@ -449,7 +466,7 @@ const layer = Layer.effect(
 
       if (result === "compact") {
         processor.message.error = new SessionV1.ContextOverflowError({
-          message: replay
+          message: Option.isSome(replay)
             ? "Conversation history too large to compact - exceeds model context limit"
             : "Session too large to compact - context exceeds model limit even after stripping media",
         }).toObject()
@@ -458,28 +475,32 @@ const layer = Layer.effect(
         return "stop"
       }
 
-      if (compactionPart && selected.tail_start_id && compactionPart.tail_start_id !== selected.tail_start_id) {
+      if (
+        compactionPart &&
+        Option.isSome(selected.tail_start_id) &&
+        compactionPart.tail_start_id !== selected.tail_start_id.value
+      ) {
         yield* session.updatePart({
           ...compactionPart,
-          tail_start_id: selected.tail_start_id,
+          tail_start_id: selected.tail_start_id.value,
         })
       }
 
       if (result === "continue" && input.auto) {
-        if (replay) {
-          const original = replay.info
+        if (Option.isSome(replay)) {
+          const original = replay.value.info
           const replayMsg = yield* session.updateMessage({
             id: MessageID.ascending(),
             role: "user",
             sessionID: input.sessionID,
-            time: { created: Date.now() },
+            time: { created: yield* Clock.currentTimeMillis },
             agent: original.agent,
             model: original.model,
             format: original.format,
             tools: original.tools,
             system: original.system,
           })
-          for (const part of replay.parts) {
+          for (const part of replay.value.parts) {
             if (part.type === "compaction") continue
             const replayPart =
               part.type === "file" && MessageV2.isMedia(part.mime)
@@ -494,7 +515,7 @@ const layer = Layer.effect(
           }
         }
 
-        if (!replay) {
+        if (Option.isNone(replay)) {
           const info = yield* provider.getProvider(userMessage.model.providerID)
           if (
             (yield* plugin.trigger(
@@ -520,10 +541,11 @@ const layer = Layer.effect(
               id: MessageID.ascending(),
               role: "user",
               sessionID: input.sessionID,
-              time: { created: Date.now() },
+              time: { created: yield* Clock.currentTimeMillis },
               agent: userMessage.agent,
               model: userMessage.model,
             })
+            const now = yield* Clock.currentTimeMillis
             const text =
               (input.overflow
                 ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
@@ -541,8 +563,8 @@ const layer = Layer.effect(
               synthetic: true,
               text,
               time: {
-                start: Date.now(),
-                end: Date.now(),
+                start: now,
+                end: now,
               },
             })
           }
@@ -569,7 +591,7 @@ const layer = Layer.effect(
         model: input.model,
         sessionID: input.sessionID,
         agent: input.agent,
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
       })
       yield* session.updatePart({
         id: PartID.ascending(),

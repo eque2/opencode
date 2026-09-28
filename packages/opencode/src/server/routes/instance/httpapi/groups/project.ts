@@ -13,7 +13,7 @@ const UpdatePayload = Schema.Struct({
   name: Schema.optional(Schema.String),
   icon: Schema.optional(Project.Info.fields.icon),
   commands: Schema.optional(Project.Info.fields.commands),
-})
+}).annotate({ description: "Project properties to update" })
 
 export const ProjectApi = HttpApi.make("project")
   .add(

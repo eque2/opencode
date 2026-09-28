@@ -14,16 +14,24 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* VenicePlugin.effect(host)
 })
 
 function fakeSelectorSdk(calls: string[]) {
-  const make = (method: string) => (id: string) => {
-    calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
-  }
+  const make =
+    (method: string) =>
+    (id: string): LanguageModelV3 => {
+      calls.push(`${method}:${id}`)
+      return {
+        specificationVersion: "v3",
+        provider: method,
+        modelId: id,
+        supportedUrls: {},
+        doGenerate: () => Promise.reject(new Error("the fake language model does not generate")),
+        doStream: () => Promise.reject(new Error("the fake language model does not stream")),
+      }
+    }
   return {
     responses: make("responses"),
     messages: make("messages"),
@@ -35,7 +43,6 @@ function fakeSelectorSdk(calls: string[]) {
 describe("VenicePlugin", () => {
   it.effect("creates a Venice SDK for venice-ai-sdk-provider", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
@@ -52,7 +59,6 @@ describe("VenicePlugin", () => {
 
   it.effect("uses the model provider ID as the bundled Venice SDK name", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
@@ -70,7 +76,6 @@ describe("VenicePlugin", () => {
 
   it.effect("only handles the bundled venice-ai-sdk-provider package", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const similar = yield* aisdk.runSDK({
@@ -96,7 +101,6 @@ describe("VenicePlugin", () => {
 
   it.effect("leaves Venice language selection to the default languageModel fallback", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       const calls: string[] = []
       yield* addPlugin()

@@ -2,7 +2,8 @@
 import { TextAttributes, type InputRenderable, type KeyEvent } from "@opentui/core"
 import { useKeyboard, type JSX } from "@opentui/solid"
 import fuzzysort from "fuzzysort"
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, type Accessor } from "solid-js"
+import { Option } from "effect"
 import { RunFooterMenu, createFooterMenuState, type RunFooterMenuItem } from "./footer.menu"
 import type { RunFooterTheme } from "./theme"
 import type { FooterQueuedPrompt, FooterSubagentTab, RunCommand, RunInput, RunProvider } from "./types"
@@ -31,7 +32,8 @@ type ModelEntry = PanelEntry & {
 }
 
 type VariantEntry = PanelEntry & {
-  variant: string | undefined
+  // None selects the model's default variant.
+  variant: Option.Option<string>
   current: boolean
 }
 
@@ -233,11 +235,11 @@ function PanelShell(props: {
         <text fg={props.theme().text} attributes={TextAttributes.BOLD} wrapMode="none" flexShrink={0}>
           {props.title}
         </text>
-        {props.countVisible !== false ? (
+        <Show when={props.countVisible !== false}>
           <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
             {countLabel(props.count, props.total, props.query)}
           </text>
-        ) : null}
+        </Show>
         <box flexGrow={1} flexShrink={1} backgroundColor="transparent" />
         <text fg={props.theme().muted} wrapMode="none" truncate flexShrink={0}>
           esc
@@ -576,7 +578,7 @@ export function RunCommandMenuBody(props: {
 export function RunSubagentSelectBody(props: {
   theme: Accessor<RunFooterTheme>
   tabs: Accessor<FooterSubagentTab[]>
-  current: Accessor<string | undefined>
+  current: Accessor<Option.Option<string>>
   onClose: () => void
   onSelect: (sessionID: string) => void
   onRows?: (rows: number) => void
@@ -589,11 +591,11 @@ export function RunSubagentSelectBody(props: {
       return {
         category: "",
         display: title,
-        description: title === item.label ? undefined : item.label,
+        ...(title === item.label ? {} : { description: item.label }),
         footer: subagentStatusLabel(item.status),
         keywords: `${item.label} ${item.description} ${item.title ?? ""} ${item.status}`,
         sessionID: item.sessionID,
-        current: props.current() === item.sessionID,
+        current: Option.contains(props.current(), item.sessionID),
       }
     }),
   )
@@ -679,8 +681,8 @@ export function RunQueuedPromptSelectBody(props: {
   theme: Accessor<RunFooterTheme>
   prompts: Accessor<FooterQueuedPrompt[]>
   onClose: () => void
-  onEdit: (prompt: FooterQueuedPrompt) => void | Promise<void>
-  onDelete: (prompt: FooterQueuedPrompt) => void | Promise<void>
+  onEdit: (prompt: FooterQueuedPrompt) => void
+  onDelete: (prompt: FooterQueuedPrompt) => void
   onRows?: (rows: number) => void
 }) {
   let field: InputRenderable | undefined
@@ -783,13 +785,16 @@ export function RunSkillSelectBody(props: {
   const entries = createMemo<SkillEntry[]>(() =>
     (props.commands() ?? [])
       .filter((item) => item.source === "skill")
-      .map((item) => ({
-        category: "",
-        display: item.name,
-        description: item.description?.replace(/\s+/g, " ").trim() || undefined,
-        keywords: `skill ${item.name} ${item.description ?? ""}`,
-        name: item.name,
-      }))
+      .map((item) => {
+        const description = item.description?.replace(/\s+/g, " ").trim()
+        return {
+          category: "",
+          display: item.name,
+          ...(description ? { description } : {}),
+          keywords: `skill ${item.name} ${item.description ?? ""}`,
+          name: item.name,
+        }
+      })
       .sort((a, b) => a.display.localeCompare(b.display)),
   )
   const items = createMemo<SkillEntry[]>(() => match(query(), entries()))
@@ -852,9 +857,9 @@ export function RunSkillSelectBody(props: {
 export function RunVariantSelectBody(props: {
   theme: Accessor<RunFooterTheme>
   variants: Accessor<string[]>
-  current: Accessor<string | undefined>
+  current: Accessor<Option.Option<string>>
   onClose: () => void
-  onSelect: (variant: string | undefined) => void
+  onSelect: (variant: Option.Option<string>) => void
 }) {
   let field: InputRenderable | undefined
   const [query, setQuery] = createSignal("")
@@ -862,18 +867,18 @@ export function RunVariantSelectBody(props: {
     {
       category: "",
       display: "Default",
-      description: props.current() === undefined ? "current" : undefined,
+      ...(Option.isNone(props.current()) ? { description: "current" } : {}),
       keywords: "default",
-      variant: undefined,
-      current: props.current() === undefined,
+      variant: Option.none(),
+      current: Option.isNone(props.current()),
     },
     ...props.variants().map((variant) => ({
       category: "",
       display: variant,
-      description: props.current() === variant ? "current" : undefined,
+      ...(Option.contains(props.current(), variant) ? { description: "current" } : {}),
       keywords: variant,
-      variant,
-      current: props.current() === variant,
+      variant: Option.some(variant),
+      current: Option.contains(props.current(), variant),
     })),
   ])
   const items = createMemo<VariantEntry[]>(() => match(query(), entries()))
@@ -965,20 +970,20 @@ export function RunModelSelectBody(props: {
             const title = model.name ?? modelID
             const current = props.current()?.providerID === provider.id && props.current()?.modelID === modelID
             const footer = current
-              ? "current"
+              ? Option.some("current")
               : model.cost?.input === 0 && provider.id === "opencode"
-                ? "Free"
+                ? Option.some("Free")
                 : title !== modelID
-                  ? modelID
-                  : undefined
+                  ? Option.some(modelID)
+                  : Option.none<string>()
             return {
               providerID: provider.id,
               modelID,
               providerName: provider.name,
               category: provider.name,
               display: title,
-              footer,
-              keywords: `${provider.id} ${provider.name} ${modelID} ${title} ${footer ?? ""}`,
+              ...(Option.isSome(footer) ? { footer: footer.value } : {}),
+              keywords: `${provider.id} ${provider.name} ${modelID} ${title} ${Option.getOrElse(footer, () => "")}`,
               current,
             }
           }),

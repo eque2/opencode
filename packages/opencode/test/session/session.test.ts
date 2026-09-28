@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
-import { Deferred, Effect, Exit, Layer } from "effect"
+import { Deferred, Effect, Exit, Layer, Schema } from "effect"
 import { Session as SessionNs } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
@@ -12,10 +12,13 @@ import { testEffect } from "../lib/effect"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { GlobalBus } from "@/bus/global"
+import { takeGlobalBusEvent } from "../server/global-bus"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceStore } from "@/project/instance-store"
 import { InstanceBootstrap } from "@/project/bootstrap"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 
 const it = testEffect(
   AppNodeBuilder.build(
@@ -36,11 +39,21 @@ const it = testEffect(
   ),
 )
 
+class AwaitTimeoutError extends Schema.TaggedError<AwaitTimeoutError>()("SessionTestAwaitTimeoutError", {
+  message: Schema.String,
+}) {}
+
 const awaitDeferred = <T>(deferred: Deferred.Deferred<T>, message: string) =>
   Effect.race(
     Deferred.await(deferred),
-    Effect.sleep("2 seconds").pipe(Effect.flatMap(() => Effect.fail(new Error(message)))),
+    Effect.sleep("2 seconds").pipe(Effect.flatMap(() => Effect.fail(new AwaitTimeoutError({ message })))),
   )
+
+// Narrows a published payload to one event definition by its type tag, as EventV2 routing does.
+const isPayloadOf =
+  <D extends EventV2.Definition>(definition: D) =>
+  (event: EventV2.Payload): event is EventV2.Payload<D> =>
+    event.type === definition.type
 
 const remove = (id: SessionID) => SessionNs.use.remove(id)
 
@@ -49,14 +62,10 @@ describe("session.created event", () => {
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
       const events = yield* EventV2Bridge.Service
-      const received = yield* Deferred.make<SessionNs.Info>()
+      const received = yield* Deferred.make<EventV2.Data<typeof SessionNs.Event.Created>["info"]>()
 
       const unsub = yield* events.listen((event) => {
-        if (event.type === SessionNs.Event.Created.type)
-          Deferred.doneUnsafe(
-            received,
-            Effect.succeed((event.data as typeof SessionNs.Event.Created.data.Type).info as SessionNs.Info),
-          )
+        if (isPayloadOf(SessionNs.Event.Created)(event)) Deferred.doneUnsafe(received, Effect.succeed(event.data.info))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
@@ -110,12 +119,11 @@ describe("session.created event", () => {
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
       const received = yield* Deferred.make<{ syncEvent: EventV2.SerializedEvent }>()
-      const listener = (event: { payload: { type?: string; syncEvent?: EventV2.SerializedEvent } }) => {
-        if (event.payload.type === "sync" && event.payload.syncEvent)
-          Deferred.doneUnsafe(received, Effect.succeed({ syncEvent: event.payload.syncEvent }))
-      }
-      GlobalBus.on("event", listener)
-      yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", listener)))
+      const subscription = yield* GlobalBus.subscribe
+      yield* takeGlobalBusEvent(subscription, (event) => event.payload.type === "sync" && event.payload.syncEvent).pipe(
+        Effect.flatMap((event) => Deferred.succeed(received, { syncEvent: event.payload.syncEvent })),
+        Effect.forkScoped,
+      )
 
       const info = yield* session.create({})
       const event = yield* awaitDeferred(received, "timed out waiting for legacy global sync event")
@@ -148,21 +156,15 @@ describe("step-finish token propagation via event", () => {
           role: "user",
           time: { created: Date.now() },
           agent: "user",
-          model: { providerID: "test", modelID: "test" },
+          model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
           tools: {},
-          mode: "",
-        } as unknown as SessionV1.Info)
+        } satisfies SessionV1.User)
 
-        // Event subscribers receive readonly Schema.Type payloads; `SessionV1.Part`
-        // is the mutable domain type. Cast bridges the two — safe because the
-        // test only reads the value afterwards.
-        const received = yield* Deferred.make<SessionV1.Part>()
+        // Event subscribers receive the readonly Schema.Type payload, so the test keeps that type.
+        const received = yield* Deferred.make<EventV2.Data<typeof MessageV2.Event.PartUpdated>["part"]>()
         const unsub = yield* events.listen((event) => {
-          if (event.type === MessageV2.Event.PartUpdated.type)
-            Deferred.doneUnsafe(
-              received,
-              Effect.succeed((event.data as typeof MessageV2.Event.PartUpdated.data.Type).part as SessionV1.Part),
-            )
+          if (isPayloadOf(MessageV2.Event.PartUpdated)(event))
+            Deferred.doneUnsafe(received, Effect.succeed(event.data.part))
           return Effect.void
         })
         yield* Effect.addFinalizer(() => unsub)
@@ -189,7 +191,8 @@ describe("step-finish token propagation via event", () => {
         const receivedPart = yield* awaitDeferred(received, "timed out waiting for message.part.updated")
 
         expect(receivedPart.type).toBe("step-finish")
-        const finish = receivedPart as SessionV1.StepFinishPart
+        if (receivedPart.type !== "step-finish") return
+        const finish = receivedPart
         expect(finish.tokens.input).toBe(500)
         expect(finish.tokens.output).toBe(800)
         expect(finish.tokens.reasoning).toBe(200)
@@ -252,16 +255,16 @@ describe("Session", () => {
           role: "user",
           time: { created: index + 1 },
           agent: "user",
-          model: { providerID: "test", modelID: "test" },
-        } as SessionV1.User)
+          model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        } satisfies SessionV1.User)
       }
 
       const beforeWrap = yield* Effect.acquireRelease(
-        session.fork({ sessionID: created.id, messageID: MessageID.make(ids[1]!) }),
+        session.fork({ sessionID: created.id, messageID: MessageID.make(ids[1]) }),
         (info) => session.remove(info.id).pipe(Effect.ignore),
       )
       const afterWrap = yield* Effect.acquireRelease(
-        session.fork({ sessionID: created.id, messageID: MessageID.make(ids[2]!) }),
+        session.fork({ sessionID: created.id, messageID: MessageID.make(ids[2]) }),
         (info) => session.remove(info.id).pipe(Effect.ignore),
       )
 

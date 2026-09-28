@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema } from "effect"
+import { ToolCallID } from "@opencode-ai/llm"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -49,7 +50,9 @@ describe("WebSearchTool provider selection", () => {
 
 describe("WebSearchTool MCP response parser", () => {
   test("parses plain JSON-RPC responses", async () => {
-    expect(await Effect.runPromise(WebSearchTool.parseResponse(payload("search results")))).toBe("search results")
+    expect(await Effect.runPromise(WebSearchTool.parseResponse(payload("search results")))).toEqual(
+      Option.some("search results"),
+    )
   })
 
   test("parses SSE JSON-RPC responses and ignores non-JSON frames", async () => {
@@ -57,7 +60,7 @@ describe("WebSearchTool MCP response parser", () => {
       await Effect.runPromise(
         WebSearchTool.parseResponse(`data: [DONE]\nevent: message\ndata: ${payload("search results")}\n\n`),
       ),
-    ).toBe("search results")
+    ).toEqual(Option.some("search results"))
   })
 })
 
@@ -151,7 +154,7 @@ describe("WebSearchTool registration", () => {
           ...toolIdentity,
           call: {
             type: "tool-call",
-            id: "call-exa",
+            id: ToolCallID.make("call-exa"),
             name: "websearch",
             input: {
               query: "effect typescript",
@@ -214,7 +217,12 @@ describe("WebSearchTool registration", () => {
       const settled = yield* settleTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-parallel", name: "websearch", input: { query: "effect layers" } },
+        call: {
+          type: "tool-call",
+          id: ToolCallID.make("call-parallel"),
+          name: "websearch",
+          input: { query: "effect layers" },
+        },
       })
 
       expect(requests[0]).toMatchObject({
@@ -253,7 +261,12 @@ describe("WebSearchTool registration", () => {
       const settled = yield* settleTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-exa-key", name: "websearch", input: { query: "effect schema" } },
+        call: {
+          type: "tool-call",
+          id: ToolCallID.make("call-exa-key"),
+          name: "websearch",
+          input: { query: "effect schema" },
+        },
       })
 
       expect(requests[0]?.url).toBe(`${WebSearchTool.EXA_URL}?exaApiKey=exa+secret`)
@@ -273,7 +286,12 @@ describe("WebSearchTool registration", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-empty", name: "websearch", input: { query: "nothing" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-empty"),
+            name: "websearch",
+            input: { query: "nothing" },
+          },
         }),
       ).toEqual({ type: "text", value: WebSearchTool.NO_RESULTS })
     }),
@@ -306,7 +324,12 @@ describe("WebSearchTool registration", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-large-response", name: "websearch", input: { query: "too much" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-large-response"),
+            name: "websearch",
+            input: { query: "too much" },
+          },
         }),
       ).toEqual({ type: "error", value: "Unable to search the web for too much" })
       expect(chunksRead).toBeLessThan(10)

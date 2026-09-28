@@ -1,4 +1,5 @@
 import type { DesktopTheme } from "./types"
+import { parseDesktopTheme } from "./validate"
 import oc2ThemeJson from "./themes/oc-2.json"
 import amoledThemeJson from "./themes/amoled.json"
 import auraThemeJson from "./themes/aura.json"
@@ -37,43 +38,43 @@ import vercelThemeJson from "./themes/vercel.json"
 import vesperThemeJson from "./themes/vesper.json"
 import zenburnThemeJson from "./themes/zenburn.json"
 
-export const oc2Theme = oc2ThemeJson as DesktopTheme
-export const amoledTheme = amoledThemeJson as DesktopTheme
-export const auraTheme = auraThemeJson as DesktopTheme
-export const ayuTheme = ayuThemeJson as DesktopTheme
-export const carbonfoxTheme = carbonfoxThemeJson as DesktopTheme
-export const catppuccinTheme = catppuccinThemeJson as DesktopTheme
-export const catppuccinFrappeTheme = catppuccinFrappeThemeJson as DesktopTheme
-export const catppuccinMacchiatoTheme = catppuccinMacchiatoThemeJson as DesktopTheme
-export const cobalt2Theme = cobalt2ThemeJson as DesktopTheme
-export const cursorTheme = cursorThemeJson as DesktopTheme
-export const draculaTheme = draculaThemeJson as DesktopTheme
-export const everforestTheme = everforestThemeJson as DesktopTheme
-export const flexokiTheme = flexokiThemeJson as DesktopTheme
-export const githubTheme = githubThemeJson as DesktopTheme
-export const gruvboxTheme = gruvboxThemeJson as DesktopTheme
-export const kanagawaTheme = kanagawaThemeJson as DesktopTheme
-export const lucentOrngTheme = lucentOrngThemeJson as DesktopTheme
-export const materialTheme = materialThemeJson as DesktopTheme
-export const matrixTheme = matrixThemeJson as DesktopTheme
-export const mercuryTheme = mercuryThemeJson as DesktopTheme
-export const monokaiTheme = monokaiThemeJson as DesktopTheme
-export const nightowlTheme = nightowlThemeJson as DesktopTheme
-export const nordTheme = nordThemeJson as DesktopTheme
-export const oneDarkTheme = oneDarkThemeJson as DesktopTheme
-export const oneDarkProTheme = oneDarkProThemeJson as DesktopTheme
-export const opencodeTheme = opencodeThemeJson as DesktopTheme
-export const orngTheme = orngThemeJson as DesktopTheme
-export const osakaJadeTheme = osakaJadeThemeJson as DesktopTheme
-export const palenightTheme = palenightThemeJson as DesktopTheme
-export const rosepineTheme = rosepineThemeJson as DesktopTheme
-export const shadesOfPurpleTheme = shadesOfPurpleThemeJson as DesktopTheme
-export const solarizedTheme = solarizedThemeJson as DesktopTheme
-export const synthwave84Theme = synthwave84ThemeJson as DesktopTheme
-export const tokyonightTheme = tokyonightThemeJson as DesktopTheme
-export const vercelTheme = vercelThemeJson as DesktopTheme
-export const vesperTheme = vesperThemeJson as DesktopTheme
-export const zenburnTheme = zenburnThemeJson as DesktopTheme
+export const oc2Theme = parseDesktopTheme(oc2ThemeJson)
+export const amoledTheme = parseDesktopTheme(amoledThemeJson)
+export const auraTheme = parseDesktopTheme(auraThemeJson)
+export const ayuTheme = parseDesktopTheme(ayuThemeJson)
+export const carbonfoxTheme = parseDesktopTheme(carbonfoxThemeJson)
+export const catppuccinTheme = parseDesktopTheme(catppuccinThemeJson)
+export const catppuccinFrappeTheme = parseDesktopTheme(catppuccinFrappeThemeJson)
+export const catppuccinMacchiatoTheme = parseDesktopTheme(catppuccinMacchiatoThemeJson)
+export const cobalt2Theme = parseDesktopTheme(cobalt2ThemeJson)
+export const cursorTheme = parseDesktopTheme(cursorThemeJson)
+export const draculaTheme = parseDesktopTheme(draculaThemeJson)
+export const everforestTheme = parseDesktopTheme(everforestThemeJson)
+export const flexokiTheme = parseDesktopTheme(flexokiThemeJson)
+export const githubTheme = parseDesktopTheme(githubThemeJson)
+export const gruvboxTheme = parseDesktopTheme(gruvboxThemeJson)
+export const kanagawaTheme = parseDesktopTheme(kanagawaThemeJson)
+export const lucentOrngTheme = parseDesktopTheme(lucentOrngThemeJson)
+export const materialTheme = parseDesktopTheme(materialThemeJson)
+export const matrixTheme = parseDesktopTheme(matrixThemeJson)
+export const mercuryTheme = parseDesktopTheme(mercuryThemeJson)
+export const monokaiTheme = parseDesktopTheme(monokaiThemeJson)
+export const nightowlTheme = parseDesktopTheme(nightowlThemeJson)
+export const nordTheme = parseDesktopTheme(nordThemeJson)
+export const oneDarkTheme = parseDesktopTheme(oneDarkThemeJson)
+export const oneDarkProTheme = parseDesktopTheme(oneDarkProThemeJson)
+export const opencodeTheme = parseDesktopTheme(opencodeThemeJson)
+export const orngTheme = parseDesktopTheme(orngThemeJson)
+export const osakaJadeTheme = parseDesktopTheme(osakaJadeThemeJson)
+export const palenightTheme = parseDesktopTheme(palenightThemeJson)
+export const rosepineTheme = parseDesktopTheme(rosepineThemeJson)
+export const shadesOfPurpleTheme = parseDesktopTheme(shadesOfPurpleThemeJson)
+export const solarizedTheme = parseDesktopTheme(solarizedThemeJson)
+export const synthwave84Theme = parseDesktopTheme(synthwave84ThemeJson)
+export const tokyonightTheme = parseDesktopTheme(tokyonightThemeJson)
+export const vercelTheme = parseDesktopTheme(vercelThemeJson)
+export const vesperTheme = parseDesktopTheme(vesperThemeJson)
+export const zenburnTheme = parseDesktopTheme(zenburnThemeJson)
 
 export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   "oc-2": oc2Theme,

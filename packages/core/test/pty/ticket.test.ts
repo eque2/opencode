@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { NodeCrypto } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PtyID } from "@opencode-ai/core/pty/schema"
@@ -8,7 +9,9 @@ import { testEffect } from "../lib/effect"
 
 const it = testEffect(LayerNode.compile(PtyTicket.node))
 const itExpiring = testEffect(
-  LayerNode.compile(PtyTicket.node, [[PtyTicket.node, Layer.effect(PtyTicket.Service, PtyTicket.make(5))]]),
+  LayerNode.compile(PtyTicket.node, [
+    [PtyTicket.node, Layer.effect(PtyTicket.Service, PtyTicket.make(5)).pipe(Layer.provide(NodeCrypto.layer))],
+  ]),
 )
 
 describe("PTY websocket tickets", () => {

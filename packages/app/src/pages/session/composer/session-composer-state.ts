@@ -1,4 +1,5 @@
-import { createEffect, createMemo, on, onCleanup } from "solid-js"
+import { Data, Effect, Option } from "effect"
+import { createEffect, createMemo, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { PermissionRequest, QuestionRequest, Todo } from "@opencode-ai/sdk/v2"
 import { useParams } from "@solidjs/router"
@@ -8,7 +9,22 @@ import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
+
+/** The permission reply request rejected. `cause` holds the original rejection. */
+class PermissionReplyError extends Data.TaggedError("App.PermissionReplyError")<{ readonly cause: unknown }> {}
+
+// Runs a program from a UI handler that does not wait for it; a defect is logged.
+const runDetached = <A, E>(program: Effect.Effect<A, E>) => {
+  Effect.runFork(program.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
+/** Completes on the next animation frame. Interrupting it cancels the frame request. */
+const nextFrame = Effect.callback<void>((resume) => {
+  const handle = requestAnimationFrame(() => resume(Effect.void))
+  return Effect.sync(() => cancelAnimationFrame(handle))
+})
 
 export const todoState = (input: {
   count: number
@@ -22,8 +38,6 @@ export const todoState = (input: {
 }
 
 export const todoDockAtBoundary = (state: ReturnType<typeof todoState>) => state === "open"
-
-const idle = { type: "idle" as const }
 
 export function createSessionComposerController(options?: { closeMs?: number | (() => number) }) {
   const params = useParams()
@@ -63,7 +77,7 @@ export function createSessionComposerController(options?: { closeMs?: number | (
 
   const [store, setStore] = createStore({
     sessionID: params.id,
-    responding: undefined as string | undefined,
+    responding: Option.none<string>(),
     dock: todos().length > 0 && !done() && live(),
     closing: false,
     opening: false,
@@ -72,28 +86,42 @@ export function createSessionComposerController(options?: { closeMs?: number | (
   const permissionResponding = createMemo(() => {
     const perm = permissionRequest()
     if (!perm) return false
-    return store.responding === perm.id
+    return Option.contains(store.responding, perm.id)
   })
 
   const decide = (response: "once" | "always" | "reject") => {
     const perm = permissionRequest()
     if (!perm) return
-    if (store.responding === perm.id) return
+    if (Option.contains(store.responding, perm.id)) return
 
-    setStore("responding", perm.id)
-    sdk()
-      .api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response })
-      .catch((err: unknown) => {
-        const description = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description })
-      })
-      .finally(() => {
-        setStore("responding", (id) => (id === perm.id ? undefined : id))
-      })
+    setStore("responding", Option.some(perm.id))
+    runDetached(
+      Effect.tryPromise({
+        try: () => sdk().api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response }),
+        catch: (cause) => new PermissionReplyError({ cause }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            const description = error.cause instanceof Error ? error.cause.message : String(error.cause)
+            showToast({ title: language.t("common.requestFailed"), description })
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => setStore("responding", (id) => (Option.contains(id, perm.id) ? Option.none() : id))),
+        ),
+      ),
+    )
   }
 
-  let timer: number | undefined
-  let raf: number | undefined
+  // The close delay and the frame that ends the opening state. The owner cleanup interrupts both.
+  const closeTimer = createFiberSlot()
+  const openingFrame = createFiberSlot()
+  let closeScheduled = false
+
+  const cancelClose = () => {
+    closeTimer.interrupt()
+    closeScheduled = false
+  }
 
   const closeMs = () => {
     const value = options?.closeMs
@@ -103,11 +131,17 @@ export function createSessionComposerController(options?: { closeMs?: number | (
   }
 
   const scheduleClose = () => {
-    if (timer) window.clearTimeout(timer)
-    timer = window.setTimeout(() => {
-      setStore({ dock: false, closing: false })
-      timer = undefined
-    }, closeMs())
+    closeScheduled = true
+    closeTimer.run(
+      Effect.sleep(closeMs()).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            setStore({ dock: false, closing: false })
+            closeScheduled = false
+          }),
+        ),
+      ),
+    )
   }
 
   // Keep stale turn todos from reopening if the model never clears them.
@@ -121,8 +155,7 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     on(
       () => [params.id, todos().length, done(), live()] as const,
       ([id, count, complete, active], previous) => {
-        if (raf) cancelAnimationFrame(raf)
-        raf = undefined
+        openingFrame.interrupt()
 
         const next = todoState({
           count,
@@ -131,38 +164,31 @@ export function createSessionComposerController(options?: { closeMs?: number | (
         })
 
         if (!previous || previous[0] !== id) {
-          if (timer) window.clearTimeout(timer)
-          timer = undefined
+          cancelClose()
           setStore({ sessionID: id, dock: todoDockAtBoundary(next), closing: false, opening: false })
           if (next === "clear") clear()
           return
         }
 
         if (next === "hide") {
-          if (timer) window.clearTimeout(timer)
-          timer = undefined
+          cancelClose()
           setStore({ dock: false, closing: false, opening: false })
           return
         }
 
         if (next === "clear") {
-          if (timer) window.clearTimeout(timer)
-          timer = undefined
+          cancelClose()
           clear()
           return
         }
 
         if (next === "open") {
-          if (timer) window.clearTimeout(timer)
-          timer = undefined
+          cancelClose()
           const hidden = !store.dock || store.closing
           setStore({ dock: true, closing: false })
           if (hidden) {
             setStore("opening", true)
-            raf = requestAnimationFrame(() => {
-              setStore("opening", false)
-              raf = undefined
-            })
+            openingFrame.run(nextFrame.pipe(Effect.andThen(Effect.sync(() => setStore("opening", false)))))
             return
           }
           setStore("opening", false)
@@ -170,20 +196,10 @@ export function createSessionComposerController(options?: { closeMs?: number | (
         }
 
         setStore({ dock: true, opening: false, closing: true })
-        if (!timer) scheduleClose()
+        if (!closeScheduled) scheduleClose()
       },
     ),
   )
-
-  onCleanup(() => {
-    if (!timer) return
-    window.clearTimeout(timer)
-  })
-
-  onCleanup(() => {
-    if (!raf) return
-    cancelAnimationFrame(raf)
-  })
 
   return {
     blocked,

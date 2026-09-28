@@ -1,9 +1,10 @@
-import type { ModelMessage, ToolResultPart } from "ai"
+import type { ImagePart, ModelMessage, ToolResultPart } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type * as Provider from "./provider"
 import type * as ModelsDev from "@opencode-ai/core/models-dev"
 import { iife } from "@/util/iife"
+import { Option, Predicate } from "effect"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -162,6 +163,9 @@ function normalizeMessages(
           })
         }
         return msg
+
+      default:
+        return msg
     }
   })
 
@@ -182,8 +186,8 @@ function normalizeMessages(
           if (part.type === "reasoning") {
             return (
               part.text.trim().length > 0 ||
-              part.providerOptions?.anthropic?.signature != null ||
-              part.providerOptions?.anthropic?.redactedData != null
+              Predicate.isNotNullish(part.providerOptions?.anthropic?.signature) ||
+              Predicate.isNotNullish(part.providerOptions?.anthropic?.redactedData)
             )
           }
           return true
@@ -211,7 +215,11 @@ function normalizeMessages(
             // Match what the SDK can replay before assigning cache points. Otherwise
             // unsigned reasoning can leave an empty or cache-point-only message.
             const metadata = part.providerOptions?.[model.providerID] ?? part.providerOptions?.bedrock
-            return metadata?.signature != null || metadata?.redactedContent != null || metadata?.redactedData != null
+            return (
+              Predicate.isNotNullish(metadata?.signature) ||
+              Predicate.isNotNullish(metadata?.redactedContent) ||
+              Predicate.isNotNullish(metadata?.redactedData)
+            )
           }
           return true
         })
@@ -406,6 +414,14 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   return msgs
 }
 
+// Only a string or URL image can carry a data URL or a media type prefix.
+// Binary image content has no text form to inspect, so it maps to "".
+function imageText(image: ImagePart["image"]) {
+  if (typeof image === "string") return image
+  if (image instanceof URL) return image.href
+  return ""
+}
+
 function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   return msgs.map((msg) => {
     if (msg.role !== "user" || !Array.isArray(msg.content)) return msg
@@ -415,7 +431,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
 
       // Check for empty base64 image data
       if (part.type === "image") {
-        const imageStr = String(part.image)
+        const imageStr = imageText(part.image)
         if (imageStr.startsWith("data:")) {
           const match = imageStr.match(/^data:([^;]+);base64,(.*)$/)
           if (match && (!match[2] || match[2].length === 0)) {
@@ -427,13 +443,12 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
         }
       }
 
-      const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
-      const filename = part.type === "file" ? part.filename : undefined
+      const mime = part.type === "image" ? imageText(part.image).split(";")[0].replace("data:", "") : part.mediaType
       const modality = mimeToModality(mime)
       if (!modality) return part
       if (model.capabilities.input[modality]) return part
 
-      const name = filename ? `"${filename}"` : modality
+      const name = part.type === "file" && part.filename ? `"${part.filename}"` : modality
       return {
         type: "text" as const,
         text: `ERROR: Cannot read ${name} (this model does not support ${modality} input). Inform the user.`,
@@ -448,17 +463,33 @@ function mapProviderOptions(
   msgs: ModelMessage[],
   transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
 ) {
-  return msgs.map((msg) => {
-    if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
-    return {
-      ...msg,
-      providerOptions: transform(msg.providerOptions),
-      content: msg.content.map((part) =>
-        part.type === "tool-approval-request" || part.type === "tool-approval-response"
-          ? part
-          : { ...part, providerOptions: transform(part.providerOptions) },
-      ),
-    } as typeof msg
+  const withOptions = <T extends { providerOptions?: Record<string, any> }>(item: T): T => ({
+    ...item,
+    providerOptions: transform(item.providerOptions),
+  })
+  // Each role has its own part union, so map per role to keep the message type exact.
+  return msgs.map((msg): ModelMessage => {
+    const next = withOptions(msg)
+    switch (next.role) {
+      case "system":
+        return next
+      case "user":
+        return typeof next.content === "string" ? next : { ...next, content: next.content.map(withOptions) }
+      case "assistant":
+        return typeof next.content === "string"
+          ? next
+          : {
+              ...next,
+              content: next.content.map((part) => (part.type === "tool-approval-request" ? part : withOptions(part))),
+            }
+      case "tool":
+        return {
+          ...next,
+          content: next.content.map((part) => (part.type === "tool-approval-response" ? part : withOptions(part))),
+        }
+      default:
+        return next
+    }
   })
 }
 
@@ -528,8 +559,10 @@ export function temperature(model: Provider.Model) {
   const id = model.api.id.toLowerCase()
   if (id.includes("north-mini-code")) return 1.0
   if (id.includes("claude")) return undefined
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 1.0 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 1.0
+    return undefined
+  }
   if (id.includes("glm-4.6")) return 1.0
   if (id.includes("glm-4.7")) return 1.0
   if (id.includes("minimax-m2")) return 1.0
@@ -545,8 +578,10 @@ export function temperature(model: Provider.Model) {
 
 export function topP(model: Provider.Model) {
   const id = model.api.id.toLowerCase()
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 0.95 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 0.95
+    return undefined
+  }
   if (["minimax-m2", "kimi-k2.5", "kimi-k2p5", "kimi-k2-5"].some((s) => id.includes(s))) {
     return 0.95
   }
@@ -565,8 +600,10 @@ export function topK(model: Provider.Model) {
     if (["m2.", "m25", "m21"].some((s) => id.includes(s))) return 40
     return 20
   }
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 64 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 64
+    return undefined
+  }
   return undefined
 }
 
@@ -597,7 +634,10 @@ const GPT5_PRO_RE = /(?:^|\/)gpt-5[.-]?pro(?:[.-]|$)/
 const GPT5_VERSIONED_PRO_RE = /(?:^|\/)gpt-5[.-]\d+[.-]pro(?:[.-]|$)/
 
 function gpt5Version(apiId: string) {
-  return Number(GPT5_VERSION_RE.exec(apiId)?.[1]) || undefined
+  const version = Number(GPT5_VERSION_RE.exec(apiId)?.[1])
+  // NaN (no match) and 0 both mean "no version".
+  if (!version) return undefined
+  return version
 }
 
 function versionedGpt5ReasoningEfforts(apiId: string) {
@@ -636,11 +676,12 @@ function openaiReasoningEfforts(apiId: string, releaseDate: string) {
   // GPT-5.1 replaced GPT-5's `minimal` effort with `none`; GPT-5.2+
   // additionally accepts `xhigh`. Model pages list the supported subset.
   if (versionedEfforts) return versionedEfforts
-  const efforts = [...WIDELY_SUPPORTED_EFFORTS]
-  if (GPT5_FAMILY_RE.test(id)) efforts.unshift("minimal")
-  if (releaseDate >= OPENAI_NONE_EFFORT_RELEASE_DATE) efforts.unshift("none")
-  if (releaseDate >= OPENAI_XHIGH_EFFORT_RELEASE_DATE) efforts.push("xhigh")
-  return efforts
+  return [
+    ...(releaseDate >= OPENAI_NONE_EFFORT_RELEASE_DATE ? ["none"] : []),
+    ...(GPT5_FAMILY_RE.test(id) ? ["minimal"] : []),
+    ...WIDELY_SUPPORTED_EFFORTS,
+    ...(releaseDate >= OPENAI_XHIGH_EFFORT_RELEASE_DATE ? ["xhigh"] : []),
+  ]
 }
 
 function openaiCompatibleReasoningEfforts(id: string) {
@@ -666,18 +707,18 @@ function anthropicOpus45(apiId: string) {
   return ["opus-4-5", "opus-4.5"].some((value) => apiId.includes(value))
 }
 
-function anthropicAdaptiveEfforts(apiId: string): string[] | null {
+function anthropicAdaptiveEfforts(apiId: string): Option.Option<string[]> {
   if (anthropicUsesModernAdaptiveThinking(apiId)) {
-    return ["low", "medium", "high", "xhigh", "max"]
+    return Option.some(["low", "medium", "high", "xhigh", "max"])
   }
   if (
     ["opus-4-6", "opus-4.6", "4-6-opus", "4.6-opus", "sonnet-4-6", "sonnet-4.6", "4-6-sonnet", "4.6-sonnet"].some((v) =>
       apiId.includes(v),
     )
   ) {
-    return ["low", "medium", "high", "max"]
+    return Option.some(["low", "medium", "high", "max"])
   }
-  return null
+  return Option.none()
 }
 
 function anthropicOmitsThinking(apiId: string) {
@@ -705,9 +746,15 @@ function anthropicBindsThinking(apiId: string) {
 // The patched AI SDK adds the thinking-binding-controls beta whenever it is set.
 const ANTHROPIC_BLOCK_BINDING = { prefixMismatchBehavior: "drop_block" }
 
+function blockBindingKey(sdk: string | undefined) {
+  if (sdk === "bedrock") return "reasoningConfig"
+  if (sdk === "anthropic") return "thinking"
+  return undefined
+}
+
 function anthropicBlockBinding(model: Provider.Model, options: { [x: string]: any }) {
   const sdk = sdkKey(model.api.npm)
-  const key = sdk === "bedrock" ? "reasoningConfig" : sdk === "anthropic" ? "thinking" : undefined
+  const key = blockBindingKey(sdk)
   // Consume the OpenCode-only opt-out even on models outside the default scope.
   if (key && options[key]?.blockBinding === false) {
     const result = { ...options, [key]: { ...options[key] } }
@@ -879,9 +926,9 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@ai-sdk/gateway":
       if (model.api.id.includes("anthropic")) {
-        if (adaptiveEfforts) {
+        if (Option.isSome(adaptiveEfforts)) {
           return Object.fromEntries(
-            adaptiveEfforts.map((effort) => [
+            adaptiveEfforts.value.map((effort) => [
               effort,
               {
                 thinking: {
@@ -982,10 +1029,10 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       if (model.api.id.toLowerCase().includes("north-mini-code")) {
         return Object.fromEntries(["none", "high"].map((effort) => [effort, { reasoningEffort: effort }]))
       }
-      const efforts = [...WIDELY_SUPPORTED_EFFORTS]
-      if (model.api.id.toLowerCase().includes("deepseek-v4")) {
-        efforts.push("max")
-      }
+      const efforts = [
+        ...WIDELY_SUPPORTED_EFFORTS,
+        ...(model.api.id.toLowerCase().includes("deepseek-v4") ? ["max"] : []),
+      ]
       return Object.fromEntries(efforts.map((effort) => [effort, { reasoningEffort: effort }]))
 
     case "@ai-sdk/azure":
@@ -1033,8 +1080,8 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
     case "@ai-sdk/google-vertex/anthropic":
       // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-vertex#anthropic-provider
-      if (adaptiveEfforts) {
-        let efforts = [...adaptiveEfforts]
+      if (Option.isSome(adaptiveEfforts)) {
+        let efforts = [...adaptiveEfforts.value]
         if (model.providerID === "github-copilot") {
           if (model.api.id.includes("opus-4.7")) {
             efforts = ["medium"]
@@ -1079,9 +1126,9 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@ai-sdk/amazon-bedrock":
       // https://v5.ai-sdk.dev/providers/ai-sdk-providers/amazon-bedrock
-      if (adaptiveEfforts) {
+      if (Option.isSome(adaptiveEfforts)) {
         return Object.fromEntries(
-          adaptiveEfforts.map((effort) => [
+          adaptiveEfforts.value.map((effort) => [
             effort,
             {
               reasoningConfig: {
@@ -1169,12 +1216,12 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@jerome-benoit/sap-ai-provider-v2": {
       if (id.includes("anthropic")) {
-        if (adaptiveEfforts) {
+        if (Option.isSome(adaptiveEfforts)) {
           // Bedrock adaptive splits `effort` out into `output_config` (vs Anthropic
           // native which inlines it). Claude 4.7+ defaults `display` to "omitted".
           return wrapInSapModelParams(
             Object.fromEntries(
-              adaptiveEfforts.map((effort) => [
+              adaptiveEfforts.value.map((effort) => [
                 effort,
                 {
                   thinking: { type: "adaptive", ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}) },
@@ -1423,8 +1470,8 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     // We keep `gateway` as-is and route every other top-level option under the
     // model-derived upstream slug.
     const i = model.api.id.indexOf("/")
-    const rawSlug = i > 0 ? model.api.id.slice(0, i) : undefined
-    const slug = rawSlug ? (SLUG_OVERRIDES[rawSlug] ?? rawSlug) : undefined
+    const slug =
+      i > 0 ? Option.some(model.api.id.slice(0, i)).pipe(Option.map((raw) => SLUG_OVERRIDES[raw] ?? raw)) : Option.none()
     const gateway = normalized.gateway
     const rest = Object.fromEntries(Object.entries(normalized).filter(([k]) => k !== "gateway"))
     const has = Object.keys(rest).length > 0
@@ -1433,9 +1480,9 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     if (gateway !== undefined) result.gateway = gateway
 
     if (has) {
-      if (slug) {
+      if (Option.isSome(slug)) {
         // Route model-specific options under the provider slug
-        result[slug] = rest
+        result[slug.value] = rest
       } else if (gateway && typeof gateway === "object" && !Array.isArray(gateway)) {
         result.gateway = { ...gateway, ...rest }
       } else {
@@ -1472,7 +1519,7 @@ export function maxOutputTokens(model: Provider.Model, outputTokenMax = OUTPUT_T
 type JsonRecord = Record<string, unknown>
 
 function isPlainObject(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 // Mirrors Codex's Rust JSON schema compatibility lowering for OpenAI tool schemas.
@@ -1579,13 +1626,15 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
   */
 
   if (model.api.npm === "@ai-sdk/openai" || model.api.npm === "@ai-sdk/azure") {
-    schema = sanitizeOpenAISchema(schema) as JSONSchema7
+    // An object schema always lowers to an object schema, so the guard only narrows the type.
+    const sanitized = sanitizeOpenAISchema(schema)
+    if (isPlainObject(sanitized)) schema = sanitized
     // Codex also applies lossy compaction above 4 KB; defer that until OpenCode needs the same schema budget.
   }
 
   if (model.providerID === "moonshotai" || model.api.id.toLowerCase().includes("kimi")) {
     const sanitizeMoonshot = (obj: unknown): unknown => {
-      if (obj === null || typeof obj !== "object") return obj
+      if (!Predicate.isObjectOrArray(obj)) return obj
       if (Array.isArray(obj)) return obj.map(sanitizeMoonshot)
       // Moonshot expands $ref before validation and rejects sibling keywords like description on the same node.
       if ("$ref" in obj && typeof obj.$ref === "string") return { $ref: obj.$ref }
@@ -1596,15 +1645,13 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
     }
 
     const sanitized = sanitizeMoonshot(schema)
-    if (typeof sanitized === "object" && sanitized !== null && !Array.isArray(sanitized)) {
+    if (Predicate.isObject(sanitized)) {
       schema = sanitized
     }
   }
 
   // Convert integer enums to string enums for Google/Gemini
   if (model.providerID === "google" || model.api.id.includes("gemini")) {
-    const isPlainObject = (node: unknown): node is Record<string, any> =>
-      typeof node === "object" && node !== null && !Array.isArray(node)
     const hasCombiner = (node: unknown) =>
       isPlainObject(node) && (Array.isArray(node.anyOf) || Array.isArray(node.oneOf) || Array.isArray(node.allOf))
     const hasSchemaIntent = (node: unknown) => {
@@ -1629,7 +1676,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
     }
 
     const sanitizeGemini = (obj: any): any => {
-      if (obj === null || typeof obj !== "object") {
+      if (!Predicate.isObjectOrArray(obj)) {
         return obj
       }
 
@@ -1646,7 +1693,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
           if (result.type === "integer" || result.type === "number") {
             result.type = "string"
           }
-        } else if (typeof value === "object" && value !== null) {
+        } else if (Predicate.isObjectOrArray(value)) {
           result[key] = sanitizeGemini(value)
         } else {
           result[key] = value
@@ -1677,7 +1724,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
       }
 
       if (result.type === "array" && !hasCombiner(result)) {
-        if (result.items == null) {
+        if (Predicate.isNullish(result.items)) {
           result.items = {}
         }
         // Ensure items has a type only when it's still schema-empty.
@@ -1703,7 +1750,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
 
 export function reasoningVariants(model: ModelsDev.Model, target: Provider.Model): Provider.Model["variants"] {
   const options = model.reasoning_options
-  if (options === undefined) return
+  if (options === undefined) return undefined
   if (options.length === 0) return {}
 
   const effort = options.find((option) => option.type === "effort")
@@ -1711,7 +1758,10 @@ export function reasoningVariants(model: ModelsDev.Model, target: Provider.Model
 
   const toggle = options.some((option) => option.type === "toggle")
   const budget = options.find((option) => option.type === "budget_tokens")
-  if (!budget) return toggle ? nonEmptyVariants(reasoningToggle(target)) : undefined
+  if (!budget) {
+    if (toggle) return nonEmptyVariants(reasoningToggle(target))
+    return undefined
+  }
 
   return nonEmptyVariants({
     ...(toggle ? reasoningToggle(target) : {}),
@@ -1723,8 +1773,9 @@ function effortVariants(model: Provider.Model, values: readonly unknown[]) {
   return Object.fromEntries(
     values.flatMap((value) => {
       const id = (() => {
-        if (value === null) return "none"
+        if (Predicate.isNull(value)) return "none"
         if (typeof value === "string") return value
+        return undefined
       })()
       if (id === undefined) return []
       const settings = reasoningEffort(model, id)
@@ -1749,7 +1800,8 @@ function budgetVariants(model: Provider.Model, min?: number, max?: number) {
 }
 
 function nonEmptyVariants(variants: NonNullable<Provider.Model["variants"]>): Provider.Model["variants"] {
-  return Object.keys(variants).length > 0 ? variants : undefined
+  if (Object.keys(variants).length > 0) return variants
+  return undefined
 }
 
 function reasoningToggle(model: Provider.Model): NonNullable<Provider.Model["variants"]> {
@@ -1777,7 +1829,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
     case "@ai-sdk/google-vertex":
       return { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
     case "@ai-sdk/amazon-bedrock":
-      if (anthropicAdaptiveEfforts(model.api.id))
+      if (Option.isSome(anthropicAdaptiveEfforts(model.api.id)))
         return {
           reasoningConfig: {
             type: "adaptive",
@@ -1793,7 +1845,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
             maxReasoningEffort: effort,
           },
         }
-      if (model.api.id.includes("anthropic")) return
+      if (model.api.id.includes("anthropic")) return undefined
       return { reasoningConfig: { type: "enabled", maxReasoningEffort: effort } }
     case "@ai-sdk/gateway":
       if (model.id.includes("anthropic")) return { thinking: { type: "adaptive", display: "summarized" }, effort }
@@ -1801,7 +1853,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
       return { reasoningEffort: effort }
     case "@ai-sdk/github-copilot":
       // OAuth discovery replaces these with variants from Copilot's /models capabilities.
-      if (model.id.includes("gemini")) return
+      if (model.id.includes("gemini")) return undefined
       if (model.id.includes("claude")) return { reasoningEffort: effort }
       return { reasoningEffort: effort, reasoningSummary: "auto", include: INCLUDE_ENCRYPTED_REASONING }
     case "@ai-sdk/openai":
@@ -1827,20 +1879,21 @@ function reasoningEffort(model: Provider.Model, effort: string) {
     case "gitlab-ai-provider":
       if (model.family?.startsWith("gpt")) return { reasoningEffort: effort }
       if (model.family?.startsWith("claude")) return { thinking: { type: "adaptive", effort } }
-      return
+      return undefined
     case "@ai-sdk/cohere":
     case "@ai-sdk/perplexity":
     case "@ai-sdk/vercel":
     case "@ai-sdk/alibaba":
-      return
+      return undefined
   }
+  return undefined
 }
 
 function anthropicEffort(model: Provider.Model, effort: string) {
   if (anthropicOpus45(model.api.id)) return anthropicOpus45Effort(model, effort)
   // Kimi defaults to omitting adaptive thinking text unless summarized display is requested.
   if (isKimiFamily(model)) return { thinking: { type: "adaptive", display: "summarized" }, effort }
-  if (!anthropicAdaptiveEfforts(model.api.id)) return
+  if (Option.isNone(anthropicAdaptiveEfforts(model.api.id))) return undefined
   return {
     thinking: {
       type: "adaptive",
@@ -1875,7 +1928,7 @@ function reasoningBudget(model: Provider.Model, budget: number) {
     case "@ai-sdk/gateway":
       if (model.id.includes("anthropic")) return { thinking: { type: "enabled", budgetTokens: budget } }
       if (model.id.includes("google")) return { thinkingConfig: { includeThoughts: true, thinkingBudget: budget } }
-      return
+      return undefined
     case "@ai-sdk/cohere":
       return { thinking: { type: "enabled", tokenBudget: budget } }
     case "@ai-sdk/alibaba":
@@ -1885,7 +1938,7 @@ function reasoningBudget(model: Provider.Model, budget: number) {
         return { modelParams: { thinking: { type: "enabled", budget_tokens: budget } } }
       if (model.id.includes("gemini"))
         return { modelParams: { thinkingConfig: { includeThoughts: true, thinkingBudget: budget } } }
-      return
+      return undefined
     case "@ai-sdk/amazon-bedrock/mantle":
     case "@ai-sdk/azure":
     case "@ai-sdk/cerebras":
@@ -1902,8 +1955,9 @@ function reasoningBudget(model: Provider.Model, budget: number) {
     case "ai-gateway-provider":
     case "gitlab-ai-provider":
     case "venice-ai-sdk-provider":
-      return
+      return undefined
   }
+  return undefined
 }
 
 export * as ProviderTransform from "./transform"

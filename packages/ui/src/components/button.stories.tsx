@@ -57,6 +57,7 @@ export default {
       control: "select",
       options: ["none", "check", "plus", "arrow-right"],
       mapping: {
+        // eslint-disable-next-line effect/no-undefined-use-option -- (a) Storybook argTypes mapping API: mapping a control option to undefined unsets the arg
         none: undefined,
       },
     },

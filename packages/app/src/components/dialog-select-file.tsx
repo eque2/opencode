@@ -5,6 +5,7 @@ import { Keybind } from "@opencode-ai/ui/keybind"
 import { List } from "@opencode-ai/ui/list"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
 import { createMemo, createSignal, lazy, Match, Show, Switch } from "solid-js"
+import { DateTime, Effect } from "effect"
 import { formatKeybind } from "@/context/command"
 import { useServerSDK } from "@/context/server-sdk"
 import { useLanguage } from "@/context/language"
@@ -68,40 +69,46 @@ function DialogSelectFileLegacy(props: { filesOnly: () => boolean; onOpenFile?: 
   const palette = createCommandPaletteModel(props)
   const [grouped, setGrouped] = createSignal(false)
 
-  const items = async (text: string) => {
-    const query = text.trim()
-    setGrouped(query.length > 0)
+  const fileEntries = () => uniqueCommandPaletteEntries([...palette.recentFileEntries(), ...palette.rootFileEntries()])
 
-    if (!query && props.filesOnly()) {
-      const loaded = palette.file.tree.state("")?.loaded
-      const pending = loaded ? Promise.resolve() : palette.file.tree.list("")
-      const next = uniqueCommandPaletteEntries([...palette.recentFileEntries(), ...palette.rootFileEntries()])
+  // searchFiles without a signal and sessions both resolve to an empty list on
+  // failure, so Effect.promise does not turn a rejection into a defect here.
+  const loadItems = (text: string) =>
+    Effect.gen(function* () {
+      const query = text.trim()
+      setGrouped(query.length > 0)
 
-      if (loaded || next.length > 0) {
-        void pending
-        return next
+      if (!query && props.filesOnly()) {
+        if (palette.file.tree.state("")?.loaded) return fileEntries()
+
+        // Start the root listing before reading the entries, as the tree marks
+        // the root as loading while the request runs.
+        const pending = palette.file.tree.list("")
+        const next = fileEntries()
+        if (next.length > 0) return next
+
+        yield* Effect.promise(() => pending)
+        return fileEntries()
       }
 
-      await pending
-      return uniqueCommandPaletteEntries([...palette.recentFileEntries(), ...palette.rootFileEntries()])
-    }
+      if (!query) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
 
-    if (!query) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
+      if (props.filesOnly()) {
+        const files = yield* Effect.promise(() => palette.file.searchFiles(query))
+        const category = palette.language.t("palette.group.files")
+        return files.map((path) => createCommandPaletteFileEntry(path, category))
+      }
 
-    if (props.filesOnly()) {
-      const files = await palette.file.searchFiles(query)
+      const [files, nextSessions] = yield* Effect.all(
+        [Effect.promise(() => palette.file.searchFiles(query)), Effect.promise(() => palette.sessions(query))],
+        { concurrency: "unbounded" },
+      )
       const category = palette.language.t("palette.group.files")
-      return files.map((path) => createCommandPaletteFileEntry(path, category))
-    }
+      const entries = files.map((path) => createCommandPaletteFileEntry(path, category))
+      return [...palette.commandEntries(), ...nextSessions, ...entries]
+    })
 
-    const [files, nextSessions] = await Promise.all([
-      palette.file.searchFiles(query),
-      Promise.resolve(palette.sessions(query)),
-    ])
-    const category = palette.language.t("palette.group.files")
-    const entries = files.map((path) => createCommandPaletteFileEntry(path, category))
-    return [...palette.commandEntries(), ...nextSessions, ...entries]
-  }
+  const items = (text: string) => Effect.runPromise(loadItems(text))
 
   return (
     <Dialog class="pt-3 pb-0 !max-h-[480px]" transition>
@@ -175,9 +182,11 @@ function DialogSelectFileLegacy(props: { filesOnly: () => boolean; onOpenFile?: 
                   </div>
                 </div>
                 <Show when={item.updated}>
-                  <span class="text-12-regular text-text-weak whitespace-nowrap ml-2">
-                    {getRelativeTime(new Date(item.updated!).toISOString(), palette.language.t)}
-                  </span>
+                  {(updated) => (
+                    <span class="text-12-regular text-text-weak whitespace-nowrap ml-2">
+                      {getRelativeTime(DateTime.formatIso(DateTime.makeUnsafe(updated())), palette.language.t)}
+                    </span>
+                  )}
                 </Show>
               </div>
             </Match>

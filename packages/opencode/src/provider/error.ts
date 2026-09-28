@@ -1,24 +1,49 @@
 import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
+import { Data, Option, Predicate, Schema } from "effect"
 import { iife } from "@/util/iife"
 import type { ProviderV2 } from "@opencode-ai/core/provider"
 import { isContextOverflow } from "@opencode-ai/llm"
 
-export class HeaderTimeoutError extends Error {
+// Both errors abort fetch signals and cross the AI SDK stream, so they stay Error instances with
+// positional constructors. MessageV2.fromError reports `name` as the wire error code.
+export class HeaderTimeoutError extends Data.TaggedError("ProviderHeaderTimeoutError")<{
+  readonly ms: number
+  readonly message: string
+}> {
   public override readonly name = "ProviderHeaderTimeoutError"
 
-  constructor(public readonly ms: number) {
-    super(`Provider response headers timed out after ${ms}ms`)
+  constructor(ms: number) {
+    super({ ms, message: `Provider response headers timed out after ${ms}ms` })
   }
 }
 
-export class ResponseStreamError extends Error {
+export class ResponseStreamError extends Data.TaggedError("ProviderResponseStreamError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {
   public override readonly name = "ProviderResponseStreamError"
 
   constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
+    super(options ? { message, cause: options.cause } : { message })
   }
 }
+
+type JsonObject = { readonly [key: PropertyKey]: unknown }
+
+// Opaque provider payloads: only a few fields are read, each through a typeof check.
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+// Arrays count as objects without fields, as property reads on them found nothing before.
+const toObject = (value: unknown): Option.Option<JsonObject> => {
+  if (Predicate.isObject(value)) return Option.some(value)
+  if (Array.isArray(value)) return Option.some({})
+  return Option.none()
+}
+
+const nonEmptyString = (value: unknown): Option.Option<string> =>
+  typeof value === "string" && value !== "" ? Option.some(value) : Option.none()
 
 function isOpenAiErrorRetryable(e: APICallError) {
   const status = e.statusCode
@@ -45,14 +70,14 @@ function message(providerID: ProviderV2.ID, e: APICallError) {
       return msg
     }
 
-    try {
-      const body = JSON.parse(e.responseBody)
-      // try to extract common error message fields
-      const errMsg = body.message || body.error || body.error?.message
-      if (errMsg && typeof errMsg === "string") {
-        return `${msg}: ${errMsg}`
-      }
-    } catch {}
+    // try to extract common error message fields
+    const errMsg = decodeJson(e.responseBody).pipe(
+      Option.flatMap(toObject),
+      Option.flatMap((body) => nonEmptyString(body.message || body.error)),
+    )
+    if (Option.isSome(errMsg)) {
+      return `${msg}: ${errMsg.value}`
+    }
 
     // If responseBody is HTML (e.g. from a gateway or proxy error page),
     // provide a human-readable message instead of dumping raw markup
@@ -70,20 +95,9 @@ function message(providerID: ProviderV2.ID, e: APICallError) {
   }).trim()
 }
 
-function json(input: unknown) {
-  if (typeof input === "string") {
-    try {
-      const result = JSON.parse(input)
-      if (result && typeof result === "object") return result
-      return undefined
-    } catch {
-      return undefined
-    }
-  }
-  if (typeof input === "object" && input !== null) {
-    return input
-  }
-  return undefined
+function json(input: unknown): Option.Option<JsonObject> {
+  if (typeof input === "string") return decodeJson(input).pipe(Option.flatMap(toObject))
+  return toObject(input)
 }
 
 export type ParsedStreamError =
@@ -100,14 +114,21 @@ export type ParsedStreamError =
     }
 
 export function parseStreamError(input: unknown): ParsedStreamError | undefined {
-  const raw = json(input)
-  const body = typeof raw?.message === "string" ? (json(raw.message) ?? raw) : raw
-  if (!body) return
+  return Option.getOrUndefined(streamError(input))
+}
 
-  const responseBody = JSON.stringify(body)
-  if (body.type !== "error") return
+function streamError(input: unknown): Option.Option<ParsedStreamError> {
+  return json(input).pipe(
+    Option.map((raw) => (typeof raw.message === "string" ? Option.getOrElse(json(raw.message), () => raw) : raw)),
+    Option.filter((body) => body.type === "error"),
+    Option.flatMap((body) => encodeJson(body).pipe(Option.map((responseBody) => classifyStreamError(body, responseBody)))),
+  )
+}
 
-  switch (body?.error?.code) {
+function classifyStreamError(body: JsonObject, responseBody: string): ParsedStreamError {
+  const error = Option.getOrElse(toObject(body.error), (): JsonObject => ({}))
+  const errorMessage = typeof error.message === "string" ? Option.some(error.message) : Option.none<string>()
+  switch (error.code) {
     case "context_length_exceeded":
       return {
         type: "context_overflow",
@@ -131,23 +152,15 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
     case "invalid_prompt":
       return {
         type: "api_error",
-        message: typeof body?.error?.message === "string" ? body?.error?.message : "Invalid prompt.",
+        message: Option.getOrElse(errorMessage, () => "Invalid prompt."),
         isRetryable: false,
-        responseBody,
-      }
-    case "server_is_overloaded":
-    case "server_error":
-      return {
-        type: "api_error",
-        message: typeof body?.error?.message === "string" ? body?.error?.message : "Server error.",
-        isRetryable: true,
         responseBody,
       }
   }
 
   return {
     type: "api_error",
-    message: typeof body?.error?.message === "string" ? body.error.message : "Server error.",
+    message: Option.getOrElse(errorMessage, () => "Server error."),
     isRetryable: true,
     responseBody,
   }
@@ -171,8 +184,11 @@ export type ParsedAPICallError =
 
 export function parseAPICallError(input: { providerID: ProviderV2.ID; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
-  const body = json(input.error.responseBody)
-  if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
+  const code = json(input.error.responseBody).pipe(
+    Option.flatMap((body) => toObject(body.error)),
+    Option.map((error) => error.code),
+  )
+  if (isContextOverflow(m) || input.error.statusCode === 413 || Option.contains(code, "context_length_exceeded")) {
     return {
       type: "context_overflow",
       message: m,
@@ -180,7 +196,6 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     }
   }
 
-  const metadata = input.error.url ? { url: input.error.url } : undefined
   return {
     type: "api_error",
     message: m,
@@ -188,7 +203,7 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
-    metadata,
+    ...(input.error.url ? { metadata: { url: input.error.url } } : {}),
   }
 }
 

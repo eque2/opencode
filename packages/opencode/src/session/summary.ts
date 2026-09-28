@@ -7,60 +7,32 @@ import { Session } from "./session"
 import { SessionID, MessageID } from "./schema"
 import { Config } from "@/config/config"
 
+const GIT_PATH_ESCAPES: Record<string, string> = {
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  "\\": "\\",
+  '"': '"',
+}
+
+// A token is an octal escape, a backslash escape, or one plain character. A trailing backslash is plain.
+const GIT_PATH_TOKEN = /\\[0-7]{1,3}|\\[\s\S]|[\s\S]/g
+
+function gitPathByte(token: string) {
+  if (token.length === 1) return token.charCodeAt(0)
+  const escaped = token.slice(1)
+  if (/^[0-7]+$/.test(escaped)) return parseInt(escaped, 8)
+  return (GIT_PATH_ESCAPES[escaped] ?? escaped).charCodeAt(0)
+}
+
 function unquoteGitPath(input: string) {
   if (!input.startsWith('"')) return input
   if (!input.endsWith('"')) return input
   const body = input.slice(1, -1)
-  const bytes: number[] = []
-
-  for (let i = 0; i < body.length; i++) {
-    const char = body[i]!
-    if (char !== "\\") {
-      bytes.push(char.charCodeAt(0))
-      continue
-    }
-
-    const next = body[i + 1]
-    if (!next) {
-      bytes.push("\\".charCodeAt(0))
-      continue
-    }
-
-    if (next >= "0" && next <= "7") {
-      const chunk = body.slice(i + 1, i + 4)
-      const match = chunk.match(/^[0-7]{1,3}/)
-      if (!match) {
-        bytes.push(next.charCodeAt(0))
-        i++
-        continue
-      }
-      bytes.push(parseInt(match[0], 8))
-      i += match[0].length
-      continue
-    }
-
-    const escaped =
-      next === "n"
-        ? "\n"
-        : next === "r"
-          ? "\r"
-          : next === "t"
-            ? "\t"
-            : next === "b"
-              ? "\b"
-              : next === "f"
-                ? "\f"
-                : next === "v"
-                  ? "\v"
-                  : next === "\\" || next === '"'
-                    ? next
-                    : undefined
-
-    bytes.push((escaped ?? next).charCodeAt(0))
-    i++
-  }
-
-  return Buffer.from(bytes).toString()
+  return Buffer.from((body.match(GIT_PATH_TOKEN) ?? []).map(gitPathByte)).toString()
 }
 
 export interface Interface {
@@ -148,7 +120,7 @@ const layer = Layer.effect(
 export const DiffInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
-})
+}).annotate({ identifier: "SessionSummary.DiffInput" })
 export type DiffInput = Schema.Schema.Type<typeof DiffInput>
 
 export const node = LayerNode.make({

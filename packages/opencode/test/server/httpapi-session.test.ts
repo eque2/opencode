@@ -4,13 +4,12 @@ import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
-import { Cause, Config, Effect, Exit, Layer } from "effect"
+import { Cause, Config, Effect, Exit, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter, HttpServer } from "effect/unstable/http"
 import { layerWebSocketConstructorGlobal } from "effect/unstable/socket/Socket"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { registerAdapter } from "../../src/control-plane/adapters"
 import type { WorkspaceAdapter } from "../../src/control-plane/types"
@@ -31,14 +30,13 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
 import { testProviderConfig } from "../lib/test-provider"
 import { pollWithTimeout, testEffect } from "../lib/effect"
 
-const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
 const noopBootstrapLayer = Layer.succeed(
   InstanceBootstrapService.Service,
   InstanceBootstrapService.Service.of({ run: Effect.void }),
@@ -167,7 +165,8 @@ const insertCorruptV2Message = (sessionID: SessionIDType, time = 1) =>
           type: "assistant",
           seq: time,
           time_created: time,
-          data: {} as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+          // Raw SQL, so the corrupt empty object bypasses the column type as the test intends.
+          data: sql`${"{}"}`,
         },
       ])
       .run()
@@ -215,21 +214,38 @@ function request(path: string, init?: RequestInit) {
   )
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
+function json(response: HttpClientResponse.HttpClientResponse) {
   if (response.status !== 200) return response.text.pipe(Effect.flatMap((text) => Effect.die(new Error(text))))
-  return response.json.pipe(Effect.map((value) => value as T))
+  return response.json
 }
+
+function decodeJson<S extends Schema.Constraint>(response: HttpClientResponse.HttpClientResponse, schema: S) {
+  return json(response).pipe(Effect.flatMap(Schema.decodeUnknownEffect(schema)))
+}
+
+// Response shapes whose fields the tests read. UnknownPage keeps each item as sent.
+const SessionList = Schema.Array(Session.Info)
+const UnknownPage = Schema.Struct({ data: Schema.Array(Schema.Unknown) })
+const MessagePage = Schema.Struct({ data: Schema.Array(SessionMessage.Message) })
+const CursorPage = Schema.Struct({ cursor: Schema.Struct({ next: Schema.optional(Schema.String) }) })
+const MessageCursorPage = Schema.Struct({
+  data: Schema.Array(SessionMessage.Message),
+  cursor: Schema.Struct({ next: Schema.optional(Schema.String) }),
+})
 
 function responseJson(response: HttpClientResponse.HttpClientResponse) {
   return response.json
 }
 
-function requestJson<T>(path: string, init?: RequestInit) {
-  return request(path, init).pipe(Effect.flatMap(json<T>))
+function requestJson(path: string, init?: RequestInit) {
+  return request(path, init).pipe(Effect.flatMap(json))
+}
+
+function requestDecoded<S extends Schema.Constraint>(schema: S, path: string, init?: RequestInit) {
+  return request(path, init).pipe(Effect.flatMap((response) => decodeJson(response, schema)))
 }
 
 afterEach(async () => {
-  Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = originalWorkspaces
   await disposeAllInstances()
   await resetDatabase()
 })
@@ -327,34 +343,34 @@ describe("session HttpApi", () => {
         const message = yield* createTextMessage(parent.id, "hello")
         yield* createTextMessage(parent.id, "world")
 
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?roots=true`, { headers })
+        const listed = yield* requestDecoded(SessionList, `${SessionPaths.list}?roots=true`, { headers })
         expect(listed.map((item) => item.id)).toContain(parent.id)
-        expect(Object.hasOwn(listed[0]!, "parentID")).toBe(false)
+        expect(Object.hasOwn(listed[0], "parentID")).toBe(false)
 
-        expect(yield* requestJson<Record<string, unknown>>(SessionPaths.status, { headers })).toEqual({})
+        expect(yield* requestJson(SessionPaths.status, { headers })).toEqual({})
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers }),
+          yield* requestJson(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers }),
         ).toMatchObject({ id: parent.id, title: "parent" })
 
         expect(
-          (yield* requestJson<Session.Info[]>(pathFor(SessionPaths.children, { sessionID: parent.id }), {
+          (yield* requestDecoded(SessionList, pathFor(SessionPaths.children, { sessionID: parent.id }), {
             headers,
           })).map((item) => item.id),
         ).toEqual([child.id])
 
         expect(
-          yield* requestJson<unknown[]>(pathFor(SessionPaths.todo, { sessionID: parent.id }), { headers }),
+          yield* requestJson(pathFor(SessionPaths.todo, { sessionID: parent.id }), { headers }),
         ).toEqual([])
 
         expect(
-          yield* requestJson<unknown[]>(pathFor(SessionPaths.diff, { sessionID: parent.id }), { headers }),
+          yield* requestJson(pathFor(SessionPaths.diff, { sessionID: parent.id }), { headers }),
         ).toEqual([])
 
         const messages = yield* request(`${pathFor(SessionPaths.messages, { sessionID: parent.id })}?limit=1`, {
           headers,
         })
-        const messagePage = yield* json<SessionV1.WithParts[]>(messages)
+        const messagePage = yield* decodeJson(messages, Schema.Array(SessionV1.WithParts))
         const nextCursor = messages.headers["x-next-cursor"]
         expect(nextCursor).toBeTruthy()
         expect(messagePage[0]?.parts[0]).toMatchObject({ type: "text" })
@@ -371,7 +387,7 @@ describe("session HttpApi", () => {
         ).toBe(400)
 
         expect(
-          yield* requestJson<SessionV1.WithParts>(
+          yield* requestJson(
             pathFor(SessionPaths.message, { sessionID: parent.id, messageID: message.info.id }),
             { headers },
           ),
@@ -380,7 +396,7 @@ describe("session HttpApi", () => {
         yield* insertLegacyAssistantMessage(parent.id)
 
         expect(
-          (yield* requestJson<{ data: SessionMessage.Message[] }>(`/api/session/${parent.id}/message`, {
+          (yield* requestDecoded(UnknownPage, `/api/session/${parent.id}/message`, {
             headers,
           })).data,
         ).toMatchObject([{ type: "assistant" }])
@@ -424,7 +440,7 @@ describe("session HttpApi", () => {
         cwd: sessionDirectory,
         root: sessionDirectory,
       })
-    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
+    }).pipe(Effect.provide(TestLLMServer.layer.pipe(Layer.provideMerge(AppNodeBuilder.build(CrossSpawnSpawner.node))))),
   )
 
   it.instance(
@@ -446,7 +462,7 @@ describe("session HttpApi", () => {
           })}`,
           { headers },
         )
-        const sessionCursor = (yield* json<{ data: Session.Info[]; cursor: { next?: string } }>(sessionPage)).cursor
+        const sessionCursor = (yield* decodeJson(sessionPage, CursorPage)).cursor
           .next
         expect(sessionCursor).toBeTruthy()
         expect(JSON.parse(Buffer.from(sessionCursor!, "base64url").toString("utf8"))).toMatchObject({
@@ -474,7 +490,7 @@ describe("session HttpApi", () => {
         })
 
         const messagePage = yield* request(`/api/session/${session.id}/message?limit=1`, { headers })
-        const messageBody = yield* json<{ data: SessionMessage.Message[]; cursor: { next?: string } }>(messagePage)
+        const messageBody = yield* decodeJson(messagePage, MessageCursorPage)
         const messageCursor = messageBody.cursor.next
         expect(messageCursor).toBeTruthy()
         expect(messageBody.data.map((message) => message.id)).toEqual([secondMessage.id])
@@ -488,7 +504,7 @@ describe("session HttpApi", () => {
           headers,
         })
         expect(
-          (yield* json<{ data: SessionMessage.Message[] }>(nextMessagePage)).data.map((message) => message.id),
+          (yield* decodeJson(nextMessagePage, MessagePage)).data.map((message) => message.id),
         ).toEqual([firstMessage.id])
 
         const legacyMessageCursor = Buffer.from(
@@ -498,7 +514,7 @@ describe("session HttpApi", () => {
           headers,
         })
         expect(
-          (yield* json<{ data: SessionMessage.Message[] }>(legacyMessagePage)).data.map((message) => message.id),
+          (yield* decodeJson(legacyMessagePage, MessagePage)).data.map((message) => message.id),
         ).toEqual([firstMessage.id])
 
         const messageCursorWithOrder = yield* request(
@@ -577,9 +593,8 @@ describe("session HttpApi", () => {
           })
         const first = yield* recordPrompt()
         const retried = yield* recordPrompt()
-        type PromptBody = { id: string; prompt: { text: string }; delivery: string; promotedSeq?: number }
-        const firstBody = yield* json<{ data: PromptBody }>(first)
-        const retriedBody = yield* json<{ data: PromptBody }>(retried)
+        const firstBody = yield* json(first)
+        const retriedBody = yield* json(retried)
         expect(first.status).toBe(200)
         expect(retried.status).toBe(200)
         expect(retriedBody).toEqual(firstBody)
@@ -587,7 +602,7 @@ describe("session HttpApi", () => {
           data: { id: "msg_http_prompt", prompt: { text: "hello" }, delivery: "steer" },
         })
 
-        const messages = yield* requestJson<{ data: PromptBody[] }>(`/api/session/${session.id}/message`, {
+        const messages = yield* requestDecoded(UnknownPage, `/api/session/${session.id}/message`, {
           headers,
         })
         expect(messages.data).toHaveLength(0)
@@ -625,7 +640,7 @@ describe("session HttpApi", () => {
         })
         expect(wake.status).toBe(200)
         const message = yield* pollWithTimeout(
-          requestJson<{ data: SessionMessage.Message[] }>(`/api/session/${session.id}/message`, { headers }).pipe(
+          requestDecoded(MessagePage, `/api/session/${session.id}/message`, { headers }).pipe(
             Effect.map(({ data }) => data.find((message) => message.id === wakeID)),
           ),
           "V2 prompt was not promoted after wake",
@@ -679,8 +694,8 @@ describe("session HttpApi", () => {
         expect(messagesBody).toMatchObject({
           _tag: "UnknownError",
           message: "Unexpected server error. Check server logs for details.",
+          ref: expect.stringMatching(/^err_[0-9a-f-]{8}$/),
         })
-        expect((messagesBody as { ref?: unknown }).ref).toMatch(/^err_[0-9a-f-]{8}$/)
         expect(JSON.stringify(messagesBody)).not.toContain("assistant")
 
         const context = yield* request(`/api/session/${session.id}/context`, {
@@ -691,8 +706,8 @@ describe("session HttpApi", () => {
         expect(contextBody).toMatchObject({
           _tag: "UnknownError",
           message: "Unexpected server error. Check server logs for details.",
+          ref: expect.stringMatching(/^err_[0-9a-f-]{8}$/),
         })
-        expect((contextBody as { ref?: unknown }).ref).toMatch(/^err_[0-9a-f-]{8}$/)
         expect(JSON.stringify(contextBody)).not.toContain("assistant")
       }),
     { git: true, config: { formatter: false, lsp: false } },
@@ -711,7 +726,7 @@ describe("session HttpApi", () => {
         })
 
         expect(response.status).toBe(200)
-        expect((yield* json<Session.Info>(response)).summary?.diffs).toEqual([{ additions: 1, deletions: 0 }])
+        expect((yield* decodeJson(response, Session.Info)).summary?.diffs).toEqual([{ additions: 1, deletions: 0 }])
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -723,33 +738,33 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
 
-        const createdEmpty = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const createdEmpty = yield* requestDecoded(Session.Info, SessionPaths.create, {
           method: "POST",
           headers,
         })
         expect(createdEmpty.id).toBeTruthy()
 
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestDecoded(Session.Info, SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "created" }),
         })
         expect(created.title).toBe("created")
 
-        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+        const updated = yield* requestJson(pathFor(SessionPaths.update, { sessionID: created.id }), {
           method: "PATCH",
           headers,
           body: JSON.stringify({ title: "updated", time: { archived: 1 } }),
         })
         expect(updated).toMatchObject({ id: created.id, title: "updated", time: { archived: 1 } })
 
-        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: created.id }), {
+        const forked = yield* requestDecoded(Session.Info, pathFor(SessionPaths.fork, { sessionID: created.id }), {
           method: "POST",
           headers,
         })
         expect(forked.id).not.toBe(created.id)
 
-        const forkedWithoutContentType = yield* requestJson<Session.Info>(
+        const forkedWithoutContentType = yield* requestDecoded(Session.Info, 
           pathFor(SessionPaths.fork, { sessionID: created.id }),
           {
             method: "POST",
@@ -765,7 +780,7 @@ describe("session HttpApi", () => {
         })
         expect(invalidFork.status).toBe(400)
 
-        const forkedWhitespace = yield* requestJson<Session.Info>(
+        const forkedWhitespace = yield* requestDecoded(Session.Info, 
           pathFor(SessionPaths.fork, { sessionID: created.id }),
           {
             method: "POST",
@@ -776,14 +791,14 @@ describe("session HttpApi", () => {
         expect(forkedWhitespace.id).not.toBe(created.id)
 
         expect(
-          yield* requestJson<boolean>(pathFor(SessionPaths.abort, { sessionID: created.id }), {
+          yield* requestJson(pathFor(SessionPaths.abort, { sessionID: created.id }), {
             method: "POST",
             headers,
           }),
         ).toBe(true)
 
         expect(
-          yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: created.id }), {
+          yield* requestJson(pathFor(SessionPaths.remove, { sessionID: created.id }), {
             method: "DELETE",
             headers,
           }),
@@ -797,7 +812,6 @@ describe("session HttpApi", () => {
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
-        Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
         const project = yield* Project.use.fromDirectory(test.directory)
         const workspace = yield* createLocalWorkspace({
           projectID: project.project.id,
@@ -805,7 +819,7 @@ describe("session HttpApi", () => {
           directory: path.join(test.directory, ".workspace-local"),
         })
 
-        const created = yield* requestJson<Session.Info>(`${SessionPaths.create}?workspace=${workspace.id}`, {
+        const created = yield* requestDecoded(Session.Info, `${SessionPaths.create}?workspace=${workspace.id}`, {
           method: "POST",
           headers: { "x-opencode-directory": test.directory, "content-type": "application/json" },
           body: JSON.stringify({ title: "workspace session" }),
@@ -839,7 +853,7 @@ describe("session HttpApi", () => {
           body,
         })
         expect(response.status).toBe(200)
-        expect((yield* json<Session.Info>(response)).time.archived).toBe(-1)
+        expect((yield* decodeJson(response, Session.Info)).time.archived).toBe(-1)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -870,8 +884,9 @@ describe("session HttpApi", () => {
           directory: currentDir,
         })
         const headers = { "x-opencode-directory": test.directory }
-        const sessions = (yield* json<Session.Info[]>(
+        const sessions = (yield* decodeJson(
           yield* request(`${SessionPaths.list}?${query}`, { headers }),
+          SessionList,
         )).map((item) => item.id)
 
         expect(sessions).toContain(pathSession.id)
@@ -887,18 +902,18 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const hint = test.directory + path.sep
         const headers = { "x-opencode-directory": hint, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestDecoded(Session.Info, SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "hinted" }),
         })
 
         const query = new URLSearchParams({ directory: hint, roots: "true" })
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        const listed = yield* requestDecoded(SessionList, `${SessionPaths.list}?${query}`, { headers })
         expect(listed.map((item) => item.id)).toContain(created.id)
 
         const globalQuery = new URLSearchParams({ directory: hint })
-        const global = yield* requestJson<Session.Info[]>(`${ExperimentalPaths.session}?${globalQuery}`, { headers })
+        const global = yield* requestDecoded(SessionList, `${ExperimentalPaths.session}?${globalQuery}`, { headers })
         expect(global.map((item) => item.id)).toContain(created.id)
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
@@ -911,7 +926,7 @@ describe("session HttpApi", () => {
         if (process.platform !== "win32") return
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestDecoded(Session.Info, SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "windows spelling" }),
@@ -922,7 +937,7 @@ describe("session HttpApi", () => {
         const trailingSeparator = `${test.directory}\\`
         for (const spelling of [forwardSlashes, lowercaseDrive, trailingSeparator]) {
           const query = new URLSearchParams({ directory: spelling, roots: "true" })
-          const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+          const listed = yield* requestDecoded(SessionList, `${SessionPaths.list}?${query}`, { headers })
           expect({ spelling, ids: listed.map((item) => item.id) }).toEqual({ spelling, ids: [created.id] })
         }
       }),
@@ -937,7 +952,7 @@ describe("session HttpApi", () => {
         if (process.platform !== "win32") return
         const globalWorktreeSentinel = "/"
         const headers = { "x-opencode-directory": globalWorktreeSentinel, "content-type": "application/json" }
-        const driveRootSession = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const driveRootSession = yield* requestDecoded(Session.Info, SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "created at drive root" }),
@@ -945,7 +960,7 @@ describe("session HttpApi", () => {
         expect(driveRootSession.directory).toMatch(/^[A-Za-z]:\\$/)
 
         const query = new URLSearchParams({ directory: globalWorktreeSentinel, roots: "true" })
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        const listed = yield* requestDecoded(SessionList, `${SessionPaths.list}?${query}`, { headers })
         expect(listed.map((item) => item.id)).toContain(driveRootSession.id)
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
@@ -982,7 +997,7 @@ describe("session HttpApi", () => {
         const first = yield* createTextMessage(session.id, "first")
         const second = yield* createTextMessage(session.id, "second")
 
-        const updated = yield* requestJson<SessionV1.Part>(
+        const updated = yield* requestJson(
           pathFor(SessionPaths.updatePart, {
             sessionID: session.id,
             messageID: first.info.id,
@@ -997,7 +1012,7 @@ describe("session HttpApi", () => {
         expect(updated).toMatchObject({ id: first.part.id, type: "text", text: "updated" })
 
         expect(
-          yield* requestJson<boolean>(
+          yield* requestJson(
             pathFor(SessionPaths.deletePart, {
               sessionID: session.id,
               messageID: first.info.id,
@@ -1008,7 +1023,7 @@ describe("session HttpApi", () => {
         ).toBe(true)
 
         expect(
-          yield* requestJson<boolean>(
+          yield* requestJson(
             pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID: second.info.id }),
             { method: "DELETE", headers },
           ),
@@ -1052,7 +1067,7 @@ describe("session HttpApi", () => {
         const session = yield* createSession({ title: "remaining" })
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
+          yield* requestJson(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
             headers,
             body: JSON.stringify({ messageID: MessageID.ascending() }),
@@ -1060,7 +1075,7 @@ describe("session HttpApi", () => {
         ).toMatchObject({ id: session.id })
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.unrevert, { sessionID: session.id }), {
+          yield* requestJson(pathFor(SessionPaths.unrevert, { sessionID: session.id }), {
             method: "POST",
             headers,
           }),

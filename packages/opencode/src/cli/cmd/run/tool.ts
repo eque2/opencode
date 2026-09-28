@@ -15,6 +15,7 @@
 import os from "os"
 import path from "path"
 import stripAnsi from "strip-ansi"
+import { Option, Schema } from "effect"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import type * as Tool from "@/tool/tool"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
@@ -136,18 +137,25 @@ function dict(v: unknown): ToolDict {
   return { ...v }
 }
 
+// Copies untrusted tool input into a prototype-less record, so a renderer never
+// reads an inherited Object.prototype member as a tool argument.
+function bare(value: ToolDict) {
+  // eslint-disable-next-line effect/no-null-use-option -- (a) Object.create takes a null prototype argument to build a prototype-less object; no Option form exists for it
+  return Object.assign(Object.create(null), value)
+}
+
 function props<T = Tool.Info>(frame: ToolFrame): ToolProps<T> {
   return {
-    input: Object.assign(Object.create(null), frame.input),
-    metadata: Object.assign(Object.create(null), frame.meta),
+    input: bare(frame.input),
+    metadata: bare(frame.meta),
     frame,
   }
 }
 
 function permission<T = Tool.Info>(ctx: ToolPermissionCtx): ToolPermissionProps<T> {
   return {
-    input: Object.assign(Object.create(null), ctx.input),
-    metadata: Object.assign(Object.create(null), ctx.meta),
+    input: bare(ctx.input),
+    metadata: bare(ctx.meta),
     patterns: ctx.patterns,
   }
 }
@@ -272,8 +280,13 @@ export function toolPath(input?: string, opts: { home?: boolean } = {}): string 
   return abs.replaceAll("\\", "/")
 }
 
+// Tool input is untrusted JSON; input that cannot be encoded shows as "Unknown".
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 function fallbackInline(ctx: ToolFrame): ToolInline {
-  const title = text(ctx.state.title) || (Object.keys(ctx.input).length > 0 ? JSON.stringify(ctx.input) : "Unknown")
+  const title =
+    text(ctx.state.title) ||
+    (Object.keys(ctx.input).length > 0 ? Option.getOrElse(encodeJson(ctx.input), () => "Unknown") : "Unknown")
 
   return {
     icon: "⚙",
@@ -321,11 +334,11 @@ function runList(p: ToolProps): ToolInline {
 
 function runRead(p: ToolProps<typeof ReadTool>): ToolInline {
   const file = toolPath(p.input.filePath)
-  const description = info(p.frame.input, ["filePath"]) || undefined
+  const description = info(p.frame.input, ["filePath"])
   return {
     icon: "→",
     title: `Read ${file}`,
-    ...(description && { description }),
+    ...(description ? { description } : {}),
   }
 }
 
@@ -334,7 +347,7 @@ function runWrite(p: ToolProps<typeof WriteTool>): ToolInline {
     icon: "←",
     title: `Write ${toolPath(p.input.filePath)}`,
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -370,7 +383,7 @@ function runTask(p: ToolProps<typeof TaskTool>): ToolInline {
   return {
     icon,
     title: desc || `${kind} Task`,
-    description: desc ? `${kind} Agent` : undefined,
+    ...(desc ? { description: `${kind} Agent` } : {}),
   }
 }
 
@@ -428,7 +441,7 @@ function runInvalid(p: ToolProps<typeof InvalidTool>): ToolInline {
     icon: "✗",
     title: text(p.frame.state.title) || "Invalid Tool",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -438,7 +451,7 @@ function runBatch(p: ToolProps): ToolInline {
     icon: "#",
     title: text(p.frame.state.title) || (calls > 0 ? `Batch ${calls} tool${calls === 1 ? "" : "s"}` : "Batch"),
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -453,9 +466,8 @@ function lspTitle(
 ): string {
   const op = input.operation || "request"
   const file = input.filePath ? toolPath(input.filePath, opts) : ""
-  const line = typeof input.line === "number" ? input.line : undefined
-  const char = typeof input.character === "number" ? input.character : undefined
-  const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : ""
+  const pos =
+    typeof input.line === "number" && typeof input.character === "number" ? `:${input.line}:${input.character}` : ""
   if (!file) {
     return `LSP ${op}`
   }
@@ -475,7 +487,7 @@ function runPlanExit(p: ToolProps<typeof PlanExitTool>): ToolInline {
     icon: "→",
     title: text(p.frame.state.title) || "Switching to build agent",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -740,38 +752,33 @@ function scrollPatchFinal(p: ToolProps<typeof ApplyPatchTool>): string {
 
   const show_updates = !files.some((file) => file?.type && file.type !== "update")
   const shown = files.filter((file) => show_updates || file.type !== "update")
-  const rows = shown.slice(0, 6).map(patchLine)
-  if (shown.length > 6) {
-    rows.push(`... and ${shown.length - 6} more`)
-  }
+  const rows = [...shown.slice(0, 6).map(patchLine), ...(shown.length > 6 ? [`... and ${shown.length - 6} more`] : [])]
 
   if (rows.length > 0) {
     return rows.join("\n")
   }
 
-  return patchLine(files[0]!)
+  return patchLine(files[0])
 }
 
 function scrollTaskStart(_: ToolProps<typeof TaskTool>): string {
   return ""
 }
 
-function taskResult(output: string): string | undefined {
+function taskResult(output: string): Option.Option<string> {
   if (!output.trim()) {
-    return undefined
+    return Option.none()
   }
 
   const match = output.match(/<task_result>\s*([\s\S]*?)\s*<\/task_result>/)
-  if (match) {
-    return match[1].trim() || undefined
-  }
-
-  const next = output
-    .split("\n")
-    .filter((line) => !line.startsWith("task_id:"))
-    .join("\n")
-    .trim()
-  return next || undefined
+  const next = match
+    ? match[1].trim()
+    : output
+        .split("\n")
+        .filter((line) => !line.startsWith("task_id:"))
+        .join("\n")
+        .trim()
+  return next ? Option.some(next) : Option.none()
 }
 
 function scrollTaskFinal(p: ToolProps<typeof TaskTool>): string {
@@ -840,19 +847,12 @@ function scrollQuestionFinal(p: ToolProps<typeof QuestionTool>): string {
     return `0 questions · ${time}`
   }
 
-  const rows: string[] = []
-  for (const [i, item] of q.slice(0, 4).entries()) {
-    const prompt = item.question
+  const rows = q.slice(0, 4).flatMap((item, i) => {
     const reply = a[i] ?? []
-    rows.push(`? ${prompt || `Question ${i + 1}`}`)
-    rows.push(`  ${reply.length > 0 ? reply.join(", ") : "(no answer)"}`)
-  }
+    return [`? ${item.question || `Question ${i + 1}`}`, `  ${reply.length > 0 ? reply.join(", ") : "(no answer)"}`]
+  })
 
-  if (q.length > 4) {
-    rows.push(`... and ${q.length - 4} more`)
-  }
-
-  return rows.join("\n")
+  return [...rows, ...(q.length > 4 ? [`... and ${q.length - 4} more`] : [])].join("\n")
 }
 
 function scrollLspStart(p: ToolProps<typeof LspTool>): string {
@@ -1005,9 +1005,10 @@ function permWebSearch(p: ToolPermissionProps<typeof WebSearchTool>): ToolPermis
 
 function permLsp(p: ToolPermissionProps<typeof LspTool>): ToolPermissionInfo {
   const file = p.input.filePath || ""
-  const line = typeof p.input.line === "number" ? p.input.line : undefined
-  const char = typeof p.input.character === "number" ? p.input.character : undefined
-  const pos = line !== undefined && char !== undefined ? `${line}:${char}` : undefined
+  const pos =
+    typeof p.input.line === "number" && typeof p.input.character === "number"
+      ? `${p.input.line}:${p.input.character}`
+      : ""
   return {
     icon: "→",
     title: lspTitle(p.input, { home: true }),
@@ -1274,7 +1275,7 @@ function runBash(p: ToolProps<typeof BashTool>): ToolInline {
     icon: "$",
     title: p.input.command || "",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output).trim() : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output).trim() } : {}),
   }
 }
 
@@ -1300,31 +1301,21 @@ export function toolStructuredFinal(commit: StreamCommit): boolean {
 export function toolInlineInfo(part: ToolPart): ToolInline {
   const ctx = frame(part)
   const draw = rule(ctx.name)?.run
-  try {
-    if (draw) {
-      return draw(props(ctx))
-    }
-  } catch {
+  if (!draw) {
     return fallbackInline(ctx)
   }
 
-  return fallbackInline(ctx)
+  // A renderer that throws on malformed input falls back to the generic view.
+  return Option.liftThrowable(() => draw(props(ctx)))().pipe(Option.getOrElse(() => fallbackInline(ctx)))
 }
 
 export function toolScroll(phase: ToolPhase, ctx: ToolFrame): string {
   const draw = rule(ctx.name)?.scroll?.[phase]
-  try {
-    if (draw) {
-      return draw(props(ctx))
+  if (draw) {
+    const drawn = Option.liftThrowable(() => draw(props(ctx)))()
+    if (Option.isSome(drawn)) {
+      return drawn.value
     }
-  } catch {
-    if (phase === "start") {
-      return fallbackStart(ctx)
-    }
-    if (phase === "progress") {
-      return ctx.raw
-    }
-    return fallbackFinal(ctx)
   }
 
   if (phase === "start") {
@@ -1349,11 +1340,7 @@ export function toolPermissionInfo(
     return undefined
   }
 
-  try {
-    return draw(permission({ input, meta, patterns }))
-  } catch {
-    return undefined
-  }
+  return Option.getOrUndefined(Option.liftThrowable(() => draw(permission({ input, meta, patterns })))())
 }
 
 export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | undefined {
@@ -1363,11 +1350,7 @@ export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | 
     return undefined
   }
 
-  try {
-    return draw(props(ctx))
-  } catch {
-    return undefined
-  }
+  return Option.getOrUndefined(Option.liftThrowable(() => draw(props(ctx)))())
 }
 
 function textBody(content: string): RunEntryBody | undefined {
@@ -1440,8 +1423,8 @@ export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody |
 
     if (commit.phase === "final" && ctx.status === "completed") {
       const result = taskResult(text(ctx.state.output))
-      if (result) {
-        return markdownBody(result)
+      if (Option.isSome(result)) {
+        return markdownBody(result.value)
       }
     }
   }

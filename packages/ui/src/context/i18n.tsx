@@ -1,3 +1,4 @@
+import { Iterable, MutableHashMap, Option } from "effect"
 import { createContext, useContext, type Accessor, type ParentProps } from "solid-js"
 import { I18nProvider } from "@kobalte/core/i18n"
 import { dict as en } from "../i18n/en"
@@ -23,19 +24,21 @@ export type UiI18n = {
   plural: (key: UiI18nPluralKey, count: number, params?: UiI18nParams) => string
 }
 
-const rules = new Map<string, Intl.PluralRules>()
+const rules = MutableHashMap.empty<string, Intl.PluralRules>()
 
 export function pluralCategory(locale: string, count: number): UiPluralCategory {
-  const cached = rules.get(locale)
-  if (cached) return cached.select(count)
+  const cached = MutableHashMap.get(rules, locale)
+  if (Option.isSome(cached)) return cached.value.select(count)
   const next = new Intl.PluralRules(locale)
-  if (rules.size >= 32) rules.delete(rules.keys().next().value!)
-  rules.set(locale, next)
+  // Evict the oldest locale; MutableHashMap keeps insertion order for string keys.
+  const oldest = MutableHashMap.size(rules) >= 32 ? Iterable.head(MutableHashMap.keys(rules)) : Option.none()
+  if (Option.isSome(oldest)) MutableHashMap.remove(rules, oldest.value)
+  MutableHashMap.set(rules, locale, next)
   return next.select(count)
 }
 
-export function pluralKey(key: UiI18nPluralKey, category: UiPluralCategory) {
-  return `${key}.${category}` as UiI18nPluralLookupKey
+export function pluralKey(key: UiI18nPluralKey, category: UiPluralCategory): UiI18nPluralLookupKey {
+  return `${key}.${category}`
 }
 
 function resolveTemplate(text: string, params?: UiI18nParams) {
@@ -50,14 +53,14 @@ function resolveTemplate(text: string, params?: UiI18nParams) {
 const fallback: UiI18n = {
   locale: () => "en",
   t: (key, params) => {
-    const value = en[key] ?? String(key)
+    const value = en[key] ?? key
     return resolveTemplate(value, params)
   },
   plural: (key, count, params) =>
     fallback.t(pluralKey(key, pluralCategory(fallback.locale(), count)), { ...params, count }),
 }
 
-const Context = createContext<UiI18n>(fallback)
+const Context = createContext(fallback)
 
 function UiI18nProvider(props: ParentProps<{ value: UiI18n }>) {
   return (

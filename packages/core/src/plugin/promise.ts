@@ -2,11 +2,20 @@ export * as PluginPromise from "./promise"
 
 import { define } from "@opencode-ai/plugin/v2/effect"
 import type { Plugin, PluginContext, Registration } from "@opencode-ai/plugin/v2/promise"
-import { Effect, Scope } from "effect"
+import { Effect, Predicate, Scope } from "effect"
 
 // The Effect host hands back this registration shape; mirror it structurally so
 // we do not have to alias the Effect package's `Registration` against the Promise one.
 type HostRegistration = { readonly dispose: Effect.Effect<void> }
+
+// A Promise plugin callback returns either a Promise or nothing. Await the
+// Promise when there is one; a synchronous throw or a rejection is a defect,
+// as it was with `Effect.promise`.
+const settle = (evaluate: () => PromiseLike<void> | void) =>
+  Effect.suspend(() => {
+    const result = evaluate()
+    return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.void
+  })
 
 /**
  * Adapts a Promise plugin into an Effect plugin so the existing Effect-only
@@ -40,7 +49,7 @@ export function fromPromise(plugin: Plugin) {
             ) => Effect.Effect<HostRegistration, never, Scope.Scope>
           }) =>
           (callback: (draft: Draft) => Promise<void> | void) =>
-            register(domain.transform((draft) => Effect.promise(() => Promise.resolve(callback(draft)))))
+            register(domain.transform((draft) => settle(() => callback(draft))))
 
         const context2: PluginContext = {
           options: host.options,
@@ -49,10 +58,8 @@ export function fromPromise(plugin: Plugin) {
             reload: () => run(host.agent.reload()),
           },
           aisdk: {
-            sdk: (callback) =>
-              register(host.aisdk.sdk((event) => Effect.promise(() => Promise.resolve(callback(event))))),
-            language: (callback) =>
-              register(host.aisdk.language((event) => Effect.promise(() => Promise.resolve(callback(event))))),
+            sdk: (callback) => register(host.aisdk.sdk((event) => settle(() => callback(event)))),
+            language: (callback) => register(host.aisdk.language((event) => settle(() => callback(event)))),
           },
           catalog: {
             transform: transform(host.catalog),
@@ -87,7 +94,7 @@ export function fromPromise(plugin: Plugin) {
           },
         }
 
-        yield* Effect.promise(() => Promise.resolve(plugin.setup(context2)))
+        yield* settle(() => plugin.setup(context2))
       }),
   })
 }

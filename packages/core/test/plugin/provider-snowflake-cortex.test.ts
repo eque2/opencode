@@ -1,6 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect, it as bun_it } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
@@ -14,7 +14,6 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* SnowflakeCortexPlugin.effect(host)
 })
@@ -51,7 +50,6 @@ describe("SnowflakeCortexPlugin", () => {
 
   it.effect("ignores non-snowflake-cortex providers", () =>
     Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
       const aisdk = yield* AISDK.Service
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
@@ -69,7 +67,6 @@ describe("SnowflakeCortexPlugin", () => {
   it.effect("creates SDK for snowflake-cortex using SNOWFLAKE_CORTEX_PAT env var", () =>
     withEnv({ SNOWFLAKE_CORTEX_PAT: "test-pat" }, () =>
       Effect.gen(function* () {
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
         const result = yield* aisdk.runSDK({
@@ -88,7 +85,6 @@ describe("SnowflakeCortexPlugin", () => {
   it.effect("falls back to options.apiKey when SNOWFLAKE_CORTEX_PAT env var is absent", () =>
     withEnv({ SNOWFLAKE_CORTEX_PAT: undefined }, () =>
       Effect.gen(function* () {
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
         const result = yield* aisdk.runSDK({
@@ -111,7 +107,6 @@ describe("SnowflakeCortexPlugin", () => {
   it.effect("uses SNOWFLAKE_CORTEX_TOKEN env var", () =>
     withEnv({ SNOWFLAKE_CORTEX_TOKEN: "oauth-token", SNOWFLAKE_CORTEX_PAT: undefined }, () =>
       Effect.gen(function* () {
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
         const result = yield* aisdk.runSDK({
@@ -130,7 +125,6 @@ describe("SnowflakeCortexPlugin", () => {
   it.effect("falls back to options.token when no Snowflake env token is set", () =>
     withEnv({ SNOWFLAKE_CORTEX_TOKEN: undefined, SNOWFLAKE_CORTEX_PAT: undefined }, () =>
       Effect.gen(function* () {
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
         const result = yield* aisdk.runSDK({
@@ -153,7 +147,6 @@ describe("SnowflakeCortexPlugin", () => {
   it.effect("sets includeUsage on the SDK options", () =>
     withEnv({ SNOWFLAKE_CORTEX_PAT: "test-pat" }, () =>
       Effect.gen(function* () {
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
         const result = yield* aisdk.runSDK({
@@ -183,7 +176,7 @@ describe("cortexFetch", () => {
       method: "POST",
       body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024 }),
     })
-    const body = JSON.parse(captured[0].body as string)
+    const body = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.JsonObject))(captured[0].body)
     expect(body.max_completion_tokens).toBe(1024)
     expect(body.max_tokens).toBeUndefined()
   })
@@ -207,7 +200,9 @@ describe("cortexFetch", () => {
       })
     const response = await cortexFetch(upstream)("https://test", {})
     expect(response.status).toBe(200)
-    const data = (await response.json()) as { choices: { finish_reason: string }[] }
+    const data = Schema.decodeUnknownSync(
+      Schema.Struct({ choices: Schema.Array(Schema.Struct({ finish_reason: Schema.String })) }),
+    )(await response.json())
     expect(data.choices[0].finish_reason).toBe("stop")
   })
 

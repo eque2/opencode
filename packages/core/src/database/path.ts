@@ -1,4 +1,5 @@
 import nodePath from "path"
+import { Schema } from "effect"
 import { customType } from "drizzle-orm/sqlite-core"
 import { AbsolutePath } from "../schema"
 
@@ -11,12 +12,20 @@ function isWindowsStoragePath(input: string) {
   return /^[A-Za-z]:\//.test(input) || input.startsWith("//")
 }
 
+// A stored path must be absolute: POSIX, or a drive or UNC path on Windows. The drizzle-orm
+// customType mappers are synchronous, so decodeSync rejects a bad path by throwing its schema error.
+const StoragePath = Schema.String.check(
+  Schema.makeFilter((path) =>
+    nodePath.posix.isAbsolute(path) || (process.platform === "win32" && isWindowsStoragePath(path))
+      ? true
+      : `Path is not absolute: ${path}`,
+  ),
+)
+const decodeStoragePath = Schema.decodeSync(StoragePath)
+const StoragePathsJson = Schema.fromJsonString(Schema.Array(Schema.String))
+
 function absolute(input: string) {
-  const result = storagePath(input)
-  if (!nodePath.posix.isAbsolute(result) && !(process.platform === "win32" && isWindowsStoragePath(result))) {
-    throw new Error(`Path is not absolute: ${input}`)
-  }
-  return result
+  return decodeStoragePath(storagePath(input))
 }
 
 function toPlatform(input: string) {
@@ -83,9 +92,9 @@ export const absoluteArrayColumn = customType<{
     return "text"
   },
   toDriver(input) {
-    return JSON.stringify(input.map(absolute))
+    return Schema.encodeSync(StoragePathsJson)(input.map(absolute))
   },
   fromDriver(input) {
-    return (JSON.parse(input) as string[]).map((item) => AbsolutePath.make(toPlatform(absolute(item))))
+    return Schema.decodeSync(StoragePathsJson)(input).map((item) => AbsolutePath.make(toPlatform(absolute(item))))
   },
 })

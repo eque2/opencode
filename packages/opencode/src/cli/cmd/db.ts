@@ -1,9 +1,11 @@
 import type { Argv } from "yargs"
 import { spawn } from "child_process"
 import { Database } from "@opencode-ai/core/database/database"
-import { Effect } from "effect"
+import { Console, Effect, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { effectCmd } from "../effect-cmd"
+
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 const QueryCommand = effectCmd({
   command: "$0 [query]",
@@ -23,23 +25,28 @@ const QueryCommand = effectCmd({
       })
   },
   handler: Effect.fn("Cli.db.query")(function* (args: { query?: string; format: string }) {
-    const query = args.query as string | undefined
-    if (query) {
-      const { db } = yield* Database.Service
-      const result = yield* db.all<Record<string, unknown>>(sql.raw(query)).pipe(Effect.orDie)
-      if (args.format === "json") console.log(JSON.stringify(result, null, 2))
-      else if (result.length > 0) {
-        const keys = Object.keys(result[0])
-        console.log(keys.join("\t"))
-        for (const row of result) console.log(keys.map((key) => row[key]).join("\t"))
-      }
-      return
-    }
-    const child = spawn("sqlite3", [Database.path()], {
+    const query = args.query
+    if (query) return yield* printQuery(query, args.format)
+    const child = spawn("sqlite3", [yield* Database.path], {
       stdio: "inherit",
     })
-    yield* Effect.promise(() => new Promise((resolve) => child.on("close", resolve)))
+    return yield* Effect.callback<void>((resume) => {
+      child.on("close", () => resume(Effect.void))
+    })
   }),
+})
+
+const printQuery = Effect.fnUntraced(function* (query: string, format: string) {
+  const { db } = yield* Database.Service
+  const result = yield* db.all<Record<string, unknown>>(sql.raw(query)).pipe(Effect.orDie)
+  if (format === "json") {
+    yield* Console.log(yield* encodePrettyJson(result).pipe(Effect.orDie))
+    return
+  }
+  if (result.length === 0) return
+  const keys = Object.keys(result[0])
+  yield* Console.log(keys.join("\t"))
+  yield* Effect.forEach(result, (row) => Console.log(keys.map((key) => row[key]).join("\t")), { discard: true })
 })
 
 const PathCommand = effectCmd({
@@ -47,7 +54,7 @@ const PathCommand = effectCmd({
   describe: "print the database path",
   instance: false,
   handler: Effect.fn("Cli.db.path")(function* () {
-    console.log(Database.path())
+    yield* Console.log(yield* Database.path)
   }),
 })
 

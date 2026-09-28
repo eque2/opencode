@@ -1,8 +1,9 @@
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Effect, Schema } from "effect"
+import { Effect, Encoding, Option, Schema } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
+import { errorRef } from "./error-ref"
 import { InvalidCursorError, SessionNotFoundError, UnknownError } from "@opencode-ai/protocol/errors"
 
 const DefaultMessagesLimit = 50
@@ -11,16 +12,21 @@ const Cursor = Schema.Struct({
   id: SessionMessage.ID,
   order: Schema.Union([Schema.Literal("asc"), Schema.Literal("desc")]),
   direction: Schema.Union([Schema.Literal("previous"), Schema.Literal("next")]),
-})
+}).annotate({ identifier: "SessionMessagesCursor" })
 
-const decodeCursor = Schema.decodeUnknownSync(Cursor)
+const CursorJson = Schema.fromJsonString(Cursor)
+const encodeCursorJson = Schema.encodeSync(CursorJson)
+const decodeCursorJson = Schema.decodeUnknownEffect(CursorJson)
 
 const cursor = {
   encode(message: SessionMessage.Message, order: "asc" | "desc", direction: "previous" | "next") {
-    return Buffer.from(JSON.stringify({ id: message.id, order, direction })).toString("base64url")
+    return Encoding.encodeBase64Url(encodeCursorJson({ id: message.id, order, direction }))
   },
   decode(input: string) {
-    return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
+    return Effect.fromResult(Encoding.decodeBase64UrlString(input)).pipe(
+      Effect.flatMap(decodeCursorJson),
+      Effect.mapError(() => new InvalidCursorError({ message: "Invalid cursor" })),
+    )
   },
 }
 
@@ -33,17 +39,21 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
       Effect.fn(function* (ctx) {
         if (ctx.query.cursor && ctx.query.order !== undefined)
           return yield* new InvalidCursorError({ message: "Cursor cannot be combined with order" })
-        const decoded = yield* Effect.try({
-          try: () => (ctx.query.cursor ? cursor.decode(ctx.query.cursor) : undefined),
-          catch: () => new InvalidCursorError({ message: "Invalid cursor" }),
+        const decoded = yield* Option.fromNullishOr(ctx.query.cursor).pipe(
+          Option.filter((input) => input !== ""),
+          Option.map((input) => cursor.decode(input)),
+          Effect.transposeOption,
+        )
+        const order = Option.match(decoded, {
+          onNone: () => ctx.query.order ?? "desc",
+          onSome: (value) => value.order,
         })
-        const order = decoded?.order ?? ctx.query.order ?? "desc"
         const messages = yield* session
           .messages({
             sessionID: ctx.params.sessionID,
             limit: ctx.query.limit ?? DefaultMessagesLimit,
             order,
-            cursor: decoded ? { id: decoded.id, direction: decoded.direction } : undefined,
+            ...(Option.isSome(decoded) ? { cursor: { id: decoded.value.id, direction: decoded.value.direction } } : {}),
           })
           .pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
@@ -54,25 +64,26 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
                 }),
               ),
             ),
-            Effect.catchTag("Session.MessageDecodeError", (error) => {
-              const ref = `err_${crypto.randomUUID().slice(0, 8)}`
-              return Effect.logError("failed to decode session message").pipe(
-                Effect.annotateLogs({ ref, sessionID: error.sessionID, messageID: error.messageID }),
-                Effect.andThen(
-                  Effect.fail(
-                    new UnknownError({ message: "Unexpected server error. Check server logs for details.", ref }),
+            Effect.catchTag("Session.MessageDecodeError", (error) =>
+              Effect.flatMap(errorRef, (ref) =>
+                Effect.logError("failed to decode session message").pipe(
+                  Effect.annotateLogs({ ref, sessionID: error.sessionID, messageID: error.messageID }),
+                  Effect.andThen(
+                    Effect.fail(
+                      new UnknownError({ message: "Unexpected server error. Check server logs for details.", ref }),
+                    ),
                   ),
                 ),
-              )
-            }),
+              ),
+            ),
           )
         const first = messages[0]
         const last = messages.at(-1)
         return {
           data: messages,
           cursor: {
-            previous: first ? cursor.encode(first, order, "previous") : undefined,
-            next: last ? cursor.encode(last, order, "next") : undefined,
+            ...(first ? { previous: cursor.encode(first, order, "previous") } : {}),
+            ...(last ? { next: cursor.encode(last, order, "next") } : {}),
           },
         }
       }),

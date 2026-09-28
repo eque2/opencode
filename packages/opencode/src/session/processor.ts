@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Clock, Deferred, Effect, Equal, Exit, Layer, Context, Option, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -67,14 +67,27 @@ type ToolCall = {
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
   shouldBreak: boolean
-  snapshot: string | undefined
+  snapshot: Option.Option<string>
   blocked: boolean
   needsCompaction: boolean
-  currentText: SessionV1.TextPart | undefined
+  currentText: Option.Option<SessionV1.TextPart>
   reasoningMap: Record<string, SessionV1.ReasoningPart>
 }
 
 type StreamEvent = LLMEvent
+
+// A stream event that ends the provider turn: a provider error, a tool error
+// without an error value, or a tool call while a summary is generated.
+class StreamEventError extends Schema.TaggedError<StreamEventError>()("SessionProcessorStreamEventError", {
+  message: Schema.String,
+}) {}
+
+// JSON text of a tool result or tool input. A value that JSON cannot encode
+// (undefined, a function) is None, as JSON.stringify returned undefined for it.
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+// A snapshot hash is present only when it is a non-empty string.
+const snapshotHash = (hash: string | undefined) => Option.filter(Option.fromUndefinedOr(hash), (value) => value !== "")
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionProcessor") {}
 
@@ -106,10 +119,10 @@ const layer = Layer.effect(
         model: input.model,
         toolcalls: {},
         shouldBreak: false,
-        snapshot: initialSnapshot,
+        snapshot: snapshotHash(initialSnapshot),
         blocked: false,
         needsCompaction: false,
-        currentText: undefined,
+        currentText: Option.none(),
         reasoningMap: {},
       }
       let aborted = false
@@ -123,7 +136,7 @@ const layer = Layer.effect(
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
         delete ctx.toolcalls[toolCallID]
-        if (done) yield* Deferred.succeed(done, undefined).pipe(Effect.ignore)
+        if (done) yield* Deferred.done(done, Exit.void).pipe(Effect.ignore)
       })
 
       const readToolCall = Effect.fn("SessionProcessor.readToolCall")(function* (toolCallID: string) {
@@ -176,7 +189,7 @@ const layer = Layer.effect(
             output: output.output,
             metadata: output.metadata,
             title: output.title,
-            time: { start: match.part.state.time.start, end: Date.now() },
+            time: { start: match.part.state.time.start, end: yield* Clock.currentTimeMillis },
             attachments: output.attachments,
           },
         })
@@ -194,7 +207,7 @@ const layer = Layer.effect(
             error: errorMessage(error),
             // Keep metadata streamed while running so failures retain progress detail (e.g. execute's child calls).
             metadata: match.part.state.metadata,
-            time: { start: match.part.state.time.start, end: Date.now() },
+            time: { start: match.part.state.time.start, end: yield* Clock.currentTimeMillis },
           },
         })
         if (error instanceof PermissionV1.RejectedError || error instanceof Question.RejectedError) {
@@ -208,7 +221,10 @@ const layer = Layer.effect(
         if (!(reasoningID in ctx.reasoningMap)) return
         // oxlint-disable-next-line no-self-assign -- reactivity trigger
         ctx.reasoningMap[reasoningID].text = ctx.reasoningMap[reasoningID].text
-        ctx.reasoningMap[reasoningID].time = { ...ctx.reasoningMap[reasoningID].time, end: Date.now() }
+        ctx.reasoningMap[reasoningID].time = {
+          ...ctx.reasoningMap[reasoningID].time,
+          end: yield* Clock.currentTimeMillis,
+        }
         yield* session.updatePart(ctx.reasoningMap[reasoningID])
         delete ctx.reasoningMap[reasoningID]
       })
@@ -241,7 +257,7 @@ const layer = Layer.effect(
           tool: input.name,
           callID: input.id,
           state: { status: "pending", input: {}, raw: "" },
-          metadata: input.providerExecuted ? { providerExecuted: true } : undefined,
+          ...(input.providerExecuted ? { metadata: { providerExecuted: true } } : {}),
         } satisfies SessionV1.ToolPart)
         ctx.toolcalls[input.id] = {
           done: yield* Deferred.make<void>(),
@@ -262,20 +278,40 @@ const layer = Layer.effect(
             title: typeof value.result.value.title === "string" ? value.result.value.title : value.name,
             metadata: isRecord(value.result.value.metadata) ? value.result.value.metadata : {},
             output: value.result.value.output,
-            attachments: Array.isArray(value.result.value.attachments)
-              ? value.result.value.attachments.filter(isFilePart)
-              : undefined,
+            ...(Array.isArray(value.result.value.attachments)
+              ? { attachments: value.result.value.attachments.filter(isFilePart) }
+              : {}),
           }
         }
         return {
           title: value.name,
           metadata: value.result.type === "json" && isRecord(value.result.value) ? value.result.value : {},
           output:
-            typeof value.result.value === "string" ? value.result.value : (JSON.stringify(value.result.value) ?? ""),
+            typeof value.result.value === "string"
+              ? value.result.value
+              : Option.getOrElse(encodeJson(value.result.value), () => ""),
         }
       }
 
-      const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
+      // A provider error, or a tool call while a summary is generated, ends the provider turn.
+      // The handler fails with it before it applies the event.
+      const endingEvent = (value: StreamEvent): Option.Option<StreamEventError> => {
+        if (value.type === "provider-error") return Option.some(new StreamEventError({ message: value.message }))
+        if ((value.type === "tool-input-start" || value.type === "tool-call") && ctx.assistantMessage.summary) {
+          return Option.some(
+            new StreamEventError({ message: `Tool call not allowed while generating summary: ${value.name}` }),
+          )
+        }
+        return Option.none()
+      }
+
+      const handleEvent = (value: StreamEvent) =>
+        Effect.suspend((): Effect.Effect<void, PermissionV1.Error | StreamEventError> => {
+          const ending = endingEvent(value)
+          return Option.isSome(ending) ? Effect.fail(ending.value) : applyEvent(value)
+        })
+
+      const applyEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
           case "reasoning-start":
             if (value.id in ctx.reasoningMap) return
@@ -285,7 +321,7 @@ const layer = Layer.effect(
               sessionID: ctx.assistantMessage.sessionID,
               type: "reasoning",
               text: "",
-              time: { start: Date.now() },
+              time: { start: yield* Clock.currentTimeMillis },
               metadata: value.providerMetadata,
             }
             yield* session.updatePart(ctx.reasoningMap[value.id])
@@ -313,9 +349,6 @@ const layer = Layer.effect(
             return
 
           case "tool-input-start":
-            if (ctx.assistantMessage.summary) {
-              throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
-            }
             yield* ensureToolCall(value)
             return
 
@@ -329,11 +362,9 @@ const layer = Layer.effect(
           }
 
           case "tool-call": {
-            if (ctx.assistantMessage.summary) {
-              throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
-            }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
+            const now = yield* Clock.currentTimeMillis
             yield* updateToolCall(value.id, (match) => ({
               ...match,
               tool: value.name,
@@ -343,7 +374,7 @@ const layer = Layer.effect(
                   : {
                       status: "running",
                       input,
-                      time: { start: Date.now() },
+                      time: { start: now },
                     },
               metadata: match.metadata?.providerExecuted
                 ? { ...value.providerMetadata, providerExecuted: true }
@@ -354,6 +385,7 @@ const layer = Layer.effect(
               Effect.provideService(Database.Service, database),
             )
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            const inputJson = encodeJson(input)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||
@@ -362,7 +394,7 @@ const layer = Layer.effect(
                   part.type === "tool" &&
                   part.tool === value.name &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(input),
+                  Equal.equals(encodeJson(part.state.input), inputJson),
               )
             ) {
               return
@@ -397,37 +429,35 @@ const layer = Layer.effect(
                     ),
                     Effect.exit,
                   )
-                : Effect.succeed(Exit.succeed<SessionV1.FilePart>(attachment)),
+                : Effect.succeed(Exit.succeed(attachment)),
             )
             const omitted = normalized.filter(Exit.isFailure).length
             const attachments = normalized.filter(Exit.isSuccess).map((item) => item.value)
             const output = {
-              ...rawOutput,
+              title: rawOutput.title,
+              metadata: rawOutput.metadata,
               output:
                 omitted === 0
                   ? rawOutput.output
                   : `${rawOutput.output}\n\n[${omitted} image${omitted === 1 ? "" : "s"} omitted: could not be resized below the image size limit.]`,
-              attachments: attachments.length ? attachments : undefined,
+              ...(attachments.length ? { attachments } : {}),
             }
             yield* completeToolCall(value.id, output)
             return
           }
 
           case "tool-error": {
-            yield* failToolCall(value.id, value.error ?? new Error(value.message))
+            yield* failToolCall(value.id, value.error ?? new StreamEventError({ message: value.message }))
             return
           }
 
-          case "provider-error":
-            throw new Error(value.message)
-
           case "step-start":
-            if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
+            if (Option.isNone(ctx.snapshot)) ctx.snapshot = snapshotHash(yield* snapshot.track())
             yield* session.updatePart({
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
               sessionID: ctx.sessionID,
-              snapshot: ctx.snapshot,
+              snapshot: Option.getOrUndefined(ctx.snapshot),
               type: "step-start",
             })
             return
@@ -438,15 +468,13 @@ const layer = Layer.effect(
             // Anthropic reports thinking blocks it removed before the model saw the
             // prompt. Prefix mismatches mean opencode changed history behind a signed
             // block; log them so the churn can be tracked down.
-            const dropped = isRecord(value.providerMetadata?.anthropic)
-              ? value.providerMetadata.anthropic.inputTransformations
-              : undefined
+            const dropped = value.providerMetadata?.anthropic?.inputTransformations
             if (Array.isArray(dropped) && dropped.length > 0) {
               yield* Effect.logWarning("thinking blocks dropped by provider", {
                 sessionID: ctx.sessionID,
                 messageID: ctx.assistantMessage.id,
                 model: ctx.model.id,
-                transformations: JSON.stringify(dropped),
+                transformations: Option.getOrElse(encodeJson(dropped), () => String(dropped)),
               })
             }
             const usage = Session.getUsage({
@@ -468,8 +496,8 @@ const layer = Layer.effect(
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
-            if (ctx.snapshot) {
-              const patch = yield* snapshot.patch(ctx.snapshot)
+            if (Option.isSome(ctx.snapshot)) {
+              const patch = yield* snapshot.patch(ctx.snapshot.value)
               if (patch.files.length) {
                 yield* session.updatePart({
                   id: PartID.ascending(),
@@ -480,7 +508,7 @@ const layer = Layer.effect(
                   files: patch.files,
                 })
               }
-              ctx.snapshot = undefined
+              ctx.snapshot = Option.none()
             }
             yield* summary
               .summarize({
@@ -497,53 +525,59 @@ const layer = Layer.effect(
             return
           }
 
-          case "text-start":
-            ctx.currentText = {
+          case "text-start": {
+            const currentText: SessionV1.TextPart = {
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
               sessionID: ctx.assistantMessage.sessionID,
               type: "text",
               text: "",
-              time: { start: Date.now() },
+              time: { start: yield* Clock.currentTimeMillis },
               metadata: value.providerMetadata,
             }
-            yield* session.updatePart(ctx.currentText)
+            ctx.currentText = Option.some(currentText)
+            yield* session.updatePart(currentText)
             return
+          }
 
-          case "text-delta":
-            if (!ctx.currentText) return
-            ctx.currentText.text += value.text
-            if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
+          case "text-delta": {
+            if (Option.isNone(ctx.currentText)) return
+            const currentText = ctx.currentText.value
+            currentText.text += value.text
+            if (value.providerMetadata) currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
-              sessionID: ctx.currentText.sessionID,
-              messageID: ctx.currentText.messageID,
-              partID: ctx.currentText.id,
+              sessionID: currentText.sessionID,
+              messageID: currentText.messageID,
+              partID: currentText.id,
               field: "text",
               delta: value.text,
             })
             return
+          }
 
-          case "text-end":
-            if (!ctx.currentText) return
+          case "text-end": {
+            if (Option.isNone(ctx.currentText)) return
+            const currentText = ctx.currentText.value
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
-            ctx.currentText.text = ctx.currentText.text
-            ctx.currentText.text = (yield* plugin.trigger(
+            currentText.text = currentText.text
+            currentText.text = (yield* plugin.trigger(
               "experimental.text.complete",
               {
                 sessionID: ctx.sessionID,
                 messageID: ctx.assistantMessage.id,
-                partID: ctx.currentText.id,
+                partID: currentText.id,
               },
-              { text: ctx.currentText.text },
+              { text: currentText.text },
             )).text
             {
-              const end = Date.now()
-              ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }
+              const end = yield* Clock.currentTimeMillis
+              currentText.time = { start: currentText.time?.start ?? end, end }
             }
-            if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
-            yield* session.updatePart(ctx.currentText)
-            ctx.currentText = undefined
+            if (value.providerMetadata) currentText.metadata = value.providerMetadata
+            yield* session.updatePart(currentText)
+            ctx.currentText = Option.none()
             return
+          }
 
           case "finish":
             return
@@ -551,8 +585,8 @@ const layer = Layer.effect(
       })
 
       const cleanup = Effect.fn("SessionProcessor.cleanup")(function* () {
-        if (ctx.snapshot) {
-          const patch = yield* snapshot.patch(ctx.snapshot)
+        if (Option.isSome(ctx.snapshot)) {
+          const patch = yield* snapshot.patch(ctx.snapshot.value)
           if (patch.files.length) {
             yield* session.updatePart({
               id: PartID.ascending(),
@@ -563,18 +597,19 @@ const layer = Layer.effect(
               files: patch.files,
             })
           }
-          ctx.snapshot = undefined
+          ctx.snapshot = Option.none()
         }
 
-        if (ctx.currentText) {
-          const end = Date.now()
-          ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }
-          yield* session.updatePart(ctx.currentText)
-          ctx.currentText = undefined
+        if (Option.isSome(ctx.currentText)) {
+          const currentText = ctx.currentText.value
+          const end = yield* Clock.currentTimeMillis
+          currentText.time = { start: currentText.time?.start ?? end, end }
+          yield* session.updatePart(currentText)
+          ctx.currentText = Option.none()
         }
 
         for (const part of Object.values(ctx.reasoningMap)) {
-          const end = Date.now()
+          const end = yield* Clock.currentTimeMillis
           yield* session.updatePart({
             ...part,
             time: { start: part.time.start ?? end, end },
@@ -592,7 +627,7 @@ const layer = Layer.effect(
           const match = yield* readToolCall(toolCallID)
           if (!match) continue
           const part = match.part
-          const end = Date.now()
+          const end = yield* Clock.currentTimeMillis
           const metadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {}
           yield* session.updatePart({
             ...part,
@@ -606,7 +641,7 @@ const layer = Layer.effect(
           })
         }
         ctx.toolcalls = {}
-        ctx.assistantMessage.time.completed = Date.now()
+        ctx.assistantMessage.time.completed = yield* Clock.currentTimeMillis
         yield* session.updateMessage(ctx.assistantMessage)
       })
 
@@ -615,7 +650,7 @@ const layer = Layer.effect(
           "session.id": input.sessionID,
           messageID: input.assistantMessage.id,
           error: errorMessage(e),
-          stack: e instanceof Error ? e.stack : undefined,
+          ...(e instanceof Error ? { stack: e.stack } : {}),
         })
         const error = parse(e)
         if (SessionV1.ContextOverflowError.isInstance(error)) {
@@ -648,7 +683,7 @@ const layer = Layer.effect(
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
-            ctx.currentText = undefined
+            ctx.currentText = Option.none()
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
             const stream = llm.stream(streamInput)

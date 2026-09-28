@@ -131,12 +131,9 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
     baseUrl: "http://localhost:4096",
   })
   const fallback = () => own
-  const read =
-    typeof opts.client === "function"
-      ? opts.client
-      : opts.client
-        ? () => opts.client as HostPluginApi["client"]
-        : fallback
+  // A const keeps its narrowed type inside the closure below.
+  const given = opts.client
+  const read = typeof given === "function" ? given : given ? () => given : fallback
   const client = () => read()
   let depth = 0
   let size: "medium" | "large" | "xlarge" = "medium"
@@ -157,6 +154,7 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
   }
   const keymap =
     opts.keymap ??
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) TuiKeymap is the @opentui/keymap Keymap class, whose #private field no object can satisfy, and a real Keymap needs a live Renderable host; this stub implements the three methods the plugin host calls
     ({
       acquireResource(_key: symbol, setup: () => () => void) {
         const dispose = setup()

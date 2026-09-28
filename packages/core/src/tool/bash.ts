@@ -2,7 +2,7 @@ export * as BashTool from "./bash"
 
 import path from "path"
 import { ToolFailure } from "@opencode-ai/llm"
-import { Duration, Effect, Layer, Schema } from "effect"
+import { Array as Arr, Config as EffectConfig, ConfigProvider, Duration, Effect, Layer, Option, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
@@ -36,17 +36,36 @@ const StructuredOutput = Schema.Struct({
   exit: Schema.Number.pipe(Schema.optional),
   truncated: Schema.Boolean,
   timeout: Schema.Boolean.pipe(Schema.optional),
-})
+}).annotate({ identifier: "BashTool.StructuredOutput" })
 
 const Output = Schema.Struct({
   ...StructuredOutput.fields,
   output: Schema.String,
   warnings: Schema.Array(Schema.String).pipe(Schema.optional),
-})
+}).annotate({ identifier: "BashTool.Output" })
 
 type Output = typeof Output.Type
 
-const defaultShell = () => (process.platform === "win32" ? (process.env.COMSPEC ?? "cmd.exe") : "/bin/sh")
+/** The resolved working directory is not a directory when the command would start. */
+export class NotDirectoryError extends Schema.TaggedError<NotDirectoryError>()("BashTool.NotDirectoryError", {
+  path: Schema.String,
+  message: Schema.String,
+}) {}
+
+const comspec = EffectConfig.String("COMSPEC").pipe(EffectConfig.withDefault("cmd.exe"))
+
+/**
+ * Picks /bin/sh on POSIX, and COMSPEC or cmd.exe on Windows.
+ *
+ * The ambient ConfigProvider copies process.env once per process, so each call reads a fresh
+ * environment snapshot, as the former `process.env.COMSPEC` read did. Empty strings stay values.
+ * A defaulted String config cannot fail, so a ConfigError here is a defect.
+ */
+const defaultShell = Effect.suspend(() =>
+  process.platform === "win32"
+    ? comspec.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))
+    : Effect.succeed("/bin/sh"),
+).pipe(Effect.orDie)
 
 const modelOutput = (output: Output) => {
   const warnings = output.warnings?.length
@@ -83,15 +102,16 @@ const externalCommandDirectories = Effect.fn("BashTool.externalCommandDirectorie
   command: string,
   cwd: string,
 ) {
-  const directories = new Set<string>()
-  for (const token of shellTokens(command)) {
-    const value = unquote(token).replace(/[;,|&]+$/, "")
-    if (!path.isAbsolute(value)) continue
-    const resolved = yield* fs.resolve(value)
-    if (FSUtil.contains(cwd, resolved)) continue
-    directories.add(yield* fs.resolve(path.dirname(resolved)))
-  }
-  return [...directories]
+  const directories = yield* Effect.forEach(shellTokens(command), (token) =>
+    Effect.gen(function* () {
+      const value = unquote(token).replace(/[;,|&]+$/, "")
+      if (!path.isAbsolute(value)) return Option.none<string>()
+      const resolved = yield* fs.resolve(value)
+      if (FSUtil.contains(cwd, resolved)) return Option.none<string>()
+      return Option.some(yield* fs.resolve(path.dirname(resolved)))
+    }),
+  )
+  return Arr.dedupe(Arr.getSomes(directories))
 })
 
 const layer = Layer.effectDiscard(
@@ -149,12 +169,15 @@ const layer = Layer.effectDiscard(
               })
 
               if ((yield* fs.stat(target.canonical)).type !== "Directory")
-                return yield* Effect.fail(new Error(`Working directory is not a directory: ${target.canonical}`))
+                return yield* new NotDirectoryError({
+                  path: target.canonical,
+                  message: `Working directory is not a directory: ${target.canonical}`,
+                })
 
               const entries = yield* config.entries()
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
-                  .shell ?? defaultShell()
+                  .shell ?? (yield* defaultShell)
               const command = ChildProcess.make(input.command, [], {
                 cwd: target.canonical,
                 shell,
@@ -163,18 +186,19 @@ const layer = Layer.effectDiscard(
                 forceKillAfter: Duration.seconds(3),
               })
               const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
-              const result = yield* appProcess
+              const run = yield* appProcess
                 .run(command, {
                   combineOutput: true,
                   timeout: Duration.millis(timeout),
                   maxOutputBytes: MAX_CAPTURE_BYTES,
                 })
                 .pipe(
+                  Effect.map(Option.some),
                   Effect.catchTag("AppProcessError", (error) =>
-                    isTimeout(error) ? Effect.succeed(undefined) : Effect.fail(error),
+                    isTimeout(error) ? Effect.succeed(Option.none()) : Effect.fail(error),
                   ),
                 )
-              if (!result) {
+              if (Option.isNone(run)) {
                 return {
                   output: `Command exceeded timeout of ${timeout} ms. Retry with a larger timeout if the command is expected to take longer.`,
                   truncated: false,
@@ -183,13 +207,13 @@ const layer = Layer.effectDiscard(
                 }
               }
 
+              const result = run.value
               const output = result.output?.toString("utf8") || "(no output)"
-              const notice = result.outputTruncated
-                ? "[output capture truncated at the in-memory safety limit]"
-                : undefined
               return {
                 exit: result.exitCode,
-                output: notice ? `${output}\n\n${notice}` : output,
+                output: result.outputTruncated
+                  ? `${output}\n\n[output capture truncated at the in-memory safety limit]`
+                  : output,
                 truncated: result.outputTruncated === true,
                 ...(warnings.length ? { warnings } : {}),
               }

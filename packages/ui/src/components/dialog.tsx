@@ -19,22 +19,23 @@ export function Dialog(props: DialogProps) {
   return (
     <div
       data-component="dialog"
-      data-fit={props.fit ? true : undefined}
+      bool:data-fit={!!props.fit}
       data-size={props.size || "normal"}
-      data-transition={props.transition ? true : undefined}
+      bool:data-transition={!!props.transition}
     >
       <div data-slot="dialog-container">
         <Kobalte.Content
           data-slot="dialog-content"
-          data-no-header={!props.title && !props.action ? "" : undefined}
+          bool:data-no-header={!props.title && !props.action}
           classList={{
             ...props.classList,
             [props.class ?? ""]: !!props.class,
           }}
           onOpenAutoFocus={(e) => {
-            const target = e.currentTarget as HTMLElement | null
-            const autofocusEl = target?.querySelector("[autofocus]") as HTMLElement | null
-            if (autofocusEl) {
+            const target = e.currentTarget
+            if (!(target instanceof HTMLElement)) return
+            const autofocusEl = target.querySelector("[autofocus]")
+            if (autofocusEl instanceof HTMLElement) {
               e.preventDefault()
               autofocusEl.focus()
             }

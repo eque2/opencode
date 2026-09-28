@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { Effect, HashMap, MutableHashMap, Option } from "effect"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { normalizeSessionMessages } from "@/utils/session-message"
 
@@ -12,7 +13,19 @@ mock.module("@opencode-ai/session-ui/message-part", () => ({
     })),
 }))
 
-const { Timeline, TimelineRow } = await import("./rows")
+let Timeline: typeof import("./rows").Timeline
+let TimelineRow: typeof import("./rows").TimelineRow
+
+// The rows module loads after the message-part mock, so it binds to the mock.
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const rows = yield* Effect.promise(() => import("./rows"))
+      Timeline = rows.Timeline
+      TimelineRow = rows.TimelineRow
+    }),
+  ),
+)
 
 describe("current session timeline rows", () => {
   test("derives turns and tagged rows from chronological current messages", () => {
@@ -37,12 +50,12 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "busy",
       true,
@@ -73,12 +86,12 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "idle",
       true,
@@ -114,12 +127,12 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source.slice(1),
-      (messageID) => messages.get(messageID),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "idle",
       true,
@@ -190,12 +203,12 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "busy",
       true,

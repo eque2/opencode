@@ -6,6 +6,7 @@ import {
   serializeArrayParam,
   serializeObjectParam,
   serializePrimitiveParam,
+  toParamString,
 } from "./pathSerializer.gen.js"
 
 export interface PathSerializer {
@@ -14,6 +15,12 @@ export interface PathSerializer {
 }
 
 export const PATH_PARAM_RE = /\{[^{}]+\}/g
+
+/**
+ * Detects a non-null object, so its properties can be read by string key.
+ */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null
 
 export const defaultPathSerializer = ({ path, url: _url }: PathSerializer) => {
   let url = _url
@@ -48,14 +55,14 @@ export const defaultPathSerializer = ({ path, url: _url }: PathSerializer) => {
         continue
       }
 
-      if (typeof value === "object") {
+      if (isRecord(value)) {
         url = url.replace(
           match,
           serializeObjectParam({
             explode,
             name,
             style,
-            value: value as Record<string, unknown>,
+            value,
             valueOnly: true,
           }),
         )
@@ -67,13 +74,14 @@ export const defaultPathSerializer = ({ path, url: _url }: PathSerializer) => {
           match,
           `;${serializePrimitiveParam({
             name,
-            value: value as string,
+            value,
           })}`,
         )
         continue
       }
 
-      const replaceValue = encodeURIComponent(style === "label" ? `.${value as string}` : (value as string))
+      const text = toParamString(value)
+      const replaceValue = encodeURIComponent(style === "label" ? `.${text}` : text)
       url = url.replace(match, replaceValue)
     }
   }

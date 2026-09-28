@@ -1,6 +1,7 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
 import { mockOpenCodeServer } from "../utils/mock-server"
+import { readNodeProbe, writeNodeProbe } from "../utils/node-probe"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/TerminalTabSwitch"
@@ -29,7 +30,7 @@ test("keeps the terminal session alive when switching session tabs in a workspac
   const terminal = page.locator('[data-component="terminal"]')
   await expect(terminal).toBeVisible()
   await expect.poll(() => connections.length).toBe(1)
-  const connection = new URL(connections[0]!)
+  const connection = new URL(connections[0])
   expect(connection.pathname).toBe(`/api/pty/${ptyID}/connect`)
   expect(connection.searchParams.get("location[directory]")).toBe(directory)
   expect(connection.searchParams.get("ticket")).toBeNull()
@@ -48,20 +49,16 @@ test("keeps the terminal session alive when switching session tabs in a workspac
   expect(connections.length).toBe(1)
 })
 
-type Probed = HTMLElement & { __e2eProbe?: string }
-
 async function switchTab(page: Page, title: string) {
   await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
 }
 
 async function writeProbe(page: Page) {
-  await page.locator('[data-component="terminal"]').evaluate((el, probe) => {
-    ;(el as Probed).__e2eProbe = probe
-  }, PROBE)
+  await writeNodeProbe(page.locator('[data-component="terminal"]'), PROBE)
 }
 
 async function readProbe(page: Page) {
-  return page.locator('[data-component="terminal"]').evaluate((el) => (el as Probed).__e2eProbe)
+  return readNodeProbe(page.locator('[data-component="terminal"]'))
 }
 
 async function setup(page: Page) {

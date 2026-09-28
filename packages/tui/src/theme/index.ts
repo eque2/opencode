@@ -1,4 +1,5 @@
 import { SyntaxStyle, RGBA, type TerminalColors } from "@opentui/core"
+import { MutableHashSet, Option, Predicate, Result, Schema } from "effect"
 import aura from "./assets/aura.json" with { type: "json" }
 import ayu from "./assets/ayu.json" with { type: "json" }
 import carbonfox from "./assets/carbonfox.json" with { type: "json" }
@@ -110,16 +111,16 @@ export function selectedForeground(theme: Theme, bg?: RGBA): RGBA {
   return theme.background
 }
 
-type HexColor = `#${string}`
-type RefName = string
+// A hex color ("#rrggbb"), "transparent", "none", or the name of a def or theme color.
+type ColorString = string
 type Variant = {
-  dark: HexColor | RefName
-  light: HexColor | RefName
+  dark: ColorString
+  light: ColorString
 }
-type ColorValue = HexColor | RefName | Variant | RGBA
+type ColorValue = ColorString | Variant | RGBA
 export type ThemeJson = {
   $schema?: string
-  defs?: Record<string, HexColor | RefName>
+  defs?: Record<string, ColorString>
   theme: Omit<Record<ThemeColor, ColorValue>, "selectedListItemText" | "backgroundMenu"> & {
     selectedListItemText?: ColorValue
     backgroundMenu?: ColorValue
@@ -165,8 +166,8 @@ export const DEFAULT_THEMES: Record<string, ThemeJson> = {
 
 const pluginThemes: Record<string, ThemeJson> = {}
 let customThemes: Record<string, ThemeJson> = {}
-let systemTheme: ThemeJson | undefined
-const listeners = new Set<(themes: Record<string, ThemeJson>) => void>()
+let systemTheme: Option.Option<ThemeJson> = Option.none()
+const listeners = MutableHashSet.empty<(themes: Record<string, ThemeJson>) => void>()
 
 function listThemes() {
   // Priority: defaults < plugin installs < custom files < generated system.
@@ -175,10 +176,10 @@ function listThemes() {
     ...pluginThemes,
     ...customThemes,
   }
-  if (!systemTheme) return themes
+  if (Option.isNone(systemTheme)) return themes
   return {
     ...themes,
-    system: systemTheme,
+    system: systemTheme.value,
   }
 }
 
@@ -191,15 +192,16 @@ export function allThemes() {
   return listThemes()
 }
 
+// A theme is an object whose `theme` key holds an object; resolveTheme checks the colors.
 export function isTheme(theme: unknown): theme is ThemeJson {
-  if (typeof theme !== "object" || theme === null || Array.isArray(theme)) return false
-  const value = Reflect.get(theme, "theme")
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(theme) && Predicate.isObject(theme.theme)
 }
 
 export function subscribeThemes(listener: (themes: Record<string, ThemeJson>) => void) {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
+  MutableHashSet.add(listeners, listener)
+  return () => {
+    MutableHashSet.remove(listeners, listener)
+  }
 }
 
 export function setCustomThemes(themes: Record<string, ThemeJson>) {
@@ -207,7 +209,7 @@ export function setCustomThemes(themes: Record<string, ThemeJson>) {
   syncThemes()
 }
 
-export function setSystemTheme(theme: ThemeJson | undefined) {
+export function setSystemTheme(theme: Option.Option<ThemeJson>) {
   systemTheme = theme
   syncThemes()
 }
@@ -238,64 +240,139 @@ export function upsertTheme(name: string, theme: unknown) {
   return true
 }
 
-export function resolveTheme(theme: ThemeJson, mode: "dark" | "light") {
-  const defs = theme.defs ?? {}
-  function resolveColor(c: ColorValue, chain: string[] = []): RGBA {
-    if (c instanceof RGBA) return c
-    if (typeof c === "string") {
-      if (c === "transparent" || c === "none") return RGBA.fromInts(0, 0, 0, 0)
+/** A theme color that refers back to itself, or to a name that neither the defs nor the theme define. */
+export class ThemeColorReferenceError extends Schema.TaggedError<ThemeColorReferenceError>()(
+  "TuiTheme.ColorReferenceError",
+  { message: Schema.String },
+) {}
 
-      if (c.startsWith("#")) return RGBA.fromHex(c)
+/** A theme that leaves out a color that ThemeJson requires. */
+export class ThemeColorMissingError extends Schema.TaggedError<ThemeColorMissingError>()(
+  "TuiTheme.ColorMissingError",
+  { key: Schema.String, message: Schema.String },
+) {}
+
+// Theme values by key. A color reference may name any theme key, and thinkingOpacity holds a number.
+type ThemeValueLookup = Readonly<Record<string, ColorValue | number | undefined>>
+
+// The theme colors that every theme defines. selectedListItemText and backgroundMenu fall back to other colors.
+type RequiredThemeColor = Exclude<ThemeColor, "selectedListItemText" | "backgroundMenu">
+
+export function resolveTheme(
+  theme: ThemeJson,
+  mode: "dark" | "light",
+): Result.Result<Theme, ThemeColorReferenceError | ThemeColorMissingError> {
+  const defs = theme.defs ?? {}
+  const values: ThemeValueLookup = theme.theme
+  function resolveColor(
+    c: ColorValue | number,
+    chain: ReadonlyArray<string> = [],
+  ): Result.Result<RGBA, ThemeColorReferenceError> {
+    if (c instanceof RGBA) return Result.succeed(c)
+    if (typeof c === "string") {
+      if (c === "transparent" || c === "none") return Result.succeed(RGBA.fromInts(0, 0, 0, 0))
+
+      if (c.startsWith("#")) return Result.succeed(RGBA.fromHex(c))
 
       if (chain.includes(c)) {
-        throw new Error(`Circular color reference: ${[...chain, c].join(" -> ")}`)
+        return Result.fail(
+          new ThemeColorReferenceError({ message: `Circular color reference: ${[...chain, c].join(" -> ")}` }),
+        )
       }
 
-      const next = defs[c] ?? theme.theme[c as ThemeColor]
+      const next = defs[c] ?? values[c]
       if (next === undefined) {
-        throw new Error(`Color reference "${c}" not found in defs or theme`)
+        return Result.fail(new ThemeColorReferenceError({ message: `Color reference "${c}" not found in defs or theme` }))
       }
       return resolveColor(next, [...chain, c])
     }
     if (typeof c === "number") {
-      return ansiToRgba(c)
+      return Result.succeed(ansiToRgba(c))
     }
     return resolveColor(c[mode], chain)
   }
 
-  const resolved = Object.fromEntries(
-    Object.entries(theme.theme)
-      .filter(([key]) => key !== "selectedListItemText" && key !== "backgroundMenu" && key !== "thinkingOpacity")
-      .map(([key, value]) => {
-        return [key, resolveColor(value as ColorValue)]
-      }),
-  ) as Partial<Record<ThemeColor, RGBA>>
+  // Custom and plugin themes are unchecked JSON, so a required color can be absent at run time.
+  function color(key: RequiredThemeColor): Result.Result<RGBA, ThemeColorReferenceError | ThemeColorMissingError> {
+    const value = values[key]
+    if (value === undefined) {
+      return Result.fail(new ThemeColorMissingError({ key, message: `Required theme color "${key}" is missing` }))
+    }
+    return resolveColor(value)
+  }
 
-  // Handle selectedListItemText separately since it's optional
-  const hasSelectedListItemText = theme.theme.selectedListItemText !== undefined
-  if (hasSelectedListItemText) {
-    resolved.selectedListItemText = resolveColor(theme.theme.selectedListItemText!)
-  } else {
+  return Result.gen(function* () {
+    const background = yield* color("background")
+    const backgroundElement = yield* color("backgroundElement")
+
+    // Handle selectedListItemText separately since it's optional
     // Backward compatibility: if selectedListItemText is not defined, use background color
     // This preserves the current behavior for all existing themes
-    resolved.selectedListItemText = resolved.background
-  }
+    const selectedListItemText = theme.theme.selectedListItemText
 
-  // Handle backgroundMenu - optional with fallback to backgroundElement
-  if (theme.theme.backgroundMenu !== undefined) {
-    resolved.backgroundMenu = resolveColor(theme.theme.backgroundMenu)
-  } else {
-    resolved.backgroundMenu = resolved.backgroundElement
-  }
+    // Handle backgroundMenu - optional with fallback to backgroundElement
+    const backgroundMenu = theme.theme.backgroundMenu
 
-  // Handle thinkingOpacity - optional with default of 0.6
-  const thinkingOpacity = theme.theme.thinkingOpacity ?? 0.6
-
-  return {
-    ...resolved,
-    _hasSelectedListItemText: hasSelectedListItemText,
-    thinkingOpacity,
-  } as Theme
+    const resolved: Theme = {
+      primary: yield* color("primary"),
+      secondary: yield* color("secondary"),
+      accent: yield* color("accent"),
+      error: yield* color("error"),
+      warning: yield* color("warning"),
+      success: yield* color("success"),
+      info: yield* color("info"),
+      text: yield* color("text"),
+      textMuted: yield* color("textMuted"),
+      selectedListItemText:
+        selectedListItemText === undefined ? background : yield* resolveColor(selectedListItemText),
+      background,
+      backgroundPanel: yield* color("backgroundPanel"),
+      backgroundElement,
+      backgroundMenu: backgroundMenu === undefined ? backgroundElement : yield* resolveColor(backgroundMenu),
+      border: yield* color("border"),
+      borderActive: yield* color("borderActive"),
+      borderSubtle: yield* color("borderSubtle"),
+      diffAdded: yield* color("diffAdded"),
+      diffRemoved: yield* color("diffRemoved"),
+      diffContext: yield* color("diffContext"),
+      diffHunkHeader: yield* color("diffHunkHeader"),
+      diffHighlightAdded: yield* color("diffHighlightAdded"),
+      diffHighlightRemoved: yield* color("diffHighlightRemoved"),
+      diffAddedBg: yield* color("diffAddedBg"),
+      diffRemovedBg: yield* color("diffRemovedBg"),
+      diffContextBg: yield* color("diffContextBg"),
+      diffLineNumber: yield* color("diffLineNumber"),
+      diffAddedLineNumberBg: yield* color("diffAddedLineNumberBg"),
+      diffRemovedLineNumberBg: yield* color("diffRemovedLineNumberBg"),
+      markdownText: yield* color("markdownText"),
+      markdownHeading: yield* color("markdownHeading"),
+      markdownLink: yield* color("markdownLink"),
+      markdownLinkText: yield* color("markdownLinkText"),
+      markdownCode: yield* color("markdownCode"),
+      markdownBlockQuote: yield* color("markdownBlockQuote"),
+      markdownEmph: yield* color("markdownEmph"),
+      markdownStrong: yield* color("markdownStrong"),
+      markdownHorizontalRule: yield* color("markdownHorizontalRule"),
+      markdownListItem: yield* color("markdownListItem"),
+      markdownListEnumeration: yield* color("markdownListEnumeration"),
+      markdownImage: yield* color("markdownImage"),
+      markdownImageText: yield* color("markdownImageText"),
+      markdownCodeBlock: yield* color("markdownCodeBlock"),
+      syntaxComment: yield* color("syntaxComment"),
+      syntaxKeyword: yield* color("syntaxKeyword"),
+      syntaxFunction: yield* color("syntaxFunction"),
+      syntaxVariable: yield* color("syntaxVariable"),
+      syntaxString: yield* color("syntaxString"),
+      syntaxNumber: yield* color("syntaxNumber"),
+      syntaxType: yield* color("syntaxType"),
+      syntaxOperator: yield* color("syntaxOperator"),
+      syntaxPunctuation: yield* color("syntaxPunctuation"),
+      // Handle thinkingOpacity - optional with default of 0.6
+      thinkingOpacity: theme.theme.thinkingOpacity ?? 0.6,
+      _hasSelectedListItemText: selectedListItemText !== undefined,
+    }
+    return resolved
+  })
 }
 
 function ansiToRgba(code: number): RGBA {
@@ -352,7 +429,7 @@ export function tint(base: RGBA, overlay: RGBA, alpha: number): RGBA {
 
 export function terminalMode(colors: TerminalColors): "dark" | "light" | undefined {
   const bg = colors.defaultBackground
-  if (!bg) return
+  if (!bg) return undefined
   const { r, g, b } = RGBA.fromHex(bg)
   return 0.299 * r + 0.587 * g + 0.114 * b > 0.5 ? "light" : "dark"
 }

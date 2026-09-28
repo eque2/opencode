@@ -1,6 +1,5 @@
-import { Effect, Stream } from "effect"
+import { Array, Chunk, Effect, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
 import os from "os"
-import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
 import { containsPath, type InstanceContext } from "../project/instance-context"
@@ -24,31 +23,45 @@ import { BashArity } from "@/permission/arity"
 
 export { Parameters } from "./shell/prompt"
 
+class ParseError extends Schema.TaggedError<ParseError>()("ShellTool.ParseError", {
+  message: Schema.String,
+}) {}
+
+class InvalidTimeoutError extends Schema.TaggedError<InvalidTimeoutError>()("ShellTool.InvalidTimeoutError", {
+  timeout: Schema.Number,
+}) {
+  override get message() {
+    return `Invalid timeout value: ${this.timeout}. Timeout must be a positive number.`
+  }
+}
+
 const MAX_METADATA_LENGTH = 30_000
-const CWD = new Set(["cd", "chdir", "popd", "pushd", "push-location", "set-location"])
-const FILES = new Set([
-  ...CWD,
-  "rm",
-  "cp",
-  "mv",
-  "mkdir",
-  "touch",
-  "chmod",
-  "chown",
-  "cat",
-  // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
-  // already hit the entries above, and alias normalization should happen in one
-  // place later so we do not risk double-prompting.
-  "get-content",
-  "set-content",
-  "add-content",
-  "copy-item",
-  "move-item",
-  "remove-item",
-  "new-item",
-  "rename-item",
-])
-const CMD_FILES = new Set([
+const CWD: HashSet.HashSet<string> = HashSet.make("cd", "chdir", "popd", "pushd", "push-location", "set-location")
+const FILES: HashSet.HashSet<string> = HashSet.union(
+  CWD,
+  HashSet.make(
+    "rm",
+    "cp",
+    "mv",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "cat",
+    // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
+    // already hit the entries above, and alias normalization should happen in one
+    // place later so we do not risk double-prompting.
+    "get-content",
+    "set-content",
+    "add-content",
+    "copy-item",
+    "move-item",
+    "remove-item",
+    "new-item",
+    "rename-item",
+  ),
+)
+const CMD_FILES: HashSet.HashSet<string> = HashSet.make(
   "copy",
   "del",
   "dir",
@@ -61,22 +74,32 @@ const CMD_FILES = new Set([
   "rename",
   "rmdir",
   "type",
-])
-const FLAGS = new Set(["-destination", "-literalpath", "-path"])
-const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
+)
+const FLAGS: HashSet.HashSet<string> = HashSet.make("-destination", "-literalpath", "-path")
+const SWITCHES: HashSet.HashSet<string> = HashSet.make(
+  "-confirm",
+  "-debug",
+  "-force",
+  "-nonewline",
+  "-recurse",
+  "-verbose",
+  "-whatif",
+)
 
 type Part = {
   type: string
   text: string
 }
 
+// Each list keeps the first occurrence of a value, in the order the scan found it.
 type Scan = {
-  dirs: Set<string>
-  patterns: Set<string>
-  always: Set<string>
+  dirs: ReadonlyArray<string>
+  patterns: ReadonlyArray<string>
+  always: ReadonlyArray<string>
 }
 
-type Chunk = {
+// A decoded piece of the command output and its size in UTF-8 bytes.
+type OutputPiece = {
   text: string
   size: number
 }
@@ -138,37 +161,38 @@ function home(text: string) {
   return text
 }
 
-function envValue(key: string) {
-  if (process.platform !== "win32") return process.env[key]
-  const name = Object.keys(process.env).find((item) => item.toLowerCase() === key.toLowerCase())
-  return name ? process.env[name] : undefined
+// The value of a variable in the command environment, or "" when it is not set. Windows
+// variable names ignore case.
+function envValue(env: NodeJS.ProcessEnv, key: string) {
+  if (process.platform !== "win32") return env[key] ?? ""
+  const name = Object.keys(env).find((item) => item.toLowerCase() === key.toLowerCase())
+  return (name && env[name]) || ""
 }
 
+// The value of an automatic PowerShell variable, or "" for a variable the scan does not know.
 function auto(key: string, cwd: string, shell: string) {
   const name = key.toUpperCase()
   if (name === "HOME") return os.homedir()
   if (name === "PWD") return cwd
   if (name === "PSHOME") return path.dirname(shell)
+  return ""
 }
 
-function expand(text: string, cwd: string, shell: string) {
+function expand(text: string, cwd: string, shell: string, env: NodeJS.ProcessEnv) {
   const out = unquote(text)
-    .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell) || "")
+    .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(env, key))
+    .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(env, key))
+    .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell))
   return home(out)
 }
 
-function provider(text: string) {
+// The filesystem path of a PowerShell provider path, or None for another provider.
+function provider(text: string): Option.Option<string> {
   const match = text.match(/^([A-Za-z]+)::(.*)$/)
-  if (match) {
-    if (match[1].toLowerCase() !== "filesystem") return
-    return match[2]
-  }
+  if (match) return match[1].toLowerCase() === "filesystem" ? Option.some(match[2]) : Option.none()
   const prefix = text.match(/^([A-Za-z]+):(.*)$/)
-  if (!prefix) return text
-  if (prefix[1].length === 1) return text
-  return
+  if (!prefix || prefix[1].length === 1) return Option.some(text)
+  return Option.none()
 }
 
 function dynamic(text: string, ps: boolean) {
@@ -178,11 +202,12 @@ function dynamic(text: string, ps: boolean) {
   return text.includes("$")
 }
 
-function prefix(text: string) {
+// The literal part of a glob path, or None when the path starts with a glob character.
+function prefix(text: string): Option.Option<string> {
   const match = /[?*[]/.exec(text)
-  if (!match) return text
-  if (match.index === 0) return
-  return text.slice(0, match.index)
+  if (!match) return Option.some(text)
+  if (match.index === 0) return Option.none()
+  return Option.some(text.slice(0, match.index))
 }
 
 function pathArgs(list: Part[], ps: boolean, cmd = false) {
@@ -208,8 +233,8 @@ function pathArgs(list: Part[], ps: boolean, cmd = false) {
     }
     if (item.type === "command_parameter") {
       const flag = item.text.toLowerCase()
-      if (SWITCHES.has(flag)) continue
-      want = FLAGS.has(flag)
+      if (HashSet.has(SWITCHES, flag)) continue
+      want = HashSet.has(FLAGS, flag)
       continue
     }
     out.push(item.text)
@@ -255,17 +280,22 @@ function tail(text: string, maxLines: number, maxBytes: number) {
 }
 
 const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boolean) {
-  const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
-  if (!tree) throw new Error("Failed to parse command")
+  const loaded = yield* Effect.promise(() => parsers())
+  const tree = (ps ? loaded.ps : loaded.bash).parse(command)
+  if (!tree) return yield* Effect.die(new ParseError({ message: "Failed to parse command" }))
   return tree
 })
 
-const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: { command: string }) {
-  if (scan.dirs.size > 0) {
-    const directories = Array.from(scan.dirs)
-    const globs = directories.map((dir) => {
-      if (process.platform === "win32") return FSUtil.normalizePathPattern(path.join(dir, "*"))
-      return path.join(dir, "*")
+const ask = Effect.fn("ShellTool.ask")(function* (
+  fs: FSUtil.Interface,
+  ctx: Tool.Context,
+  scan: Scan,
+  input: { command: string },
+) {
+  if (scan.dirs.length > 0) {
+    const globs = yield* Effect.forEach(scan.dirs, (dir) => {
+      if (process.platform === "win32") return fs.normalizePathPattern(path.join(dir, "*"))
+      return Effect.succeed(path.join(dir, "*"))
     })
     yield* ctx.ask({
       permission: "external_directory",
@@ -273,17 +303,17 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
       always: globs,
       metadata: {
         command: input.command,
-        directories,
+        directories: scan.dirs,
         patterns: globs,
       },
     })
   }
 
-  if (scan.patterns.size === 0) return
+  if (scan.patterns.length === 0) return
   yield* ctx.ask({
     permission: ShellID.ToolID,
-    patterns: Array.from(scan.patterns),
-    always: Array.from(scan.always),
+    patterns: scan.patterns,
+    always: scan.always,
     metadata: {
       command: input.command,
     },
@@ -308,32 +338,50 @@ function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv
     detached: process.platform !== "win32",
   })
 }
-const parser = lazy(async () => {
-  const { Parser } = await import("web-tree-sitter")
-  const { default: treeWasm } = await import("web-tree-sitter/tree-sitter.wasm" as string, {
-    with: { type: "wasm" },
-  })
+const loadParsers = Effect.gen(function* () {
+  const { Parser } = yield* Effect.promise(() => import("web-tree-sitter"))
+  const { default: treeWasm } = yield* Effect.promise(
+    () =>
+      import("web-tree-sitter/tree-sitter.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
   const treePath = resolveWasm(treeWasm)
-  await Parser.init({
-    locateFile() {
-      return treePath
-    },
-  })
-  const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
-    with: { type: "wasm" },
-  })
-  const { default: psWasm } = await import("tree-sitter-powershell/tree-sitter-powershell.wasm" as string, {
-    with: { type: "wasm" },
-  })
+  yield* Effect.promise(() =>
+    Parser.init({
+      locateFile() {
+        return treePath
+      },
+    }),
+  )
+  const { default: bashWasm } = yield* Effect.promise(
+    () =>
+      import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
+  const { default: psWasm } = yield* Effect.promise(
+    () =>
+      import("tree-sitter-powershell/tree-sitter-powershell.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
   const bashPath = resolveWasm(bashWasm)
   const psPath = resolveWasm(psWasm)
-  const [bashLanguage, psLanguage] = await Promise.all([Language.load(bashPath), Language.load(psPath)])
+  const [bashLanguage, psLanguage] = yield* Effect.all(
+    [Effect.promise(() => Language.load(bashPath)), Effect.promise(() => Language.load(psPath))],
+    { concurrency: "unbounded" },
+  )
   const bash = new Parser()
   bash.setLanguage(bashLanguage)
   const ps = new Parser()
   ps.setLanguage(psLanguage)
   return { bash, ps }
 })
+
+// web-tree-sitter keeps one module per process, and Parser.init replaces it, so the parsers load
+// once per process and every shell tool shares them.
+const parsers = lazy(() => Effect.runPromise(loadParsers))
 
 export const ShellTool = Tool.define(
   ShellID.ToolID,
@@ -351,28 +399,49 @@ export const ShellTool = Tool.define(
         .lines(ChildProcess.make(shell, ["-lc", 'cygpath -w -- "$1"', "_", text]))
         .pipe(Effect.catch(() => Effect.succeed([] as string[])))
       const file = lines[0]?.trim()
-      if (!file) return
-      return FSUtil.normalizePath(file)
+      if (!file) return Option.none<string>()
+      return Option.some(yield* fs.normalizePath(file))
     })
 
     const resolvePath = Effect.fn("ShellTool.resolvePath")(function* (text: string, root: string, shell: string) {
       if (process.platform === "win32") {
         if (Shell.posix(shell) && text.startsWith("/") && FSUtil.windowsPath(text) === text) {
           const file = yield* cygpath(shell, text)
-          if (file) return file
+          if (Option.isSome(file)) return file.value
         }
-        return FSUtil.normalizePath(path.resolve(root, FSUtil.windowsPath(text)))
+        return yield* fs.normalizePath(path.resolve(root, FSUtil.windowsPath(text)))
       }
       return path.resolve(root, text)
     })
 
-    const argPath = Effect.fn("ShellTool.argPath")(function* (arg: string, cwd: string, ps: boolean, shell: string) {
-      const text = ps ? expand(arg, cwd, shell) : home(unquote(arg))
-      const file = text && prefix(text)
-      if (!file || dynamic(file, ps)) return
-      const next = ps ? provider(file) : file
-      if (!next) return
-      return yield* resolvePath(next, cwd, shell)
+    const argPath = Effect.fn("ShellTool.argPath")(function* (
+      arg: string,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+      env: NodeJS.ProcessEnv,
+    ) {
+      const text = ps ? expand(arg, cwd, shell, env) : home(unquote(arg))
+      const file = prefix(text).pipe(Option.filter((file) => file.length > 0 && !dynamic(file, ps)))
+      const next = ps ? Option.flatMap(file, provider) : file
+      if (Option.isNone(next) || !next.value) return Option.none<string>()
+      return Option.some(yield* resolvePath(next.value, cwd, shell))
+    })
+
+    // The folder of a path argument outside the instance, or None.
+    const argDir = Effect.fnUntraced(function* (
+      arg: string,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+      instance: InstanceContext,
+      env: NodeJS.ProcessEnv,
+    ) {
+      const found = yield* argPath(arg, cwd, ps, shell, env)
+      const resolved = Option.getOrUndefined(found)
+      yield* Effect.logInfo("resolved path", { arg, resolved })
+      if (Option.isNone(found) || containsPath(found.value, instance)) return Option.none<string>()
+      return Option.some((yield* fs.isDir(found.value)) ? found.value : path.dirname(found.value))
     })
 
     const collect = Effect.fn("ShellTool.collect")(function* (
@@ -381,36 +450,35 @@ export const ShellTool = Tool.define(
       ps: boolean,
       shell: string,
       instance: InstanceContext,
+      env: NodeJS.ProcessEnv,
     ) {
-      const scan: Scan = {
-        dirs: new Set<string>(),
-        patterns: new Set<string>(),
-        always: new Set<string>(),
-      }
       const shellKind = ShellID.toKind(Shell.name(shell))
 
-      for (const node of commands(root)) {
-        const command = parts(node)
-        const tokens = command.map((item) => item.text)
-        const cmd = ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]
-
-        if (cmd && (FILES.has(cmd) || (shellKind === "cmd" && CMD_FILES.has(cmd)))) {
-          for (const arg of pathArgs(command, ps, shellKind === "cmd")) {
-            const resolved = yield* argPath(arg, cwd, ps, shell)
-            yield* Effect.logInfo("resolved path", { arg, resolved })
-            if (!resolved || containsPath(resolved, instance)) continue
-            const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
-            scan.dirs.add(dir)
+      const found = yield* Effect.forEach(commands(root), (node) =>
+        Effect.gen(function* () {
+          const command = parts(node)
+          const tokens = command.map((item) => item.text)
+          const cmd = (ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]) ?? ""
+          const files = cmd && (HashSet.has(FILES, cmd) || (shellKind === "cmd" && HashSet.has(CMD_FILES, cmd)))
+          const dirs = files
+            ? yield* Effect.forEach(pathArgs(command, ps, shellKind === "cmd"), (arg) =>
+                argDir(arg, cwd, ps, shell, instance, env),
+              )
+            : []
+          const asks = tokens.length > 0 && (!cmd || !HashSet.has(CWD, cmd))
+          return {
+            dirs: Array.getSomes(dirs),
+            patterns: asks ? [source(node)] : [],
+            always: asks ? [BashArity.prefix(tokens).join(" ") + " *"] : [],
           }
-        }
+        }),
+      )
 
-        if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
-        }
-      }
-
-      return scan
+      return {
+        dirs: Array.dedupe(found.flatMap((item) => item.dirs)),
+        patterns: Array.dedupe(found.flatMap((item) => item.patterns)),
+        always: Array.dedupe(found.flatMap((item) => item.always)),
+      } satisfies Scan
     })
 
     const shellEnv = Effect.fn("ShellTool.shellEnv")(function* (ctx: Tool.Context, cwd: string) {
@@ -439,38 +507,13 @@ export const ShellTool = Tool.define(
       const keep = limits.maxBytes * 2
       let full = ""
       let last = ""
-      const list: Chunk[] = []
+      let list = Chunk.empty<OutputPiece>()
       let used = 0
       let file = ""
-      let sink: ReturnType<typeof createWriteStream> | undefined
+      let sink = Option.none<FileSystem.File>()
       let cut = false
       let expired = false
       let aborted = false
-
-      const closeSink = Effect.fnUntraced(function* () {
-        const stream = sink
-        if (!stream) return
-        sink = undefined
-        if (stream.destroyed || stream.closed) return
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve) => {
-              let settled = false
-              const done = () => {
-                if (settled) return
-                settled = true
-                stream.off("close", done)
-                stream.off("error", done)
-                stream.off("finish", done)
-                resolve()
-              }
-              stream.once("close", done)
-              stream.once("error", done)
-              stream.once("finish", done)
-              stream.end(done)
-            }),
-        ).pipe(Effect.catch(() => Effect.void))
-      })
 
       yield* ctx.metadata({
         metadata: {
@@ -478,55 +521,65 @@ export const ShellTool = Tool.define(
         },
       })
 
-      const code: number | null = yield* Effect.scoped(
+      const code: Option.Option<number> = yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* Effect.addFinalizer(closeSink)
+          // The output file lives in a child scope that is registered before the reader fiber
+          // is forked, so the scope interrupts the reader before it closes the file.
+          const sinkScope = yield* Scope.fork(yield* Scope.Scope)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
 
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
-              list.push({ text: chunk, size })
+              list = Chunk.append(list, { text: chunk, size })
               used += size
-              while (used > keep && list.length > 1) {
-                const item = list.shift()
-                if (!item) break
-                used -= item.size
+              while (used > keep && Chunk.size(list) > 1) {
+                const item = Chunk.head(list)
+                if (Option.isNone(item)) break
+                list = Chunk.drop(list, 1)
+                used -= item.value.size
                 cut = true
               }
 
               last = preview(last + chunk)
 
-              if (file) {
-                sink?.write(chunk)
-              } else {
-                full += chunk
-                if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
-                      Effect.sync(() => {
-                        file = next
-                        cut = true
-                        sink = createWriteStream(next, { flags: "a" })
-                        full = ""
-                      }),
-                    ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                        },
-                      }),
-                    ),
-                  )
-                }
-              }
-
-              return ctx.metadata({
+              const publish = ctx.metadata({
                 metadata: {
                   output: last,
                 },
               })
+
+              if (file) {
+                if (Option.isNone(sink)) return publish
+                return sink.value.writeAll(Buffer.from(chunk, "utf-8")).pipe(
+                  Effect.catch((error) => Effect.logWarning("shell output file write failed", { file, error })),
+                  Effect.andThen(publish),
+                )
+              }
+              full += chunk
+              if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
+                return trunc.write(full).pipe(
+                  Effect.tap((next) =>
+                    fs.open(next, { flag: "a" }).pipe(
+                      Scope.provide(sinkScope),
+                      Effect.map(Option.some),
+                      Effect.catch((error) =>
+                        Effect.logWarning("shell output file open failed", { file: next, error }).pipe(
+                          Effect.as(Option.none<FileSystem.File>()),
+                        ),
+                      ),
+                      Effect.map((opened) => {
+                        file = next
+                        cut = true
+                        sink = opened
+                        full = ""
+                      }),
+                    ),
+                  ),
+                  Effect.andThen(publish),
+                )
+              }
+              return publish
             }),
           )
 
@@ -541,8 +594,8 @@ export const ShellTool = Tool.define(
 
           const exit = yield* Effect.raceAll([
             handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-            abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-            timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
+            abort.pipe(Effect.as({ kind: "abort" as const })),
+            timeout.pipe(Effect.as({ kind: "timeout" as const })),
           ])
 
           if (exit.kind === "abort") {
@@ -554,7 +607,7 @@ export const ShellTool = Tool.define(
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
 
-          return exit.kind === "exit" ? exit.code : null
+          return exit.kind === "exit" ? Option.some(exit.code) : Option.none()
         }),
       ).pipe(Effect.orDie)
 
@@ -565,7 +618,10 @@ export const ShellTool = Tool.define(
         )
       }
       if (aborted) meta.push("User aborted the command")
-      const raw = list.map((item) => item.text).join("")
+      const raw = Chunk.join(
+        Chunk.map(list, (item) => item.text),
+        "",
+      )
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
       if (!file && end.cut) {
@@ -586,7 +642,8 @@ export const ShellTool = Tool.define(
         title: input.command,
         metadata: {
           output: last || preview(output),
-          exit: code,
+          // The exit code is null on the wire when the tool stopped the command.
+          exit: Option.getOrNull(code),
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
         },
@@ -597,10 +654,12 @@ export const ShellTool = Tool.define(
     return () =>
       Effect.gen(function* () {
         const cfg = yield* config.get()
-        const shell = Shell.acceptable(cfg.shell)
+        const shell = yield* Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
-        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
+        const prompt = yield* Effect.fromResult(
+          ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs),
+        ).pipe(Effect.orDie)
         yield* Effect.logInfo("shell tool using shell", { shell })
 
         return {
@@ -613,18 +672,24 @@ export const ShellTool = Tool.define(
                 ? yield* resolvePath(params.workdir, instanceCtx.directory, shell)
                 : instanceCtx.directory
               if (params.timeout !== undefined && params.timeout < 0) {
-                throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
+                return yield* Effect.die(new InvalidTimeoutError({ timeout: params.timeout }))
               }
               const timeout = params.timeout ?? defaultTimeoutMs
               const ps = Shell.ps(shell)
+              // PowerShell $env: paths expand against the environment that the command runs with.
+              const env = yield* shellEnv(ctx, cwd)
               yield* Effect.scoped(
                 Effect.gen(function* () {
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
                     Effect.sync(() => tree.delete()),
                   )
-                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
-                  if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
-                  yield* ask(ctx, scan, params)
+                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx, env)
+                  yield* ask(
+                    fs,
+                    ctx,
+                    containsPath(cwd, instanceCtx) ? scan : { ...scan, dirs: Array.dedupe([...scan.dirs, cwd]) },
+                    params,
+                  )
                 }),
               )
 
@@ -633,7 +698,7 @@ export const ShellTool = Tool.define(
                   shell,
                   command: params.command,
                   cwd,
-                  env: yield* shellEnv(ctx, cwd),
+                  env,
                   timeout,
                 },
                 ctx,

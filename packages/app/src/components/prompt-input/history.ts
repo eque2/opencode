@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { Prompt } from "@/context/prompt"
 import type { SelectedLineRange } from "@/context/file"
 
@@ -38,7 +39,7 @@ export function clonePromptParts(prompt: Prompt): Prompt {
     if (part.type === "agent") return { ...part }
     return {
       ...part,
-      selection: part.selection ? { ...part.selection } : undefined,
+      ...(part.selection ? { selection: { ...part.selection } } : {}),
     }
   })
 }
@@ -121,10 +122,10 @@ function isPromptEqual(promptA: PromptHistoryStoredEntry, promptB: PromptHistory
     const partB = entryB.prompt[i]
     if (partA.type !== partB.type) return false
     if (partA.type === "text" && partA.content !== (partB.type === "text" ? partB.content : "")) return false
-    if (partA.type === "file") {
-      if (partA.path !== (partB.type === "file" ? partB.path : "")) return false
+    if (partA.type === "file" && partB.type === "file") {
+      if (partA.path !== partB.path) return false
       const a = partA.selection
-      const b = partB.type === "file" ? partB.selection : undefined
+      const b = partB.selection
       const sameSelection =
         (!a && !b) ||
         (!!a &&
@@ -153,19 +154,19 @@ type HistoryNavInput = {
   historyIndex: number
   currentPrompt: Prompt
   currentComments: PromptHistoryComment[]
-  savedPrompt: PromptHistoryEntry | null
+  savedPrompt: Option.Option<PromptHistoryEntry>
 }
 
 type HistoryNavResult =
   | {
       handled: false
       historyIndex: number
-      savedPrompt: PromptHistoryEntry | null
+      savedPrompt: Option.Option<PromptHistoryEntry>
     }
   | {
       handled: true
       historyIndex: number
-      savedPrompt: PromptHistoryEntry | null
+      savedPrompt: Option.Option<PromptHistoryEntry>
       entry: PromptHistoryEntry
       cursor: "start" | "end"
     }
@@ -185,10 +186,10 @@ export function navigatePromptHistory(input: HistoryNavInput): HistoryNavResult 
       return {
         handled: true,
         historyIndex: 0,
-        savedPrompt: {
+        savedPrompt: Option.some({
           prompt: clonePromptParts(input.currentPrompt),
           comments: clonePromptHistoryComments(input.currentComments),
-        },
+        }),
         entry,
         cursor: "start",
       }
@@ -226,24 +227,14 @@ export function navigatePromptHistory(input: HistoryNavInput): HistoryNavResult 
   }
 
   if (input.historyIndex === 0) {
-    if (input.savedPrompt) {
-      return {
-        handled: true,
-        historyIndex: -1,
-        savedPrompt: null,
-        entry: input.savedPrompt,
-        cursor: "end",
-      }
-    }
-
     return {
       handled: true,
       historyIndex: -1,
-      savedPrompt: null,
-      entry: {
+      savedPrompt: Option.none(),
+      entry: Option.getOrElse(input.savedPrompt, () => ({
         prompt: DEFAULT_PROMPT,
         comments: [],
-      },
+      })),
       cursor: "end",
     }
   }

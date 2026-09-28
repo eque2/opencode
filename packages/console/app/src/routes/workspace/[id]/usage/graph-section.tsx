@@ -24,6 +24,8 @@ import { useI18n } from "~/context/i18n"
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
+const USAGE_PLANS = ["sub", "lite", "byok"] as const
+
 async function getCosts(workspaceID: string, year: number, month: number, tzOffset: string) {
   "use server"
   return withActor(async () => {
@@ -59,7 +61,7 @@ async function getCosts(workspaceID: string, year: number, month: number, tzOffs
           x.map((r) => ({
             ...r,
             totalCost: r.totalCost ? parseInt(r.totalCost) : 0,
-            plan: r.plan as "sub" | "lite" | "byok" | null,
+            plan: USAGE_PLANS.find((plan) => plan === r.plan) ?? null,
           })),
         ),
     )

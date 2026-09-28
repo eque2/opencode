@@ -13,6 +13,7 @@ import {
   type CliRenderer,
   type ScrollbackSurface,
 } from "@opentui/core"
+import { Effect, Option, Schema } from "effect"
 import { entryBody, entryCanStream, entryDone, entryFlags } from "./entry.body"
 import { entryColor, entryLook, entrySyntax } from "./scrollback.shared"
 import { turnSummaryCommit } from "./turn-summary"
@@ -21,6 +22,15 @@ import { type RunTheme } from "./theme"
 import type { RunDiffStyle, RunEntryBody, StreamCommit } from "./types"
 
 type ActiveBody = Exclude<RunEntryBody, { type: "none" | "structured" }>
+
+/** The retained surface did not settle its pending layout work. */
+export class ScrollbackSettleError extends Schema.TaggedError<ScrollbackSettleError>()("ScrollbackSettleError", {
+  cause: Schema.Defect(),
+}) {}
+
+function settle(surface: ScrollbackSurface) {
+  return Effect.tryPromise({ try: () => surface.settle(), catch: (cause) => new ScrollbackSettleError({ cause }) })
+}
 
 type ActiveEntry = {
   body: ActiveBody
@@ -85,7 +95,7 @@ function staticBody(commit: StreamCommit, body: RunEntryBody, spaced: number): R
 export class RunScrollbackStream {
   private tail: StreamCommit | undefined
   private rendered: StreamCommit | undefined
-  private active: ActiveEntry | undefined
+  private active: Option.Option<ActiveEntry> = Option.none()
   private diffStyle: RunDiffStyle | undefined
   private sessionID?: () => string | undefined
   private treeSitterClient: TreeSitterClient | undefined
@@ -127,12 +137,12 @@ export class RunScrollbackStream {
 
     const previous = this.theme
     this.theme = theme
-    const active = this.active
-    if (!active) {
+    if (Option.isNone(this.active)) {
       this.onThemeRelease?.(previous)
       return
     }
 
+    const active = this.active.value
     this.pendingThemes.push(previous)
 
     const style = entryLook(active.commit, theme.entry)
@@ -200,12 +210,10 @@ export class RunScrollbackStream {
     }
   }
 
-  private markRendered(commit: StreamCommit | undefined): void {
-    if (!commit) {
-      return
+  private markRendered(commit: Option.Option<StreamCommit>): void {
+    if (Option.isSome(commit)) {
+      this.rendered = commit.value
     }
-
-    this.rendered = commit
   }
 
   private writeSpacer(rows: number): void {
@@ -222,206 +230,240 @@ export class RunScrollbackStream {
     active.pendingSpacerRows = 0
   }
 
-  private async flushActive(done: boolean, trailingNewline: boolean): Promise<boolean> {
-    const active = this.active
-    if (!active) {
-      return false
-    }
-
-    if (active.body.type === "text") {
-      if (!(active.renderable instanceof TextRenderable)) {
+  private flushActive(done: boolean, trailingNewline: boolean): Effect.Effect<boolean, ScrollbackSettleError> {
+    return Effect.gen({ self: this }, function* () {
+      if (Option.isNone(this.active)) {
         return false
       }
 
-      const renderable = active.renderable
-      renderable.content = active.content
-      active.surface.render()
-      this.releasePendingThemes()
-      const targetRows = done ? active.surface.height : Math.max(active.committedRows, active.surface.height - 1)
-      if (targetRows <= active.committedRows) {
-        return false
+      const active = this.active.value
+      if (active.body.type === "text") {
+        if (!(active.renderable instanceof TextRenderable)) {
+          return false
+        }
+
+        const renderable = active.renderable
+        renderable.content = active.content
+        active.surface.render()
+        this.releasePendingThemes()
+        const targetRows = done ? active.surface.height : Math.max(active.committedRows, active.surface.height - 1)
+        if (targetRows <= active.committedRows) {
+          return false
+        }
+
+        this.flushPendingSpacer(active)
+        active.surface.commitRows(active.committedRows, targetRows, {
+          trailingNewline: done && targetRows === active.surface.height ? trailingNewline : false,
+        })
+        active.committedRows = targetRows
+        active.rendered = true
+        return true
       }
 
-      this.flushPendingSpacer(active)
-      active.surface.commitRows(active.committedRows, targetRows, {
-        trailingNewline: done && targetRows === active.surface.height ? trailingNewline : false,
-      })
-      active.committedRows = targetRows
-      active.rendered = true
-      return true
-    }
+      if (active.body.type === "code") {
+        if (!(active.renderable instanceof CodeRenderable)) {
+          return false
+        }
 
-    if (active.body.type === "code") {
-      if (!(active.renderable instanceof CodeRenderable)) {
+        const renderable = active.renderable
+        renderable.content = active.content
+        renderable.streaming = !done
+        yield* settle(active.surface)
+        this.releasePendingThemes()
+        const targetRows = done ? active.surface.height : Math.max(active.committedRows, active.surface.height - 1)
+        if (targetRows <= active.committedRows) {
+          return false
+        }
+
+        this.flushPendingSpacer(active)
+        active.surface.commitRows(active.committedRows, targetRows, {
+          trailingNewline: done && targetRows === active.surface.height ? trailingNewline : false,
+        })
+        active.committedRows = targetRows
+        active.rendered = true
+        return true
+      }
+
+      if (!(active.renderable instanceof MarkdownRenderable)) {
         return false
       }
 
       const renderable = active.renderable
       renderable.content = active.content
       renderable.streaming = !done
-      await active.surface.settle()
+      yield* settle(active.surface)
       this.releasePendingThemes()
-      const targetRows = done ? active.surface.height : Math.max(active.committedRows, active.surface.height - 1)
-      if (targetRows <= active.committedRows) {
+      const targetBlockCount = done ? renderable._blockStates.length : renderable._stableBlockCount
+      if (targetBlockCount <= active.committedBlocks) {
         return false
       }
 
-      this.flushPendingSpacer(active)
-      active.surface.commitRows(active.committedRows, targetRows, {
-        trailingNewline: done && targetRows === active.surface.height ? trailingNewline : false,
-      })
-      active.committedRows = targetRows
-      active.rendered = true
-      return true
-    }
+      if (
+        commitMarkdownBlocks({
+          surface: active.surface,
+          renderable,
+          startBlock: active.committedBlocks,
+          endBlockExclusive: targetBlockCount,
+          trailingNewline: done && targetBlockCount === renderable._blockStates.length ? trailingNewline : false,
+          beforeCommit: () => this.flushPendingSpacer(active),
+        })
+      ) {
+        active.committedBlocks = targetBlockCount
+        active.rendered = true
+        return true
+      }
 
-    if (!(active.renderable instanceof MarkdownRenderable)) {
       return false
-    }
-
-    const renderable = active.renderable
-    renderable.content = active.content
-    renderable.streaming = !done
-    await active.surface.settle()
-    this.releasePendingThemes()
-    const targetBlockCount = done ? renderable._blockStates.length : renderable._stableBlockCount
-    if (targetBlockCount <= active.committedBlocks) {
-      return false
-    }
-
-    if (
-      commitMarkdownBlocks({
-        surface: active.surface,
-        renderable,
-        startBlock: active.committedBlocks,
-        endBlockExclusive: targetBlockCount,
-        trailingNewline: done && targetBlockCount === renderable._blockStates.length ? trailingNewline : false,
-        beforeCommit: () => this.flushPendingSpacer(active),
-      })
-    ) {
-      active.committedBlocks = targetBlockCount
-      active.rendered = true
-      return true
-    }
-
-    return false
+    })
   }
 
-  private async finishActive(trailingNewline: boolean): Promise<StreamCommit | undefined> {
-    if (!this.active) {
-      return undefined
-    }
-
-    const active = this.active
-
-    try {
-      await this.flushActive(true, trailingNewline)
-    } finally {
-      if (this.active === active) {
-        this.active = undefined
+  // Flushes the rest of the active entry, then always drops and destroys its
+  // surface. The result is the entry commit when any of it reached scrollback.
+  private finishActive(trailingNewline: boolean): Effect.Effect<Option.Option<StreamCommit>, ScrollbackSettleError> {
+    return Effect.gen({ self: this }, function* () {
+      if (Option.isNone(this.active)) {
+        return Option.none<StreamCommit>()
       }
 
-      if (!active.surface.isDestroyed) {
-        active.surface.destroy()
-      }
-      this.releasePendingThemes()
-    }
+      const active = this.active.value
+      yield* this.flushActive(true, trailingNewline).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (Option.exists(this.active, (current) => current === active)) {
+              this.active = Option.none()
+            }
 
-    return active.rendered ? active.commit : undefined
+            if (!active.surface.isDestroyed) {
+              active.surface.destroy()
+            }
+            this.releasePendingThemes()
+          }),
+        ),
+      )
+
+      return active.rendered ? Option.some(active.commit) : Option.none<StreamCommit>()
+    })
   }
 
-  private async writeStreaming(commit: StreamCommit, body: ActiveBody): Promise<void> {
-    if (!this.active || !sameEntryGroup(this.active.commit, commit) || this.active.body.type !== body.type) {
-      this.markRendered(await this.finishActive(false))
-      this.active = this.createEntry(commit, body)
-    }
+  // Keeps the active entry when the commit continues it; else finishes it and
+  // opens a new entry for the commit.
+  private streamingEntry(commit: StreamCommit, body: ActiveBody): Effect.Effect<ActiveEntry, ScrollbackSettleError> {
+    return Effect.gen({ self: this }, function* () {
+      const current = this.active
+      if (
+        Option.isSome(current) &&
+        sameEntryGroup(current.value.commit, commit) &&
+        current.value.body.type === body.type
+      ) {
+        return current.value
+      }
 
-    this.active.body = body
-    this.active.commit = commit
-    this.active.content += body.content
-    await this.flushActive(false, false)
-    if (this.active.rendered) {
-      this.markRendered(this.active.commit)
-    }
+      this.markRendered(yield* this.finishActive(false))
+      const next = this.createEntry(commit, body)
+      this.active = Option.some(next)
+      return next
+    })
   }
 
-  public async append(commit: StreamCommit): Promise<void> {
-    const same = sameEntryGroup(this.tail, commit)
-    if (!same) {
-      this.markRendered(await this.finishActive(false))
-    }
+  private writeStreaming(commit: StreamCommit, body: ActiveBody): Effect.Effect<void, ScrollbackSettleError> {
+    return Effect.gen({ self: this }, function* () {
+      const active = yield* this.streamingEntry(commit, body)
+      active.body = body
+      active.commit = commit
+      active.content += body.content
+      yield* this.flushActive(false, false)
+      if (active.rendered) {
+        this.markRendered(Option.some(active.commit))
+      }
+    })
+  }
 
-    if (commit.summary) {
-      this.writeSpacer(1)
-      this.renderer.writeToScrollback(turnSummaryWriter({ ...commit.summary, theme: this.theme }))
-      this.markRendered(commit)
-      this.tail = commit
-      return
-    }
-
-    const body = entryBody(commit)
-    if (body.type === "none") {
-      if (entryDone(commit)) {
-        this.markRendered(await this.finishActive(false))
+  private appendCommit(commit: StreamCommit): Effect.Effect<void, ScrollbackSettleError> {
+    return Effect.gen({ self: this }, function* () {
+      const same = sameEntryGroup(this.tail, commit)
+      if (!same) {
+        this.markRendered(yield* this.finishActive(false))
       }
 
-      this.tail = commit
-      return
-    }
-
-    if (
-      body.type !== "structured" &&
-      (entryCanStream(commit, body) || (commit.kind === "tool" && commit.phase === "final" && body.type === "markdown"))
-    ) {
-      await this.writeStreaming(commit, body)
-      if (entryDone(commit)) {
-        this.markRendered(await this.finishActive(false))
+      if (commit.summary) {
+        this.writeSpacer(1)
+        this.renderer.writeToScrollback(turnSummaryWriter({ ...commit.summary, theme: this.theme }))
+        this.markRendered(Option.some(commit))
+        this.tail = commit
+        return
       }
+
+      const body = entryBody(commit)
+      if (body.type === "none") {
+        if (entryDone(commit)) {
+          this.markRendered(yield* this.finishActive(false))
+        }
+
+        this.tail = commit
+        return
+      }
+
+      if (
+        body.type !== "structured" &&
+        (entryCanStream(commit, body) ||
+          (commit.kind === "tool" && commit.phase === "final" && body.type === "markdown"))
+      ) {
+        yield* this.writeStreaming(commit, body)
+        if (entryDone(commit)) {
+          this.markRendered(yield* this.finishActive(false))
+        }
+        this.tail = commit
+        return
+      }
+
+      if (same) {
+        this.markRendered(yield* this.finishActive(false))
+      }
+
+      const rows = separatorRows(this.rendered, commit, body)
+      const spaced = rows || (!this.rendered && this.wrote ? 1 : 0)
+      this.writeSpacer(spaced)
+
+      this.renderer.writeToScrollback(
+        entryWriter({
+          commit,
+          body: staticBody(commit, body, spaced),
+          theme: this.theme,
+          opts: {
+            diffStyle: this.diffStyle,
+          },
+        }),
+      )
+      this.markRendered(Option.some(commit))
       this.tail = commit
-      return
-    }
+    })
+  }
 
-    if (same) {
-      this.markRendered(await this.finishActive(false))
-    }
-
-    const rows = separatorRows(this.rendered, commit, body)
-    const spaced = rows || (!this.rendered && this.wrote ? 1 : 0)
-    this.writeSpacer(spaced)
-
-    this.renderer.writeToScrollback(
-      entryWriter({
-        commit,
-        body: staticBody(commit, body, spaced),
-        theme: this.theme,
-        opts: {
-          diffStyle: this.diffStyle,
-        },
-      }),
-    )
-    this.markRendered(commit)
-    this.tail = commit
+  // footer.ts runs these through its Promise-based callback queue, and the
+  // tests await them, so the public methods run the Effects as Promises.
+  public append(commit: StreamCommit): Promise<void> {
+    return Effect.runPromise(this.appendCommit(commit))
   }
 
   private resetActive(): void {
-    if (!this.active) {
+    if (Option.isNone(this.active)) {
       return
     }
 
-    if (!this.active.surface.isDestroyed) {
-      this.active.surface.destroy()
+    if (!this.active.value.surface.isDestroyed) {
+      this.active.value.surface.destroy()
     }
 
-    this.active = undefined
+    this.active = Option.none()
     this.releasePendingThemes()
   }
 
-  public async complete(trailingNewline = false): Promise<void> {
-    this.markRendered(await this.finishActive(trailingNewline))
+  public complete(trailingNewline = false): Promise<void> {
+    return Effect.runPromise(this.finishActive(trailingNewline).pipe(Effect.map((commit) => this.markRendered(commit))))
   }
 
-  public async writeTurnSummary(input: { agent: string; model: string; duration: string }): Promise<void> {
-    await this.append(turnSummaryCommit(input))
+  public writeTurnSummary(input: { agent: string; model: string; duration: string }): Promise<void> {
+    return Effect.runPromise(this.appendCommit(turnSummaryCommit(input)))
   }
 
   public destroy(): void {

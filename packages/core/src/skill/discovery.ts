@@ -1,8 +1,9 @@
 export * as SkillDiscovery from "./discovery"
 
 import path from "path"
-import { Context, Effect, Layer, Schedule, Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { NodeCrypto } from "@effect/platform-node"
+import { Context, Crypto, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { makeGlobalNode } from "../effect/app-node"
@@ -23,6 +24,9 @@ function isSafeSegment(value: string) {
   )
 }
 
+// decodeURIComponent throws a URIError for a malformed escape; such a segment is unsafe.
+const decodeSegment = Option.liftThrowable(decodeURIComponent)
+
 function isSafeRelativePath(value: string) {
   const segments = value.split("/")
   return (
@@ -34,21 +38,7 @@ function isSafeRelativePath(value: string) {
     !URL.canParse(value) &&
     !path.posix.isAbsolute(value) &&
     !path.win32.isAbsolute(value) &&
-    segments.every((segment) => {
-      try {
-        const decoded = decodeURIComponent(segment)
-        return (
-          decoded.length > 0 &&
-          decoded !== "." &&
-          decoded !== ".." &&
-          !decoded.includes("/") &&
-          !decoded.includes("\\") &&
-          !decoded.includes("\0")
-        )
-      } catch {
-        return false
-      }
-    })
+    segments.every((segment) => Option.exists(decodeSegment(segment), isSafeSegment))
   )
 }
 
@@ -62,6 +52,12 @@ class Index extends Schema.Class<Index>("SkillDiscovery.Index")({
   skills: Schema.Array(IndexSkill),
 }) {}
 
+interface SkillFile {
+  readonly url: string
+  readonly destination: string
+  readonly file: string
+}
+
 export interface Interface {
   readonly pull: (url: string) => Effect.Effect<AbsolutePath[]>
 }
@@ -73,6 +69,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
+    const cryptoService = yield* Crypto.Crypto
     const http = (yield* HttpClient.HttpClient).pipe(
       HttpClient.retryTransient({
         retryOn: "errors-and-responses",
@@ -104,15 +101,16 @@ const layer = Layer.effect(
           HttpClientRequest.acceptJson,
           http.execute,
           Effect.flatMap(HttpClientResponse.schemaBodyJson(Index)),
+          Effect.map(Option.some),
           Effect.catch((error) =>
-            Effect.logError("failed to fetch skill index", { url: index, error }).pipe(Effect.as(undefined)),
+            Effect.logError("failed to fetch skill index", { url: index, error }).pipe(Effect.as(Option.none())),
           ),
         )
-        if (!data) return []
+        if (Option.isNone(data)) return []
 
         const sourceRoot = path.resolve(global.cache, "skills", Bun.hash(base).toString(16))
         return yield* Effect.forEach(
-          data.skills.flatMap((skill) => {
+          data.value.skills.flatMap((skill) => {
             if (!isSafeSegment(skill.name)) {
               return []
             }
@@ -127,43 +125,46 @@ const layer = Layer.effect(
 
             const skillUrl = new URL(`${encodeURIComponent(skill.name)}/`, source)
             const versionFile = path.join(root, ".opencode-version")
-            const files = skill.files.map((file) => {
-              if (!isSafeRelativePath(file)) return undefined
-              let resource: URL
-              try {
-                resource = new URL(file, skillUrl)
-              } catch {
-                return undefined
-              }
-              if (resource.origin !== source.origin) return undefined
+            // One unsafe file rejects the whole skill.
+            const files = Option.all(
+              skill.files.map((file): Option.Option<SkillFile> => {
+                if (!isSafeRelativePath(file) || !URL.canParse(file, skillUrl.href)) return Option.none()
+                const resource = new URL(file, skillUrl)
+                if (resource.origin !== source.origin) return Option.none()
 
-              const destination = path.resolve(root, file)
-              if (!FSUtil.contains(root, destination) || destination === root) return undefined
-              return {
-                url: resource.href,
-                destination,
-                file,
-              }
-            })
-            if (files.some((file) => file === undefined)) {
+                const destination = path.resolve(root, file)
+                if (!FSUtil.contains(root, destination) || destination === root) return Option.none()
+                return Option.some({
+                  url: resource.href,
+                  destination,
+                  file,
+                })
+              }),
+            )
+            if (Option.isNone(files)) {
               return []
             }
-            return [{ skill, root, versionFile, files: files as { url: string; destination: string; file: string }[] }]
+            return [{ skill, root, versionFile, files: files.value }]
           }),
           ({ skill, root, versionFile, files }) =>
             Effect.gen(function* () {
-              const version = skill.version
-              const current =
-                version === undefined
-                  ? undefined
-                  : yield* fs.readFileStringSafe(versionFile).pipe(Effect.catch(() => Effect.succeed(undefined)))
-              if (version === undefined || current === version) {
+              // Some(version) when the index names a version that the cached copy does not have.
+              const pending = yield* Option.match(Option.fromUndefinedOr(skill.version), {
+                onNone: () => Effect.succeed(Option.none<string>()),
+                onSome: (version) =>
+                  fs.readFileStringSafe(versionFile).pipe(
+                    Effect.map((current) => (current === version ? Option.none<string>() : Option.some(version))),
+                    Effect.catch(() => Effect.succeed(Option.some(version))),
+                  ),
+              })
+              if (Option.isNone(pending)) {
                 yield* Effect.forEach(files, (file) => download(file.url, file.destination), {
                   concurrency: fileConcurrency,
                   discard: true,
                 })
               } else {
-                const token = crypto.randomUUID()
+                const version = pending.value
+                const token = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
                 const staging = `${root}.tmp-${token}`
                 const backup = `${root}.old-${token}`
                 yield* Effect.gen(function* () {
@@ -208,6 +209,6 @@ const layer = Layer.effect(
       }),
     })
   }),
-)
+).pipe(Layer.provide(NodeCrypto.layer))
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [httpClient, FSUtil.node, Global.node] })

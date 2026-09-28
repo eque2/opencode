@@ -7,7 +7,8 @@ import { effectCmd } from "../effect-cmd"
 import * as Prompt from "../effect/prompt"
 import open from "open"
 
-const openBrowser = (url: string) => Effect.promise(() => open(url).catch(() => undefined))
+// Opening the browser is best effort: the URL is already printed for the user.
+const openBrowser = (url: string) => Effect.tryPromise(() => open(url)).pipe(Effect.ignore)
 
 const println = (msg: string) => Effect.sync(() => UI.println(msg))
 
@@ -88,8 +89,7 @@ const logoutEffect = Effect.fn("logout")(function* (email?: string) {
     const match = accounts.find((a) => a.email === email)
     if (!match) return yield* println("Account not found: " + email)
     yield* service.remove(match.id)
-    yield* Prompt.outro("Logged out from " + email)
-    return
+    return yield* Prompt.outro("Logged out from " + email)
   }
 
   const active = yield* service.active()
@@ -106,10 +106,10 @@ const logoutEffect = Effect.fn("logout")(function* (email?: string) {
   })
 
   const selected = yield* Prompt.select({ message: "Select account to log out", options: opts })
-  if (Option.isNone(selected)) return
+  if (Option.isNone(selected)) return yield* Effect.void
 
   yield* service.remove(selected.value.id)
-  yield* Prompt.outro("Logged out from " + selected.value.email)
+  return yield* Prompt.outro("Logged out from " + selected.value.email)
 })
 
 interface OrgChoice {
@@ -140,11 +140,11 @@ const switchEffect = Effect.fn("switch")(function* () {
   yield* Prompt.intro("Switch org")
 
   const selected = yield* Prompt.select<OrgChoice>({ message: "Select org", options: opts })
-  if (Option.isNone(selected)) return
+  if (Option.isNone(selected)) return yield* Effect.void
 
   const choice = selected.value
   yield* service.use(choice.accountID, Option.some(choice.orgID))
-  yield* Prompt.outro("Switched to " + choice.label)
+  return yield* Prompt.outro("Switched to " + choice.label)
 })
 
 const orgsEffect = Effect.fn("orgs")(function* () {
@@ -156,12 +156,15 @@ const orgsEffect = Effect.fn("orgs")(function* () {
 
   const active = yield* service.active()
 
-  for (const group of groups) {
-    for (const org of group.orgs) {
-      const isActive = isActiveOrgChoice(active, { accountID: group.account.id, orgID: org.id })
-      yield* println(formatOrgLine(group.account, org, isActive))
-    }
-  }
+  return yield* Effect.forEach(
+    groups.flatMap((group) =>
+      group.orgs.map((org) =>
+        formatOrgLine(group.account, org, isActiveOrgChoice(active, { accountID: group.account.id, orgID: org.id })),
+      ),
+    ),
+    println,
+    { discard: true },
+  )
 })
 
 const openEffect = Effect.fn("open")(function* () {
@@ -171,7 +174,7 @@ const openEffect = Effect.fn("open")(function* () {
 
   const url = active.value.url
   yield* openBrowser(url)
-  yield* Prompt.outro("Opened " + url)
+  return yield* Prompt.outro("Opened " + url)
 })
 
 export const LoginCommand = effectCmd({
@@ -260,5 +263,5 @@ export const ConsoleCommand = cmd({
         describe: "open active console account",
       })
       .demandCommand(),
-  async handler() {},
+  handler() {},
 })

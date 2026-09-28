@@ -16,9 +16,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
   const session = createMemo(() => sync.session.get(props.sessionID))
+  // Solid's Show takes the workspace or undefined, the type project.workspace.get returns.
   const workspace = () => {
     const workspaceID = session()?.workspaceID
-    if (!workspaceID) return
+    if (!workspaceID) return undefined
     return project.workspace.get(workspaceID)
   }
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))

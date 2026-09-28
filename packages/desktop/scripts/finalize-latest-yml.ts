@@ -25,6 +25,10 @@ type LatestYml = {
   releaseDate: string
 }
 
+function isComplete(entry: Partial<FileEntry> | undefined): entry is FileEntry {
+  return Boolean(entry?.url && entry.sha512 && entry.size)
+}
+
 function parse(content: string): LatestYml {
   const lines = content.split("\n")
   let version = ""
@@ -33,7 +37,7 @@ function parse(content: string): LatestYml {
   let current: Partial<FileEntry> | undefined
 
   const flush = () => {
-    if (current?.url && current.sha512 && current.size) files.push(current as FileEntry)
+    if (isComplete(current)) files.push(current)
     current = undefined
   }
 

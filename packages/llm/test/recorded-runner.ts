@@ -1,3 +1,4 @@
+/// <reference types="bun" />
 import { test, type TestOptions } from "bun:test"
 import { Effect, type Layer } from "effect"
 import { testEffect } from "./lib/effect"
@@ -39,14 +40,14 @@ export const recordedEffectGroup = <
     readonly metadata: Record<string, unknown>
     readonly recording: boolean
     readonly options: Options
-    readonly caseOptions: CaseOptions
+    readonly caseOptions: Partial<CaseOptions>
   }) => Layer.Layer<R, E>
 }) => {
   const cassettes = new Set<string>()
 
   const run = <A, E2>(
     name: string,
-    caseOptions: CaseOptions,
+    caseOptions: Partial<CaseOptions>,
     body: RecordedBody<A, E2, R>,
     testOptions?: number | TestOptions,
   ) => {
@@ -87,7 +88,7 @@ export const recordedEffectGroup = <
   }
 
   const effect = <A, E2>(name: string, body: RecordedBody<A, E2, R>, testOptions?: number | TestOptions) =>
-    run(name, {} as CaseOptions, body, testOptions)
+    run(name, {}, body, testOptions)
 
   effect.with = <A, E2>(
     name: string,

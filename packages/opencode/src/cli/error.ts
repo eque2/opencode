@@ -15,8 +15,14 @@ function configData(input: unknown, tag: string): Record<string, unknown> | unde
   return undefined
 }
 
-function stringField(input: Record<string, unknown>, key: string): string | undefined {
-  return typeof input[key] === "string" ? input[key] : undefined
+function stringField(input: unknown, key: string): string | undefined {
+  if (isRecord(input) && typeof input[key] === "string") return input[key]
+  return undefined
+}
+
+function dataStringField(input: unknown, key: string): string | undefined {
+  if (!isRecord(input)) return undefined
+  return stringField(input.data, key)
 }
 
 function configIssues(input: Record<string, unknown>): ConfigIssue[] {
@@ -46,7 +52,7 @@ export function FormatError(input: unknown): string | undefined {
 
   // MCPFailed: { name: string }
   if (NamedError.hasName(input, "MCPFailed")) {
-    const data = isRecord(input) && isRecord(input.data) ? stringField(input.data, "name") : undefined
+    const data = dataStringField(input, "name")
     return `MCP server "${data}" failed. Note, opencode does not support MCP authentication yet.`
   }
 

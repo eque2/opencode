@@ -1,9 +1,18 @@
-import { Duration, Effect, Schema } from "effect"
+import { Config, Duration, Effect, Option, Redacted, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
-export const EXA_URL = process.env.EXA_API_KEY
-  ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
-  : "https://mcp.exa.ai/mcp"
+const EXA_BASE_URL = "https://mcp.exa.ai/mcp"
+
+/** The Exa MCP URL, carrying EXA_API_KEY when the environment sets a non-empty key. */
+export const exaUrl = Config.Redacted("EXA_API_KEY").pipe(
+  Config.option,
+  Config.map(
+    Option.match({
+      onNone: () => EXA_BASE_URL,
+      onSome: (key) => `${EXA_BASE_URL}?exaApiKey=${encodeURIComponent(Redacted.value(key))}`,
+    }),
+  ),
+)
 export const PARALLEL_URL = "https://search.parallel.ai/mcp"
 
 const McpResult = Schema.Struct({
@@ -15,29 +24,30 @@ const McpResult = Schema.Struct({
       }),
     ),
   }),
-})
+}).annotate({ identifier: "McpWebSearch.Result" })
 
 const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
 const parsePayload = (payload: string) =>
   Effect.gen(function* () {
     const trimmed = payload.trim()
-    if (!trimmed.startsWith("{")) return undefined
+    if (!trimmed.startsWith("{")) return Option.none<string>()
     const data = yield* decode(trimmed)
-    return data.result.content.find((item) => item.text)?.text
+    return Option.fromUndefinedOr(data.result.content.find((item) => item.text)?.text)
   })
 
+/** The first non-empty text result in a JSON-RPC body or in its SSE data frames. */
 export const parseResponse = Effect.fn("McpWebSearch.parseResponse")(function* (body: string) {
   const trimmed = body.trim()
-  const direct = trimmed ? yield* parsePayload(trimmed) : undefined
-  if (direct) return direct
+  const direct = trimmed ? yield* parsePayload(trimmed) : Option.none<string>()
+  if (Option.isSome(direct)) return direct
 
   for (const line of body.split("\n")) {
     if (!line.startsWith("data: ")) continue
     const data = yield* parsePayload(line.substring(6))
-    if (data) return data
+    if (Option.isSome(data)) return data
   }
-  return undefined
+  return Option.none<string>()
 })
 
 export const SearchArgs = Schema.Struct({
@@ -46,14 +56,14 @@ export const SearchArgs = Schema.Struct({
   numResults: Schema.Number,
   livecrawl: Schema.String,
   contextMaxCharacters: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "McpWebSearch.SearchArgs" })
 
 export const ParallelSearchArgs = Schema.Struct({
   objective: Schema.String,
   search_queries: Schema.Array(Schema.String),
   session_id: Schema.optional(Schema.String),
   model_name: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "McpWebSearch.ParallelSearchArgs" })
 
 const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
   Schema.Struct({

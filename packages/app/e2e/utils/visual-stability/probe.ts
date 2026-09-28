@@ -14,10 +14,7 @@ type ProbeWindow<RegionName extends string = string> = Window & {
 
 const captures = new WeakMap<Page, VisualCapture>()
 
-export async function startVisualProbe<Regions extends Record<string, VisualRegionDefinition>>(
-  page: Page,
-  regions: Regions,
-) {
+export async function startVisualProbe(page: Page, regions: Record<string, VisualRegionDefinition>) {
   await stopCapture(page)
   await page.evaluate(() => {
     ;(window as ProbeWindow).__visualStabilityProbe?.stop()
@@ -197,13 +194,13 @@ export async function stopVisualProbe<RegionName extends string = string>(
 ): Promise<VisualProbeResult<RegionName>> {
   return page
     .evaluate(() => {
-      const probe = (window as ProbeWindow).__visualStabilityProbe
+      const probe = (window as ProbeWindow<RegionName>).__visualStabilityProbe
       if (!probe) throw new Error("Visual stability probe is not running")
       probe.stop()
       return { markers: probe.markers, samples: probe.samples }
     })
     .then(
-      async (trace) => ({ ...trace, frames: await stopCapture(page) }) as unknown as VisualProbeResult<RegionName>,
+      async (trace) => ({ ...trace, frames: await stopCapture(page) }),
       async (error: unknown) => {
         await stopCapture(page)
         throw error

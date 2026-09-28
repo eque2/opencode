@@ -2,7 +2,7 @@ export * as ConfigReferencePlugin from "./reference"
 
 import { define } from "../../plugin/internal"
 import path from "path"
-import { Effect } from "effect"
+import { Effect, MutableHashMap } from "effect"
 import { Config } from "../../config"
 import { ConfigReference } from "../reference"
 import { Reference } from "../../reference"
@@ -18,16 +18,24 @@ export const Plugin = define({
     const global = yield* Global.Service
     yield* ctx.reference.transform(
       Effect.fn(function* (draft) {
-        const entries = new Map<string, Reference.Source>()
+        // String keys keep insertion order, so references reach the draft in config order.
+        const entries = MutableHashMap.empty<string, Reference.Source>()
         for (const doc of (yield* config.entries()).filter(
           (entry): entry is Config.Document => entry.type === "document",
         )) {
           const directory = doc.path ? path.dirname(doc.path) : location.directory
           for (const [name, entry] of Object.entries(doc.info.references ?? {})) {
             if (!validAlias(name)) continue
-            const description = typeof entry === "string" ? undefined : entry.description
-            const hidden = typeof entry === "string" ? undefined : entry.hidden
-            entries.set(
+            // Copy only the optional fields that the entry sets.
+            const details =
+              typeof entry === "string"
+                ? {}
+                : {
+                    ...(entry.description === undefined ? {} : { description: entry.description }),
+                    ...(entry.hidden === undefined ? {} : { hidden: entry.hidden }),
+                  }
+            MutableHashMap.set(
+              entries,
               name,
               local(entry)
                 ? Reference.LocalSource.make({
@@ -35,15 +43,13 @@ export const Plugin = define({
                     path: AbsolutePath.make(
                       localPath(directory, global.home, typeof entry === "string" ? entry : entry.path),
                     ),
-                    ...(description === undefined ? {} : { description }),
-                    ...(hidden === undefined ? {} : { hidden }),
+                    ...details,
                   })
                 : Reference.GitSource.make({
                     type: "git",
                     repository: typeof entry === "string" ? entry : entry.repository,
                     ...(entry.branch === undefined ? {} : { branch: entry.branch }),
-                    ...(description === undefined ? {} : { description }),
-                    ...(hidden === undefined ? {} : { hidden }),
+                    ...details,
                   }),
             )
           }
@@ -55,7 +61,7 @@ export const Plugin = define({
 })
 
 function validAlias(name: string) {
-  return name.length > 0 && !/[\/\s`,]/.test(name)
+  return name.length > 0 && !/[/\s`,]/.test(name)
 }
 
 function local(entry: ConfigReference.Entry): entry is string | ConfigReference.Local {

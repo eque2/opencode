@@ -2,7 +2,7 @@ export * as SkillV2 from "./skill"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Schema, Types } from "effect"
 import { Skill } from "@opencode-ai/schema/skill"
 import { AgentV2 } from "./agent"
 import { ConfigMarkdown } from "./config/markdown"
@@ -34,8 +34,29 @@ const Frontmatter = Schema.Struct({
   name: Schema.String.pipe(Schema.optional),
   description: Schema.String.pipe(Schema.optional),
   slash: Schema.Boolean.pipe(Schema.optional),
-})
+}).annotate({ identifier: "SkillV2.Frontmatter" })
 const decodeFrontmatter = Schema.decodeUnknownOption(Frontmatter)
+
+/** Parses one skill markdown file. A file without frontmatter or a usable name is not a skill. */
+const parseSkill = (directory: string, filepath: string, content: string): Option.Option<Info> =>
+  Option.gen(function* () {
+    const markdown = yield* Option.fromUndefinedOr(ConfigMarkdown.parseOption(content))
+    const frontmatter = yield* decodeFrontmatter(markdown.data)
+    // Only a markdown file at the root of the directory takes its name from the file name.
+    const name = yield* Option.fromUndefinedOr(frontmatter.name).pipe(
+      Option.orElse(() =>
+        path.dirname(filepath) === directory ? Option.some(path.basename(filepath, ".md")) : Option.none(),
+      ),
+      Option.filter((name) => name.length > 0),
+    )
+    return {
+      name,
+      description: frontmatter.description,
+      slash: frontmatter.slash,
+      location: AbsolutePath.make(filepath),
+      content: markdown.content,
+    }
+  })
 
 export type Data = {
   sources: Types.DeepMutable<Source>[]
@@ -70,52 +91,46 @@ const layer = Layer.effect(
       }),
     })
 
+    const loadDirectory = Effect.fnUntraced(function* (directory: string) {
+      const files = yield* fs
+        .scan("{*.md,**/SKILL.md}", { cwd: directory, absolute: true, include: "file", symlink: true, dot: true })
+        .pipe(Effect.catch(() => Effect.succeed([] as string[])))
+      const skills = yield* Effect.forEach(files.toSorted(), (filepath) =>
+        fs.readFileStringSafe(filepath).pipe(
+          Effect.map((content) =>
+            Option.fromUndefinedOr(content).pipe(
+              Option.filter((content) => content.length > 0),
+              Option.flatMap((content) => parseSkill(directory, filepath, content)),
+            ),
+          ),
+          Effect.catch(() => Effect.succeedNone),
+        ),
+      )
+      return skills.flatMap(Option.toArray)
+    })
+
     const load = Effect.fn("SkillV2.load")(function* (source: Source) {
-      const skills: Info[] = []
       if (source.type === "embedded") return [source.skill]
       const directories = source.type === "directory" ? [source.path] : yield* discovery.pull(source.url)
-      for (const directory of directories) {
-        const files = yield* fs
-          .scan("{*.md,**/SKILL.md}", { cwd: directory, absolute: true, include: "file", symlink: true, dot: true })
-          .pipe(Effect.catch(() => Effect.succeed([] as string[])))
-        for (const filepath of files.toSorted()) {
-          const content = yield* fs.readFileStringSafe(filepath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-          if (!content) continue
-          const markdown = ConfigMarkdown.parseOption(content)
-          if (!markdown) continue
-          const frontmatter = decodeFrontmatter(markdown.data).valueOrUndefined
-          if (!frontmatter) continue
-          const name =
-            frontmatter.name !== undefined
-              ? frontmatter.name
-              : path.dirname(filepath) === directory
-                ? path.basename(filepath, ".md")
-                : undefined
-          if (!name) continue
-          skills.push({
-            name,
-            description: frontmatter.description,
-            slash: frontmatter.slash,
-            location: AbsolutePath.make(filepath),
-            content: markdown.content,
-          })
-        }
-      }
-      return skills
+      const skills = yield* Effect.forEach(directories, (directory) => loadDirectory(directory))
+      return skills.flat()
     })
 
     // QUESTION(Dax): Should local skill sources invalidate on filesystem watch
     // events, following the reload policy chosen for other context sources?
-    const cache = new Map<string, Info[]>()
+    const cache = MutableHashMap.empty<string, Info[]>()
     const list = Effect.fn("SkillV2.list")(function* () {
-      const skills = new Map<string, Info>()
+      // MutableHashMap iterates in insertion order, so a later skill with the same name
+      // replaces the value but keeps the position of the first one.
+      const skills = MutableHashMap.empty<string, Info>()
       for (const source of state.get().sources) {
         const key = Source.key(source)
-        const loaded = cache.get(key) ?? (yield* load(source))
-        cache.set(key, loaded)
-        for (const skill of loaded) skills.set(skill.name, skill)
+        const cached = MutableHashMap.get(cache, key)
+        const loaded = Option.isSome(cached) ? cached.value : yield* load(source)
+        MutableHashMap.set(cache, key, loaded)
+        for (const skill of loaded) MutableHashMap.set(skills, skill.name, skill)
       }
-      return Array.from(skills.values())
+      return Array.from(MutableHashMap.values(skills))
     })
 
     return Service.of({

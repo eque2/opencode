@@ -1,4 +1,5 @@
 import { type SelectedLineRange } from "@pierre/diffs"
+import { Option, Predicate, Result } from "effect"
 
 type SelectionKey = "ui.sessionReview.selection.line" | "ui.sessionReview.selection.lines"
 type SelectionVars = Record<string, string | number>
@@ -18,7 +19,7 @@ export function previewSelectedLines(source: string, range: LineSpan) {
   const start = Math.max(1, Math.min(range.start, range.end))
   const end = Math.max(range.start, range.end)
   const lines = source.split("\n").slice(start - 1, end)
-  if (lines.length === 0) return
+  if (lines.length === 0) return undefined
   return lines.slice(0, 2).join("\n")
 }
 
@@ -53,7 +54,7 @@ export function lineInSelectedRange(range: SelectedLineRange | null | undefined,
 
 export function isSingleLineSelection(range: SelectedLineRange | null) {
   if (!range) return false
-  return range.start === range.end && (range.endSide == null || range.endSide === range.side)
+  return range.start === range.end && (Predicate.isNullish(range.endSide) || range.endSide === range.side)
 }
 
 export function toRange(source: Range | StaticRange): Range {
@@ -64,35 +65,48 @@ export function toRange(source: Range | StaticRange): Range {
   return range
 }
 
+type SelectionOwner = ShadowRoot & { getSelection: () => Selection | null }
+
+// ShadowRoot.getSelection is a non-standard Chromium method, so lib.dom does not declare it.
+function ownsSelection(root: ShadowRoot): root is SelectionOwner {
+  return Predicate.hasProperty(root, "getSelection") && typeof root.getSelection === "function"
+}
+
+export function readShadowSelection(root: ShadowRoot): Option.Option<Selection> {
+  const own = ownsSelection(root) ? Option.fromNullOr(root.getSelection()) : Option.none<Selection>()
+  return Option.orElse(own, () => Option.fromNullOr(window.getSelection()))
+}
+
 export function restoreShadowTextSelection(root: ShadowRoot | undefined, range: Range | undefined) {
   if (!root || !range) return
 
   requestAnimationFrame(() => {
-    const selection =
-      (root as unknown as { getSelection?: () => Selection | null }).getSelection?.() ?? window.getSelection()
-    if (!selection) return
+    const selection = readShadowSelection(root)
+    if (Option.isNone(selection)) return
 
-    try {
-      selection.removeAllRanges()
-      selection.addRange(range)
-    } catch {}
+    // addRange throws when the saved range no longer fits the document. The restore is best effort, so the
+    // failure is dropped, as the old empty catch block did.
+    Result.try(() => {
+      selection.value.removeAllRanges()
+      selection.value.addRange(range)
+    })
   })
 }
 
 export function createLineNumberSelectionBridge() {
   let mode: PointerMode = "none"
-  let line: number | undefined
+  let line: Option.Option<number> = Option.none()
   let moved = false
   let pending = false
 
   const clear = () => {
     mode = "none"
-    line = undefined
+    line = Option.none()
     moved = false
   }
 
   return {
-    begin(numberColumn: boolean, next: number | undefined) {
+    begin(numberColumn: boolean, next: Option.Option<number>) {
       if (!numberColumn) {
         mode = "text"
         return
@@ -102,7 +116,7 @@ export function createLineNumberSelectionBridge() {
       line = next
       moved = false
     },
-    track(buttons: number, next: number | undefined) {
+    track(buttons: number, next: Option.Option<number>) {
       if (mode !== "numbers") return false
 
       if ((buttons & 1) === 0) {
@@ -110,7 +124,7 @@ export function createLineNumberSelectionBridge() {
         return true
       }
 
-      if (next !== undefined && line !== undefined && next !== line) moved = true
+      if (Option.isSome(next) && Option.isSome(line) && next.value !== line.value) moved = true
       return true
     },
     finish() {
@@ -119,8 +133,8 @@ export function createLineNumberSelectionBridge() {
       clear()
       return current
     },
-    consume(range: SelectedLineRange | null) {
-      const result = pending && !isSingleLineSelection(range)
+    consume(range: Option.Option<SelectedLineRange>) {
+      const result = pending && !Option.exists(range, isSingleLineSelection)
       pending = false
       return result
     },

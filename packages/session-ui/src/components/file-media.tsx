@@ -2,6 +2,7 @@ import type { FileContent } from "@opencode-ai/sdk/v2"
 import { createEffect, createMemo, Match, on, onCleanup, Show, Switch, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
+import { Option } from "effect"
 import {
   dataUrlFromMediaValue,
   hasMediaValue,
@@ -9,6 +10,7 @@ import {
   mediaKindFromPath,
   normalizeMimeType,
   svgTextFromValue,
+  type MediaKind,
 } from "../pierre/media"
 
 export type FileMediaOptions = {
@@ -23,6 +25,16 @@ export type FileMediaOptions = {
   onError?: (ctx: { kind: "image" | "audio" | "svg" }) => void
 }
 
+type MediaView = MediaKind | "none"
+
+type RemoteRequest = {
+  key: string
+  kind: "image" | "audio"
+  path: string
+  readFile: (path: string) => Promise<FileContent | undefined>
+  onError: FileMediaOptions["onError"]
+}
+
 function mediaValue(cfg: FileMediaOptions, mode: "image" | "audio") {
   if (cfg.current !== undefined) return cfg.current
   if (mode === "image") return cfg.after ?? cfg.before
@@ -32,24 +44,24 @@ function mediaValue(cfg: FileMediaOptions, mode: "image" | "audio") {
 export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX.Element }) {
   const i18n = useI18n()
   const [remote, setRemote] = createStore<{
-    key?: string
-    loading?: boolean
-    error?: boolean
-    src?: string
-    mime?: string
-  }>({})
+    key: Option.Option<string>
+    loading: boolean
+    error: boolean
+    src: Option.Option<string>
+    mime: Option.Option<string>
+  }>({ key: Option.none(), loading: false, error: false, src: Option.none(), mime: Option.none() })
   const cfg = () => props.media
-  const kind = createMemo(() => {
+  const kind = createMemo((): MediaView => {
     const media = cfg()
-    if (!media || media.mode === "off") return
-    return mediaKindFromPath(media.path)
+    if (!media || media.mode === "off") return "none"
+    return Option.getOrElse(mediaKindFromPath(media.path), (): MediaView => "none")
   })
 
   const isBinary = createMemo(() => {
     const media = cfg()
     if (!media || media.mode === "off") return false
-    if (kind()) return false
-    return isBinaryContent(media.current as any)
+    if (kind() !== "none") return false
+    return isBinaryContent(media.current)
   })
 
   const onLoad = () => props.media?.onLoad?.()
@@ -57,72 +69,79 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
   const deleted = createMemo(() => {
     const media = cfg()
     const k = kind()
-    if (!media || !k) return false
+    if (!media || k === "none") return false
     if (media.deleted) return true
     if (k === "svg") return false
     if (media.current !== undefined) return false
-    return !hasMediaValue(media.after as any) && hasMediaValue(media.before as any)
+    return !hasMediaValue(media.after) && hasMediaValue(media.before)
   })
 
-  const direct = createMemo(() => {
+  const direct = createMemo((): Option.Option<string> => {
     const media = cfg()
     const k = kind()
-    if (!media || (k !== "image" && k !== "audio")) return
+    if (!media || (k !== "image" && k !== "audio")) return Option.none()
     return dataUrlFromMediaValue(mediaValue(media, k), k)
   })
 
-  const request = createMemo(() => {
+  const request = createMemo((): Option.Option<RemoteRequest> => {
     const media = cfg()
     const k = kind()
-    if (!media || (k !== "image" && k !== "audio")) return
-    if (media.current !== undefined) return
-    if (deleted()) return
-    if (direct()) return
-    if (!media.path || !media.readFile) return
+    if (!media || (k !== "image" && k !== "audio")) return Option.none()
+    if (media.current !== undefined) return Option.none()
+    if (deleted()) return Option.none()
+    if (Option.isSome(direct())) return Option.none()
+    if (!media.path || !media.readFile) return Option.none()
 
-    return {
+    return Option.some({
       key: `${k}:${media.path}`,
       kind: k,
       path: media.path,
       readFile: media.readFile,
       onError: media.onError,
-    }
+    })
   })
 
+  // True when the remote store holds the load or the result for this request.
+  const remoteFor = (input: RemoteRequest) => Option.contains(remote.key, input.key)
+
   createEffect(() => {
-    const input = request()
-    if (!input) {
-      setRemote({ key: undefined, loading: false, error: false, src: undefined, mime: undefined })
+    const next = request()
+    if (Option.isNone(next)) {
+      setRemote({ key: Option.none(), loading: false, error: false, src: Option.none(), mime: Option.none() })
       return
     }
+    const input = next.value
 
     let active = true
     // Keep the previous media visible while re-reading the same file (e.g. a vcs
     // diff refresh); only a key change resets to the loading placeholder.
-    if (untrack(() => remote.key) === input.key) setRemote({ loading: true, error: false })
-    else setRemote({ key: input.key, loading: true, error: false, src: undefined, mime: undefined })
+    if (untrack(() => remoteFor(input))) setRemote({ loading: true, error: false })
+    else setRemote({ key: Option.some(input.key), loading: true, error: false, src: Option.none(), mime: Option.none() })
     void input.readFile(input.path).then(
       (result) => {
         if (!active) return
-        const src = dataUrlFromMediaValue(result as any, input.kind)
-        if (!src) {
+        const src = dataUrlFromMediaValue(result, input.kind)
+        if (Option.isNone(src)) {
           input.onError?.({ kind: input.kind })
-          setRemote({ key: input.key, loading: false, error: true, src: undefined, mime: undefined })
+          setRemote({ key: Option.some(input.key), loading: false, error: true, src: Option.none(), mime: Option.none() })
           return
         }
 
         setRemote({
-          key: input.key,
+          key: Option.some(input.key),
           loading: false,
           error: false,
           src,
-          mime: input.kind === "audio" ? normalizeMimeType(result?.mimeType) : undefined,
+          mime:
+            input.kind === "audio"
+              ? Option.fromNullishOr(result?.mimeType).pipe(Option.flatMap(normalizeMimeType))
+              : Option.none(),
         })
       },
       () => {
         if (!active) return
         input.onError?.({ kind: input.kind })
-        setRemote({ key: input.key, loading: false, error: true, src: undefined, mime: undefined })
+        setRemote({ key: Option.some(input.key), loading: false, error: true, src: Option.none(), mime: Option.none() })
       },
     )
 
@@ -131,49 +150,49 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
     })
   })
 
-  const src = createMemo(() => {
+  const src = createMemo((): Option.Option<string> => {
     const input = request()
-    if (!input || remote.key !== input.key || remote.error) return direct()
-    return direct() ?? remote.src
+    if (Option.isNone(input) || !remoteFor(input.value) || remote.error) return direct()
+    return Option.orElse(direct(), () => remote.src)
   })
   const status = createMemo(() => {
-    if (direct()) return "ready" as const
+    if (Option.isSome(direct())) return "ready" as const
     const input = request()
-    if (!input) return "idle" as const
-    if (remote.key !== input.key || remote.loading) return "loading" as const
+    if (Option.isNone(input)) return "idle" as const
+    if (!remoteFor(input.value) || remote.loading) return "loading" as const
     if (remote.error) return "error" as const
-    if (src()) return "ready" as const
+    if (Option.isSome(src())) return "ready" as const
     return "idle" as const
   })
-  const audioMime = createMemo(() => {
+  const audioMime = createMemo((): Option.Option<string> => {
     const input = request()
-    if (!input || remote.key !== input.key) return
+    if (Option.isNone(input) || !remoteFor(input.value)) return Option.none()
     return remote.mime
   })
 
-  const svgSource = createMemo(() => {
+  const svgSource = createMemo((): Option.Option<string> => {
     const media = cfg()
-    if (!media || kind() !== "svg") return
-    return svgTextFromValue(media.current as any)
+    if (!media || kind() !== "svg") return Option.none()
+    return svgTextFromValue(media.current)
   })
-  const svgSrc = createMemo(() => {
+  const svgSrc = createMemo((): Option.Option<string> => {
     const media = cfg()
-    if (!media || kind() !== "svg") return
-    return dataUrlFromMediaValue(media.current as any, "svg")
+    if (!media || kind() !== "svg") return Option.none()
+    return dataUrlFromMediaValue(media.current, "svg")
   })
-  const svgInvalid = createMemo(() => {
+  const svgInvalid = createMemo((): Option.Option<readonly [string | undefined, unknown]> => {
     const media = cfg()
-    if (!media || kind() !== "svg") return
-    if (svgSource() !== undefined) return
-    if (!hasMediaValue(media.current as any)) return
-    return [media.path, media.current] as const
+    if (!media || kind() !== "svg") return Option.none()
+    if (Option.isSome(svgSource())) return Option.none()
+    if (!hasMediaValue(media.current)) return Option.none()
+    return Option.some([media.path, media.current] as const)
   })
 
   createEffect(
     on(
       svgInvalid,
       (value) => {
-        if (!value) return
+        if (Option.isNone(value)) return
         cfg()?.onError?.({ kind: "svg" })
       },
       { defer: true },
@@ -187,7 +206,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
     <Switch>
       <Match when={kind() === "image" || kind() === "audio"}>
         <Show
-          when={src()}
+          when={Option.getOrUndefined(src())}
           fallback={(() => {
             const media = cfg()
             const k = kind()
@@ -241,7 +260,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
             return (
               <div class="flex justify-center bg-background-stronger px-6 py-4">
                 <audio class="w-full max-w-xl" controls preload="metadata" onLoadedMetadata={onLoad}>
-                  <source src={value()} type={audioMime()} />
+                  <source src={value()} type={Option.getOrUndefined(audioMime())} />
                 </audio>
               </div>
             )
@@ -250,12 +269,12 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
       </Match>
       <Match when={kind() === "svg"}>
         {(() => {
-          if (svgSource() === undefined && svgSrc() == null) return props.fallback()
+          if (Option.isNone(svgSource()) && Option.isNone(svgSrc())) return props.fallback()
 
           return (
             <div class="flex flex-col gap-4 px-6 py-4">
-              <Show when={svgSource() !== undefined}>{props.fallback()}</Show>
-              <Show when={svgSrc()}>
+              <Show when={Option.isSome(svgSource())}>{props.fallback()}</Show>
+              <Show when={Option.getOrUndefined(svgSrc())}>
                 {(value) => (
                   <div class="flex justify-center">
                     <img

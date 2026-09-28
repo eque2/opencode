@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import fs from "fs/promises"
 import path from "path"
 import yargs from "yargs"
@@ -7,12 +9,21 @@ import { tmpdir } from "../../fixture/fixture"
 import { TuiThreadCommand, resolveThreadDirectory } from "../../../src/cli/cmd/tui"
 import { cliIt } from "../../lib/cli-process"
 
+// Resolve the thread directory with the real filesystem service.
+function threadDirectory(project?: string, envPWD?: string, cwd?: string) {
+  return Effect.runPromise(
+    resolveThreadDirectory(project, envPWD, cwd).pipe(Effect.provide(LayerNode.compile(FSUtil.node))),
+  )
+}
+
 describe("tui thread", () => {
   test("loads the TUI integration lazily", async () => {
     const source = await Bun.file(new URL("../../../src/cli/cmd/tui.ts", import.meta.url)).text()
 
-    expect(source).toContain('await import("../tui/layer")')
-    expect(source).toMatch(/await import\(["']@\/plugin\/tui\/runtime["']\)/)
+    expect(source).toContain('import("../tui/layer")')
+    expect(source).toMatch(/import\(["']@\/plugin\/tui\/runtime["']\)/)
+    expect(source).not.toMatch(/from ["']\.\.\/tui\/layer["']/)
+    expect(source).not.toMatch(/from ["']@\/plugin\/tui\/runtime["']/)
     expect(source).not.toContain('import("./app")')
   })
 
@@ -29,7 +40,7 @@ describe("tui thread", () => {
 
     try {
       await fs.symlink(tmp.path, link, type)
-      expect(resolveThreadDirectory(project, link, tmp.path)).toBe(tmp.path)
+      expect(await threadDirectory(project, link, tmp.path)).toBe(tmp.path)
     } finally {
       await fs.rm(link, { recursive: true, force: true }).catch(() => undefined)
     }
@@ -47,8 +58,8 @@ describe("tui thread", () => {
     await using pwd = await tmpdir({ git: true })
     await using cwd = await tmpdir({ git: true })
 
-    expect(resolveThreadDirectory(".", pwd.path, cwd.path)).toBe(pwd.path)
-    expect(resolveThreadDirectory(undefined, pwd.path, cwd.path)).toBe(cwd.path)
+    expect(await threadDirectory(".", pwd.path, cwd.path)).toBe(pwd.path)
+    expect(await threadDirectory(undefined, pwd.path, cwd.path)).toBe(cwd.path)
   })
 
   test("parses supported --no-replay forms", async () => {

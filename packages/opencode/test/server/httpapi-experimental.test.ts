@@ -1,6 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Fiber, Layer } from "effect"
+import { Effect, Fiber, Layer, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
@@ -14,7 +14,9 @@ import { Worktree } from "../../src/worktree"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { takeGlobalBusEvent } from "./global-bus"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestFailure } from "../fixture/test-failure"
 
 const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Database.node])), httpApiLayer))
 const testWorktreeMutations = process.platform === "win32" ? it.instance.skip : it.instance
@@ -27,27 +29,25 @@ function createSession(input?: Session.CreateInput) {
   return Session.use.create(input)
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
-  return response.json.pipe(Effect.map((value) => value as T))
+function json(response: HttpClientResponse.HttpClientResponse) {
+  return response.json
 }
 
 function waitReady(input: { directory?: string; name?: string }) {
   return Effect.gen(function* () {
-    const ready = yield* Deferred.make<void>()
-    const on = (event: GlobalEvent) => {
-      if (event.payload.type !== Worktree.Event.Ready.type) return
-      if (input.directory && event.directory !== input.directory) return
-      if (input.name && event.payload.properties.name !== input.name) return
-      Deferred.doneUnsafe(ready, Effect.void)
+    const matches = (event: GlobalEvent) => {
+      if (event.payload.type !== Worktree.Event.Ready.type) return false
+      if (input.directory && event.directory !== input.directory) return false
+      if (input.name && event.payload.properties.name !== input.name) return false
+      return true
     }
 
-    GlobalBus.on("event", on)
-    yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
-
-    return yield* Deferred.await(ready).pipe(
+    const subscription = yield* GlobalBus.subscribe
+    return yield* takeGlobalBusEvent(subscription, matches).pipe(
+      Effect.asVoid,
       Effect.timeoutOrElse({
         duration: "10 seconds",
-        orElse: () => Effect.fail(new Error("timed out waiting for worktree.ready")),
+        orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for worktree.ready" })),
       }),
     )
   })
@@ -103,7 +103,7 @@ function withCreatedWorktree(
   const headers = { "content-type": "application/json" }
   return Effect.acquireUseRelease(
     Effect.gen(function* () {
-      const ready = yield* waitReady({ name }).pipe(Effect.forkScoped)
+      const ready = yield* waitReady({ name }).pipe(Effect.forkScoped({ startImmediately: true }))
       const created = yield* request(ExperimentalPaths.worktree, directory, {
         method: "POST",
         headers,
@@ -111,7 +111,7 @@ function withCreatedWorktree(
       })
 
       expect(created.status).toBe(200)
-      const info = yield* json<Worktree.Info>(created)
+      const info = yield* HttpClientResponse.schemaBodyJson(Worktree.Info)(created)
       expect(info).toMatchObject({ name, branch: "opencode/api-test" })
       yield* Fiber.join(ready)
       return info
@@ -124,9 +124,11 @@ function withCreatedWorktree(
           headers,
           body: JSON.stringify({ directory: info.directory }),
         })
-        if (removed.status !== 200) return yield* Effect.fail(new Error(`failed to remove worktree: ${removed.status}`))
-        const ok = yield* json<boolean>(removed)
-        if (!ok) return yield* Effect.fail(new Error(`failed to remove worktree ${info.directory}`))
+        if (removed.status !== 200)
+          return yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
+        const ok = yield* HttpClientResponse.schemaBodyJson(Schema.Boolean)(removed)
+        if (!ok) return yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
+        return yield* Effect.void
       }),
   )
 }
@@ -165,7 +167,7 @@ describe("experimental HttpApi", () => {
         expect(yield* json(consoleOrgs)).toEqual({ orgs: [] })
 
         expect(toolList.status).toBe(200)
-        expect(yield* json<unknown[]>(toolList)).toContainEqual(
+        expect(yield* json(toolList)).toContainEqual(
           expect.objectContaining({
             id: "bash",
             description: expect.any(String),
@@ -249,7 +251,7 @@ describe("experimental HttpApi", () => {
         expect(page.status).toBe(200)
         expect(page.headers["x-next-cursor"]).toBeTruthy()
 
-        const body = yield* json<Session.GlobalInfo[]>(page)
+        const body = yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(page)
         expect(body.map((session) => session.id)).toEqual([second.id])
         expect(body[0].project?.id).toBe(second.projectID)
 
@@ -262,7 +264,11 @@ describe("experimental HttpApi", () => {
           tmp.directory,
         )
         expect(next.status).toBe(200)
-        expect((yield* json<Session.GlobalInfo[]>(next)).map((session) => session.id)).toContain(first.id)
+        expect(
+          (yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(next)).map(
+            (session) => session.id,
+          ),
+        ).toContain(first.id)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

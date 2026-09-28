@@ -2,20 +2,28 @@ import { beforeAll, describe, expect, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { pathToFileURL } from "url"
-import { createTestKeymap } from "@opentui/keymap/testing"
+import { createTestRenderer } from "@opentui/core/testing"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import type { TuiAttentionSoundPack } from "@opencode-ai/plugin/tui"
 import { tmpdir } from "../../fixture/fixture"
 import { createTuiPluginApi } from "../../fixture/tui-plugin"
 import { createTuiResolvedConfig, mockTuiRuntime } from "../../fixture/tui-runtime"
 import { Global } from "@opencode-ai/core/global"
 import { TuiConfig } from "../../../src/config/tui"
-import { Filesystem } from "@/util/filesystem"
 import { PluginLoader } from "../../../src/plugin/loader"
+import { Schema } from "effect"
 
 const { allThemes, addTheme } = await import("@opencode-ai/tui/context/theme")
 const { TuiPluginRuntime } = await import("../../../src/plugin/tui/runtime")
 
 type Row = Record<string, unknown>
+
+const decodeValueExport = Schema.decodeUnknownSync(Schema.Struct({ value: Schema.String }))
+
+// The fixture keymap with some methods replaced by test doubles.
+function keymapWith<Methods extends object>(methods: Methods) {
+  return Object.assign(createTuiPluginApi().keymap, methods)
+}
 
 test("does not retry permanent file plugin load errors", async () => {
   await using tmp = await tmpdir({
@@ -78,7 +86,7 @@ export default { id: "demo.retry.load", tui: async () => {}, value }
     },
     finish: async (loaded, _origin, retry) => ({
       retry,
-      value: (loaded.mod.default as { value: string }).value,
+      value: decodeValueExport(loaded.mod.default).value,
     }),
     report: {
       start(_candidate, retry) {
@@ -136,7 +144,7 @@ type Data = {
 }
 
 async function row(file: string): Promise<Row> {
-  return Filesystem.readJson<Row>(file)
+  return Bun.file(file).json()
 }
 
 async function load(): Promise<Data> {
@@ -650,11 +658,15 @@ test("continues loading when a plugin is missing config metadata", async () => {
   try {
     await TuiPluginRuntime.init({ api: createTuiPluginApi(), config })
     // bad plugin was skipped (no metadata entry)
-    await expect(fs.readFile(path.join(tmp.path, "bad.txt"), "utf8")).rejects.toThrow()
+    const failure = await fs.readFile(path.join(tmp.path, "bad.txt"), "utf8").then(
+      () => "resolved",
+      (error) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
     // good plugin loaded fine
-    await expect(fs.readFile(tmp.extra.goodMarker, "utf8")).resolves.toBe("called")
+    expect(await fs.readFile(tmp.extra.goodMarker, "utf8")).toBe("called")
     // bare string spec gets undefined options
-    await expect(fs.readFile(tmp.extra.bareMarker, "utf8")).resolves.toBe("undefined")
+    expect(await fs.readFile(tmp.extra.bareMarker, "utf8")).toBe("undefined")
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
@@ -715,7 +727,7 @@ test("does not wait on permanent tui plugin startup failures", async () => {
     })
 
     expect(wait).toHaveBeenCalledTimes(0)
-    await expect(fs.readFile(tmp.extra.marker, "utf8")).resolves.toBe("called")
+    expect(await fs.readFile(tmp.extra.marker, "utf8")).toBe("called")
     expect(TuiPluginRuntime.list().find((item) => item.id === "demo.good.after-bad")?.active).toBe(true)
     expect(TuiPluginRuntime.list().some((item) => item.spec === tmp.extra.binarySpec)).toBe(false)
     expect(TuiPluginRuntime.list().some((item) => item.spec === tmp.extra.invalidShapeSpec)).toBe(false)
@@ -840,7 +852,11 @@ test("does not bootstrap server plugins while initializing tui plugins", async (
   const mock = mockTuiRuntime(tmp.path, [])
   try {
     await TuiPluginRuntime.init({ api: createTuiPluginApi(), config: mock.config })
-    await expect(fs.stat(tmp.extra.marker)).rejects.toThrow()
+    const failure = await fs.stat(tmp.extra.marker).then(
+      () => "resolved",
+      (error) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
   } finally {
     await TuiPluginRuntime.dispose()
     mock.restore()
@@ -944,7 +960,7 @@ test("auto-disposes plugin keymap layers", async () => {
 
   let command_add = 0
   let command_drop = 0
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer(layer: { commands?: Array<{ name: string }> }) {
       const tracked = layer.commands?.some((item) => item.name === "demo.keymap.cleanup") ?? false
       if (tracked) command_add += 1
@@ -953,7 +969,7 @@ test("auto-disposes plugin keymap layers", async () => {
         command_drop += 1
       }
     },
-  } as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -999,14 +1015,16 @@ test("plugin keymap proxy preserves real keymap receiver", async () => {
     },
   })
 
-  const harness = createTestKeymap({ defaultKeys: true })
+  // A real renderer keymap, so the plugin API gets the TuiKeymap type without a cast.
+  const { renderer } = await createTestRenderer({})
+  const keymap = createDefaultOpenTuiKeymap(renderer)
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
   try {
     await TuiPluginRuntime.init({
       api: createTuiPluginApi({
-        keymap: harness.keymap as unknown as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"],
+        keymap,
       }),
       config: createTuiResolvedConfig({
         plugin: [tmp.extra.spec],
@@ -1014,11 +1032,11 @@ test("plugin keymap proxy preserves real keymap receiver", async () => {
       }),
     })
 
-    await expect(fs.readFile(tmp.extra.marker, "utf8")).resolves.toBe("ok")
-    expect(harness.keymap.getData("demo.receiver")).toBe("ok")
+    expect(await fs.readFile(tmp.extra.marker, "utf8")).toBe("ok")
+    expect(keymap.getData("demo.receiver")).toBe("ok")
   } finally {
     await TuiPluginRuntime.dispose()
-    harness.cleanup()
+    renderer.destroy()
     cwd.mockRestore()
     wait.mockRestore()
   }
@@ -1135,13 +1153,13 @@ test("auto-disposes plugin keymap transformers", async () => {
       drop += 1
     }
   }
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer: () => () => {},
     prependLayerBindingsTransformer: track,
     appendLayerBindingsTransformer: track,
     prependCommandTransformer: track,
     appendCommandTransformer: track,
-  } as unknown as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -1190,7 +1208,7 @@ test("manual onDispose for plugin keymap layers stays idempotent", async () => {
   })
 
   let command_drop = 0
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer(layer: { commands?: Array<{ name: string }> }) {
       const tracked = layer.commands?.some((item) => item.name === "demo.keymap.cleanup.manual") ?? false
       return () => {
@@ -1198,7 +1216,7 @@ test("manual onDispose for plugin keymap layers stays idempotent", async () => {
         command_drop += 1
       }
     },
-  } as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -1296,7 +1314,7 @@ test("updates installed theme when plugin metadata changes", async () => {
   try {
     await TuiPluginRuntime.init({ api: mkApi(), config: mkConfig() })
     await TuiPluginRuntime.dispose()
-    await expect(fs.readFile(tmp.extra.dest, "utf8")).resolves.toContain("#111111")
+    expect(await fs.readFile(tmp.extra.dest, "utf8")).toContain("#111111")
 
     await Bun.write(tmp.extra.themePath, JSON.stringify({ theme: { primary: "#222222" } }, null, 2))
     await Bun.write(
@@ -1319,9 +1337,9 @@ test("updates installed theme when plugin metadata changes", async () => {
     const text = await fs.readFile(tmp.extra.dest, "utf8")
     expect(text).toContain("#222222")
     expect(text).not.toContain("#111111")
-    const list = await Filesystem.readJson<Record<string, { themes?: Record<string, { dest: string }> }>>(
-      process.env.OPENCODE_PLUGIN_META_FILE!,
-    )
+    const list: Record<string, { themes?: Record<string, { dest: string }> }> = await Bun.file(
+      process.env.OPENCODE_PLUGIN_META_FILE,
+    ).json()
     expect(list["demo.theme-update"]?.themes?.[tmp.extra.themeName]?.dest).toBe(tmp.extra.dest)
   } finally {
     await TuiPluginRuntime.dispose()

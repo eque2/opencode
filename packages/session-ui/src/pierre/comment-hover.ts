@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 export type HoverCommentLine = {
   lineNumber: number
   side?: "additions" | "deletions"
@@ -7,8 +9,8 @@ export function createHoverCommentUtility(props: {
   label: string
   getHoveredLine: () => HoverCommentLine | undefined
   onSelect: (line: HoverCommentLine) => void
-}) {
-  if (typeof document === "undefined") return
+}): Option.Option<HTMLButtonElement> {
+  if (typeof document === "undefined") return Option.none()
 
   const button = document.createElement("button")
   button.type = "button"
@@ -79,5 +81,5 @@ export function createHoverCommentUtility(props: {
     open()
   })
 
-  return button
+  return Option.some(button)
 }

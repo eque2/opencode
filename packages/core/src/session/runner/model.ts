@@ -6,7 +6,7 @@ import * as AnthropicMessages from "@opencode-ai/llm/protocols/anthropic-message
 import * as OpenAICompatibleChat from "@opencode-ai/llm/protocols/openai-compatible-chat"
 import * as OpenAIResponses from "@opencode-ai/llm/protocols/openai-responses"
 import { Auth, type AnyRoute } from "@opencode-ai/llm/route"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { produce } from "immer"
 import { Catalog } from "../../catalog"
 import { Credential } from "../../credential"
@@ -80,11 +80,12 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 /** Test or embedding seam for supplying a model resolver directly. */
 export const layerWith = (resolve: Interface["resolve"]) => Layer.succeed(Service, Service.of({ resolve }))
 
-const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
-  if (credential?.type === "key") return Auth.value(credential.key)
-  if (credential?.type === "oauth") return Auth.value(credential.access)
+/** The API key credential: from the connection first, then from the model request body or API settings. */
+const apiKey = (model: ModelV2.Info, credential?: Credential.Value): Option.Option<Auth.Credential> => {
+  if (credential?.type === "key") return Option.some(Auth.value(credential.key))
+  if (credential?.type === "oauth") return Option.some(Auth.value(credential.access))
   const value = model.request.body.apiKey ?? model.api.settings?.apiKey
-  if (typeof value === "string") return Auth.value(value)
+  return typeof value === "string" ? Option.some(Auth.value(value)) : Option.none()
 }
 
 const withDefaults = (model: ModelV2.Info, route: AnyRoute) => {
@@ -94,7 +95,7 @@ const withDefaults = (model: ModelV2.Info, route: AnyRoute) => {
     : body
   return route.with({
     provider: model.providerID,
-    endpoint: model.api.url === undefined ? undefined : { baseURL: model.api.url },
+    ...(model.api.url === undefined ? {} : { endpoint: { baseURL: model.api.url } }),
     headers: model.request.headers,
     http: { body: httpBody },
     limits: { context: model.limit.context, output: model.limit.output },
@@ -142,21 +143,23 @@ export const fromCatalogModel = (
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/openai") {
     return Effect.succeed(
       withDefaults(resolved, OpenAIResponses.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
+        .with({ auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.bearer(secret) }) })
         .model({ id: resolved.api.id }),
     )
   }
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/anthropic") {
     return Effect.succeed(
       withDefaults(resolved, AnthropicMessages.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.header("x-api-key", key) })
+        .with({
+          auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.header("x-api-key", secret) }),
+        })
         .model({ id: resolved.api.id }),
     )
   }
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/openai-compatible" && resolved.api.url) {
     return Effect.succeed(
       withDefaults(resolved, OpenAICompatibleChat.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
+        .with({ auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.bearer(secret) }) })
         .model({ id: resolved.api.id }),
     )
   }
@@ -184,17 +187,20 @@ export const locationLayer = Layer.effect(
   Effect.gen(function* () {
     const catalog = yield* Catalog.Service
     const integrations = yield* Integration.Service
+    /** The catalog default when the runner supports it, otherwise the first available supported model. */
+    const defaultSelection = Effect.fnUntraced(function* () {
+      const defaultModel = yield* catalog.model.default()
+      if (defaultModel && supported(defaultModel)) return defaultModel
+      return (yield* catalog.model.available()).find(supported)
+    })
     return Service.of({
       resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session) {
         // Location plugins populate and filter the catalog asynchronously during layer startup.
-        const defaultModel = session.model ? undefined : yield* catalog.model.default()
         const selected = session.model
           ? (yield* catalog.model.available()).find(
               (model) => model.providerID === session.model?.providerID && model.id === session.model.id,
             )
-          : defaultModel && supported(defaultModel)
-            ? defaultModel
-            : (yield* catalog.model.available()).find(supported)
+          : yield* defaultSelection()
         if (!selected && session.model)
           return yield* new ModelUnavailableError({
             providerID: session.model.providerID,
@@ -205,11 +211,8 @@ export const locationLayer = Layer.effect(
         const connection = yield* integrations.connection.active(
           provider?.integrationID ?? Integration.ID.make(selected.providerID),
         )
-        return yield* resolve(
-          session,
-          selected,
-          connection ? yield* integrations.connection.resolve(connection) : undefined,
-        )
+        if (!connection) return yield* resolve(session, selected)
+        return yield* resolve(session, selected, yield* integrations.connection.resolve(connection))
       }),
     })
   }),

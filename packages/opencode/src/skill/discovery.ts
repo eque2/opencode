@@ -1,14 +1,18 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient, path } from "@opencode-ai/core/effect/app-node-platform"
-import { NodePath } from "@effect/platform-node"
-import { Effect, Layer, Path, Schema, Context } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { Array as Arr, Effect, Layer, Option, Path, Random, Schema, Context } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { withTransientReadRetry } from "@/util/effect-http-client"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
 
 const skillConcurrency = 4
 const fileConcurrency = 8
+
+// Sixteen hex digits that keep the staging and backup folders of concurrent refreshes apart.
+// The token only has to be unique, not secret.
+const hex32 = Random.nextIntBetween(0, 0xffffffff).pipe(Effect.map((n) => n.toString(16).padStart(8, "0")))
+const stagingToken = Effect.all([hex32, hex32]).pipe(Effect.map((parts) => parts.join("")))
 
 class IndexSkill extends Schema.Class<IndexSkill>("IndexSkill")({
   name: Schema.String,
@@ -57,20 +61,21 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
         HttpClientRequest.acceptJson,
         http.execute,
         Effect.flatMap(HttpClientResponse.schemaBodyJson(Index)),
+        Effect.map(Option.some),
         Effect.catch((err) =>
-          Effect.logError("failed to fetch index", { url: index, error: err }).pipe(Effect.as(null)),
+          Effect.logError("failed to fetch index", { url: index, error: err }).pipe(Effect.as(Option.none<Index>())),
         ),
       )
 
-      if (!data) return []
+      if (Option.isNone(data)) return []
 
-      const missing = data.skills.filter((skill) => !skill.files.includes("SKILL.md"))
+      const missing = data.value.skills.filter((skill) => !skill.files.includes("SKILL.md"))
       yield* Effect.forEach(
         missing,
         (skill) => Effect.logWarning("skill entry missing SKILL.md", { url: index, skill: skill.name }),
         { discard: true },
       )
-      const list = data.skills.filter((skill) => skill.files.includes("SKILL.md"))
+      const list = data.value.skills.filter((skill) => skill.files.includes("SKILL.md"))
 
       const dirs = yield* Effect.forEach(
         list,
@@ -78,20 +83,22 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
           Effect.gen(function* () {
             const root = path.join(cache, skill.name)
             const versionFile = path.join(root, ".opencode-version")
-            const version = skill.version
-            const current =
-              version === undefined
-                ? undefined
-                : yield* fs.readFileStringSafe(versionFile).pipe(Effect.catch(() => Effect.succeed(undefined)))
+            const version = Option.fromNullishOr(skill.version)
+            const current = Option.isNone(version)
+              ? Option.none<string>()
+              : yield* fs.readFileStringSafe(versionFile).pipe(
+                  Effect.map(Option.fromNullishOr),
+                  Effect.catch(() => Effect.succeed(Option.none<string>())),
+                )
 
-            if (version === undefined || current === version) {
+            if (Option.isNone(version) || Option.contains(current, version.value)) {
               yield* Effect.forEach(
                 skill.files,
                 (file) => download(new URL(file, `${host}/${skill.name}/`).href, path.join(root, file)),
                 { concurrency: fileConcurrency, discard: true },
               )
             } else {
-              const token = crypto.randomUUID()
+              const token = yield* stagingToken
               const staging = `${root}.tmp-${token}`
               const backup = `${root}.old-${token}`
               yield* Effect.gen(function* () {
@@ -102,7 +109,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
                 )
                 if (!downloaded.every(Boolean)) return
                 if (!(yield* fs.exists(path.join(staging, "SKILL.md")).pipe(Effect.orDie))) return
-                yield* fs.writeFileString(path.join(staging, ".opencode-version"), version)
+                yield* fs.writeFileString(path.join(staging, ".opencode-version"), version.value)
                 yield* Effect.uninterruptible(
                   Effect.gen(function* () {
                     const cached = yield* fs.exists(root).pipe(Effect.orDie)
@@ -123,12 +130,14 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
                 Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
               )
             }
-            return (yield* fs.exists(path.join(root, "SKILL.md")).pipe(Effect.orDie)) ? root : null
+            return (yield* fs.exists(path.join(root, "SKILL.md")).pipe(Effect.orDie))
+              ? Option.some(root)
+              : Option.none()
           }),
         { concurrency: skillConcurrency },
       )
 
-      return dirs.filter((dir): dir is string => dir !== null)
+      return Arr.getSomes(dirs)
     })
 
     return Service.of({ pull })

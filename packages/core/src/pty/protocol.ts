@@ -6,6 +6,11 @@ export * as PtyProtocol from "./protocol"
 // Outbound frames are raw UTF-8 terminal chunks. One control frame — a 0x00 byte followed by
 // UTF-8 JSON — carries the absolute output cursor after replay so clients can resume later.
 
+import { Option, Schema } from "effect"
+
+const MetaFrame = Schema.Struct({ cursor: Schema.Number }).annotate({ identifier: "PtyProtocol.MetaFrame" })
+const encodeMetaFrame = Schema.encodeSync(Schema.fromJsonString(MetaFrame))
+
 const encoder = new TextEncoder()
 const decoder = new TextDecoder("utf-8", { fatal: true })
 
@@ -13,7 +18,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true })
 export const REPLAY_CHUNK = 64 * 1024
 
 export function metaFrame(cursor: number) {
-  const bytes = encoder.encode(JSON.stringify({ cursor }))
+  const bytes = encoder.encode(encodeMetaFrame({ cursor }))
   const out = new Uint8Array(bytes.length + 1)
   out[0] = 0
   out.set(bytes, 1)
@@ -26,12 +31,11 @@ export function chunks(data: string) {
   return out
 }
 
+// The fatal decoder throws on invalid UTF-8; the lifted form returns None instead.
+const decodeUtf8 = Option.liftThrowable((bytes: Uint8Array) => decoder.decode(bytes))
+
 // Inbound client frames are UTF-8 text or binary; invalid UTF-8 input is dropped.
 export function decodeInput(message: string | Uint8Array | ArrayBuffer) {
   if (typeof message === "string") return message
-  try {
-    return decoder.decode(message instanceof ArrayBuffer ? new Uint8Array(message) : message)
-  } catch {
-    return undefined
-  }
+  return Option.getOrUndefined(decodeUtf8(message instanceof ArrayBuffer ? new Uint8Array(message) : message))
 }

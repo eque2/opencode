@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun"
+import { Schema } from "effect"
 import path from "node:path"
 import { parseArgs } from "node:util"
 
@@ -40,16 +41,11 @@ if (!rel.ok) {
   throw new Error(`Failed to fetch release: ${rel.status} ${rel.statusText}`)
 }
 
-type Asset = {
-  name: string
-  url: string
-}
+const Release = Schema.Struct({
+  assets: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String, url: Schema.String }))),
+})
 
-type Release = {
-  assets?: Asset[]
-}
-
-const assets = ((await rel.json()) as Release).assets ?? []
+const assets = Schema.decodeUnknownSync(Release)(await rel.json()).assets ?? []
 const amap = new Map(assets.map((item) => [item.name, item]))
 
 type Item = {
@@ -99,10 +95,7 @@ async function read(sub: string, file: string) {
 }
 
 function pick(list: Item[], exts: string[]) {
-  for (const ext of exts) {
-    const found = list.find((item) => item.url.split("?")[0]?.toLowerCase().endsWith(ext))
-    if (found) return found.url
-  }
+  return exts.flatMap((ext) => list.filter((item) => item.url.split("?")[0]?.toLowerCase().endsWith(ext))).at(0)?.url
 }
 
 function link(raw: string) {

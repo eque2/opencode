@@ -1,4 +1,5 @@
-import { createContext, createSignal, splitProps, useContext } from "solid-js"
+import { Effect, Fiber, Option, Schema } from "effect"
+import { createContext, createSignal, onCleanup, splitProps, useContext } from "solid-js"
 import type { JSX } from "solid-js/jsx-runtime"
 import { makeResizeObserver } from "@solid-primitives/resize-observer"
 import { IconCheckCircle, IconHashtag } from "../icons"
@@ -11,12 +12,16 @@ export function ShareI18nProvider(props: { messages: ShareMessages; children: JS
   return <shareContext.Provider value={props.messages}>{props.children}</shareContext.Provider>
 }
 
+export class ShareI18nMissingError extends Schema.TaggedError<ShareI18nMissingError>()("ShareI18nMissingError", {
+  message: Schema.String,
+}) {}
+
+// A Solid context hook must stay synchronous, so a missing provider is a defect thrown at the call site.
 export function useShareMessages() {
-  const value = useContext(shareContext)
-  if (value) {
-    return value
-  }
-  throw new Error("ShareI18nProvider is required")
+  return Option.getOrThrowWith(
+    Option.fromNullishOr(useContext(shareContext)),
+    () => new ShareI18nMissingError({ message: "ShareI18nProvider is required" }),
+  )
 }
 
 export function normalizeLocale(locale: string) {
@@ -48,6 +53,12 @@ export function AnchorIcon(props: AnchorProps) {
   const [local, rest] = splitProps(props, ["id", "children"])
   const [copied, setCopied] = createSignal(false)
   const messages = useShareMessages()
+  // The pending reset fiber is interrupted on a new click and when the component unmounts.
+  let reset = Option.none<Fiber.Fiber<void>>()
+  const interruptReset = () => {
+    if (Option.isSome(reset)) Effect.runFork(Fiber.interrupt(reset.value))
+  }
+  onCleanup(interruptReset)
 
   return (
     <div {...rest} data-element-anchor title={messages.link_to_message} data-status={copied() ? "copied" : ""}>
@@ -60,12 +71,17 @@ export function AnchorIcon(props: AnchorProps) {
           const hash = anchor.getAttribute("href") || ""
           const { origin, pathname, search } = window.location
 
-          navigator.clipboard
-            .writeText(`${origin}${pathname}${search}${hash}`)
-            .catch((err) => console.error("Copy failed", err))
+          Effect.runFork(
+            Effect.tryPromise(() => navigator.clipboard.writeText(`${origin}${pathname}${search}${hash}`)).pipe(
+              Effect.catch((err) => Effect.logError("Copy failed", err)),
+            ),
+          )
 
           setCopied(true)
-          setTimeout(() => setCopied(false), 3000)
+          interruptReset()
+          reset = Option.some(
+            Effect.runFork(Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))))),
+          )
         }}
       >
         {local.children}
@@ -83,7 +99,7 @@ export function createOverflow() {
     get status() {
       return overflow()
     },
-    ref(el: HTMLElement) {
+    ref: (el: HTMLElement) => {
       const sync = () => {
         setOverflow(el.scrollHeight > el.clientHeight + 1)
       }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import path from "path"
 import { Effect, Exit, Layer, PlatformError } from "effect"
 import { Config } from "@opencode-ai/core/config"
@@ -174,7 +175,7 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-read", name: "read", input: { path: "README.md" } },
+          call: { type: "tool-call", id: ToolCallID.make("call-read"), name: "read", input: { path: "README.md" } },
         }),
       ).toEqual({
         type: "json",
@@ -205,7 +206,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-external-read", name: "read", input: { path: external } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-external-read"),
+            name: "read",
+            input: { path: external },
+          },
         }),
       ).toMatchObject({ type: "json" })
       expect(assertions).toMatchObject([
@@ -236,7 +242,7 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-image", name: "read", input: { path: "pixel.png" } },
+          call: { type: "tool-call", id: ToolCallID.make("call-image"), name: "read", input: { path: "pixel.png" } },
         }),
       ).toEqual({
         type: "content",
@@ -255,7 +261,12 @@ describe("ReadTool", () => {
       const settled = yield* settleTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-image-settle", name: "read", input: { path: "pixel.png" } },
+        call: {
+          type: "tool-call",
+          id: ToolCallID.make("call-image-settle"),
+          name: "read",
+          input: { path: "pixel.png" },
+        },
       })
       expect(settled.output?.structured).toMatchObject({
         uri: "file:///pixel.png",
@@ -290,7 +301,12 @@ describe("ReadTool", () => {
       const settled = yield* settleTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-large-image", name: "read", input: { path: "large.png" } },
+        call: {
+          type: "tool-call",
+          id: ToolCallID.make("call-large-image"),
+          name: "read",
+          input: { path: "large.png" },
+        },
       })
 
       expect(settled.outputPaths).toBeUndefined()
@@ -326,7 +342,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-image-fallback", name: "read", input: { path: "pixel.png" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-image-fallback"),
+            name: "read",
+            input: { path: "pixel.png" },
+          },
         }),
       ).toMatchObject({
         type: "content",
@@ -350,7 +371,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-truncated-image", name: "read", input: { path: "truncated.png" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-truncated-image"),
+            name: "read",
+            input: { path: "truncated.png" },
+          },
         }),
       ).toEqual({ type: "error", value: "Image could not be decoded: truncated.png" })
     }),
@@ -383,7 +409,7 @@ describe("ReadTool", () => {
       const result = yield* executeTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-wide-image", name: "read", input: { path: "wide.png" } },
+        call: { type: "tool-call", id: ToolCallID.make("call-wide-image"), name: "read", input: { path: "wide.png" } },
       })
 
       expect(result.type).toBe("error")
@@ -416,7 +442,12 @@ describe("ReadTool", () => {
       const result = yield* executeTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-resize-image", name: "read", input: { path: "wide.png" } },
+        call: {
+          type: "tool-call",
+          id: ToolCallID.make("call-resize-image"),
+          name: "read",
+          input: { path: "wide.png" },
+        },
       })
 
       expect(result.type).toBe("content")
@@ -455,7 +486,7 @@ describe("ReadTool", () => {
       const result = yield* executeTool(registry, {
         sessionID,
         ...toolIdentity,
-        call: { type: "tool-call", id: "call-max-bytes", name: "read", input: { path: "pixel.png" } },
+        call: { type: "tool-call", id: ToolCallID.make("call-max-bytes"), name: "read", input: { path: "pixel.png" } },
       })
 
       expect(result.type).toBe("error")
@@ -479,7 +510,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-disguised-image", name: "read", input: { path: "pixel.bin" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-disguised-image"),
+            name: "read",
+            input: { path: "pixel.bin" },
+          },
         }),
       ).toMatchObject({
         type: "content",
@@ -499,7 +535,7 @@ describe("ReadTool", () => {
           ...toolIdentity,
           call: {
             type: "tool-call",
-            id: "call-binary",
+            id: ToolCallID.make("call-binary"),
             name: "read",
             input: { path: "archive.dat", offset: 2, limit: 1 },
           },
@@ -521,7 +557,7 @@ describe("ReadTool", () => {
           yield* executeTool(registry, {
             sessionID,
             ...toolIdentity,
-            call: { type: "tool-call", id: "call-defect", name: "read", input: { path: "README.md" } },
+            call: { type: "tool-call", id: ToolCallID.make("call-defect"), name: "read", input: { path: "README.md" } },
           }).pipe(Effect.exit),
         ),
       ).toBe(true)
@@ -537,7 +573,7 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-read", name: "read", input: { path: "README.md" } },
+          call: { type: "tool-call", id: ToolCallID.make("call-read"), name: "read", input: { path: "README.md" } },
         }),
       ).toEqual({ type: "error", value: "Unable to read README.md" })
       expect(readCalls).toEqual([])
@@ -552,7 +588,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-missing-path", name: "read", input: { path: missingPath } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-missing-path"),
+            name: "read",
+            input: { path: missingPath },
+          },
         }),
       ).toEqual({ type: "error", value: `Unable to read ${missingPath}` })
       expect(assertions).toEqual([])
@@ -571,7 +612,7 @@ describe("ReadTool", () => {
           ...toolIdentity,
           call: {
             type: "tool-call",
-            id: "call-read-directory",
+            id: ToolCallID.make("call-read-directory"),
             name: "read",
             input: { path: "src", offset: 2, limit: 10 },
           },
@@ -592,7 +633,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-read-directory-denied", name: "read", input: { path: "src" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-read-directory-denied"),
+            name: "read",
+            input: { path: "src" },
+          },
         }),
       ).toEqual({ type: "error", value: "Unable to read src" })
       expect(listCalls).toEqual([])
@@ -609,7 +655,12 @@ describe("ReadTool", () => {
           yield* executeTool(registry, {
             sessionID,
             ...toolIdentity,
-            call: { type: "tool-call", id: "call-missing", name: "read", input: { path: "missing.txt" } },
+            call: {
+              type: "tool-call",
+              id: ToolCallID.make("call-missing"),
+              name: "read",
+              input: { path: "missing.txt" },
+            },
           }).pipe(Effect.exit),
         ),
       ).toBe(true)
@@ -636,7 +687,7 @@ describe("ReadTool", () => {
           ...toolIdentity,
           call: {
             type: "tool-call",
-            id: "call-large",
+            id: ToolCallID.make("call-large"),
             name: "read",
             input: { path: "large.txt", offset: 2, limit: 1 },
           },
@@ -666,7 +717,12 @@ describe("ReadTool", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-direct-binary", name: "read", input: { path: "late-binary" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-direct-binary"),
+            name: "read",
+            input: { path: "late-binary" },
+          },
         }),
       ).toEqual({ type: "error", value: "Cannot read binary file: late-binary" })
     }),

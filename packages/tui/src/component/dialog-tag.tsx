@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { createMemo, createResource } from "solid-js"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
@@ -16,15 +17,16 @@ export function DialogTag(props: { onSelect?: (value: string) => void }) {
 
   const [files] = createResource(
     () => [store.filter],
-    async () => {
-      const result = await sdk.client.find.files({
-        query: store.filter,
-        workspace: project.workspace.current(),
-      })
-      if (result.error) return []
-      const sliced = (result.data ?? []).slice(0, 5)
-      return sliced
-    },
+    // A rejected request still puts the resource in its error state, as the old await did.
+    () =>
+      Effect.runPromise(
+        Effect.promise(() =>
+          sdk.client.find.files({
+            query: store.filter,
+            workspace: project.workspace.current(),
+          }),
+        ).pipe(Effect.map((result) => (result.error ? [] : (result.data ?? []).slice(0, 5)))),
+      ),
   )
 
   const options = createMemo(() =>

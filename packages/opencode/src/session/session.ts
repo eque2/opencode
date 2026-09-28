@@ -10,9 +10,6 @@ import type { ProviderMetadata, Usage } from "@opencode-ai/llm"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { SessionV2 } from "@opencode-ai/core/session"
-import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
-import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 
 import { NotFoundError } from "@/storage/storage"
 import { eq } from "drizzle-orm"
@@ -38,7 +35,20 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Effect, Layer, Option, Context, Schema, Types } from "effect"
+import {
+  Array as Arr,
+  Clock,
+  DateTime,
+  Effect,
+  HashMap,
+  Layer,
+  MutableHashMap,
+  Option,
+  Context,
+  Predicate,
+  Schema,
+  Types,
+} from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -56,44 +66,39 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
+// NULL columns become absent keys on the Info value.
 export function fromRow(row: SessionRow): Info {
-  const summary =
-    row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
-      ? {
-          additions: row.summary_additions ?? 0,
-          deletions: row.summary_deletions ?? 0,
-          files: row.summary_files ?? 0,
-          diffs: row.summary_diffs ?? undefined,
-        }
-      : undefined
-  const share = row.share_url ? { url: row.share_url } : undefined
-  const revert = row.revert
-    ? {
-        messageID: MessageID.make(row.revert.messageID),
-        partID: row.revert.partID ? PartID.make(row.revert.partID) : undefined,
-        snapshot: row.revert.snapshot,
-        diff: row.revert.diff,
-      }
-    : undefined
+  const hasSummary = [row.summary_additions, row.summary_deletions, row.summary_files].some(Predicate.isNotNull)
   return {
     id: row.id,
     slug: row.slug,
     projectID: row.project_id,
-    workspaceID: row.workspace_id ?? undefined,
+    ...(Predicate.isNotNull(row.workspace_id) ? { workspaceID: row.workspace_id } : {}),
     directory: row.directory,
-    path: row.path ?? undefined,
-    parentID: row.parent_id ?? undefined,
+    ...(Predicate.isNotNull(row.path) ? { path: row.path } : {}),
+    ...(Predicate.isNotNull(row.parent_id) ? { parentID: row.parent_id } : {}),
     title: row.title,
-    agent: row.agent ?? undefined,
-    model: row.model
+    ...(Predicate.isNotNull(row.agent) ? { agent: row.agent } : {}),
+    ...(row.model
       ? {
-          id: ModelV2.ID.make(row.model.id),
-          providerID: ProviderV2.ID.make(row.model.providerID),
-          variant: row.model.variant,
+          model: {
+            id: ModelV2.ID.make(row.model.id),
+            providerID: ProviderV2.ID.make(row.model.providerID),
+            variant: row.model.variant,
+          },
         }
-      : undefined,
+      : {}),
     version: row.version,
-    summary,
+    ...(hasSummary
+      ? {
+          summary: {
+            additions: row.summary_additions ?? 0,
+            deletions: row.summary_deletions ?? 0,
+            files: row.summary_files ?? 0,
+            ...(Predicate.isNotNull(row.summary_diffs) ? { diffs: row.summary_diffs } : {}),
+          },
+        }
+      : {}),
     cost: row.cost,
     tokens: {
       input: row.tokens_input,
@@ -104,15 +109,24 @@ export function fromRow(row: SessionRow): Info {
         write: row.tokens_cache_write,
       },
     },
-    share,
-    metadata: row.metadata ?? undefined,
-    revert,
-    permission: row.permission ? [...row.permission] : undefined,
+    ...(row.share_url ? { share: { url: row.share_url } } : {}),
+    ...(isMetadata(row.metadata) ? { metadata: row.metadata } : {}),
+    ...(row.revert
+      ? {
+          revert: {
+            messageID: MessageID.make(row.revert.messageID),
+            ...(row.revert.partID ? { partID: PartID.make(row.revert.partID) } : {}),
+            snapshot: row.revert.snapshot,
+            diff: row.revert.diff,
+          },
+        }
+      : {}),
+    ...(row.permission ? { permission: [...row.permission] } : {}),
     time: {
       created: row.time_created,
       updated: row.time_updated,
-      compacting: row.time_compacting ?? undefined,
-      archived: row.time_archived ?? undefined,
+      ...(Predicate.isNotNull(row.time_compacting) ? { compacting: row.time_compacting } : {}),
+      ...(Predicate.isNotNull(row.time_archived) ? { archived: row.time_archived } : {}),
     },
   }
 }
@@ -142,14 +156,15 @@ export function toRow(info: Info) {
     tokens_reasoning: (info.tokens ?? EmptyTokens).reasoning,
     tokens_cache_read: (info.tokens ?? EmptyTokens).cache.read,
     tokens_cache_write: (info.tokens ?? EmptyTokens).cache.write,
-    revert: info.revert
-      ? {
-          messageID: SessionMessage.ID.make(info.revert.messageID),
-          partID: info.revert.partID,
-          snapshot: info.revert.snapshot,
-          diff: info.revert.diff,
-        }
-      : null,
+    // An absent revert stays NULL, so an update that writes this row also clears the column.
+    revert: Option.getOrNull(
+      Option.map(Option.fromUndefinedOr(info.revert), (revert) => ({
+        messageID: SessionMessage.ID.make(revert.messageID),
+        partID: revert.partID,
+        snapshot: revert.snapshot,
+        diff: revert.diff,
+      })),
+    ),
     permission: info.permission,
     time_created: info.time.created,
     time_updated: info.time.updated,
@@ -177,7 +192,7 @@ const Summary = Schema.Struct({
   deletions: Schema.Finite,
   files: Schema.Finite,
   diffs: optional(Schema.Array(Snapshot.FileDiff)),
-})
+}).annotate({ description: "Line and file change counts of a session" })
 
 const Tokens = Schema.Struct({
   input: Schema.Finite,
@@ -187,13 +202,13 @@ const Tokens = Schema.Struct({
     read: Schema.Finite,
     write: Schema.Finite,
   }),
-})
+}).annotate({ description: "Token usage of a session" })
 
 const EmptyTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
 
 const Share = Schema.Struct({
   url: Schema.String,
-})
+}).annotate({ description: "Share link of a session" })
 
 // Legacy HTTP accepted negative values here. Keep archive timestamps permissive
 // while excluding non-finite values that cannot round-trip through JSON.
@@ -204,22 +219,24 @@ const Time = Schema.Struct({
   updated: NonNegativeInt,
   compacting: optional(NonNegativeInt),
   archived: optional(ArchivedTimestamp),
-})
+}).annotate({ description: "Lifecycle timestamps of a session" })
 
 const Revert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
   snapshot: optional(Schema.String),
   diff: optional(Schema.String),
-})
+}).annotate({ description: "Revert point of a session" })
 
 const Model = Schema.Struct({
   id: ModelV2.ID,
   providerID: ProviderV2.ID,
   variant: optional(Schema.String),
-})
+}).annotate({ description: "Model that a session uses" })
 
-export const Metadata = Schema.Record(Schema.String, Schema.Any)
+export const Metadata = Schema.Record(Schema.String, Schema.MutableJson)
+// The metadata column holds parsed JSON; the check also rejects a NULL column.
+const isMetadata = Schema.is(Metadata)
 
 export const Info = Schema.Struct({
   id: SessionID,
@@ -273,32 +290,34 @@ export type CreateInput = Types.DeepMutable<Schema.Schema.Type<typeof CreateInpu
 export const ForkInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
-})
+}).annotate({ description: "Input to fork a session" })
 export const GetInput = SessionID
 export const ChildrenInput = SessionID
 export const RemoveInput = SessionID
-export const SetTitleInput = Schema.Struct({ sessionID: SessionID, title: Schema.String })
+export const SetTitleInput = Schema.Struct({ sessionID: SessionID, title: Schema.String }).annotate({
+  description: "Input to set the title of a session",
+})
 export const SetArchivedInput = Schema.Struct({
   sessionID: SessionID,
   time: Schema.optional(ArchivedTimestamp),
-})
+}).annotate({ description: "Input to archive or unarchive a session" })
 export const SetMetadataInput = Schema.Struct({
   sessionID: SessionID,
   metadata: Metadata,
-})
+}).annotate({ description: "Input to set the metadata of a session" })
 export const SetPermissionInput = Schema.Struct({
   sessionID: SessionID,
   permission: PermissionV1.Ruleset,
-})
+}).annotate({ description: "Input to set the permission rules of a session" })
 export const SetRevertInput = Schema.Struct({
   sessionID: SessionID,
   revert: Schema.optional(Revert),
   summary: Schema.optional(Summary),
-})
+}).annotate({ description: "Input to set or clear the revert point of a session" })
 export const MessagesInput = Schema.Struct({
   sessionID: SessionID,
   limit: Schema.optional(NonNegativeInt),
-})
+}).annotate({ description: "Input to list the messages of a session" })
 export type ListInput = {
   directory?: string
   scope?: "project"
@@ -442,7 +461,7 @@ export interface Interface {
   }) => Effect.Effect<void>
   readonly clearRevert: (sessionID: SessionID) => Effect.Effect<void>
   readonly setSummary: (input: { sessionID: SessionID; summary: Info["summary"] }) => Effect.Effect<void>
-  readonly setShare: (input: { sessionID: SessionID; share: Info["share"] }) => Effect.Effect<void>
+  readonly setShare: (input: { sessionID: SessionID; share: Option.Option<typeof Share.Type> }) => Effect.Effect<void>
   readonly setWorkspace: (input: { sessionID: SessionID; workspaceID: Info["workspaceID"] }) => Effect.Effect<void>
   readonly diff: (sessionID: SessionID) => Effect.Effect<Snapshot.FileDiff[]>
   readonly messages: (input: { sessionID: SessionID; limit?: number }) => Effect.Effect<SessionV1.WithParts[], NotFound>
@@ -456,7 +475,7 @@ export interface Interface {
     messageID: MessageID
     partID: PartID
   }) => Effect.Effect<SessionV1.Part | undefined>
-  readonly updatePart: <T extends SessionV1.Part>(part: T) => Effect.Effect<T>
+  readonly updatePart: <T extends typeof SessionV1.Part.Type>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
     messageID: MessageID
@@ -475,13 +494,18 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 
 export const use = serviceUse(Service)
 
+// A clearable field keeps its current value when it is absent, clears the value
+// when it is Option.none(), and replaces the value when it is Option.some.
 export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" | "permission"> & {
   time?: Partial<Info["time"]>
-  share?: Partial<NonNullable<Info["share"]>> | null
-  summary?: Info["summary"] | null
-  revert?: Info["revert"] | null
-  permission?: Info["permission"] | null
+  share?: Option.Option<NonNullable<Info["share"]>>
+  summary?: Option.Option<NonNullable<Info["summary"]>>
+  revert?: Option.Option<NonNullable<Info["revert"]>>
+  permission?: Option.Option<NonNullable<Info["permission"]>>
 }
+
+const patched = <A>(update: Option.Option<A> | undefined, current: A | undefined) =>
+  update ? Option.getOrUndefined(update) : current
 
 const layer: Layer.Layer<
   Service,
@@ -509,25 +533,26 @@ const layer: Layer.Layer<
       permission?: PermissionV1.Ruleset
     }) {
       const ctx = yield* InstanceState.context
+      const now = yield* DateTime.now
       const result: Info = {
         id: SessionID.descending(input.id),
-        slug: Slug.create(),
+        slug: yield* Slug.make,
         version: InstallationVersion,
         projectID: ctx.project.id,
         directory: input.directory,
         path: input.path,
         workspaceID: input.workspaceID,
         parentID: input.parentID,
-        title: input.title ?? (input.parentID ? childTitlePrefix : parentTitlePrefix) + new Date().toISOString(),
+        title: input.title ?? (input.parentID ? childTitlePrefix : parentTitlePrefix) + DateTime.formatIso(now),
         agent: input.agent,
         model: input.model,
         metadata: input.metadata,
-        permission: input.permission ? [...input.permission] : undefined,
+        ...(input.permission ? { permission: [...input.permission] } : {}),
         cost: 0,
         tokens: EmptyTokens,
         time: {
-          created: Date.now(),
-          updated: Date.now(),
+          created: DateTime.toEpochMillis(now),
+          updated: DateTime.toEpochMillis(now),
         },
       }
       yield* Effect.logInfo("created", result)
@@ -553,13 +578,14 @@ const layer: Layer.Layer<
     })
 
     const listGlobal = Effect.fn("Session.listGlobal")(function* (input?: GlobalListInput) {
-      const conditions: SQL[] = []
-      if (input?.directory) conditions.push(eq(SessionTable.directory, input.directory))
-      if (input?.roots) conditions.push(isNull(SessionTable.parent_id))
-      if (input?.start) conditions.push(gte(SessionTable.time_updated, input.start))
-      if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
-      if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
-      if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
+      const conditions: SQL[] = [
+        ...(input?.directory ? [eq(SessionTable.directory, input.directory)] : []),
+        ...(input?.roots ? [isNull(SessionTable.parent_id)] : []),
+        ...(input?.start ? [gte(SessionTable.time_updated, input.start)] : []),
+        ...(input?.cursor ? [lt(SessionTable.time_updated, input.cursor)] : []),
+        ...(input?.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+        ...(input?.archived ? [] : [isNull(SessionTable.time_archived)]),
+      ]
 
       const query =
         conditions.length > 0
@@ -573,24 +599,30 @@ const layer: Layer.Layer<
         .limit(input?.limit ?? 100)
         .all()
         .pipe(Effect.orDie)
-      const ids = [...new Set(rows.map((row) => row.project_id))]
-      const projects = new Map<string, ProjectInfo>()
-      if (ids.length > 0) {
-        const items = yield* db
-          .select({ id: ProjectTable.id, name: ProjectTable.name, worktree: ProjectTable.worktree })
-          .from(ProjectTable)
-          .where(inArray(ProjectTable.id, ids))
-          .all()
-          .pipe(Effect.orDie)
-        for (const item of items) {
-          projects.set(item.id, {
+      const ids = Arr.dedupe(rows.map((row) => row.project_id))
+      const items =
+        ids.length > 0
+          ? yield* db
+              .select({ id: ProjectTable.id, name: ProjectTable.name, worktree: ProjectTable.worktree })
+              .from(ProjectTable)
+              .where(inArray(ProjectTable.id, ids))
+              .all()
+              .pipe(Effect.orDie)
+          : []
+      const projects = HashMap.fromIterable(
+        items.map((item): readonly [string, ProjectInfo] => [
+          item.id,
+          {
             id: item.id,
-            name: item.name ?? undefined,
+            ...(Predicate.isNotNull(item.name) ? { name: item.name } : {}),
             worktree: item.worktree,
-          })
-        }
-      }
-      return rows.map((row) => ({ ...fromRow(row), project: projects.get(row.project_id) ?? null }))
+          },
+        ]),
+      )
+      return rows.map((row) => ({
+        ...fromRow(row),
+        project: Option.getOrNull(HashMap.get(projects, row.project_id)),
+      }))
     })
 
     const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
@@ -605,7 +637,7 @@ const layer: Layer.Layer<
 
     const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
       const session = yield* get(sessionID)
-      try {
+      yield* Effect.gen(function* () {
         // `remove` needs to work in all cases, such as broken sessions that
         // run cleanup without instance state.
         const hasInstance = yield* InstanceState.directory.pipe(
@@ -621,9 +653,7 @@ const layer: Layer.Layer<
 
         yield* events.publish(SessionV1.Event.Deleted, { sessionID, info: session })
         yield* events.remove(sessionID)
-      } catch (error) {
-        yield* Effect.logError("failed to remove session", { sessionID, error })
-      }
+      }).pipe(Effect.tapCause((cause) => Effect.logError("failed to remove session", { sessionID, cause })))
     })
 
     const updateMessage = <T extends SessionV1.Info>(msg: T): Effect.Effect<T> =>
@@ -632,12 +662,12 @@ const layer: Layer.Layer<
         return msg
       }).pipe(Effect.withSpan("Session.updateMessage"))
 
-    const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
+    const updatePart = <T extends typeof SessionV1.Part.Type>(part: T): Effect.Effect<T> =>
       Effect.gen(function* () {
         yield* events.publish(SessionV1.Event.PartUpdated, {
           sessionID: part.sessionID,
           part: structuredClone(part),
-          time: Date.now(),
+          time: yield* Clock.currentTimeMillis,
         })
         return part
       }).pipe(Effect.withSpan("Session.updatePart"))
@@ -655,7 +685,8 @@ const layer: Layer.Layer<
         )
         .get()
         .pipe(Effect.orDie)
-      if (!row) return
+      if (!row) return undefined
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
       return {
         ...row.data,
         id: row.id,
@@ -700,19 +731,19 @@ const layer: Layer.Layer<
         metadata: structuredClone(original.metadata),
       })
       const msgs = yield* messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, MessageID>()
+      const idMap = MutableHashMap.empty<string, MessageID>()
       const target = input.messageID ? msgs.findIndex((msg) => msg.info.id === input.messageID) : msgs.length
 
       for (const msg of msgs.slice(0, target < 0 ? msgs.length : target)) {
         const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
+        MutableHashMap.set(idMap, msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+        const parentID = msg.info.role === "assistant" ? MutableHashMap.get(idMap, msg.info.parentID) : Option.none()
         const cloned = yield* updateMessage({
           ...msg.info,
           sessionID: session.id,
           id: newID,
-          ...(parentID && { parentID }),
+          ...(Option.isSome(parentID) ? { parentID: parentID.value } : {}),
         })
 
         for (const part of msg.parts) {
@@ -723,7 +754,7 @@ const layer: Layer.Layer<
             sessionID: session.id,
           }
           if (p.type === "compaction" && p.tail_start_id) {
-            p.tail_start_id = idMap.get(p.tail_start_id)
+            p.tail_start_id = Option.getOrUndefined(MutableHashMap.get(idMap, p.tail_start_id))
           }
           yield* updatePart(p)
         }
@@ -734,20 +765,21 @@ const layer: Layer.Layer<
     const patch = (sessionID: SessionID, info: Patch) =>
       Effect.gen(function* () {
         const current = yield* get(sessionID)
-        const next = {
+        const { time, share, summary, revert, permission, ...fields } = info
+        const next: Info = {
           ...current,
-          ...info,
-          time: info.time ? { ...current.time, ...info.time } : current.time,
-          share: info.share === null ? undefined : info.share ? { ...current.share, ...info.share } : current.share,
-          summary: info.summary === null ? undefined : (info.summary ?? current.summary),
-          revert: info.revert === null ? undefined : (info.revert ?? current.revert),
-          permission: info.permission === null ? undefined : (info.permission ?? current.permission),
-        } as Info
+          ...fields,
+          time: time ? { ...current.time, ...time } : current.time,
+          share: patched(share, current.share),
+          summary: patched(summary, current.summary),
+          revert: patched(revert, current.revert),
+          permission: patched(permission, current.permission),
+        }
         yield* events.publish(SessionV1.Event.Updated, { sessionID, info: next })
       })
 
     const touch = Effect.fn("Session.touch")(function* (sessionID: SessionID) {
-      yield* patch(sessionID, { time: { updated: Date.now() } }).pipe(Effect.orDie)
+      yield* patch(sessionID, { time: { updated: yield* Clock.currentTimeMillis } }).pipe(Effect.orDie)
     })
 
     const setTitle = Effect.fn("Session.setTitle")(function* (input: { sessionID: SessionID; title: string }) {
@@ -759,7 +791,10 @@ const layer: Layer.Layer<
     })
 
     const setMetadata = Effect.fn("Session.setMetadata")(function* (input: typeof SetMetadataInput.Type) {
-      yield* patch(input.sessionID, { metadata: input.metadata, time: { updated: Date.now() } }).pipe(Effect.orDie)
+      yield* patch(input.sessionID, {
+        metadata: input.metadata,
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const setAgentModel = Effect.fn("Session.setAgentModel")(function* (input: {
@@ -779,9 +814,10 @@ const layer: Layer.Layer<
       sessionID: SessionID
       permission: PermissionV1.Ruleset
     }) {
-      yield* patch(input.sessionID, { permission: [...input.permission], time: { updated: Date.now() } }).pipe(
-        Effect.orDie,
-      )
+      yield* patch(input.sessionID, {
+        permission: Option.some([...input.permission]),
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const setRevert = Effect.fn("Session.setRevert")(function* (input: {
@@ -790,34 +826,43 @@ const layer: Layer.Layer<
       summary: Info["summary"]
     }) {
       yield* patch(input.sessionID, {
-        summary: input.summary,
-        time: { updated: Date.now() },
-        revert: input.revert,
+        ...(input.summary ? { summary: Option.some(input.summary) } : {}),
+        time: { updated: yield* Clock.currentTimeMillis },
+        ...(input.revert ? { revert: Option.some(input.revert) } : {}),
       }).pipe(Effect.orDie)
     })
 
     const clearRevert = Effect.fn("Session.clearRevert")(function* (sessionID: SessionID) {
-      yield* patch(sessionID, { time: { updated: Date.now() }, revert: null }).pipe(Effect.orDie)
+      yield* patch(sessionID, { time: { updated: yield* Clock.currentTimeMillis }, revert: Option.none() }).pipe(
+        Effect.orDie,
+      )
     })
 
     const setSummary = Effect.fn("Session.setSummary")(function* (input: {
       sessionID: SessionID
       summary: Info["summary"]
     }) {
-      yield* patch(input.sessionID, { time: { updated: Date.now() }, summary: input.summary }).pipe(Effect.orDie)
+      yield* patch(input.sessionID, {
+        time: { updated: yield* Clock.currentTimeMillis },
+        ...(input.summary ? { summary: Option.some(input.summary) } : {}),
+      }).pipe(Effect.orDie)
     })
 
-    const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Info["share"] }) {
-      yield* patch(input.sessionID, { share: input.share ?? null, time: { updated: Date.now() } }).pipe(Effect.orDie)
+    const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Option.Option<typeof Share.Type> }) {
+      yield* patch(input.sessionID, {
+        share: input.share,
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const setWorkspace = Effect.fn("Session.setWorkspace")(function* (input: {
       sessionID: SessionID
       workspaceID: Info["workspaceID"]
     }) {
-      yield* patch(input.sessionID, { workspaceID: input.workspaceID, time: { updated: Date.now() } }).pipe(
-        Effect.orDie,
-      )
+      yield* patch(input.sessionID, {
+        workspaceID: input.workspaceID,
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const diff = Effect.fn("Session.diff")(function* (sessionID: SessionID) {
@@ -825,20 +870,20 @@ const layer: Layer.Layer<
       return [] as Snapshot.FileDiff[]
     })
 
+    // MessageV2.page reads the database from context; bind this service's database once.
+    const messagePage = (input: Parameters<typeof MessageV2.page>[0]) =>
+      MessageV2.page(input).pipe(Effect.provideService(Database.Service, database))
+
     const messages: Interface["messages"] = Effect.fn("Session.messages")(function* (input) {
       if (input.limit) {
-        return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
-          Effect.provideService(Database.Service, database),
-        )).items
+        return (yield* messagePage({ sessionID: input.sessionID, limit: input.limit })).items
       }
 
       const size = 50
       const result = [] as SessionV1.WithParts[]
       let before: string | undefined
       while (true) {
-        const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
+        const page = yield* messagePage({ sessionID: input.sessionID, limit: size, before })
         if (page.items.length === 0) break
         for (let i = page.items.length - 1; i >= 0; i--) {
           const item = page.items[i]
@@ -889,9 +934,7 @@ const layer: Layer.Layer<
       const size = 50
       let before: string | undefined
       while (true) {
-        const page = yield* MessageV2.page({ sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
+        const page = yield* messagePage({ sessionID, limit: size, before })
         if (page.items.length === 0) break
         for (let i = page.items.length - 1; i >= 0; i--) {
           const item = page.items[i]
@@ -959,38 +1002,14 @@ function listByProject(
     experimentalWorkspaces: boolean
   },
 ) {
-  const conditions = [eq(SessionTable.project_id, input.projectID)]
-
-  if (input.workspaceID) {
-    conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
-  }
-  if (input.path !== undefined) {
-    if (input.path) {
-      const conds = [
-        eq(SessionTable.path, input.path),
-        like(SessionTable.path, sql.param(`${input.path}/%`, SessionTable.path)),
-      ]
-
-      conditions.push(
-        input.directory
-          ? or(...conds, and(isNull(SessionTable.path), eq(SessionTable.directory, input.directory))!)!
-          : or(...conds)!,
-      )
-    }
-  } else if (input.scope !== "project") {
-    if (input.directory) {
-      conditions.push(eq(SessionTable.directory, input.directory))
-    }
-  }
-  if (input.roots) {
-    conditions.push(isNull(SessionTable.parent_id))
-  }
-  if (input.start) {
-    conditions.push(gte(SessionTable.time_updated, input.start))
-  }
-  if (input.search) {
-    conditions.push(like(SessionTable.title, `%${input.search}%`))
-  }
+  const conditions: SQL[] = [
+    eq(SessionTable.project_id, input.projectID),
+    ...(input.workspaceID ? [eq(SessionTable.workspace_id, input.workspaceID)] : []),
+    ...locationConditions(input),
+    ...(input.roots ? [isNull(SessionTable.parent_id)] : []),
+    ...(input.start ? [gte(SessionTable.time_updated, input.start)] : []),
+    ...(input.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+  ]
 
   const limit = input.limit ?? 100
 
@@ -1005,6 +1024,25 @@ function listByProject(
       Effect.orDie,
       Effect.map((rows) => rows.map(fromRow)),
     )
+}
+
+// A path matches itself and its subpaths; with a directory it also matches the
+// rows in that directory that have no path. Without a path, a scope other than
+// "project" filters by directory.
+function locationConditions(input: ListInput): SQL[] {
+  if (input.path !== undefined) {
+    if (!input.path) return []
+    const pathMatches = [
+      eq(SessionTable.path, input.path),
+      like(SessionTable.path, sql.param(`${input.path}/%`, SessionTable.path)),
+    ]
+    const matches = input.directory
+      ? or(...pathMatches, and(isNull(SessionTable.path), eq(SessionTable.directory, input.directory)))
+      : or(...pathMatches)
+    return matches ? [matches] : []
+  }
+  if (input.scope !== "project" && input.directory) return [eq(SessionTable.directory, input.directory)]
+  return []
 }
 
 export const node = LayerNode.make({

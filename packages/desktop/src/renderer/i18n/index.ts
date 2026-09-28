@@ -1,4 +1,5 @@
 import * as i18n from "@solid-primitives/i18n"
+import { Effect, Option, Schema } from "effect"
 import {
   DESKTOP_NATIVE_LOCALES,
   detectDesktopNativeLocale,
@@ -79,36 +80,16 @@ function detectLocale(): Locale {
   return detectDesktopNativeLocale(navigator.languages?.length ? navigator.languages : [navigator.language])
 }
 
-function parseLocale(value: unknown): Locale | null {
-  if (!value) return null
-  if (typeof value !== "string") return null
-  if ((DESKTOP_NATIVE_LOCALES as readonly string[]).includes(value)) return value as Locale
-  return null
-}
+const LocaleSchema = Schema.Literals(DESKTOP_NATIVE_LOCALES)
 
-function parseRecord(value: unknown) {
-  if (!value || typeof value !== "object") return null
-  if (Array.isArray(value)) return null
-  return value as Record<string, unknown>
-}
+/** A stored language value: a bare locale, or a settings record whose `locale` field holds one. */
+const StoredLocale = Schema.Union([LocaleSchema, Schema.Struct({ locale: LocaleSchema })])
 
-function parseStored(value: unknown) {
-  if (typeof value !== "string") return value
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return value
-  }
-}
+/** Stored values are JSON text; a stored value that is not JSON is read as it is. */
+const decodeStoredLocale = Schema.decodeUnknownOption(Schema.Union([Schema.fromJsonString(StoredLocale), StoredLocale]))
 
-function pickLocale(value: unknown): Locale | null {
-  const direct = parseLocale(value)
-  if (direct) return direct
-
-  const record = parseRecord(value)
-  if (!record) return null
-
-  return parseLocale(record.locale)
+function pickLocale(value: unknown): Option.Option<Locale> {
+  return Option.map(decodeStoredLocale(value), (stored) => (typeof stored === "string" ? stored : stored.locale))
 }
 
 const base = i18n.flatten(desktopEn)
@@ -181,7 +162,6 @@ function build(locale: Locale): Dictionary {
 const state = {
   locale: detectLocale(),
   dict: base as Dictionary,
-  init: undefined as Promise<Locale> | undefined,
 }
 
 state.dict = build(state.locale)
@@ -192,20 +172,23 @@ export function t(key: keyof Dictionary, params?: Record<string, string | number
   return translate(key, params)
 }
 
+const loadStoredLocale = Effect.gen(function* () {
+  const stored = yield* Effect.tryPromise(() => window.api.storeGet("opencode.global.dat", "language")).pipe(
+    Effect.option,
+  )
+  const next = Option.getOrElse(Option.flatMap(stored, pickLocale), () => state.locale)
+
+  state.locale = next
+  state.dict = build(next)
+  return next
+}).pipe(Effect.catchCause(() => Effect.sync(() => state.locale)))
+
+let init = Option.none<Promise<Locale>>()
+
 export function initI18n(): Promise<Locale> {
-  const cached = state.init
-  if (cached) return cached
-
-  const promise = (async () => {
-    const raw = await window.api.storeGet("opencode.global.dat", "language").catch(() => null)
-    const value = parseStored(raw)
-    const next = pickLocale(value) ?? state.locale
-
-    state.locale = next
-    state.dict = build(next)
-    return next
-  })().catch(() => state.locale)
-
-  state.init = promise
-  return promise
+  return Option.getOrElse(init, () => {
+    const promise = Effect.runPromise(loadStoredLocale)
+    init = Option.some(promise)
+    return promise
+  })
 }

@@ -2,7 +2,7 @@ import { $ } from "bun"
 import { describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { ConfigProvider, Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect"
+import { ConfigProvider, Data, Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -19,6 +19,8 @@ const describeWatcher = Watcher.hasNativeBinding() && !process.env.CI ? describe
 
 type WatcherEvent = { file: string; event: "add" | "change" | "unlink" }
 
+class WatcherTimeout extends Data.TaggedError("WatcherTimeout")<{ readonly message: string }> {}
+
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([FSUtil.node, EventV2.node])))
 
 const configLayer = Layer.succeed(
@@ -28,8 +30,11 @@ const configLayer = Layer.succeed(
   }),
 )
 
+// The provider replaces the environment for the whole watcher graph, which holds
+// Database.node through EventV2, so it keeps the in-memory database of test/preload.ts.
 const flagsLayer = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
+    OPENCODE_DB: ":memory:",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "false",
   }),
@@ -101,7 +106,7 @@ function nextUpdate<E>(check: (event: WatcherEvent) => boolean, trigger: Effect.
   return Effect.gen(function* () {
     const result = yield* maybeNextUpdate(check, trigger)
     if (Option.isSome(result)) return result.value
-    return yield* Effect.fail(new Error("timed out waiting for file watcher update"))
+    return yield* new WatcherTimeout({ message: "timed out waiting for file watcher update" })
   })
 }
 
@@ -114,7 +119,7 @@ function eventuallyUpdate<E>(check: (event: WatcherEvent) => boolean, trigger: (
   }).pipe(
     Effect.timeoutOrElse({
       duration: "5 seconds",
-      orElse: () => Effect.fail(new Error("timed out waiting for file watcher readiness")),
+      orElse: () => Effect.fail(new WatcherTimeout({ message: "timed out waiting for file watcher readiness" })),
     }),
   )
 }

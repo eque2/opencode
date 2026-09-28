@@ -5,8 +5,8 @@ if (process.argv.length < 3) {
   console.error("Usage: bun black-stats.ts <plan>")
   process.exit(1)
 }
-const plan = process.argv[2] as (typeof BlackPlans)[number]
-if (!BlackPlans.includes(plan)) {
+const plan = BlackPlans.find((value) => value === process.argv[2])
+if (!plan) {
   console.error("Usage: bun black-stats.ts <plan>")
   process.exit(1)
 }

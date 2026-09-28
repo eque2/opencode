@@ -4,7 +4,7 @@
 // https://github.com/cline/cline/blob/main/evals/diff-edits/diff-apply/diff-06-26-25.ts
 
 import * as path from "path"
-import { Effect, Schema, Semaphore } from "effect"
+import { Effect, MutableHashMap, Option, Result, Schema, Semaphore } from "effect"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -19,6 +19,11 @@ import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Bom from "@/util/bom"
 
+/** An edit the tool refuses: its message tells the model how to correct the call. */
+export class EditError extends Schema.TaggedError<EditError>()("EditTool.EditError", {
+  message: Schema.String,
+}) {}
+
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
@@ -32,16 +37,15 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
-const locks = new Map<string, Semaphore.Semaphore>()
+// One process-wide write lock per resolved file path.
+const locks = MutableHashMap.empty<string, Semaphore.Semaphore>()
 
-function lock(filePath: string) {
-  const resolvedFilePath = FSUtil.resolve(filePath)
-  const hit = locks.get(resolvedFilePath)
-  if (hit) return hit
-
-  const next = Semaphore.makeUnsafe(1)
-  locks.set(resolvedFilePath, next)
-  return next
+function lock(resolvedFilePath: string) {
+  return Option.getOrElse(MutableHashMap.get(locks, resolvedFilePath), () => {
+    const next = Semaphore.makeUnsafe(1)
+    MutableHashMap.set(locks, resolvedFilePath, next)
+    return next
+  })
 }
 
 export const Parameters = Schema.Struct({
@@ -69,11 +73,11 @@ export const EditTool = Tool.define(
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           if (!params.filePath) {
-            throw new Error("filePath is required")
+            return yield* new EditError({ message: "filePath is required" })
           }
 
           if (params.oldString === params.newString) {
-            throw new Error("No changes to apply: oldString and newString are identical.")
+            return yield* new EditError({ message: "No changes to apply: oldString and newString are identical." })
           }
 
           const instance = yield* InstanceState.context
@@ -82,23 +86,21 @@ export const EditTool = Tool.define(
             : path.join(instance.directory, params.filePath)
           yield* assertExternalDirectoryEffect(ctx, filePath)
 
-          let diff = ""
-          let contentOld = ""
-          let contentNew = ""
-          yield* lock(filePath).withPermits(1)(
+          // Lock on the canonical real path, so two spellings of one file share a lock.
+          const resolvedFilePath = yield* afs.resolve(filePath).pipe(Effect.flatMap(afs.normalizePath))
+          const { diff, contentOld, contentNew } = yield* lock(resolvedFilePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
                 const existed = yield* afs.existsSafe(filePath)
                 if (existed) {
-                  throw new Error(
-                    "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
-                  )
+                  return yield* new EditError({
+                    message:
+                      "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+                  })
                 }
                 const next = Bom.split(params.newString)
                 const desiredBom = next.bom
-                contentOld = ""
-                contentNew = next.text
-                diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
+                const diff = trimDiff(createTwoFilesPatch(filePath, filePath, "", next.text))
                 yield* ctx.ask({
                   permission: "edit",
                   patterns: [path.relative(instance.worktree, filePath)],
@@ -108,60 +110,61 @@ export const EditTool = Tool.define(
                     diff,
                   },
                 })
-                yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
-                if (yield* format.file(filePath)) {
-                  contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
-                }
+                yield* afs.writeWithDirs(filePath, Bom.join(next.text, desiredBom))
+                const contentNew = (yield* format.file(filePath))
+                  ? yield* Bom.syncFile(afs, filePath, desiredBom)
+                  : next.text
                 yield* events.publish(FileSystem.Event.Edited, { file: filePath })
                 yield* events.publish(Watcher.Event.Updated, {
                   file: filePath,
                   event: "add",
                 })
-                return
+                return { diff, contentOld: "", contentNew }
               }
 
-              const info = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-              if (!info) throw new Error(`File ${filePath} not found`)
-              if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
+              const info = yield* afs.stat(filePath).pipe(Effect.option)
+              if (Option.isNone(info)) return yield* new EditError({ message: `File ${filePath} not found` })
+              if (info.value.type === "Directory") {
+                return yield* new EditError({ message: `Path is a directory, not a file: ${filePath}` })
+              }
               const source = yield* Bom.readFile(afs, filePath)
-              contentOld = source.text
+              const contentOld = source.text
 
               const ending = detectLineEnding(contentOld)
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
               const replacement = convertToLineEnding(normalizeLineEndings(params.newString), ending)
 
-              const next = Bom.split(replace(contentOld, old, replacement, params.replaceAll))
+              const next = Bom.split(yield* Effect.fromResult(replace(contentOld, old, replacement, params.replaceAll)))
               const desiredBom = source.bom || next.bom
-              contentNew = next.text
 
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
-              )
               yield* ctx.ask({
                 permission: "edit",
                 patterns: [path.relative(instance.worktree, filePath)],
                 always: ["*"],
                 metadata: {
                   filepath: filePath,
-                  diff,
+                  diff: trimDiff(
+                    createTwoFilesPatch(
+                      filePath,
+                      filePath,
+                      normalizeLineEndings(contentOld),
+                      normalizeLineEndings(next.text),
+                    ),
+                  ),
                 },
               })
 
-              yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
-              if (yield* format.file(filePath)) {
-                contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
-              }
+              yield* afs.writeWithDirs(filePath, Bom.join(next.text, desiredBom))
+              const contentNew = (yield* format.file(filePath))
+                ? yield* Bom.syncFile(afs, filePath, desiredBom)
+                : next.text
               yield* events.publish(FileSystem.Event.Edited, { file: filePath })
               yield* events.publish(Watcher.Event.Updated, {
                 file: filePath,
                 event: "change",
               })
-              diff = trimDiff(
+              // The formatter may have changed the file, so the result diff is taken after it ran.
+              const diff = trimDiff(
                 createTwoFilesPatch(
                   filePath,
                   filePath,
@@ -169,6 +172,7 @@ export const EditTool = Tool.define(
                   normalizeLineEndings(contentNew),
                 ),
               )
+              return { diff, contentOld, contentNew }
             }).pipe(Effect.orDie),
           )
 
@@ -196,7 +200,7 @@ export const EditTool = Tool.define(
           let output = "Edit applied successfully."
           yield* lsp.touchFile(filePath, "document")
           const diagnostics = yield* lsp.diagnostics()
-          const normalizedFilePath = FSUtil.normalizePath(filePath)
+          const normalizedFilePath = yield* afs.normalizePath(filePath)
           const block = LSP.Diagnostic.report(filePath, diagnostics[normalizedFilePath] ?? [])
           if (block) output += `\n\nLSP errors detected in this file, please fix:\n${block}`
 
@@ -206,10 +210,10 @@ export const EditTool = Tool.define(
               diff,
               filediff,
             },
-            title: `${path.relative(instance.worktree, filePath)}`,
+            title: path.relative(instance.worktree, filePath),
             output,
           }
-        }),
+        }).pipe(Effect.provideService(FSUtil.Service, afs), Effect.orDie),
     }
   }),
 )
@@ -241,17 +245,17 @@ function levenshtein(a: string, b: string): number {
   return matrix[a.length][b.length]
 }
 
+function withoutTrailingEmptyLine(lines: string[]) {
+  return lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines
+}
+
 export const SimpleReplacer: Replacer = function* (_content, find) {
   yield find
 }
 
 export const LineTrimmedReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
-
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
+  const searchLines = withoutTrailingEmptyLine(find.split("\n"))
 
   for (let i = 0; i <= originalLines.length - searchLines.length; i++) {
     let matches = true
@@ -287,15 +291,13 @@ export const LineTrimmedReplacer: Replacer = function* (content, find) {
 
 export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
+  const findLines = find.split("\n")
 
-  if (searchLines.length < 3) {
+  if (findLines.length < 3) {
     return
   }
 
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
+  const searchLines = withoutTrailingEmptyLine(findLines)
 
   const firstLineSearch = searchLines[0].trim()
   const lastLineSearch = searchLines[searchLines.length - 1].trim()
@@ -303,23 +305,15 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const maxLineDelta = Math.max(1, Math.floor(searchBlockSize * 0.25))
 
   // Collect all candidate positions where both anchors match
-  const candidates: Array<{ startLine: number; endLine: number }> = []
-  for (let i = 0; i < originalLines.length; i++) {
-    if (originalLines[i].trim() !== firstLineSearch) {
-      continue
-    }
+  const candidates = originalLines.flatMap((line, i) => {
+    if (line.trim() !== firstLineSearch) return []
 
-    // Look for the matching last line after this first line
-    for (let j = i + 2; j < originalLines.length; j++) {
-      if (originalLines[j].trim() === lastLineSearch) {
-        const actualBlockSize = j - i + 1
-        if (Math.abs(actualBlockSize - searchBlockSize) <= maxLineDelta) {
-          candidates.push({ startLine: i, endLine: j })
-        }
-        break // Only match the first occurrence of the last line
-      }
-    }
-  }
+    // Look for the matching last line after this first line. Only its first occurrence counts.
+    const j = originalLines.findIndex((other, index) => index >= i + 2 && other.trim() === lastLineSearch)
+    if (j === -1) return []
+    const actualBlockSize = j - i + 1
+    return Math.abs(actualBlockSize - searchBlockSize) <= maxLineDelta ? [{ startLine: i, endLine: j }] : []
+  })
 
   // Return immediately if no candidates
   if (candidates.length === 0) {
@@ -373,7 +367,7 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   }
 
   // Calculate similarity for multiple candidates
-  let bestMatch: { startLine: number; endLine: number } | null = null
+  let bestMatch = Option.none<{ startLine: number; endLine: number }>()
   let maxSimilarity = -1
 
   for (const candidate of candidates) {
@@ -402,13 +396,13 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 
     if (similarity > maxSimilarity) {
       maxSimilarity = similarity
-      bestMatch = candidate
+      bestMatch = Option.some(candidate)
     }
   }
 
   // Threshold judgment
-  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && bestMatch) {
-    const { startLine, endLine } = bestMatch
+  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && Option.isSome(bestMatch)) {
+    const { startLine, endLine } = bestMatch.value
     let matchStartIndex = 0
     for (let k = 0; k < startLine; k++) {
       matchStartIndex += originalLines[k].length + 1
@@ -442,14 +436,13 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
         const words = find.trim().split(/\s+/)
         if (words.length > 0) {
           const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
-          try {
-            const regex = new RegExp(pattern)
-            const match = line.match(regex)
+          // An invalid regex pattern cannot match, so it is skipped.
+          const regex = Result.try(() => new RegExp(pattern))
+          if (Result.isSuccess(regex)) {
+            const match = line.match(regex.success)
             if (match) {
               yield match[0]
             }
-          } catch {
-            // Invalid regex pattern, skip
           }
         }
       }
@@ -586,16 +579,14 @@ export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
 }
 
 export const ContextAwareReplacer: Replacer = function* (content, find) {
-  const findLines = find.split("\n")
-  if (findLines.length < 3) {
+  const allFindLines = find.split("\n")
+  if (allFindLines.length < 3) {
     // Need at least 3 lines to have meaningful context
     return
   }
 
   // Remove trailing empty line if present
-  if (findLines[findLines.length - 1] === "") {
-    findLines.pop()
-  }
+  const findLines = withoutTrailingEmptyLine(allFindLines)
 
   const contentLines = content.split("\n")
 
@@ -679,13 +670,21 @@ export function trimDiff(diff: string): string {
   return trimmedLines.join("\n")
 }
 
-export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+): Result.Result<string, EditError> {
   if (oldString === newString) {
-    throw new Error("No changes to apply: oldString and newString are identical.")
+    return Result.fail(new EditError({ message: "No changes to apply: oldString and newString are identical." }))
   }
   if (oldString === "") {
-    throw new Error(
-      "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+    return Result.fail(
+      new EditError({
+        message:
+          "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+      }),
     )
   }
 
@@ -707,25 +706,35 @@ export function replace(content: string, oldString: string, newString: string, r
       if (index === -1) continue
       notFound = false
       if (isDisproportionateMatch(search, oldString)) {
-        throw new Error(
-          "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+        return Result.fail(
+          new EditError({
+            message:
+              "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+          }),
         )
       }
       if (replaceAll) {
-        return content.replaceAll(search, newString)
+        return Result.succeed(content.replaceAll(search, newString))
       }
       const lastIndex = content.lastIndexOf(search)
       if (index !== lastIndex) continue
-      return content.substring(0, index) + newString + content.substring(index + search.length)
+      return Result.succeed(content.substring(0, index) + newString + content.substring(index + search.length))
     }
   }
 
   if (notFound) {
-    throw new Error(
-      "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+    return Result.fail(
+      new EditError({
+        message:
+          "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+      }),
     )
   }
-  throw new Error("Found multiple matches for oldString. Provide more surrounding context to make the match unique.")
+  return Result.fail(
+    new EditError({
+      message: "Found multiple matches for oldString. Provide more surrounding context to make the match unique.",
+    }),
+  )
 }
 
 function isDisproportionateMatch(search: string, oldString: string) {

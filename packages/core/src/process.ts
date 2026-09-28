@@ -1,9 +1,24 @@
-import { Context, Duration, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Cause, Context, Duration, Effect, Fiber, Formatter, Layer, Predicate, Schema, Stream } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "./cross-spawn-spawner"
 import { makeGlobalNode } from "./effect/app-node"
+
+// The text of a failure cause: an Error message, a primitive as text, or any other value formatted.
+const describeCause = (cause: unknown): string => {
+  if (Predicate.isError(cause)) return cause.message
+  if (!cause) return ""
+  if (
+    typeof cause === "string" ||
+    typeof cause === "number" ||
+    typeof cause === "boolean" ||
+    typeof cause === "bigint"
+  ) {
+    return String(cause)
+  }
+  return Formatter.format(cause)
+}
 
 export class AppProcessError extends Schema.TaggedError<AppProcessError>()("AppProcessError", {
   command: Schema.String,
@@ -12,8 +27,7 @@ export class AppProcessError extends Schema.TaggedError<AppProcessError>()("AppP
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message() {
-    const detail =
-      this.stderr?.trim() || (this.cause instanceof Error ? this.cause.message : this.cause && String(this.cause))
+    const detail = this.stderr?.trim() || describeCause(this.cause)
     const status = this.exitCode === undefined ? "" : ` (exit ${this.exitCode})`
     return `Command failed${status}: ${this.command}${detail ? `: ${detail}` : ""}`
   }
@@ -90,19 +104,23 @@ const describeCommand = (command: ChildProcess.Command): string => {
 const wrapError = (description: string, cause: unknown): AppProcessError =>
   cause instanceof AppProcessError ? cause : new AppProcessError({ command: description, cause })
 
+// The failure of an aborted signal whose reason is not an Error. The tag keeps the
+// conventional "AbortError" error name.
+export class AbortError extends Schema.TaggedError<AbortError>()("AbortError", {
+  message: Schema.String,
+}) {}
+
 export const abortError = (signal: AbortSignal): Error => {
   const reason = signal.reason
   if (reason instanceof Error) return reason
-  const err = new Error("Aborted")
-  err.name = "AbortError"
-  return err
+  return new AbortError({ message: "Aborted" })
 }
 
 export const waitForAbort = (signal: AbortSignal) =>
   Effect.callback<never, Error>((resume) => {
     if (signal.aborted) {
       resume(Effect.fail(abortError(signal)))
-      return
+      return Effect.void
     }
     const onabort = () => resume(Effect.fail(abortError(signal)))
     signal.addEventListener("abort", onabort, { once: true })
@@ -183,7 +201,8 @@ const layer = Layer.effect(
       const timed = options?.timeout
         ? Effect.timeoutOrElse(collect, {
             duration: options.timeout,
-            orElse: () => Effect.fail(new AppProcessError({ command: description, cause: new Error("Timed out") })),
+            orElse: () =>
+              Effect.fail(new AppProcessError({ command: description, cause: new Cause.TimeoutError("Timed out") })),
           })
         : collect
       const aborted = options?.signal
@@ -201,7 +220,7 @@ const layer = Layer.effect(
       if (command._tag !== "StandardCommand") {
         return yield* new AppProcessError({
           command: describeCommand(command),
-          cause: new Error("stdin option only supports StandardCommand; received PipedCommand"),
+          cause: new Cause.IllegalArgumentError("stdin option only supports StandardCommand; received PipedCommand"),
         })
       }
       const next = ChildProcess.make(command.command, command.args, {
@@ -239,7 +258,7 @@ const layer = Layer.effect(
               return Stream.empty
             }),
           )
-          return Stream.concat(lines, tail) as Stream.Stream<string, AppProcessError | PlatformError>
+          return Stream.concat(lines, tail)
         }),
       )
       const mapped = built.pipe(

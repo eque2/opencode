@@ -5,9 +5,12 @@ import * as ACPError from "../../src/acp/error"
 describe("acp.error", () => {
   test("maps validation failures to invalid params", () => {
     const cases: ACPError.Error[] = [
-      new ACPError.SessionNotFoundError({ sessionId: "ses_missing" }),
-      new ACPError.InvalidConfigOptionError({ configId: "temperature" }),
-      new ACPError.InvalidModelError({ providerId: "anthropic", modelId: "claude-missing" }),
+      new ACPError.SessionNotFoundError({ sessionId: ACPError.RequestedSessionId.make("ses_missing") }),
+      new ACPError.InvalidConfigOptionError({ configId: ACPError.RequestedConfigId.make("temperature") }),
+      new ACPError.InvalidModelError({
+        providerId: "anthropic",
+        modelId: ACPError.RequestedModelId.make("claude-missing"),
+      }),
       new ACPError.InvalidEffortError({ effort: "extreme" }),
       new ACPError.InvalidModeError({ mode: "turbo" }),
     ]
@@ -16,11 +19,19 @@ describe("acp.error", () => {
   })
 
   test("includes safe validation details", () => {
-    expect(ACPError.toRequestError(new ACPError.SessionNotFoundError({ sessionId: "ses_123" }))).toMatchObject({
+    expect(
+      ACPError.toRequestError(
+        new ACPError.SessionNotFoundError({ sessionId: ACPError.RequestedSessionId.make("ses_123") }),
+      ),
+    ).toMatchObject({
       code: -32602,
       data: { sessionId: "ses_123" },
     })
-    expect(ACPError.toRequestError(new ACPError.InvalidModelError({ modelId: "gpt-missing" }))).toMatchObject({
+    expect(
+      ACPError.toRequestError(
+        new ACPError.InvalidModelError({ modelId: ACPError.RequestedModelId.make("gpt-missing") }),
+      ),
+    ).toMatchObject({
       code: -32602,
       data: { modelId: "gpt-missing" },
     })

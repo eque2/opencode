@@ -1,9 +1,9 @@
 import { render, TimeToFirstDraw, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { registerOpencodeSpinner } from "./component/register-spinner"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { Deferred, Effect } from "effect"
+import { Config, Deferred, Effect, Option, Predicate, Schema } from "effect"
 import { Global } from "@opencode-ai/core/global"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { ClipboardProvider, useClipboard } from "./context/clipboard"
 import { ExitProvider, useExit } from "./context/exit"
@@ -23,8 +23,18 @@ import {
   batch,
   Show,
   on,
+  type JSX,
 } from "solid-js"
-import { TuiPathsProvider, TuiStartupProvider, TuiTerminalEnvironmentProvider, useTuiStartup } from "./context/runtime"
+import {
+  TuiFlagsProvider,
+  TuiPathsProvider,
+  TuiStartupProvider,
+  TuiTerminalEnvironmentProvider,
+  useTuiFlags,
+  useTuiStartup,
+  type TuiStartup,
+  type TuiTerminalEnvironment,
+} from "./context/runtime"
 import { DialogProvider, useDialog } from "./ui/dialog"
 import { DialogProvider as DialogProviderList } from "./component/dialog-provider"
 import { ErrorComponent } from "./component/error-component"
@@ -89,6 +99,14 @@ import { cliErrorMessage, errorFormat } from "./util/error"
 
 registerOpencodeSpinner()
 
+// Run a UI handler program. A defect is logged, as an unhandled rejection reached the console before.
+function runHandler(effect: Effect.Effect<void>) {
+  Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
+}
+
+// OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
+const isMouseButton = Schema.is(Schema.Enum(MouseButton))
+
 const appGlobalBindingCommands = [
   "session.list",
   "session.new",
@@ -139,6 +157,12 @@ const appBindingCommands = [
   "app.toggle.session_directory_filter",
 ] as const
 
+/** The terminal renderer could not start. The cause is the value createCliRenderer rejected with. */
+export class TuiRendererError extends Schema.TaggedError<TuiRendererError>()("Tui.RendererError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 export type TuiInput = {
   url: string
   args: Args
@@ -154,10 +178,10 @@ export type TuiInput = {
 function errorMessage(error: unknown) {
   if (
     typeof error === "object" &&
-    error !== null &&
+    Predicate.isNotNull(error) &&
     "data" in error &&
     typeof error.data === "object" &&
-    error.data !== null &&
+    Predicate.isNotNull(error.data) &&
     "message" in error.data &&
     typeof error.data.message === "string"
   ) {
@@ -180,12 +204,48 @@ function isVersionGreater(left: string, right: string) {
   if (a.prerelease === b.prerelease) return false
   if (!a.prerelease) return true
   if (!b.prerelease) return false
-  return a.prerelease.localeCompare(b.prerelease, undefined, { numeric: true }) > 0
+  return a.prerelease.localeCompare(b.prerelease, [], { numeric: true }) > 0
 }
 
 export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
   const global = yield* Global.Service
-  const exit = { epilogue: undefined as string | undefined, reason: undefined as unknown }
+  // Every flag has a default, so reading them cannot fail.
+  const flags = yield* Config.all({
+    OPENCODE_DISABLE_MOUSE: FlagConfig.OPENCODE_DISABLE_MOUSE,
+    OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT: FlagConfig.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT,
+    OPENCODE_DISABLE_TERMINAL_TITLE: FlagConfig.OPENCODE_DISABLE_TERMINAL_TITLE,
+    OPENCODE_EXPERIMENTAL_WORKSPACES: FlagConfig.OPENCODE_EXPERIMENTAL_WORKSPACES,
+    OPENCODE_SHOW_TTFD: FlagConfig.OPENCODE_SHOW_TTFD,
+  }).pipe(Effect.orDie)
+  // The ambient provider treats an empty variable as not set, as the old truthy checks did.
+  // OPENCODE_ROUTE must hold JSON; RouteProvider validates the route shape.
+  const environment = yield* Config.all({
+    TMUX: Config.option(Config.String("TMUX")),
+    STY: Config.option(Config.String("STY")),
+    WAYLAND_DISPLAY: Config.option(Config.String("WAYLAND_DISPLAY")),
+    DISPLAY: Config.option(Config.String("DISPLAY")),
+    OPENCODE_ROUTE: Config.option(Config.schema(Schema.fromJsonString(Schema.Json), "OPENCODE_ROUTE")),
+    OPENCODE_FAST_BOOT: Config.option(Config.String("OPENCODE_FAST_BOOT")),
+  })
+  const multiplexer = Option.orElse(Option.as(environment.TMUX, "tmux" as const), () =>
+    Option.as(environment.STY, "screen" as const),
+  )
+  const displayServer = Option.orElse(Option.as(environment.WAYLAND_DISPLAY, "wayland" as const), () =>
+    Option.as(environment.DISPLAY, "x11" as const),
+  )
+  const terminalEnvironment: TuiTerminalEnvironment = {
+    platform: process.platform,
+    ...Option.match(multiplexer, { onNone: () => ({}), onSome: (value) => ({ multiplexer: value }) }),
+    ...Option.match(displayServer, { onNone: () => ({}), onSome: (value) => ({ displayServer: value }) }),
+  }
+  const startup: TuiStartup = {
+    ...Option.match(environment.OPENCODE_ROUTE, { onNone: () => ({}), onSome: (route) => ({ initialRoute: route }) }),
+    skipInitialLoading: Option.isSome(environment.OPENCODE_FAST_BOOT),
+  }
+  const exit: { epilogue: Option.Option<string>; reason: Option.Option<unknown> } = {
+    epilogue: Option.none(),
+    reason: Option.none(),
+  }
   const result = yield* Effect.scoped(
     Effect.gen(function* () {
       const renderer = yield* Effect.acquireRelease(
@@ -199,12 +259,13 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
               useKittyKeyboard: {},
               autoFocus: false,
               openConsoleOnError: false,
-              useMouse: !Flag.OPENCODE_DISABLE_MOUSE && input.config.mouse,
+              useMouse: !flags.OPENCODE_DISABLE_MOUSE && input.config.mouse,
               consoleOptions: {
                 keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
               },
             }),
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          catch: (cause) =>
+            new TuiRendererError({ message: Predicate.isError(cause) ? cause.message : String(cause), cause }),
         }),
         (renderer) =>
           Effect.sync(() => {
@@ -218,13 +279,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
         (unregister) => Effect.sync(unregister),
       )
       yield* Effect.addFinalizer(() =>
-        Effect.promise(async () => {
-          try {
-            await input.pluginHost.dispose()
-          } catch (error) {
-            console.error("Failed to dispose TUI plugins", error)
-          }
-        }),
+        Effect.tryPromise(() => input.pluginHost.dispose()).pipe(
+          Effect.catch((error) => Effect.logError("Failed to dispose TUI plugins", error.cause)),
+        ),
       )
       yield* Effect.addFinalizer(() => Effect.sync(TuiAudio.dispose))
       const shutdown = yield* Deferred.make<unknown>()
@@ -236,136 +293,130 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       renderer.once("destroy", () => Deferred.doneUnsafe(shutdown, Effect.void))
       const pluginRuntime = createPluginRuntime()
 
-      yield* Effect.tryPromise(async () => {
-        // Prewarm palette before ThemeProvider mounts so `system` theme avoids a first-paint fallback flash.
-        void renderer.getPalette({ size: 16 }).catch(() => undefined)
-        const mode = (await renderer.waitForThemeMode(1000)) ?? "dark"
-        if (renderer.isDestroyed) return
+      // Prewarm palette before ThemeProvider mounts so `system` theme avoids a first-paint fallback flash.
+      // Start it before the theme-mode query, and ignore a failure, as before.
+      yield* Effect.forkChild(Effect.tryPromise(() => renderer.getPalette({ size: 16 })).pipe(Effect.ignore), {
+        startImmediately: true,
+      })
+      const mode = (yield* Effect.tryPromise(() => renderer.waitForThemeMode(1000))) ?? "dark"
 
-        await render(() => {
-          return (
-            <ExitProvider
-              exit={(reason) => {
-                if (renderer.isDestroyed) return
-                exit.reason = reason
-                destroyRenderer(renderer)
-              }}
-            >
-              <EpilogueProvider set={(value) => (exit.epilogue = value)}>
-                <ErrorBoundary fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}>
-                  <TuiPathsProvider
-                    value={{
-                      cwd: process.cwd(),
-                      home: global.home,
-                      state: global.state,
-                      worktree: global.data + "/worktree",
-                    }}
+      if (!renderer.isDestroyed) {
+        yield* Effect.tryPromise(() =>
+          render(() => {
+            return (
+              <ExitProvider
+                exit={(reason) => {
+                  if (renderer.isDestroyed) return
+                  exit.reason = Option.liftPredicate(reason, Predicate.isNotUndefined)
+                  destroyRenderer(renderer)
+                }}
+              >
+                <EpilogueProvider
+                  set={(value) => {
+                    exit.epilogue = Option.fromNullishOr(value)
+                  }}
+                >
+                  <ErrorBoundary
+                    fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}
                   >
-                    <TuiTerminalEnvironmentProvider
+                    <TuiPathsProvider
                       value={{
-                        platform: process.platform,
-                        multiplexer: process.env.TMUX ? "tmux" : process.env.STY ? "screen" : undefined,
-                        displayServer: process.env.WAYLAND_DISPLAY
-                          ? "wayland"
-                          : process.env.DISPLAY
-                            ? "x11"
-                            : undefined,
+                        cwd: process.cwd(),
+                        home: global.home,
+                        state: global.state,
+                        worktree: global.data + "/worktree",
                       }}
                     >
-                      <TuiStartupProvider
-                        value={{
-                          initialRoute: process.env.OPENCODE_ROUTE ? JSON.parse(process.env.OPENCODE_ROUTE) : undefined,
-                          skipInitialLoading: Boolean(process.env.OPENCODE_FAST_BOOT),
-                        }}
-                      >
-                        <ClipboardProvider>
-                          <OpencodeKeymapProvider keymap={keymap}>
-                            <ArgsProvider {...input.args}>
-                              <KVProvider>
-                                <ToastProvider>
-                                  <RouteProvider
-                                    initialRoute={
-                                      input.args.continue
-                                        ? {
-                                            type: "session",
-                                            sessionID: "dummy",
-                                          }
-                                        : undefined
-                                    }
-                                  >
-                                    <TuiConfigProvider config={input.config}>
-                                      <PluginRuntimeProvider value={pluginRuntime}>
-                                        <SDKProvider
-                                          url={input.url}
-                                          directory={input.directory}
-                                          fetch={input.fetch}
-                                          headers={input.headers}
-                                          events={input.events}
-                                        >
-                                          <PermissionProvider>
-                                            <ProjectProvider>
-                                              <SyncProvider>
-                                                <DataProvider>
-                                                  <ThemeProvider mode={mode}>
-                                                    <LocalProvider>
-                                                      <PromptStashProvider>
-                                                        <DialogProvider>
-                                                          <FrecencyProvider>
-                                                            <PromptHistoryProvider>
-                                                              <PromptRefProvider>
-                                                                <EditorContextProvider>
-                                                                  <LocationProvider>
-                                                                    <App
-                                                                      onSnapshot={input.onSnapshot}
-                                                                      pluginHost={input.pluginHost}
-                                                                    />
-                                                                  </LocationProvider>
-                                                                </EditorContextProvider>
-                                                              </PromptRefProvider>
-                                                            </PromptHistoryProvider>
-                                                          </FrecencyProvider>
-                                                        </DialogProvider>
-                                                      </PromptStashProvider>
-                                                    </LocalProvider>
-                                                  </ThemeProvider>
-                                                </DataProvider>
-                                              </SyncProvider>
-                                            </ProjectProvider>
-                                          </PermissionProvider>
-                                        </SDKProvider>
-                                      </PluginRuntimeProvider>
-                                    </TuiConfigProvider>
-                                  </RouteProvider>
-                                </ToastProvider>
-                              </KVProvider>
-                            </ArgsProvider>
-                          </OpencodeKeymapProvider>
-                        </ClipboardProvider>
-                      </TuiStartupProvider>
-                    </TuiTerminalEnvironmentProvider>
-                  </TuiPathsProvider>
-                </ErrorBoundary>
-              </EpilogueProvider>
-            </ExitProvider>
-          )
-        }, renderer)
-      })
+                      <TuiTerminalEnvironmentProvider value={terminalEnvironment}>
+                        <TuiStartupProvider value={startup}>
+                          <TuiFlagsProvider value={flags}>
+                            <ClipboardProvider>
+                              <OpencodeKeymapProvider keymap={keymap}>
+                                <ArgsProvider {...input.args}>
+                                  <KVProvider>
+                                    <ToastProvider>
+                                      <RouteProvider
+                                        {...(input.args.continue
+                                          ? { initialRoute: { type: "session", sessionID: "dummy" } as const }
+                                          : {})}
+                                      >
+                                        <TuiConfigProvider config={input.config}>
+                                          <PluginRuntimeProvider value={pluginRuntime}>
+                                            <SDKProvider
+                                              url={input.url}
+                                              directory={input.directory}
+                                              fetch={input.fetch}
+                                              headers={input.headers}
+                                              events={input.events}
+                                            >
+                                              <PermissionProvider>
+                                                <ProjectProvider>
+                                                  <SyncProvider>
+                                                    <DataProvider>
+                                                      <ThemeProvider mode={mode}>
+                                                        <LocalProvider>
+                                                          <PromptStashProvider>
+                                                            <DialogProvider>
+                                                              <FrecencyProvider>
+                                                                <PromptHistoryProvider>
+                                                                  <PromptRefProvider>
+                                                                    <EditorContextProvider>
+                                                                      <LocationProvider>
+                                                                        <App
+                                                                          onSnapshot={input.onSnapshot}
+                                                                          pluginHost={input.pluginHost}
+                                                                        />
+                                                                      </LocationProvider>
+                                                                    </EditorContextProvider>
+                                                                  </PromptRefProvider>
+                                                                </PromptHistoryProvider>
+                                                              </FrecencyProvider>
+                                                            </DialogProvider>
+                                                          </PromptStashProvider>
+                                                        </LocalProvider>
+                                                      </ThemeProvider>
+                                                    </DataProvider>
+                                                  </SyncProvider>
+                                                </ProjectProvider>
+                                              </PermissionProvider>
+                                            </SDKProvider>
+                                          </PluginRuntimeProvider>
+                                        </TuiConfigProvider>
+                                      </RouteProvider>
+                                    </ToastProvider>
+                                  </KVProvider>
+                                </ArgsProvider>
+                              </OpencodeKeymapProvider>
+                            </ClipboardProvider>
+                          </TuiFlagsProvider>
+                        </TuiStartupProvider>
+                      </TuiTerminalEnvironmentProvider>
+                    </TuiPathsProvider>
+                  </ErrorBoundary>
+                </EpilogueProvider>
+              </ExitProvider>
+            )
+          }, renderer),
+        )
+      }
       yield* Deferred.await(shutdown)
       return { epilogue: exit.epilogue, reason: exit.reason }
     }),
   )
   yield* Effect.sync(() => {
     win32FlushInputBuffer()
-    if (result.reason !== undefined) {
-      process.stderr.write((cliErrorMessage(result.reason) ?? errorFormat(result.reason)) + "\n")
+    if (Option.isSome(result.reason)) {
+      const reason = result.reason.value
+      process.stderr.write((cliErrorMessage(reason) ?? errorFormat(reason)) + "\n")
       process.exitCode = 1
     }
-    if (result.epilogue) process.stdout.write(result.epilogue + "\n")
+    if (Option.isSome(result.epilogue) && result.epilogue.value) process.stdout.write(result.epilogue.value + "\n")
   })
 })
 
 function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPluginHost }) {
   const startup = useTuiStartup()
+  const flags = useTuiFlags()
   const tuiConfig = useTuiConfig()
   const route = useRoute()
   const dimensions = useTerminalDimensions()
@@ -407,25 +458,36 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     }),
   )
   const [ready, setReady] = createSignal(false)
-  props.pluginHost
-    .start({
-      api,
-      config: tuiConfig,
-      runtime: pluginRuntime,
-      dispose: () => attention.dispose(),
-    })
-    .catch((error) => {
-      console.error("Failed to load TUI plugins", error)
-    })
-    .finally(() => {
-      setReady(true)
+  runHandler(
+    Effect.tryPromise(() =>
+      props.pluginHost.start({
+        api,
+        config: tuiConfig,
+        runtime: pluginRuntime,
+        dispose: () => attention.dispose(),
+      }),
+    ).pipe(
+      Effect.catch((error) => Effect.logError("Failed to load TUI plugins", error.cause)),
+      Effect.ensuring(Effect.sync(() => setReady(true))),
+    ),
+  )
+
+  // Copy text and confirm with a toast; a failed write shows an error toast. Without a clipboard it does nothing.
+  const copyWithToast = (text: string, message: string) =>
+    Effect.gen(function* () {
+      const write = clipboard.write?.bind(clipboard)
+      if (!write) return
+      yield* Effect.tryPromise(() => write(text)).pipe(
+        Effect.andThen(Effect.sync(() => toast.show({ message, variant: "info" }))),
+        Effect.catch((error) => Effect.sync(() => toast.error(error.cause))),
+      )
     })
 
   // Let selection copy/dismiss win ahead of normal bindings when explicit copy is required.
   const offSelectionKeys = keymap.intercept(
     "key",
     ({ event }) => {
-      if (!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
+      if (!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
       Selection.handleSelectionKey(renderer, toast, event, clipboard)
     },
     { priority: 1 },
@@ -436,15 +498,11 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   })
 
   // Wire up console copy-to-clipboard via opentui's onCopySelection callback
-  renderer.console.onCopySelection = async (text: string) => {
+  renderer.console.onCopySelection = (text: string) => {
     if (!text || text.length === 0) return
-
-    await clipboard
-      .write?.(text)
-      .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
-      .catch(toast.error)
-
-    renderer.clearSelection()
+    runHandler(
+      copyWithToast(text, "Copied to clipboard").pipe(Effect.andThen(Effect.sync(() => renderer.clearSelection()))),
+    )
   }
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
   const [pasteSummaryEnabled, setPasteSummaryEnabled] = createSignal(
@@ -453,7 +511,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
 
   // Update terminal window title based on current route and session
   createEffect(() => {
-    if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
+    if (!terminalTitleEnabled() || flags.OPENCODE_DISABLE_TERMINAL_TITLE) return
 
     if (route.data.type === "home") {
       renderer.setTerminalTitle("OpenCode")
@@ -551,13 +609,13 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   )
 
   const connected = useConnected()
-  const currentWorktreeWorkspace = createMemo(() => {
-    const workspaceID = project.workspace.current()
-    if (!workspaceID) return
-    const workspace = project.workspace.get(workspaceID)
-    if (workspace?.type !== "worktree" || !workspace.directory) return
-    return workspace
-  })
+  const currentWorktreeWorkspace = createMemo(() =>
+    Option.fromNullishOr(project.workspace.current()).pipe(
+      Option.filter((workspaceID) => workspaceID !== ""),
+      Option.flatMapNullishOr((workspaceID) => project.workspace.get(workspaceID)),
+      Option.filter((workspace) => workspace.type === "worktree" && Boolean(workspace.directory)),
+    ),
+  )
   const appCommands = createMemo(() =>
     [
       {
@@ -598,22 +656,22 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         name: "workspace.copy_path",
         title: "Copy worktree path",
         category: "Workspace",
-        enabled: () => currentWorktreeWorkspace() !== undefined,
-        run: async () => {
-          const workspace = currentWorktreeWorkspace()
-          if (!workspace?.directory) return
-          await clipboard
-            .write?.(workspace.directory)
-            .then(() => toast.show({ message: "Copied worktree path", variant: "info" }))
-            .catch(toast.error)
-          dialog.clear()
-        },
+        enabled: () => Option.isSome(currentWorktreeWorkspace()),
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const directory = Option.flatMapNullishOr(currentWorktreeWorkspace(), (workspace) => workspace.directory)
+              if (Option.isNone(directory)) return
+              yield* copyWithToast(directory.value, "Copied worktree path")
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "workspace.list",
         title: "Manage workspaces",
         category: "Workspace",
-        hidden: !Flag.OPENCODE_EXPERIMENTAL_WORKSPACES,
+        hidden: !flags.OPENCODE_EXPERIMENTAL_WORKSPACES,
         slashName: "workspaces",
         run: () => {
           dialog.replace(() => <DialogWorkspaceList />)
@@ -856,15 +914,19 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         name: "app.heap_snapshot",
         title: "Write heap snapshot",
         category: "System",
-        run: async () => {
-          const files = await props.onSnapshot?.()
-          toast.show({
-            variant: "info",
-            message: `Heap snapshot written to ${files?.join(", ")}`,
-            duration: 5000,
-          })
-          dialog.clear()
-        },
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const snapshot = props.onSnapshot
+              const files = snapshot ? yield* Effect.promise(() => snapshot()) : []
+              toast.show({
+                variant: "info",
+                message: `Heap snapshot written to ${files.join(", ")}`,
+                duration: 5000,
+              })
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "terminal.suspend",
@@ -939,11 +1001,14 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           ? "Disable session directory filtering"
           : "Enable session directory filtering",
         category: "System",
-        run: async () => {
-          kv.set("session_directory_filter_enabled", !kv.get("session_directory_filter_enabled", true))
-          await sync.session.refresh()
-          dialog.clear()
-        },
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              kv.set("session_directory_filter_enabled", !kv.get("session_directory_filter_enabled", true))
+              yield* Effect.promise(() => sync.session.refresh())
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "permission.mode",
@@ -1030,57 +1095,66 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     })
   })
 
-  event.on("installation.update-available", async (evt) => {
-    console.log("installation.update-available", evt)
-    const version = evt.properties.version
+  event.on("installation.update-available", (evt) =>
+    runHandler(
+      Effect.gen(function* () {
+        yield* Effect.logInfo("installation.update-available", evt)
+        const version = evt.properties.version
 
-    const skipped = kv.get("skipped_version")
-    if (skipped && !isVersionGreater(version, skipped)) return
+        const skipped = kv.get("skipped_version")
+        if (skipped && !isVersionGreater(version, skipped)) return
 
-    const choice = await DialogConfirm.show(
-      dialog,
-      `Update Available`,
-      `A new release v${version} is available. Would you like to update now?`,
-      "skip",
-    )
+        const choice = yield* Effect.promise(() =>
+          DialogConfirm.show(
+            dialog,
+            `Update Available`,
+            `A new release v${version} is available. Would you like to update now?`,
+            "skip",
+          ),
+        )
 
-    if (choice === false) {
-      kv.set("skipped_version", version)
-      return
-    }
+        if (choice === false) {
+          kv.set("skipped_version", version)
+          return
+        }
 
-    if (choice !== true) return
+        if (choice !== true) return
 
-    toast.show({
-      variant: "info",
-      message: `Updating to v${version}…`,
-      duration: 30000,
-    })
+        toast.show({
+          variant: "info",
+          message: `Updating to v${version}…`,
+          duration: 30000,
+        })
 
-    const result = await sdk.client.global.upgrade({ target: version })
+        const result = yield* Effect.promise(() => sdk.client.global.upgrade({ target: version }))
 
-    if (result.error || !result.data?.success) {
-      toast.show({
-        variant: "error",
-        title: "Update Failed",
-        message: "Update failed",
-        duration: 10000,
-      })
-      return
-    }
+        if (result.error || !result.data?.success) {
+          toast.show({
+            variant: "error",
+            title: "Update Failed",
+            message: "Update failed",
+            duration: 10000,
+          })
+          return
+        }
 
-    await DialogAlert.show(
-      dialog,
-      "Update Complete",
-      `Successfully updated to OpenCode v${result.data.version}. Please restart the application.`,
-    )
+        const upgraded = result.data.version
+        yield* Effect.promise(() =>
+          DialogAlert.show(
+            dialog,
+            "Update Complete",
+            `Successfully updated to OpenCode v${upgraded}. Please restart the application.`,
+          ),
+        )
 
-    void exit()
-  })
+        exit()
+      }),
+    ),
+  )
 
-  const plugin = createMemo(() => {
-    if (!ready()) return
-    if (route.data.type !== "plugin") return
+  const plugin = createMemo((): JSX.Element => {
+    if (!ready()) return undefined
+    if (route.data.type !== "plugin") return undefined
     const render = pluginRuntime.routes.get(route.data.id)
     if (!render) return <PluginRouteMissing id={route.data.id} onHome={() => route.navigate({ type: "home" })} />
     return render({ params: route.data.data })
@@ -1093,20 +1167,18 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       flexDirection="column"
       backgroundColor={theme.background}
       onMouseDown={(evt) => {
-        if (!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
-        if (evt.button !== MouseButton.RIGHT) return
+        if (!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
+        if (!isMouseButton(evt.button) || evt.button !== MouseButton.RIGHT) return
 
         if (!Selection.copy(renderer, toast, clipboard)) return
         evt.preventDefault()
         evt.stopPropagation()
       }}
-      onMouseUp={
-        !Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
-          ? () => Selection.copy(renderer, toast, clipboard)
-          : undefined
-      }
+      {...(flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
+        ? {}
+        : { onMouseUp: () => Selection.copy(renderer, toast, clipboard) })}
     >
-      <Show when={Flag.OPENCODE_SHOW_TTFD}>
+      <Show when={flags.OPENCODE_SHOW_TTFD}>
         <TimeToFirstDraw />
       </Show>
       <Show when={ready()}>
@@ -1116,7 +1188,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               <Home />
             </Match>
             <Match when={route.data.type === "session"}>
-              <Show when={route.data.type === "session" ? route.data.sessionID : undefined} keyed>
+              <Show when={route.data.type === "session" && route.data.sessionID} keyed>
                 {(_) => <Session />}
               </Show>
             </Match>

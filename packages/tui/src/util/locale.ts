@@ -1,30 +1,46 @@
+import { DateTime, Option } from "effect"
+
 export function titlecase(str: string) {
   return str.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+// The text that Date gives for an invalid time value; an epoch value that DateTime.make rejects prints it.
+const invalidDate = "Invalid Date"
+
+// The fields that Date.prototype.toLocaleDateString() formats when it gets no options.
+const localDateParts: Intl.DateTimeFormatOptions = { year: "numeric", month: "numeric", day: "numeric" }
+
 export function time(input: number): string {
-  const date = new Date(input)
-  return date.toLocaleTimeString(undefined, { timeStyle: "short" })
+  return Option.match(DateTime.make(input), {
+    onNone: () => invalidDate,
+    onSome: (date) => DateTime.formatLocal(date, { timeStyle: "short" }),
+  })
 }
 
 export function datetime(input: number): string {
-  const date = new Date(input)
   const localTime = time(input)
-  const localDate = date.toLocaleDateString()
+  const localDate = Option.match(DateTime.make(input), {
+    onNone: () => invalidDate,
+    onSome: (date) => DateTime.formatLocal(date, localDateParts),
+  })
   return `${localTime} · ${localDate}`
 }
 
 export function todayTimeOrDateTime(input: number): string {
-  const date = new Date(input)
-  const now = new Date()
-  const isToday =
-    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+  const isToday = Option.exists(DateTime.make(input), (date) => sameLocalDay(date, DateTime.nowUnsafe()))
 
   if (isToday) {
     return time(input)
   } else {
     return datetime(input)
   }
+}
+
+function sameLocalDay(left: DateTime.DateTime, right: DateTime.DateTime) {
+  const zone = DateTime.zoneMakeLocal()
+  const a = DateTime.toParts(DateTime.setZone(left, zone))
+  const b = DateTime.toParts(DateTime.setZone(right, zone))
+  return a.year === b.year && a.month === b.month && a.day === b.day
 }
 
 export function number(num: number): string {

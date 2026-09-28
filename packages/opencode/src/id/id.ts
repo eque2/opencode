@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto"
+import { DateTime, Schema } from "effect"
 
 const prefixes = {
   job: "job",
@@ -14,6 +15,15 @@ const prefixes = {
 } as const
 
 const LENGTH = 26
+
+export class InvalidPrefixError extends Schema.TaggedError<InvalidPrefixError>()("IdentifierInvalidPrefixError", {
+  given: Schema.String,
+  prefix: Schema.String,
+}) {
+  override get message() {
+    return `ID ${this.given} does not start with ${this.prefix}`
+  }
+}
 
 // State for monotonic ID generation
 let lastTimestamp = 0
@@ -33,7 +43,8 @@ function generateID(prefix: keyof typeof prefixes, direction: "descending" | "as
   }
 
   if (!given.startsWith(prefixes[prefix])) {
-    throw new Error(`ID ${given} does not start with ${prefixes[prefix]}`)
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) ascending/descending are synchronous ID factories behind every schema `make`/`ascending` helper, so a foreign prefix can only surface as a thrown error.
+    throw new InvalidPrefixError({ given, prefix: prefixes[prefix] })
   }
   return given
 }
@@ -49,7 +60,7 @@ function randomBase62(length: number): string {
 }
 
 export function create(prefix: string, direction: "descending" | "ascending", timestamp?: number): string {
-  const currentTimestamp = timestamp ?? Date.now()
+  const currentTimestamp = timestamp ?? DateTime.toEpochMillis(DateTime.nowUnsafe())
 
   if (currentTimestamp !== lastTimestamp) {
     lastTimestamp = currentTimestamp

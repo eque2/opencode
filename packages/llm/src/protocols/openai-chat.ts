@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Array as Arr, Effect, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -24,7 +24,6 @@ import { ToolSchemaProjection } from "./utils/tool-schema"
 import { ToolStream } from "./utils/tool-stream"
 
 const ADAPTER = "openai-chat"
-const IMAGE_MIMES = new Set<string>(ProviderShared.IMAGE_MIMES)
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1"
 export const PATH = "/chat/completions"
 
@@ -38,22 +37,27 @@ const OpenAIChatFunction = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   parameters: JsonObject,
-})
+}).annotate({ identifier: "OpenAIChat.Function" })
 
 const OpenAIChatTool = Schema.Struct({
   type: Schema.tag("function"),
   function: OpenAIChatFunction,
-})
+}).annotate({ identifier: "OpenAIChat.Tool" })
 type OpenAIChatTool = Schema.Schema.Type<typeof OpenAIChatTool>
 
+// The id of one tool call on the wire: the assistant `tool_calls[].id` and
+// the `tool_call_id` of the tool message that answers it.
+export const ToolCallID = Schema.String.pipe(Schema.brand("OpenAIChat.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
+
 const OpenAIChatAssistantToolCall = Schema.Struct({
-  id: Schema.String,
+  id: ToolCallID,
   type: Schema.tag("function"),
   function: Schema.Struct({
     name: Schema.String,
     arguments: Schema.String,
   }),
-})
+}).annotate({ identifier: "OpenAIChat.AssistantToolCall" })
 type OpenAIChatAssistantToolCall = Schema.Schema.Type<typeof OpenAIChatAssistantToolCall>
 
 const OpenAIChatUserContent = Schema.Union([
@@ -76,9 +80,10 @@ const OpenAIChatMessage = Schema.Union([
     tool_calls: optionalArray(OpenAIChatAssistantToolCall),
     reasoning_content: Schema.optional(Schema.String),
   }),
-  Schema.Struct({ role: Schema.Literal("tool"), tool_call_id: Schema.String, content: Schema.String }),
+  Schema.Struct({ role: Schema.Literal("tool"), tool_call_id: ToolCallID, content: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("role"))
 type OpenAIChatMessage = Schema.Schema.Type<typeof OpenAIChatMessage>
+type OpenAIChatUserContentPart = Schema.Schema.Type<typeof OpenAIChatUserContent>
 
 const OpenAIChatToolChoice = Schema.Union([
   Schema.Literals(["auto", "none", "required"]),
@@ -105,7 +110,7 @@ export const bodyFields = {
   seed: Schema.optional(Schema.Number),
   stop: optionalArray(Schema.String),
 }
-const OpenAIChatBody = Schema.Struct(bodyFields)
+const OpenAIChatBody = Schema.Struct(bodyFields).annotate({ identifier: "OpenAIChat.Body" })
 export type OpenAIChatBody = Schema.Schema.Type<typeof OpenAIChatBody>
 
 // =============================================================================
@@ -128,35 +133,35 @@ const OpenAIChatUsage = Schema.Struct({
       reasoning_tokens: Schema.optional(Schema.Number),
     }),
   ),
-})
+}).annotate({ identifier: "OpenAIChat.Usage" })
 
 const OpenAIChatToolCallDeltaFunction = Schema.Struct({
   name: optionalNull(Schema.String),
   arguments: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIChat.ToolCallDeltaFunction" })
 
 const OpenAIChatToolCallDelta = Schema.Struct({
   index: Schema.Number,
   id: optionalNull(Schema.String),
   function: optionalNull(OpenAIChatToolCallDeltaFunction),
-})
+}).annotate({ identifier: "OpenAIChat.ToolCallDelta" })
 type OpenAIChatToolCallDelta = Schema.Schema.Type<typeof OpenAIChatToolCallDelta>
 
 const OpenAIChatDelta = Schema.Struct({
   content: optionalNull(Schema.String),
   reasoning_content: optionalNull(Schema.String),
   tool_calls: optionalNull(Schema.Array(OpenAIChatToolCallDelta)),
-})
+}).annotate({ identifier: "OpenAIChat.Delta" })
 
 const OpenAIChatChoice = Schema.Struct({
   delta: optionalNull(OpenAIChatDelta),
   finish_reason: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIChat.Choice" })
 
 const OpenAIChatEvent = Schema.Struct({
   choices: Schema.Array(OpenAIChatChoice),
   usage: optionalNull(OpenAIChatUsage),
-})
+}).annotate({ identifier: "OpenAIChat.Event" })
 type OpenAIChatEvent = Schema.Schema.Type<typeof OpenAIChatEvent>
 type OpenAIChatRequestMessage = LLMRequest["messages"][number]
 
@@ -194,7 +199,7 @@ const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
   })
 
 const lowerToolCall = (part: ToolCallPart): OpenAIChatAssistantToolCall => ({
-  id: part.id,
+  id: ToolCallID.make(part.id),
   type: "function",
   function: {
     name: part.name,
@@ -203,12 +208,12 @@ const lowerToolCall = (part: ToolCallPart): OpenAIChatAssistantToolCall => ({
 })
 
 const lowerMedia = Effect.fn("OpenAIChat.lowerMedia")(function* (part: MediaPart) {
-  const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, IMAGE_MIMES)
+  const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, ProviderShared.IMAGE_MIMES)
   return { type: "image_url" as const, image_url: { url: media.dataUrl } }
 })
 
-const openAICompatibleReasoningContent = (native: unknown) =>
-  isRecord(native) && typeof native.reasoning_content === "string" ? native.reasoning_content : undefined
+const openAICompatibleReasoningContent = (native: unknown): Option.Option<string> =>
+  isRecord(native) ? Option.liftPredicate(native.reasoning_content, Predicate.isString) : Option.none()
 
 const lowerUserMessage = Effect.fn("OpenAIChat.lowerUserMessage")(function* (message: OpenAIChatRequestMessage) {
   const content: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
@@ -228,60 +233,68 @@ const lowerUserMessage = Effect.fn("OpenAIChat.lowerUserMessage")(function* (mes
   return { role: "user" as const, content }
 })
 
+// A tool-call-only assistant turn sends `content: null`. Code holds the
+// joined text as an Option and the codec writes the JSON `null`.
+const encodeAssistantContent = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))
+
 const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(function* (
   message: OpenAIChatRequestMessage,
 ) {
-  const content: TextPart[] = []
-  const reasoning: ReasoningPart[] = []
-  const toolCalls: OpenAIChatAssistantToolCall[] = []
-  for (const part of message.content) {
-    if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
-      return yield* ProviderShared.unsupportedContent("OpenAI Chat", "assistant", ["text", "reasoning", "tool-call"])
-    if (part.type === "text") {
-      content.push(part)
-      continue
-    }
-    if (part.type === "reasoning") {
-      reasoning.push(part)
-      continue
-    }
-    if (part.type === "tool-call") {
-      toolCalls.push(lowerToolCall(part))
-      continue
-    }
-  }
+  if (!message.content.every((part) => ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"])))
+    return yield* ProviderShared.unsupportedContent("OpenAI Chat", "assistant", ["text", "reasoning", "tool-call"])
+  const content = message.content.filter((part): part is TextPart => part.type === "text")
+  const reasoning = message.content.filter((part): part is ReasoningPart => part.type === "reasoning")
+  const toolCalls = message.content.filter((part): part is ToolCallPart => part.type === "tool-call").map(lowerToolCall)
+  const reasoningContent =
+    reasoning.length > 0
+      ? Option.some(reasoning.map((part) => part.text).join(""))
+      : openAICompatibleReasoningContent(message.native?.openaiCompatible)
   return {
     role: "assistant" as const,
-    content: content.length === 0 ? null : ProviderShared.joinText(content),
-    tool_calls: toolCalls.length === 0 ? undefined : toolCalls,
-    reasoning_content:
-      reasoning.length > 0
-        ? reasoning.map((part) => part.text).join("")
-        : openAICompatibleReasoningContent(message.native?.openaiCompatible),
+    content: encodeAssistantContent(
+      content.length === 0 ? Option.none() : Option.some(ProviderShared.joinText(content)),
+    ),
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+    ...Option.match(reasoningContent, {
+      onNone: () => ({}),
+      onSome: (text) => ({ reasoning_content: text }),
+    }),
+  }
+})
+
+// One tool result lowers to one `tool` message. Image files cannot sit in a
+// tool message, so they come back separately for a following user message.
+const lowerToolResult = Effect.fn("OpenAIChat.lowerToolResult")(function* (
+  part: OpenAIChatRequestMessage["content"][number],
+) {
+  if (!ProviderShared.supportsContent(part, ["tool-result"]))
+    return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
+  if (part.result.type !== "content")
+    return {
+      message: {
+        role: "tool" as const,
+        tool_call_id: ToolCallID.make(part.id),
+        content: ProviderShared.toolResultText(part),
+      },
+      images: [],
+    }
+  const content: ReadonlyArray<ToolContent> = part.result.value
+  const text = content.filter((item) => item.type === "text").map((item) => item.text)
+  const files = content.filter((item) => item.type === "file")
+  return {
+    message: { role: "tool" as const, tool_call_id: ToolCallID.make(part.id), content: text.join("\n") },
+    images: yield* Effect.forEach(files, (item) =>
+      lowerMedia({ type: "media", mediaType: item.mime, data: item.uri, filename: item.name }),
+    ),
   }
 })
 
 const lowerToolMessages = Effect.fn("OpenAIChat.lowerToolMessages")(function* (message: OpenAIChatRequestMessage) {
-  const messages: OpenAIChatMessage[] = []
-  const images: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
-  for (const part of message.content) {
-    if (!ProviderShared.supportsContent(part, ["tool-result"]))
-      return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
-    if (part.result.type !== "content") {
-      messages.push({ role: "tool", tool_call_id: part.id, content: ProviderShared.toolResultText(part) })
-      continue
-    }
-    const content: ReadonlyArray<ToolContent> = part.result.value
-    const text = content.filter((item) => item.type === "text").map((item) => item.text)
-    messages.push({ role: "tool", tool_call_id: part.id, content: text.join("\n") })
-    const files = content.filter((item) => item.type === "file")
-    images.push(
-      ...(yield* Effect.forEach(files, (item) =>
-        lowerMedia({ type: "media", mediaType: item.mime, data: item.uri, filename: item.name }),
-      )),
-    )
+  const lowered = yield* Effect.forEach(message.content, lowerToolResult)
+  return {
+    messages: lowered.map((result) => result.message),
+    images: lowered.flatMap((result) => result.images),
   }
-  return { messages, images }
 })
 
 const lowerMessage = Effect.fn("OpenAIChat.lowerMessage")(function* (message: OpenAIChatRequestMessage) {
@@ -290,41 +303,56 @@ const lowerMessage = Effect.fn("OpenAIChat.lowerMessage")(function* (message: Op
   return (yield* lowerToolMessages(message)).messages
 })
 
+// A wrapped chronological system update joins a directly preceding user
+// message; otherwise it becomes its own user message.
+const appendSystemUpdate = (
+  messages: ReadonlyArray<OpenAIChatMessage>,
+  text: string,
+): ReadonlyArray<OpenAIChatMessage> => {
+  const previous = messages.at(-1)
+  if (previous?.role === "user" && typeof previous.content === "string")
+    return Arr.append(messages.slice(0, -1), { role: "user", content: `${previous.content}\n${text}` })
+  if (previous?.role === "user" && Array.isArray(previous.content))
+    return Arr.append(messages.slice(0, -1), {
+      role: "user",
+      content: [...previous.content, { type: "text", text }],
+    })
+  return Arr.append(messages, { role: "user", content: text })
+}
+
 const lowerMessages = Effect.fn("OpenAIChat.lowerMessages")(function* (request: LLMRequest) {
-  const system: OpenAIChatMessage[] =
+  let messages: ReadonlyArray<OpenAIChatMessage> =
     request.system.length === 0 ? [] : [{ role: "system", content: ProviderShared.joinText(request.system) }]
-  const messages = [...system]
-  const pendingImages: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
+  // Tool-result images wait here and flush as one user message before the
+  // next non-tool turn, so parallel tool messages stay contiguous.
+  let pendingImages: ReadonlyArray<OpenAIChatUserContentPart> = []
   const flushImages = () => {
-    if (pendingImages.length === 0) return
-    messages.push({ role: "user", content: pendingImages.splice(0) })
+    if (pendingImages.length > 0) messages = Arr.append(messages, { role: "user", content: pendingImages })
+    pendingImages = []
   }
   for (const message of request.messages) {
     if (message.role === "system") {
       const part = yield* ProviderShared.wrappedSystemUpdate("OpenAI Chat", message)
       if (pendingImages.length > 0) {
-        messages.push({ role: "user", content: [...pendingImages.splice(0), { type: "text", text: part.text }] })
+        messages = Arr.append(messages, {
+          role: "user",
+          content: Arr.append(pendingImages, { type: "text", text: part.text }),
+        })
+        pendingImages = []
         continue
       }
-      const previous = messages.at(-1)
-      if (previous?.role === "user" && typeof previous.content === "string")
-        messages[messages.length - 1] = { role: "user", content: `${previous.content}\n${part.text}` }
-      else if (previous?.role === "user" && Array.isArray(previous.content))
-        messages[messages.length - 1] = {
-          role: "user",
-          content: [...previous.content, { type: "text", text: part.text }],
-        }
-      else messages.push({ role: "user", content: part.text })
+      messages = appendSystemUpdate(messages, part.text)
       continue
     }
     if (message.role === "tool") {
       const lowered = yield* lowerToolMessages(message)
-      messages.push(...lowered.messages)
-      pendingImages.push(...lowered.images)
+      messages = Arr.appendAll(messages, lowered.messages)
+      pendingImages = Arr.appendAll(pendingImages, lowered.images)
       continue
     }
     flushImages()
-    messages.push(...(yield* lowerMessage(message)))
+    const lowered: ReadonlyArray<OpenAIChatMessage> = yield* lowerMessage(message)
+    messages = Arr.appendAll(messages, lowered)
   }
   flushImages()
   return messages
@@ -349,22 +377,26 @@ const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (request: LLMR
   return {
     model: request.model.id,
     messages: yield* lowerMessages(request),
-    tools:
-      request.tools.length === 0
-        ? undefined
-        : request.tools.map((tool) =>
+    ...(request.tools.length === 0
+      ? {}
+      : {
+          tools: request.tools.map((tool) =>
             lowerTool(tool, ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)),
           ),
-    tool_choice: request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
+        }),
+    ...(request.toolChoice ? { tool_choice: yield* lowerToolChoice(request.toolChoice) } : {}),
     stream: true as const,
     stream_options: { include_usage: true },
-    max_tokens: generation?.maxTokens,
-    temperature: generation?.temperature,
-    top_p: generation?.topP,
-    frequency_penalty: generation?.frequencyPenalty,
-    presence_penalty: generation?.presencePenalty,
-    seed: generation?.seed,
-    stop: generation?.stop,
+    // Unset generation options are omitted rather than set to undefined, so
+    // bodies that extend this schema with a JSON rest record (OpenRouter)
+    // still validate.
+    ...(generation?.maxTokens === undefined ? {} : { max_tokens: generation.maxTokens }),
+    ...(generation?.temperature === undefined ? {} : { temperature: generation.temperature }),
+    ...(generation?.topP === undefined ? {} : { top_p: generation.topP }),
+    ...(generation?.frequencyPenalty === undefined ? {} : { frequency_penalty: generation.frequencyPenalty }),
+    ...(generation?.presencePenalty === undefined ? {} : { presence_penalty: generation.presencePenalty }),
+    ...(generation?.seed === undefined ? {} : { seed: generation.seed }),
+    ...(generation?.stop === undefined ? {} : { stop: generation.stop }),
     ...(yield* lowerOptions(request)),
   }
 })
@@ -404,69 +436,90 @@ const mapUsage = (usage: OpenAIChatEvent["usage"]): Usage | undefined => {
   })
 }
 
+// Tool-call deltas fold into the tool accumulator and the lifecycle; the fold
+// keeps the events of every delta in stream order.
+interface ToolDeltaFold {
+  readonly tools: ToolStream.State<number>
+  readonly lifecycle: Lifecycle.State
+  readonly events: ReadonlyArray<LLMEvent>
+}
+
 const step = (state: ParserState, event: OpenAIChatEvent) =>
   Effect.gen(function* () {
-    const events: LLMEvent[] = []
     const usage = mapUsage(event.usage) ?? state.usage
     const choice = event.choices[0]
     const finishReason = choice?.finish_reason ? mapFinishReason(choice.finish_reason) : state.finishReason
     const delta = choice?.delta
     const toolDeltas = delta?.tool_calls ?? []
-    let tools = state.tools
+    const reasoningText = delta?.reasoning_content
+    const text = delta?.content
 
-    let lifecycle = state.lifecycle
+    const reasoned = reasoningText
+      ? Lifecycle.reasoningDelta(state.lifecycle, "reasoning-0", reasoningText)
+      : Lifecycle.unchanged(state.lifecycle)
+    const texted = text
+      ? Lifecycle.andThen(
+          Lifecycle.andThen(reasoned, (lifecycle) => Lifecycle.reasoningEnd(lifecycle, "reasoning-0")),
+          (lifecycle) => Lifecycle.textDelta(lifecycle, "text-0", text),
+        )
+      : reasoned
+    const [contentLifecycle, contentEvents] = toolDeltas.length
+      ? Lifecycle.andThen(texted, (lifecycle) => Lifecycle.reasoningEnd(lifecycle, "reasoning-0"))
+      : texted
 
-    if (delta?.reasoning_content)
-      lifecycle = Lifecycle.reasoningDelta(lifecycle, events, "reasoning-0", delta.reasoning_content)
-
-    if (delta?.content) {
-      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
-      lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", delta.content)
-    }
-
-    if (toolDeltas.length) lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
-
-    for (const tool of toolDeltas) {
-      const result = ToolStream.appendOrStart(
-        ADAPTER,
-        tools,
-        tool.index,
-        { id: tool.id ?? undefined, name: tool.function?.name ?? undefined, text: tool.function?.arguments ?? "" },
-        "OpenAI Chat tool call delta is missing id or name",
-      )
-      if (ToolStream.isError(result)) return yield* result
-      tools = result.tools
-      if (result.events.length) lifecycle = Lifecycle.stepStart(lifecycle, events)
-      events.push(...result.events)
-    }
+    const toolFold = yield* Effect.reduce(
+      toolDeltas,
+      (): ToolDeltaFold => ({ tools: state.tools, lifecycle: contentLifecycle, events: contentEvents }),
+      (fold, tool) => {
+        const result = ToolStream.appendOrStart(
+          ADAPTER,
+          fold.tools,
+          tool.index,
+          {
+            id: Option.getOrUndefined(Option.fromNullishOr(tool.id)),
+            name: Option.getOrUndefined(Option.fromNullishOr(tool.function?.name)),
+            text: tool.function?.arguments ?? "",
+          },
+          "OpenAI Chat tool call delta is missing id or name",
+        )
+        if (ToolStream.isError(result)) return Effect.fail(result)
+        const [lifecycle, events] = Lifecycle.emit(fold.lifecycle, result.events)
+        return Effect.succeed<ToolDeltaFold>({
+          tools: result.tools,
+          lifecycle,
+          events: Arr.appendAll(fold.events, events),
+        })
+      },
+    )
+    const tools = toolFold.tools
 
     // Finalize accumulated tool inputs eagerly when finish_reason arrives so
     // JSON parse failures fail the stream at the boundary rather than at halt.
     const finished =
       finishReason !== undefined && state.finishReason === undefined && Object.keys(tools).length > 0
-        ? yield* ToolStream.finishAll(ADAPTER, tools)
-        : undefined
+        ? Option.some(yield* ToolStream.finishAll(ADAPTER, tools))
+        : Option.none()
+    const settled = Option.getOrElse(finished, () => ({ tools, events: state.toolCallEvents }))
 
     return [
       {
-        tools: finished?.tools ?? tools,
-        toolCallEvents: finished?.events ?? state.toolCallEvents,
+        tools: settled.tools,
+        toolCallEvents: settled.events,
         usage,
         finishReason,
-        lifecycle,
+        lifecycle: toolFold.lifecycle,
       },
-      events,
+      toolFold.events,
     ] as const
   })
 
 const finishEvents = (state: ParserState): ReadonlyArray<LLMEvent> => {
-  const events: LLMEvent[] = []
   const hasToolCalls = state.toolCallEvents.length > 0
   const reason = state.finishReason === "stop" && hasToolCalls ? "tool-calls" : state.finishReason
-  const lifecycle = state.toolCallEvents.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-  events.push(...state.toolCallEvents)
-  if (reason) Lifecycle.finish(lifecycle, events, { reason, usage: state.usage })
-  return events
+  const [lifecycle, toolEvents] = Lifecycle.emit(state.lifecycle, state.toolCallEvents)
+  if (!reason) return toolEvents
+  const [, finishing] = Lifecycle.finish(lifecycle, { reason, usage: state.usage })
+  return Arr.appendAll(toolEvents, finishing)
 }
 
 // =============================================================================

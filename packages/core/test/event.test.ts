@@ -78,6 +78,10 @@ const durableData = (sessionID: Session.ID, text: string) => ({
   messageID: SessionV1.MessageID.ascending(`msg_${text}`),
 })
 
+// Registers a listener for the test scope and runs its Unsubscribe when the scope closes.
+const listenScoped = (events: EventV2.Interface, listener: EventV2.Subscriber) =>
+  Effect.acquireRelease(events.listen(listener), (unsubscribe) => unsubscribe).pipe(Effect.asVoid)
+
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, Location.node]), [[Location.node, locationLayer]]),
 )
@@ -124,7 +128,7 @@ describe("EventV2", () => {
   )
 
   it.effect("selects the latest durable definition independent of declaration order", () =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const latest = EventV2.define({
         type: "test.out-of-order",
         durable: { version: 2, aggregate: "id" },
@@ -136,8 +140,10 @@ describe("EventV2", () => {
         schema: { id: Schema.String },
       })
 
-      expect(Event.latest([latest, historical]).get("test.out-of-order")).toBe(latest)
-      expect(Event.latest([historical, latest]).get("test.out-of-order")).toBe(latest)
+      const forward = yield* Effect.fromResult(Event.latest([latest, historical]))
+      const reversed = yield* Effect.fromResult(Event.latest([historical, latest]))
+      expect(forward.get("test.out-of-order")).toBe(latest)
+      expect(reversed.get("test.out-of-order")).toBe(latest)
     }),
   )
 
@@ -272,10 +278,10 @@ describe("EventV2", () => {
     Effect.gen(function* () {
       const events = yield* EventV2.Service
       const received = new Array<string>()
-      yield* events.listen(() => {
+      yield* listenScoped(events, () => {
         throw new Error("listener defect")
       })
-      yield* events.listen((event) =>
+      yield* listenScoped(events, (event) =>
         Effect.sync(() => {
           received.push(event.type)
         }),
@@ -294,7 +300,7 @@ describe("EventV2", () => {
       const { db } = yield* Database.Service
       const aggregateID = EventV2.ID.create()
       const observed = new Array<{ id: string; seq: number }>()
-      yield* events.listen((event) =>
+      yield* listenScoped(events, (event) =>
         event.type !== SyncMessage.type
           ? Effect.void
           : db
@@ -355,7 +361,7 @@ describe("EventV2", () => {
     Effect.gen(function* () {
       const events = yield* EventV2.Service
       const { db } = yield* Database.Service
-      yield* events.listen(() => Effect.interrupt)
+      yield* listenScoped(events, () => Effect.interrupt)
 
       const exit = yield* events.publish(SyncMessage, { id: "interrupted", text: "hello" }).pipe(Effect.exit)
       const committed = yield* db
@@ -374,7 +380,7 @@ describe("EventV2", () => {
     Effect.gen(function* () {
       const events = yield* EventV2.Service
       const defect = new Error("listener defect")
-      yield* events.listen(() => Effect.die(defect))
+      yield* listenScoped(events, () => Effect.die(defect))
 
       expect(yield* events.publish(Message, { text: "hello" }).pipe(Effect.catchDefect(Effect.succeed))).toBe(defect)
     }),
@@ -963,7 +969,7 @@ describe("EventV2", () => {
       const events = yield* EventV2.Service
       const received = new Array<EventV2.Payload>()
       const aggregateID = Session.ID.create()
-      yield* events.listen((event) => Effect.sync(() => received.push(event)))
+      yield* listenScoped(events, (event) => Effect.sync(() => received.push(event)))
       const replayed = {
         id: EventV2.ID.create(),
         type: EventV2.versionedType(DurableMessage.type, 1),
@@ -991,7 +997,7 @@ describe("EventV2", () => {
         aggregateID,
         data: durableData(aggregateID, "original"),
       }
-      yield* events.listen((event) => Effect.sync(() => received.push(event)))
+      yield* listenScoped(events, (event) => Effect.sync(() => received.push(event)))
       yield* events.replay(replayed, { publish: true })
 
       const exit = yield* events
@@ -1036,7 +1042,7 @@ describe("EventV2", () => {
       const { db } = yield* Database.Service
       const aggregateID = Session.ID.create()
       const received = new Array<EventV2.Payload>()
-      yield* events.listen((event) => Effect.sync(() => received.push(event)))
+      yield* listenScoped(events, (event) => Effect.sync(() => received.push(event)))
 
       yield* events.replay(
         {

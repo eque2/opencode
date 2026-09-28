@@ -3,7 +3,7 @@ import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { Effect, Exit, Fiber, Stream } from "effect"
+import { Effect, Exit, Fiber, Predicate, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -20,7 +20,7 @@ const waitForFile = (file: string) =>
       try {
         return await fs.readFile(file, "utf8")
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+        if (!Predicate.hasProperty(error, "code") || error.code !== "ENOENT") throw error
         await new Promise<void>((resolve) => setTimeout(resolve, 10))
       }
     }
@@ -77,8 +77,8 @@ describe("AppProcess", () => {
           const reason = exit.cause.reasons[0]
           if (reason && reason._tag === "Fail") {
             expect(reason.error).toBeInstanceOf(AppProcess.AppProcessError)
-            expect((reason.error as AppProcess.AppProcessError).exitCode).toBe(1)
-            expect((reason.error as AppProcess.AppProcessError).message).toContain("Command failed (exit 1)")
+            expect(reason.error.exitCode).toBe(1)
+            expect(reason.error.message).toContain("Command failed (exit 1)")
           } else {
             throw new Error("expected fail reason")
           }
@@ -110,7 +110,7 @@ describe("AppProcess", () => {
           const reason = exit.cause.reasons[0]
           if (reason && reason._tag === "Fail") {
             expect(reason.error).toBeInstanceOf(AppProcess.AppProcessError)
-            expect((reason.error as AppProcess.AppProcessError).exitCode).toBe(2)
+            expect(reason.error.exitCode).toBe(2)
           }
         }
       }),

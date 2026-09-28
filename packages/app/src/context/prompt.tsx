@@ -1,6 +1,7 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useParams, useSearchParams } from "@solidjs/router"
+import { Array as Arr, Effect, MutableHashMap, Option } from "effect"
 import { createMemo, createResource, createRoot, getOwner, onCleanup } from "solid-js"
 import { requireServerKey } from "@/utils/session-route"
 import { ServerConnection } from "./server"
@@ -47,7 +48,7 @@ const MAX_PROMPT_SESSIONS = 20
 
 export function selectPromptTab(tabs: Tab[], scope: PromptScope, server: ServerConnection.Key) {
   if ("draftID" in scope) return tabs.find((tab) => tab.type === "draft" && tab.draftID === scope.draftID)
-  if (!scope.id) return
+  if (!scope.id) return undefined
   return (
     tabs.find((tab) => tab.type === "session" && tab.server === server && tab.sessionId === scope.id) ??
     ({ type: "session", server, sessionId: scope.id } satisfies Tab)
@@ -80,22 +81,23 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const serverSDK = useServerSDK()
     const tabs = useTabs()
     const settings = useSettings()
-    const cache = new Map<string, PromptCacheEntry>()
+    // String keys keep insertion order, so the first key is the least recently used session.
+    const cache = MutableHashMap.empty<string, PromptCacheEntry>()
 
     const disposeAll = () => {
-      for (const entry of cache.values()) entry.dispose()
-      cache.clear()
+      for (const entry of MutableHashMap.values(cache)) entry.dispose()
+      MutableHashMap.clear(cache)
     }
 
     onCleanup(disposeAll)
 
     const prune = () => {
-      while (cache.size > MAX_PROMPT_SESSIONS) {
-        const first = cache.keys().next().value
-        if (!first) return
-        const entry = cache.get(first)
-        entry?.dispose()
-        cache.delete(first)
+      while (MutableHashMap.size(cache) > MAX_PROMPT_SESSIONS) {
+        const first = Arr.head(Arr.fromIterable(MutableHashMap.keys(cache)))
+        if (Option.isNone(first)) return
+        const entry = MutableHashMap.get(cache, first.value)
+        if (Option.isSome(entry)) entry.value.dispose()
+        MutableHashMap.remove(cache, first.value)
       }
     }
 
@@ -105,15 +107,17 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const scope = (): PromptScope =>
       search.draftId ? { draftID: search.draftId } : { dir: base64Encode(sdk().directory), id: params.id }
     const load = (scope: PromptScope) => {
-      const current = settings.general.newLayoutDesigns() ? selectPromptTab(tabs.store, scope, serverKey()) : undefined
-      if (current) return createTabPromptState(tabs, current, serverSDK().scope, scope)
+      const current = settings.general.newLayoutDesigns()
+        ? Option.fromNullishOr(selectPromptTab(tabs.store, scope, serverKey()))
+        : Option.none()
+      if (Option.isSome(current)) return createTabPromptState(tabs, current.value, serverSDK().scope, scope)
 
       const key = scopeKey(scope)
-      const existing = cache.get(key)
-      if (existing) {
-        cache.delete(key)
-        cache.set(key, existing)
-        return existing.value
+      const existing = MutableHashMap.get(cache, key)
+      if (Option.isSome(existing)) {
+        MutableHashMap.remove(cache, key)
+        MutableHashMap.set(cache, key, existing.value)
+        return existing.value.value
       }
 
       const entry = createRoot(
@@ -124,7 +128,7 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
         owner,
       )
 
-      cache.set(key, entry)
+      MutableHashMap.set(cache, key, entry)
       prune()
       return entry.value
     }
@@ -133,12 +137,17 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const pick = (scope?: PromptScope) => (scope ? load(scope) : session())
     const ready = createPromptReady(session)
 
+    // The source reads the value now, so the resource tracks it, and resolves once the session is ready.
     const withSuspense = <T,>(cb: () => T): (() => T) =>
       createResource(
-        async () => {
+        () => {
           const value = cb()
-          await session().ready.promise
-          return value
+          return Effect.runPromise(
+            Option.match(Option.fromNullishOr(session().ready.promise), {
+              onNone: () => Effect.succeed(value),
+              onSome: (promise) => Effect.promise(() => promise).pipe(Effect.as(value)),
+            }),
+          )
         },
         cb,
         { initialValue: cb() },

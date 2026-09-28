@@ -105,8 +105,17 @@ function renderCell(value: unknown) {
       </a>
     )
   }
-  if (typeof value === "object") return JSON.stringify(value)
-  return String(value)
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "function":
+      return String(value)
+    default:
+      return JSON.stringify(value)
+  }
 }
 
 function isLinkCell(value: unknown): value is { __link: string; label: string } {

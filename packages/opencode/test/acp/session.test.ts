@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import type { McpServer } from "@agentclientprotocol/sdk"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
+import { DateTime, Effect, HashMap, Option } from "effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import * as ACPError from "@/acp/error"
@@ -25,7 +25,7 @@ const mcpServer: McpServer = {
 describe("acp session state", () => {
   sessionTest.effect("creates and retrieves session state", () =>
     Effect.gen(function* () {
-      const createdAt = new Date("2026-05-25T00:00:00.000Z")
+      const createdAt = DateTime.makeUnsafe("2026-05-25T00:00:00.000Z")
       const created = yield* ACPSession.Service.use((session) =>
         session.create({
           id: "ses_1",
@@ -47,8 +47,8 @@ describe("acp session state", () => {
         variant: "high",
         modeId: "build",
       })
-      expect(loaded.createdAt).toEqual(createdAt)
-      expect(loaded.knownParts.size).toBe(0)
+      expect(DateTime.formatIso(loaded.createdAt)).toBe(DateTime.formatIso(createdAt))
+      expect(HashMap.size(loaded.knownParts)).toBe(0)
     }),
   )
 
@@ -57,7 +57,7 @@ describe("acp session state", () => {
       const error = yield* ACPSession.Service.use((session) => session.get("ses_missing")).pipe(Effect.flip)
 
       expect(error).toBeInstanceOf(ACPError.SessionNotFoundError)
-      expect(error.sessionId).toBe("ses_missing")
+      expect(error.sessionId).toBe(ACPError.RequestedSessionId.make("ses_missing"))
     }),
   )
 
@@ -193,7 +193,7 @@ describe("acp session state", () => {
         session.tryGetPartMetadata({ sessionId: "ses_remove", messageId: "msg_1", partId: "part_1" }),
       )
 
-      expect(removed?.knownParts.size).toBe(1)
+      expect(Option.map(removed, (session) => HashMap.size(session.knownParts))).toEqual(Option.some(1))
       expect(missing).toBeUndefined()
       expect(missingPart).toBeUndefined()
     }),

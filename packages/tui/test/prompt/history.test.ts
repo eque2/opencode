@@ -11,6 +11,48 @@ describe("prompt history", () => {
     ])
   })
 
+  test("keeps every stored part shape and skips entries that are not prompts", () => {
+    const stored = entry("see @src/a.ts @build [Pasted ~2 lines]", [
+      {
+        type: "file",
+        mime: "text/plain",
+        filename: "a.ts",
+        url: "file:///repo/src/a.ts",
+        source: { type: "file", path: "src/a.ts", text: { start: 4, end: 13, value: "@src/a.ts" } },
+      },
+      {
+        type: "file",
+        mime: "text/plain",
+        filename: "main",
+        url: "file:///repo/src/main.ts",
+        source: {
+          type: "symbol",
+          path: "src/main.ts",
+          name: "main",
+          kind: 12,
+          range: { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } },
+          text: { start: 0, end: 0, value: "" },
+        },
+      },
+      { type: "agent", name: "build", source: { start: 14, end: 20, value: "@build" } },
+      {
+        type: "text",
+        text: "one\ntwo",
+        synthetic: true,
+        metadata: { kind: "paste", lines: [1, 2] },
+        source: { text: { start: 21, end: 39, value: "[Pasted ~2 lines]" } },
+      },
+    ])
+    const shell = { ...entry("ls"), mode: "shell" as const }
+    const text = [
+      JSON.stringify(stored),
+      JSON.stringify({ input: 1, parts: [] }),
+      JSON.stringify({ input: "bad part", parts: [{ type: "unknown" }] }),
+      JSON.stringify(shell),
+    ].join("\n")
+    expect(parsePromptHistory(text)).toEqual([stored, shell])
+  })
+
   test("retains only the newest entries", () => {
     const input = Array.from({ length: MAX_HISTORY_ENTRIES + 5 }, (_, index) =>
       JSON.stringify(entry(String(index))),

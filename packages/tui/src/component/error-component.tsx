@@ -1,5 +1,6 @@
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { Effect } from "effect"
 import { createSignal, For, Show } from "solid-js"
 import { getScrollAcceleration } from "../util/scroll"
 import { useClipboard } from "../context/clipboard"
@@ -42,10 +43,17 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
 
   const message = props.error.message || "An unknown error occurred."
   const stack = props.error.stack || "No stack trace available."
-  const issueURL = buildIssueURL(message, stack)
 
   const copyReport = () => {
-    void clipboard.write?.(issueURL.toString()).then(() => setCopied(true))
+    Effect.runFork(
+      Effect.gen(function* () {
+        const issueURL = buildIssueURL(message, stack, yield* describeTerminal)
+        const written = clipboard.write?.(issueURL.toString())
+        if (!written) return
+        yield* Effect.promise(() => written)
+        setCopied(true)
+      }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+    )
   }
 
   const actions = [
@@ -200,7 +208,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
   )
 }
 
-function buildIssueURL(message: string, stack: string) {
+function buildIssueURL(message: string, stack: string, terminal: string) {
   // Field keys match the ids in .github/ISSUE_TEMPLATE/bug-report.yml so the issue
   // form opens pre-filled. Populating os/terminal/reproduce keeps the report past
   // the contributing-guidelines compliance check, which pushes for system info.
@@ -208,7 +216,7 @@ function buildIssueURL(message: string, stack: string) {
   url.searchParams.set("title", `TUI crash: ${message}`)
   url.searchParams.set("opencode-version", InstallationVersion)
   url.searchParams.set("os", describeOS())
-  url.searchParams.set("terminal", describeTerminal())
+  url.searchParams.set("terminal", terminal)
   url.searchParams.set(
     "reproduce",
     "Reported automatically from the opencode crash screen. If you can, describe what you were doing when it crashed.",

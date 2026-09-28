@@ -11,12 +11,13 @@
 import path from "path"
 import { CliRenderEvents, createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { Effect, Option, Schema } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { openEditor } from "@opencode-ai/tui/editor"
 import { registerOpencodeKeymap } from "@opencode-ai/tui/keymap"
 import { Session as SessionApi } from "@/session/session"
 import * as Locale from "@/util/locale"
-import { resolveInteractiveStdin } from "./runtime.stdin"
+import { interactiveStdin } from "./runtime.stdin"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { resolveRunTheme } from "./theme"
 import type {
@@ -33,6 +34,16 @@ import type {
 import { formatModelLabel } from "./variant.shared"
 
 const FOOTER_HEIGHT = 4
+
+// The renderer or the footer closed before the requested work could run.
+export class RuntimeClosedError extends Schema.TaggedError<RuntimeClosedError>()("RuntimeClosedError", {
+  message: Schema.String,
+}) {}
+
+const runtimeClosed = () => new RuntimeClosedError({ message: "runtime closed" })
+
+// Waits for a Promise and ignores its failure.
+const settle = (run: () => Promise<unknown>) => Effect.tryPromise(run).pipe(Effect.ignore)
 
 type SplashState = {
   entry: boolean
@@ -137,14 +148,10 @@ function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): Foo
   }
 }
 
-function directoryLabel(directory: string) {
+function directoryLabel(directory: string, home: string) {
   const resolved = path.resolve(directory)
   const display =
-    resolved === Global.Path.home
-      ? "~"
-      : resolved.startsWith(`${Global.Path.home}${path.sep}`)
-        ? resolved.replace(Global.Path.home, "~")
-        : resolved
+    resolved === home ? "~" : resolved.startsWith(`${home}${path.sep}`) ? resolved.replace(home, "~") : resolved
   return display.replaceAll("\\", "/")
 }
 
@@ -173,30 +180,38 @@ function queueSplash(
 // The renderer starts in split-footer mode with captured stdout so that
 // scrollback commits and footer repaints happen in the same frame. After
 // the entry splash, RunFooter takes over the footer region.
-export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lifecycle> {
-  const source = resolveInteractiveStdin()
-  let unregisterKeymap: (() => void) | undefined
+export function createRuntimeLifecycle(input: LifecycleInput): Promise<Lifecycle> {
+  return Effect.runPromise(makeLifecycle(input).pipe(Effect.provide(Global.layerWith({}))))
+}
 
-  try {
-    const renderer = await createCliRenderer({
-      stdin: source.stdin,
-      targetFps: 30,
-      maxFps: 60,
-      useMouse: false,
-      autoFocus: false,
-      openConsoleOnError: false,
-      exitOnCtrlC: false,
-      useKittyKeyboard: { events: process.platform === "win32" },
-      screenMode: "split-footer",
-      footerHeight: FOOTER_HEIGHT,
-      externalOutputMode: "capture-stdout",
-      consoleMode: "disabled",
-      clearOnShutdown: false,
-    })
-    const theme = await resolveRunTheme(renderer)
+const makeLifecycle = Effect.fnUntraced(function* (input: LifecycleInput) {
+  const home = (yield* Global.Service).home
+  const source = yield* Effect.fromResult(interactiveStdin())
+  let unregisterKeymap = Option.none<() => void>()
+
+  const build = Effect.gen(function* () {
+    const renderer = yield* Effect.promise(() =>
+      createCliRenderer({
+        stdin: source.stdin,
+        targetFps: 30,
+        maxFps: 60,
+        useMouse: false,
+        autoFocus: false,
+        openConsoleOnError: false,
+        exitOnCtrlC: false,
+        useKittyKeyboard: { events: process.platform === "win32" },
+        screenMode: "split-footer",
+        footerHeight: FOOTER_HEIGHT,
+        externalOutputMode: "capture-stdout",
+        consoleMode: "disabled",
+        clearOnShutdown: false,
+      }),
+    )
+    const theme = yield* Effect.promise(() => resolveRunTheme(renderer))
     renderer.setBackgroundColor(theme.background)
     const keymap = createDefaultOpenTuiKeymap(renderer)
-    unregisterKeymap = registerOpencodeKeymap(keymap, renderer, input.tuiConfig)
+    const unregister = registerOpencodeKeymap(keymap, renderer, input.tuiConfig)
+    unregisterKeymap = Option.some(unregister)
     const state: SplashState = {
       entry: false,
       exit: false,
@@ -220,14 +235,66 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
         ...meta,
         theme: theme.splash,
         showSession: splash.showSession,
-        detail: directoryLabel(input.directory),
+        detail: directoryLabel(input.directory, home),
       }),
     )
-    await renderer.idle().catch(() => {})
+    yield* settle(() => renderer.idle())
 
-    const { RunFooter } = await footerTask
+    const { RunFooter } = yield* Effect.promise(() => footerTask)
     let closed = false
     let sigintRegistered = false
+
+    const sigint = () => {
+      footer.requestExit()
+    }
+
+    const attachSigint = () => {
+      if (closed || sigintRegistered) {
+        return
+      }
+
+      process.on("SIGINT", sigint)
+      sigintRegistered = true
+    }
+
+    const detachSigint = () => {
+      if (!sigintRegistered) {
+        return
+      }
+
+      process.off("SIGINT", sigint)
+      sigintRegistered = false
+    }
+
+    // Opens the external editor. SIGINT is ignored while the editor owns the
+    // terminal, and the footer handler comes back when the editor exits.
+    const editorOpen = (value: string) =>
+      Effect.gen(function* () {
+        if (closed || renderer.isDestroyed) {
+          return Option.none<string>()
+        }
+
+        yield* settle(() => renderer.idle())
+        const ignore = () => {}
+        detachSigint()
+        process.on("SIGINT", ignore)
+        return yield* Effect.promise(() =>
+          openEditor({
+            value,
+            cwd: input.directory,
+            renderer,
+            stdin: source.stdin,
+          }),
+        ).pipe(
+          Effect.map(Option.fromNullishOr),
+          Effect.ensuring(
+            Effect.sync(() => {
+              process.off("SIGINT", ignore)
+              attachSigint()
+            }),
+          ),
+        )
+      })
 
     const footer = new RunFooter(renderer, {
       directory: input.directory,
@@ -254,73 +321,30 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       onVariantSelect: input.onVariantSelect,
       onInterrupt: input.onInterrupt,
       onBackground: input.onBackground,
-      onEditorOpen: async ({ value }) => {
-        if (closed || renderer.isDestroyed) {
-          return
-        }
-
-        await renderer.idle().catch(() => {})
-        const ignore = () => {}
-        detachSigint()
-        process.on("SIGINT", ignore)
-        try {
-          return await openEditor({
-            value,
-            cwd: input.directory,
-            renderer,
-            stdin: source.stdin,
-          })
-        } finally {
-          process.off("SIGINT", ignore)
-          attachSigint()
-        }
-      },
+      onEditorOpen: ({ value }) => Effect.runPromise(editorOpen(value).pipe(Effect.map(Option.getOrUndefined))),
       onSubagentSelect: input.onSubagentSelect,
     })
 
-    const sigint = () => {
-      footer.requestExit()
-    }
-
-    const attachSigint = () => {
-      if (closed || sigintRegistered) {
-        return
-      }
-
-      process.on("SIGINT", sigint)
-      sigintRegistered = true
-    }
-
-    const detachSigint = () => {
-      if (!sigintRegistered) {
-        return
-      }
-
-      process.off("SIGINT", sigint)
-      sigintRegistered = false
-    }
-
     attachSigint()
 
-    const close = async (next: {
-      showExit: boolean
-      sessionTitle?: string
-      sessionID?: string
-      history?: RunPrompt[]
-    }) => {
-      if (closed) {
-        return
-      }
+    const close = (next: { showExit: boolean; sessionTitle?: string; sessionID?: string; history?: RunPrompt[] }) =>
+      Effect.gen(function* () {
+        if (closed) {
+          return
+        }
 
-      closed = true
-      detachSigint()
-      let wroteExit = false
+        closed = true
+        detachSigint()
+        let wroteExit = false
 
-      try {
-        await footer.idle().catch(() => {})
+        yield* Effect.gen(function* () {
+          yield* settle(() => footer.idle())
 
-        const show = renderer.isDestroyed ? false : next.showExit
-        if (!renderer.isDestroyed && show) {
+          const show = renderer.isDestroyed ? false : next.showExit
+          if (renderer.isDestroyed || !show) {
+            return
+          }
+
           const sessionID = next.sessionID || input.getSessionID?.() || input.sessionID
           const splash = splashInfo(next.sessionTitle ?? input.sessionTitle, next.history ?? input.history)
           wroteExit = queueSplash(
@@ -335,22 +359,53 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
               theme: footer.currentTheme().splash,
             }),
           )
-          await renderer.idle().catch(() => {})
-        }
-      } finally {
-        footer.close()
-        await footer.idle().catch(() => {})
-        footer.destroy()
-        unregisterKeymap?.()
-        shutdown(renderer)
-        if (!wroteExit) {
-          process.stdout.write("\n")
-        }
-        source.cleanup?.()
-      }
-    }
+          yield* settle(() => renderer.idle())
+        }).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              footer.close()
+              yield* settle(() => footer.idle())
+              footer.destroy()
+              unregister()
+              shutdown(renderer)
+              if (!wroteExit) {
+                process.stdout.write("\n")
+              }
+              source.cleanup?.()
+            }),
+          ),
+        )
+      })
 
-    return {
+    // Fails when the lifecycle, the renderer or the footer has closed.
+    const ensureOpen = Effect.suspend(() =>
+      closed || renderer.isDestroyed || footer.isClosed ? Effect.fail(runtimeClosed()) : Effect.void,
+    )
+
+    const resetForReplay = (next: { sessionTitle?: string; sessionID?: string; history: RunPrompt[] }) =>
+      Effect.gen(function* () {
+        yield* ensureOpen
+        yield* Effect.promise(() => footer.idle())
+        yield* ensureOpen
+
+        footer.resetForReplay(true)
+        renderer.resetSplitFooterForReplay({ clearSavedLines: true })
+        const splash = splashInfo(next.sessionTitle ?? input.sessionTitle, next.history)
+        renderer.writeToScrollback(
+          entrySplash({
+            ...splashMeta({
+              title: splash.title,
+              session_id: next.sessionID ?? input.getSessionID?.() ?? input.sessionID,
+            }),
+            theme: footer.currentTheme().splash,
+            showSession: splash.showSession,
+            detail: directoryLabel(input.directory, home),
+          }),
+        )
+        renderer.requestRender()
+      })
+
+    const lifecycle: Lifecycle = {
       footer,
       refreshTheme() {
         footer.refreshTheme()
@@ -370,37 +425,20 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
         renderer.on(CliRenderEvents.RESIZE, resize)
         return () => renderer.off(CliRenderEvents.RESIZE, resize)
       },
-      async resetForReplay(next) {
-        if (closed || renderer.isDestroyed || footer.isClosed) {
-          throw new Error("runtime closed")
-        }
-
-        await footer.idle()
-        if (closed || renderer.isDestroyed || footer.isClosed) {
-          throw new Error("runtime closed")
-        }
-
-        footer.resetForReplay(true)
-        renderer.resetSplitFooterForReplay({ clearSavedLines: true })
-        const splash = splashInfo(next.sessionTitle ?? input.sessionTitle, next.history)
-        renderer.writeToScrollback(
-          entrySplash({
-            ...splashMeta({
-              title: splash.title,
-              session_id: next.sessionID ?? input.getSessionID?.() ?? input.sessionID,
-            }),
-            theme: footer.currentTheme().splash,
-            showSession: splash.showSession,
-            detail: directoryLabel(input.directory),
-          }),
-        )
-        renderer.requestRender()
-      },
-      close,
+      resetForReplay: (next) => Effect.runPromise(resetForReplay(next)),
+      close: (next) => Effect.runPromise(close(next)),
     }
-  } catch (error) {
-    unregisterKeymap?.()
-    source.cleanup?.()
-    throw error
-  }
-}
+    return lifecycle
+  })
+
+  return yield* build.pipe(
+    Effect.onError(() =>
+      Effect.sync(() => {
+        if (Option.isSome(unregisterKeymap)) {
+          unregisterKeymap.value()
+        }
+        source.cleanup?.()
+      }),
+    ),
+  )
+})

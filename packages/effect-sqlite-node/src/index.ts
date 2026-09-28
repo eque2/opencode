@@ -6,6 +6,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
+import * as Predicate from "effect/Predicate"
 import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
 import * as Stream from "effect/Stream"
@@ -16,6 +17,15 @@ import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError"
 import * as Statement from "effect/unstable/sql/Statement"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
+
+const isSqlInputValue = (value: unknown): value is SQLInputValue =>
+  Predicate.isNull(value) ||
+  Predicate.isNumber(value) ||
+  Predicate.isBigInt(value) ||
+  Predicate.isString(value) ||
+  ArrayBuffer.isView(value)
+
+const isValuesRow = (value: unknown): value is ReadonlyArray<unknown> => Array.isArray(value)
 
 export const TypeId: TypeId = "~@opencode-ai/effect-sqlite-node/NodeSqliteClient"
 export type TypeId = "~@opencode-ai/effect-sqlite-node/NodeSqliteClient"
@@ -73,8 +83,16 @@ export const make = (
         Effect.withFiber<Array<Record<string, unknown>>, SqlError>((fiber) => {
           const statement = db.prepare(sql)
           statement.setReadBigInts(Context.get(fiber.context, Client.SafeIntegers))
+          if (!params.every(isSqlInputValue)) {
+            return Effect.fail(
+              new SqlError({
+                reason: classifySqliteError(params, { message: "Failed to execute statement", operation: "execute" }),
+              }),
+            )
+          }
           try {
-            return Effect.succeed(statement.all(...(params as SQLInputValue[])) as Array<Record<string, unknown>>)
+            const rows: Array<Record<string, unknown>> = statement.all(...params)
+            return Effect.succeed(rows)
           } catch (cause) {
             return Effect.fail(
               new SqlError({
@@ -89,10 +107,23 @@ export const make = (
           const statement = db.prepare(sql)
           statement.setReadBigInts(Context.get(fiber.context, Client.SafeIntegers))
           statement.setReturnArrays(true)
-          try {
-            return Effect.succeed(
-              statement.all(...(params as SQLInputValue[])) as unknown as ReadonlyArray<ReadonlyArray<unknown>>,
+          if (!params.every(isSqlInputValue)) {
+            return Effect.fail(
+              new SqlError({
+                reason: classifySqliteError(params, { message: "Failed to execute statement", operation: "execute" }),
+              }),
             )
+          }
+          try {
+            const rows: ReadonlyArray<unknown> = statement.all(...params)
+            if (!rows.every(isValuesRow)) {
+              return Effect.fail(
+                new SqlError({
+                  reason: classifySqliteError(rows, { message: "Statement returned non-array rows", operation: "execute" }),
+                }),
+              )
+            }
+            return Effect.succeed(rows)
           } catch (cause) {
             return Effect.fail(
               new SqlError({
@@ -145,6 +176,7 @@ export const make = (
     })
 
     return Object.assign(
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) effect/unstable/sql SqlClient.make returns a SqlClient whose updateValues the SQLite compiler cannot honour; SqliteClient hides it as never, and no value of type never exists
       (yield* Client.make({
         acquirer,
         compiler,

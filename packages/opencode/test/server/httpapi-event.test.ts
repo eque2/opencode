@@ -1,10 +1,11 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer, Queue, Schema, Stream } from "effect"
+import { Effect, Queue, Schema, Stream } from "effect"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestFailure } from "../fixture/test-failure"
 
 const EventData = Schema.Struct({
   id: Schema.optional(Schema.String),
@@ -17,7 +18,7 @@ const readEvent = (reader: Queue.Dequeue<Uint8Array>) =>
     const value = yield* Queue.take(reader).pipe(
       Effect.timeoutOrElse({
         duration: "5 seconds",
-        orElse: () => Effect.fail(new Error("timed out waiting for event")),
+        orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for event" })),
       }),
     )
     return Schema.decodeUnknownSync(EventData)(JSON.parse(new TextDecoder().decode(value).replace(/^data: /, "")))

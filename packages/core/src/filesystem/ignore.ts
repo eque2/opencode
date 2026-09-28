@@ -1,6 +1,7 @@
+import { HashSet } from "effect"
 import { Glob } from "../util/glob"
 
-const FOLDERS = new Set([
+const FOLDER_NAMES = [
   "node_modules",
   "bower_components",
   ".pnpm-store",
@@ -29,7 +30,9 @@ const FOLDERS = new Set([
   "mypy_cache",
   ".history",
   ".gradle",
-])
+]
+
+const FOLDERS = HashSet.fromIterable(FOLDER_NAMES)
 
 const FILES = [
   "**/*.swp",
@@ -45,7 +48,7 @@ const FILES = [
   "**/.nyc_output/**",
 ]
 
-export const PATTERNS = [...FILES, ...FOLDERS]
+export const PATTERNS = [...FILES, ...FOLDER_NAMES]
 
 export function match(filepath: string, opts?: { extra?: string[]; whitelist?: string[] }) {
   for (const pattern of opts?.whitelist || []) {
@@ -54,7 +57,7 @@ export function match(filepath: string, opts?: { extra?: string[]; whitelist?: s
 
   const parts = filepath.split(/[/\\]/)
   for (const part of parts) {
-    if (FOLDERS.has(part)) return true
+    if (HashSet.has(FOLDERS, part)) return true
   }
 
   for (const pattern of [...FILES, ...(opts?.extra || [])]) {

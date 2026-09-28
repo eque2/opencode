@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
+import { Effect, Option } from "effect"
 import { which } from "@opencode-ai/core/util/which"
 import { tmpdir } from "../fixture/tmpdir"
 
@@ -29,18 +30,20 @@ function envPath(Path: string): NodeJS.ProcessEnv {
   }
 }
 
-function same(a: string | null, b: string) {
+const find = (command: string, environment?: NodeJS.ProcessEnv) => Effect.runPromise(which(command, environment))
+
+function same(a: Option.Option<string>, b: string) {
   if (process.platform === "win32") {
-    expect(a?.toLowerCase()).toBe(b.toLowerCase())
+    expect(Option.getOrUndefined(Option.map(a, (found) => found.toLowerCase()))).toBe(b.toLowerCase())
     return
   }
 
-  expect(a).toBe(b)
+  expect(a).toEqual(Option.some(b))
 }
 
 describe("util.which", () => {
-  test("returns null when command is missing", () => {
-    expect(which("opencode-missing-command-for-test")).toBeNull()
+  test("returns None when command is missing", async () => {
+    expect(await find("opencode-missing-command-for-test")).toEqual(Option.none())
   })
 
   test("finds a command from PATH override", async () => {
@@ -49,7 +52,22 @@ describe("util.which", () => {
     await fs.mkdir(bin)
     const file = await cmd(bin, "tool")
 
-    same(which("tool", env(bin)), file)
+    same(await find("tool", env(bin)), file)
+  })
+
+  test("reads a PATH that changes at run time when no env is given", async () => {
+    await using tmp = await tmpdir()
+    const bin = path.join(tmp.path, "bin")
+    await fs.mkdir(bin)
+    const file = await cmd(bin, "runtime-tool")
+    const previous = process.env.PATH
+    process.env.PATH = [bin, previous].filter(Boolean).join(path.delimiter)
+    try {
+      same(await find("runtime-tool"), file)
+    } finally {
+      if (previous === undefined) delete process.env.PATH
+      else process.env.PATH = previous
+    }
   })
 
   test("uses first PATH match", async () => {
@@ -61,10 +79,10 @@ describe("util.which", () => {
     const first = await cmd(a, "dupe")
     await cmd(b, "dupe")
 
-    same(which("dupe", env([a, b].join(path.delimiter))), first)
+    same(await find("dupe", env([a, b].join(path.delimiter))), first)
   })
 
-  test("returns null for non-executable file on unix", async () => {
+  test("returns None for non-executable file on unix", async () => {
     if (process.platform === "win32") return
 
     await using tmp = await tmpdir()
@@ -72,7 +90,7 @@ describe("util.which", () => {
     await fs.mkdir(bin)
     await cmd(bin, "noexec", false)
 
-    expect(which("noexec", env(bin))).toBeNull()
+    expect(await find("noexec", env(bin))).toEqual(Option.none())
   })
 
   test("uses PATHEXT on windows", async () => {
@@ -84,7 +102,7 @@ describe("util.which", () => {
     const file = path.join(bin, "pathext.CMD")
     await fs.writeFile(file, "@echo off\r\n")
 
-    expect(which("pathext", { PATH: bin, PATHEXT: ".CMD" })).toBe(file)
+    expect(await find("pathext", { PATH: bin, PATHEXT: ".CMD" })).toEqual(Option.some(file))
   })
 
   test("uses Windows Path casing fallback", async () => {
@@ -95,6 +113,6 @@ describe("util.which", () => {
     await fs.mkdir(bin)
     const file = await cmd(bin, "mixed")
 
-    same(which("mixed", envPath(bin)), file)
+    same(await find("mixed", envPath(bin)), file)
   })
 })

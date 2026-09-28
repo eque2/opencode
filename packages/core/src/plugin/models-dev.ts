@@ -1,13 +1,12 @@
 import { define } from "./internal"
 import type { ModelV2Info } from "@opencode-ai/sdk/v2/types"
-import { Effect, Stream } from "effect"
+import { DateTime, Effect, MutableHashMap, Option, Stream } from "effect"
 import { EventV2 } from "../event"
 import { ModelsDev } from "../models-dev"
 import { ProviderV2 } from "../provider"
 
 function released(date: string) {
-  const time = Date.parse(date)
-  return Number.isFinite(time) ? time : 0
+  return Option.match(DateTime.make(date), { onNone: () => 0, onSome: DateTime.toEpochMillis })
 }
 
 function cost(input: ModelsDev.Model["cost"]): ModelV2Info["cost"] {
@@ -61,12 +60,22 @@ function mergeCost(base: ModelV2Info["cost"], override: ModelsDev.Model["cost"] 
     tier: right.tier ?? left.tier,
     cache: { ...left.cache, ...right.cache },
   })
-  const tiers = new Map(baseTiers.map((item) => [tierKey(item), item]))
+  // MutableHashMap keeps insertion order for string keys, so base tiers stay first.
+  const tiers = MutableHashMap.fromIterable(baseTiers.map((item) => [tierKey(item), item] as const))
   for (const item of nextTiers) {
-    const current = tiers.get(tierKey(item))
-    tiers.set(tierKey(item), current ? merge(current, item) : item)
+    MutableHashMap.set(
+      tiers,
+      tierKey(item),
+      Option.match(MutableHashMap.get(tiers, tierKey(item)), {
+        onNone: () => item,
+        onSome: (current) => merge(current, item),
+      }),
+    )
   }
-  return [merge(baseDefault ?? { input: 0, output: 0, cache: { read: 0, write: 0 } }, nextDefault), ...tiers.values()]
+  return [
+    merge(baseDefault ?? { input: 0, output: 0, cache: { read: 0, write: 0 } }, nextDefault),
+    ...MutableHashMap.values(tiers),
+  ]
 }
 
 function modeName(model: ModelsDev.Model, mode: string) {

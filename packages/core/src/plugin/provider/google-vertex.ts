@@ -1,28 +1,39 @@
-import { Effect } from "effect"
+import { Config, Effect, Option, Predicate, Schema } from "effect"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
+import { readEnvSnapshot } from "./env-snapshot"
 
-function resolveProject(options: Record<string, any>) {
-  // models.dev advertises GOOGLE_VERTEX_PROJECT for Vertex, while Google SDKs
-  // and ADC examples commonly use the broader Google Cloud project aliases.
-  return (
-    options.project ??
-    process.env.GOOGLE_VERTEX_PROJECT ??
-    process.env.GOOGLE_CLOUD_PROJECT ??
-    process.env.GCP_PROJECT ??
-    process.env.GCLOUD_PROJECT
-  )
-}
+// Google SDKs and ADC examples commonly use these broader Google Cloud project aliases.
+const cloudProjectEnv = Config.String("GOOGLE_CLOUD_PROJECT").pipe(
+  Config.orElse(() => Config.String("GCP_PROJECT")),
+  Config.orElse(() => Config.String("GCLOUD_PROJECT")),
+)
 
-function resolveLocation(options: Record<string, any>) {
-  return (
-    options.location ??
-    process.env.GOOGLE_VERTEX_LOCATION ??
-    process.env.GOOGLE_CLOUD_LOCATION ??
-    process.env.VERTEX_LOCATION ??
-    "us-central1"
-  )
-}
+// models.dev advertises GOOGLE_VERTEX_PROJECT for Vertex; the Google Cloud aliases follow it.
+const vertexProjectEnv = Config.option(
+  Config.String("GOOGLE_VERTEX_PROJECT").pipe(Config.orElse(() => cloudProjectEnv)),
+)
+
+const vertexLocationEnv = Config.String("GOOGLE_VERTEX_LOCATION").pipe(
+  Config.orElse(() => Config.String("GOOGLE_CLOUD_LOCATION")),
+  Config.orElse(() => Config.String("VERTEX_LOCATION")),
+  Config.withDefault("us-central1"),
+)
+
+const anthropicProjectEnv = Config.option(cloudProjectEnv)
+
+const anthropicLocationEnv = Config.String("GOOGLE_CLOUD_LOCATION").pipe(
+  Config.orElse(() => Config.String("VERTEX_LOCATION")),
+  Config.withDefault("global"),
+)
+
+const resolveProject = Effect.fnUntraced(function* (options: Record<string, any>) {
+  return options.project ?? Option.getOrUndefined(yield* readEnvSnapshot(vertexProjectEnv))
+})
+
+const resolveLocation = Effect.fnUntraced(function* (options: Record<string, any>) {
+  return options.location ?? (yield* readEnvSnapshot(vertexLocationEnv))
+})
 
 function vertexEndpoint(location: string) {
   if (location === "global") return "aiplatform.googleapis.com"
@@ -38,20 +49,45 @@ function replaceVertexVars(value: string, project: string | undefined, location:
     .replaceAll("${GOOGLE_VERTEX_ENDPOINT}", vertexEndpoint(location))
 }
 
+class GoogleVertexAuthError extends Schema.TaggedError<GoogleVertexAuthError>()("GoogleVertex.AuthError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+// Keep the Google auth library message: it tells the user how to set up credentials.
+const authError = (cause: unknown) =>
+  new GoogleVertexAuthError({
+    message: Predicate.isError(cause) ? cause.message : "Google Cloud authentication failed",
+    cause,
+  })
+
+const accessToken = Effect.fnUntraced(function* () {
+  const { GoogleAuth } = yield* Effect.promise(() => import("google-auth-library"))
+  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
+  const client = yield* Effect.tryPromise({ try: () => auth.getClient(), catch: authError })
+  const token = yield* Effect.tryPromise({ try: () => client.getAccessToken(), catch: authError })
+  return token.token
+})
+
 function authFetch(fetchWithRuntimeOptions?: unknown) {
   // Native Vertex SDKs handle ADC internally. OpenAI-compatible Vertex endpoints
   // do not, so inject a Google access token into their fetch path.
-  return async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const { GoogleAuth } = await import("google-auth-library")
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
-    const client = await auth.getClient()
-    const token = await client.getAccessToken()
-    const headers = new Headers(init?.headers)
-    headers.set("Authorization", `Bearer ${token.token}`)
-    return typeof fetchWithRuntimeOptions === "function"
-      ? fetchWithRuntimeOptions(input, { ...init, headers })
-      : fetch(input, { ...init, headers })
-  }
+  return (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const token = yield* accessToken()
+        const headers = new Headers(init?.headers)
+        headers.set("Authorization", `Bearer ${token}`)
+        const request = { ...init, headers }
+        // A fetch rejection, such as an abort, reaches the AI SDK unchanged.
+        return yield* Effect.promise(
+          (): Promise<Response> =>
+            typeof fetchWithRuntimeOptions === "function"
+              ? fetchWithRuntimeOptions(input, request)
+              : fetch(input, request),
+        )
+      }),
+    )
 }
 
 export const GoogleVertexPlugin = define({
@@ -69,8 +105,8 @@ export const GoogleVertexPlugin = define({
             )
           )
             continue
-          const project = resolveProject(item.provider.request.body)
-          const location = String(resolveLocation(item.provider.request.body))
+          const project = yield* resolveProject(item.provider.request.body)
+          const location = String(yield* resolveLocation(item.provider.request.body))
           evt.provider.update(item.provider.id, (provider) => {
             if (project) provider.request.body.project = project
             provider.request.body.location = location
@@ -92,8 +128,8 @@ export const GoogleVertexPlugin = define({
         }
         if (evt.package !== "@ai-sdk/google-vertex") return
         const mod = yield* Effect.promise(() => import("@ai-sdk/google-vertex"))
-        const project = resolveProject(evt.options)
-        const location = resolveLocation(evt.options)
+        const project = yield* resolveProject(evt.options)
+        const location = yield* resolveLocation(evt.options)
         const options = { ...evt.options }
         delete options.fetch
         evt.sdk = mod.createVertex({
@@ -106,7 +142,7 @@ export const GoogleVertexPlugin = define({
     yield* ctx.aisdk.language(
       Effect.fn(function* (evt) {
         if (evt.model.providerID !== ProviderV2.ID.googleVertex) return
-        evt.language = evt.sdk.languageModel(String(evt.model.api.id).trim())
+        evt.language = evt.sdk.languageModel(evt.model.api.id.trim())
       }),
     )
   }),
@@ -121,15 +157,8 @@ export const GoogleVertexAnthropicPlugin = define({
           if (item.provider.api.type !== "aisdk") continue
           if (item.provider.api.package !== "@ai-sdk/google-vertex/anthropic") continue
           const project =
-            item.provider.request.body.project ??
-            process.env.GOOGLE_CLOUD_PROJECT ??
-            process.env.GCP_PROJECT ??
-            process.env.GCLOUD_PROJECT
-          const location =
-            item.provider.request.body.location ??
-            process.env.GOOGLE_CLOUD_LOCATION ??
-            process.env.VERTEX_LOCATION ??
-            "global"
+            item.provider.request.body.project ?? Option.getOrUndefined(yield* readEnvSnapshot(anthropicProjectEnv))
+          const location = item.provider.request.body.location ?? (yield* readEnvSnapshot(anthropicLocationEnv))
           evt.provider.update(item.provider.id, (provider) => {
             if (project) provider.request.body.project = project
             provider.request.body.location = location
@@ -144,11 +173,9 @@ export const GoogleVertexAnthropicPlugin = define({
         const project =
           typeof evt.options.project === "string"
             ? evt.options.project
-            : (process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCP_PROJECT ?? process.env.GCLOUD_PROJECT)
+            : Option.getOrUndefined(yield* readEnvSnapshot(anthropicProjectEnv))
         const location =
-          typeof evt.options.location === "string"
-            ? evt.options.location
-            : (process.env.GOOGLE_CLOUD_LOCATION ?? process.env.VERTEX_LOCATION ?? "global")
+          typeof evt.options.location === "string" ? evt.options.location : yield* readEnvSnapshot(anthropicLocationEnv)
         evt.sdk = mod.createVertexAnthropic({
           ...evt.options,
           project,
@@ -166,7 +193,7 @@ export const GoogleVertexAnthropicPlugin = define({
     yield* ctx.aisdk.language(
       Effect.fn(function* (evt) {
         if (evt.model.providerID !== ProviderV2.ID.make("google-vertex-anthropic")) return
-        evt.language = evt.sdk.languageModel(String(evt.model.api.id).trim())
+        evt.language = evt.sdk.languageModel(evt.model.api.id.trim())
       }),
     )
   }),

@@ -13,6 +13,7 @@ import { useLocale } from "@kobalte/core/i18n"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { Show, createEffect, createMemo, createSignal, type JSX } from "solid-js"
 import { getWorkerPool } from "../../pierre/worker"
+import { Array, Option } from "effect"
 import { SessionFilePanelV2, SessionFilePanelV2Empty } from "./session-file-panel-v2"
 
 export const SESSION_REVIEW_V2_SIDEBAR_WIDTH_DEFAULT = 240
@@ -78,8 +79,8 @@ export function SessionReviewV2Sidebar(props: SessionReviewV2SidebarProps) {
       <Show when={props.open}>
         <aside
           data-slot="session-review-v2-sidebar"
-          data-transition={props.transition ? "" : undefined}
-          data-resizing={resizing() ? "" : undefined}
+          bool:data-transition={props.transition}
+          bool:data-resizing={resizing()}
           style={{ width: `${width()}px` }}
         >
           <div data-slot="session-review-v2-sidebar-header">
@@ -94,11 +95,11 @@ export function SessionReviewV2Sidebar(props: SessionReviewV2SidebarProps) {
               onKeyDown={props.onFilterKeyDown}
               autofocus={props.filterAutofocus}
               ref={props.filterRef}
-              role={props.filterControls ? "combobox" : undefined}
-              aria-autocomplete={props.filterControls ? "list" : undefined}
+              {...(props.filterControls
+                ? { role: "combobox", "aria-autocomplete": "list", "aria-expanded": props.filterExpanded }
+                : {})}
               aria-controls={props.filterControls}
               aria-activedescendant={props.filterActiveDescendant}
-              aria-expanded={props.filterControls ? props.filterExpanded : undefined}
               showClearButton={props.filter.length > 0}
               clearLabel={i18n.t("ui.list.clearFilter")}
               onClearClick={() => props.onFilterChange("")}
@@ -166,14 +167,17 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
     return 0
   }
 
-  const prev = () => {
-    if (!canCycle()) return
-    return props.files[(fileIndex() - 1 + props.files.length) % props.files.length]
+  // An empty path is not a file to cycle to.
+  const fileAt = (index: number) => Array.get(props.files, index).pipe(Option.filter((file) => file.length > 0))
+
+  const prev = (): Option.Option<string> => {
+    if (!canCycle()) return Option.none()
+    return fileAt((fileIndex() - 1 + props.files.length) % props.files.length)
   }
 
-  const next = () => {
-    if (!canCycle()) return
-    return props.files[(fileIndex() + 1) % props.files.length]
+  const next = (): Option.Option<string> => {
+    if (!canCycle()) return Option.none()
+    return fileAt((fileIndex() + 1) % props.files.length)
   }
 
   const canCycle = () => props.files.length > 0
@@ -184,9 +188,9 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
   const title = createMemo(() => props.title)
   const stats = createMemo(() => props.stats)
 
-  const cycle = (file: string | undefined) => {
-    if (!file) return
-    props.onSelectFile(file)
+  const cycle = (file: Option.Option<string>) => {
+    if (Option.isNone(file)) return
+    props.onSelectFile(file.value)
   }
 
   // Keep the advertised arrow keys working while the
@@ -198,7 +202,7 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
     if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return
     if (!props.hasDiffs || !canCycle()) return
     const file = event.key === previousKey() ? prev() : next()
-    if (!file) return
+    if (Option.isNone(file)) return
     event.preventDefault()
     cycle(file)
   })
@@ -221,7 +225,7 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
       <div class="flex items-center">
         <TooltipV2
           openDelay={2000}
-          inactive={!prev()}
+          inactive={Option.isNone(prev())}
           value={
             <>
               {i18n.t("ui.sessionReviewV2.previousFile")}
@@ -234,14 +238,14 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
             variant="ghost"
             size="small"
             class="session-review-v2-file-nav-button"
-            disabled={!prev()}
+            disabled={Option.isNone(prev())}
             onClick={() => cycle(prev())}
             aria-label={i18n.t("ui.sessionReviewV2.previousFile")}
           />
         </TooltipV2>
         <TooltipV2
           openDelay={2000}
-          inactive={!next()}
+          inactive={Option.isNone(next())}
           value={
             <>
               {i18n.t("ui.sessionReviewV2.nextFile")}
@@ -254,7 +258,7 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
             variant="ghost"
             size="small"
             class="session-review-v2-file-nav-button"
-            disabled={!next()}
+            disabled={Option.isNone(next())}
             onClick={() => cycle(next())}
             aria-label={i18n.t("ui.sessionReviewV2.nextFile")}
           />
@@ -337,7 +341,7 @@ export function SessionReviewV2SidebarToggle(props: { opened: boolean; disabled?
         class="session-review-v2-sidebar-toggle"
         aria-label={i18n.t("ui.sessionReviewV2.toggleSidebar")}
         aria-expanded={props.opened}
-        data-expanded={props.opened ? "" : undefined}
+        {...(props.opened ? { "data-expanded": "" } : {})}
         disabled={props.disabled}
         onClick={props.onToggle}
         icon={<Icon name="filetree" />}

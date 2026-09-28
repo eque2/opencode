@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
+import { Option } from "effect"
 import { DragDropProvider as DndKitProvider, PointerSensor } from "@dnd-kit/solid"
 import { isSortable } from "@dnd-kit/solid/sortable"
 import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
@@ -29,7 +30,6 @@ import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 
 import FileTree from "@/components/file-tree"
-import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
 
 const reviewTabID = "session-side-panel-review-tab"
@@ -50,12 +50,14 @@ import {
   createOpenSessionFileTab,
   createSessionTabs,
   getTabReorderIndex,
+  readSelectedLineRange,
   shouldShowFileTree,
   type Sizing,
 } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
+import { reviewDiffKinds } from "@/pages/session/v2/review-diff-kinds"
 
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 type RenderDiff = FileDiffInfo | (SnapshotFileDiff & { file: string }) | VcsFileDiff
@@ -116,29 +118,7 @@ export function SessionSidePanel(props: {
 
   const diffs = createMemo(() => props.diffs().filter(renderDiff))
   const diffFiles = createMemo(() => diffs().map((d) => d.file))
-  const kinds = createMemo(() => {
-    const merge = (a: "add" | "del" | "mix" | undefined, b: "add" | "del" | "mix") => {
-      if (!a) return b
-      if (a === b) return a
-      return "mix" as const
-    }
-
-    const out = new Map<string, "add" | "del" | "mix">()
-    for (const diff of diffs()) {
-      const file = normalizeFileTreeV2Path(diff.file)
-      const kind = diff.status === "added" ? "add" : diff.status === "deleted" ? "del" : "mix"
-
-      out.set(file, kind)
-
-      const parts = file.split("/")
-      for (const [idx] of parts.slice(0, -1).entries()) {
-        const dir = parts.slice(0, idx + 1).join("/")
-        if (!dir) continue
-        out.set(dir, merge(out.get(dir), kind))
-      }
-    }
-    return out
-  })
+  const kinds = createMemo(() => reviewDiffKinds(diffs()))
 
   const empty = (msg: string) => (
     <div class="h-full flex flex-col">
@@ -166,11 +146,11 @@ export function SessionSidePanel(props: {
 
   const openTab = createOpenSessionFileTab({
     normalizeTab,
-    openTab: tabs().open,
+    openTab: (tab) => tabs().open(tab),
     pathFromTab: file.pathFromTab,
     loadFile: file.load,
     openReviewPanel,
-    setActive: tabs().setActive,
+    setActive: (tab) => tabs().setActive(tab),
   })
 
   const tabState = createSessionTabs({
@@ -201,7 +181,7 @@ export function SessionSidePanel(props: {
   }
 
   let fileFilter: HTMLInputElement | undefined
-  let tabList: HTMLDivElement | undefined
+  let tabList: Option.Option<HTMLDivElement> = Option.none()
   const temporaryTab = tabs().preview
   const previewTab = (value: string) => {
     const next = normalizeTab(value)
@@ -243,13 +223,13 @@ export function SessionSidePanel(props: {
   const openFileKeybind = createMemo(() => command.keybindParts("file.open"))
   const closeTabKeybind = createMemo(() => command.keybindParts("tab.close"))
   const [store, setStore] = createStore({
-    activeDraggable: undefined as string | undefined,
+    activeDraggable: Option.none<string>(),
   })
 
   const handleDragStart = (event: unknown) => {
     const id = getDraggableId(event)
     if (!id) return
-    setStore("activeDraggable", id)
+    setStore("activeDraggable", Option.some(id))
   }
 
   const handleDragOver = (event: DragEvent) => {
@@ -263,7 +243,7 @@ export function SessionSidePanel(props: {
   }
 
   const handleDragEnd = () => {
-    setStore("activeDraggable", undefined)
+    setStore("activeDraggable", Option.none())
   }
 
   createEffect(() => {
@@ -276,11 +256,7 @@ export function SessionSidePanel(props: {
           const path = file.pathFromTab(tab)
           if (!path) return acc
 
-          const selected = file.selectedLines(path)
-          acc[path] =
-            selected && typeof selected === "object" && "start" in selected && "end" in selected
-              ? (selected as SelectedLineRange)
-              : null
+          acc[path] = Option.getOrNull(readSelectedLineRange(file.selectedLines(path)))
 
           return acc
         }, {}),
@@ -353,7 +329,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
-                                  aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                  {...(activeTab() === "review" ? { "aria-controls": reviewTabPanelID } : {})}
                                 >
                                   <div class="flex items-center gap-1.5">
                                     <div>{language.t("session.tab.review")}</div>
@@ -400,8 +376,8 @@ export function SessionSidePanel(props: {
                                         <SortableTab
                                           tab={tab}
                                           temporary={temporaryTab() === tab}
-                                          onTabClose={tabs().close}
-                                          onTabDoubleClick={temporaryTab() === tab ? openTab : undefined}
+                                          onTabClose={(tab) => tabs().close(tab)}
+                                          {...(temporaryTab() === tab ? { onTabDoubleClick: openTab } : {})}
                                         />
                                       }
                                     >
@@ -454,7 +430,9 @@ export function SessionSidePanel(props: {
                                     class="!rounded-md"
                                     onClick={() => {
                                       void import("@/components/dialog-select-file").then((x) => {
-                                        dialog.show(() => <x.DialogSelectFile mode="files" onOpenFile={showAllFiles} />)
+                                        void dialog.show(() => (
+                                          <x.DialogSelectFile mode="files" onOpenFile={showAllFiles} />
+                                        ))
                                       })
                                     }}
                                     aria-label={language.t("command.file.open")}
@@ -469,7 +447,7 @@ export function SessionSidePanel(props: {
                               id={reviewTabPanelID}
                               role="tabpanel"
                               aria-labelledby={reviewTabID}
-                              tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
+                              {...(props.reviewHasFocusableContent() ? {} : { tabIndex: 0 })}
                               data-slot="tabs-content"
                               class="flex flex-col h-full overflow-hidden contain-strict"
                             >
@@ -503,7 +481,7 @@ export function SessionSidePanel(props: {
                           </Show>
                         </Tabs>
                         <DragOverlay>
-                          <Show when={store.activeDraggable} keyed>
+                          <Show when={Option.getOrUndefined(store.activeDraggable)} keyed>
                             {(tab) => {
                               const path = file.pathFromTab(tab)
                               return (
@@ -531,11 +509,12 @@ export function SessionSidePanel(props: {
                       ]}
                       modifiers={[
                         RestrictToHorizontalAxis,
-                        RestrictToElement.configure({ element: () => tabList ?? null }),
+                        RestrictToElement.configure({ element: () => Option.getOrNull(tabList) }),
                       ]}
                       plugins={(defaults) => [
                         ...defaults.filter((plugin) => plugin !== Accessibility),
                         AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+                        // eslint-disable-next-line effect/no-null-use-option -- (a) @dnd-kit/dom FeedbackOptions.dropAnimation takes null to turn off the drop animation; undefined keeps the default animation
                         Feedback.configure({ dropAnimation: null }),
                       ]}
                       onDragEnd={(event) => {
@@ -548,7 +527,7 @@ export function SessionSidePanel(props: {
                         <div class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center">
                           <Tabs.List
                             ref={(el: HTMLDivElement) => {
-                              tabList = el
+                              tabList = Option.some(el)
                               const stop = createFileTabListSync({ el, contextOpen })
                               onCleanup(stop)
                             }}
@@ -564,7 +543,7 @@ export function SessionSidePanel(props: {
                               <Tabs.Trigger
                                 value="review"
                                 id={reviewTabID}
-                                aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                {...(activeTab() === "review" ? { "aria-controls": reviewTabPanelID } : {})}
                               >
                                 {props.hasReview()
                                   ? language.t("session.review.filesChanged", { count: props.reviewCount() })
@@ -614,8 +593,8 @@ export function SessionSidePanel(props: {
                                       tab={tab}
                                       index={() => tabs().all().indexOf(tab)}
                                       temporary={temporaryTab() === tab}
-                                      onTabClose={tabs().close}
-                                      onTabDoubleClick={temporaryTab() === tab ? openTab : undefined}
+                                      onTabClose={(tab) => tabs().close(tab)}
+                                      {...(temporaryTab() === tab ? { onTabDoubleClick: openTab } : {})}
                                     />
                                   }
                                 >
@@ -697,7 +676,7 @@ export function SessionSidePanel(props: {
                             id={reviewTabPanelID}
                             role="tabpanel"
                             aria-labelledby={reviewTabID}
-                            tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
+                            {...(props.reviewHasFocusableContent() ? {} : { tabIndex: 0 })}
                             data-slot="tabs-content"
                             class="flex flex-col h-full overflow-hidden contain-strict"
                           >
@@ -733,7 +712,7 @@ export function SessionSidePanel(props: {
                             data-slot="tabs-content"
                             class="h-full min-h-0 overflow-hidden"
                             classList={{ hidden: !fileBrowserVisible() }}
-                            inert={!fileBrowserVisible() || undefined}
+                            inert={!fileBrowserVisible()}
                           >
                             <SessionFileBrowserTab
                               tab={browserTab() ?? activeFileTab() ?? SESSION_OPEN_FILE_TAB}

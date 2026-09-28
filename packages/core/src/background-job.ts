@@ -1,6 +1,6 @@
 export * as BackgroundJob from "./background-job"
 
-import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, SynchronizedRef } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Exit, HashMap, Layer, Option, Scope, SynchronizedRef } from "effect"
 import { Identifier } from "./id/id"
 import { makeGlobalNode } from "./effect/app-node"
 
@@ -28,11 +28,13 @@ type Active = {
   output?: { sequence: number; text: string }
   tail: Deferred.Deferred<void>
   promoted: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
+  onPromote: Option.Option<Effect.Effect<void>>
 }
 
+type Jobs = HashMap.HashMap<string, Active>
+
 type State = {
-  jobs: SynchronizedRef.SynchronizedRef<Map<string, Active>>
+  jobs: SynchronizedRef.SynchronizedRef<Jobs>
   scope: Scope.Scope
 }
 
@@ -45,7 +47,7 @@ type FinishResult = {
 type PromoteResult = {
   info?: Info
   promoted?: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
+  onPromote: Option.Option<Effect.Effect<void>>
 }
 
 type StartResult = { info: Info } | { info: Info; scope: Scope.Closeable; token: object }
@@ -119,7 +121,7 @@ function errorText(error: unknown) {
  */
 export const make = Effect.gen(function* () {
   const state: State = {
-    jobs: yield* SynchronizedRef.make(new Map()),
+    jobs: yield* SynchronizedRef.make(HashMap.empty<string, Active>()),
     scope: yield* Scope.Scope,
   }
 
@@ -130,9 +132,10 @@ export const make = Effect.gen(function* () {
     exit: Exit.Exit<string, unknown>,
   ) {
     const completed_at = yield* Clock.currentTimeMillis
-    const result = yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [FinishResult, Map<string, Active>] => {
-      const job = jobs.get(id)
-      if (!job) return [{}, jobs]
+    const result = yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [FinishResult, Jobs] => {
+      const found = HashMap.get(jobs, id)
+      if (Option.isNone(found)) return [{}, jobs]
+      const job = found.value
       if (job.token !== token) return [{}, jobs]
       if (job.info.status !== "running") return [{ info: snapshot(job) }, jobs]
       const pending = job.pending - 1
@@ -141,7 +144,7 @@ export const make = Effect.gen(function* () {
           ? { sequence, text: exit.value }
           : job.output
       if (Exit.isSuccess(exit) && pending > 0) {
-        return [{}, new Map(jobs).set(id, { ...job, pending, output })]
+        return [{}, HashMap.set(jobs, id, { ...job, pending, output })]
       }
       const status: Exclude<Status, "running"> = Exit.isSuccess(exit)
         ? "completed"
@@ -150,7 +153,7 @@ export const make = Effect.gen(function* () {
           : "error"
       const next = {
         ...job,
-        onPromote: undefined,
+        onPromote: Option.none(),
         pending: 0,
         output,
         info: {
@@ -161,7 +164,7 @@ export const make = Effect.gen(function* () {
           ...(Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : {}),
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [{ info: snapshot(next), done: job.done, scope: job.scope }, HashMap.set(jobs, id, next)]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
     if (result.scope) {
@@ -188,15 +191,14 @@ export const make = Effect.gen(function* () {
   })
 
   const list: Interface["list"] = Effect.fn("BackgroundJob.list")(function* () {
-    return Array.from((yield* SynchronizedRef.get(state.jobs)).values())
+    // HashMap iteration order is not insertion order, so jobs that start in the same millisecond sort by ID.
+    return Array.from(HashMap.values(yield* SynchronizedRef.get(state.jobs)))
       .map(snapshot)
-      .toSorted((a, b) => a.started_at - b.started_at)
+      .toSorted((a, b) => a.started_at - b.started_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
 
   const get: Interface["get"] = Effect.fn("BackgroundJob.get")(function* (id) {
-    const job = (yield* SynchronizedRef.get(state.jobs)).get(id)
-    if (!job) return
-    return snapshot(job)
+    return HashMap.get(yield* SynchronizedRef.get(state.jobs), id).pipe(Option.map(snapshot), Option.getOrUndefined)
   })
 
   const start: Interface["start"] = Effect.fn("BackgroundJob.start")(function* (input) {
@@ -210,9 +212,9 @@ export const make = Effect.gen(function* () {
         const result = yield* SynchronizedRef.modifyEffect(
           state.jobs,
           Effect.fnUntraced(function* (jobs) {
-            const existing = jobs.get(id)
-            if (existing?.info.status === "running") {
-              return [{ info: snapshot(existing) }, jobs] as readonly [StartResult, Map<string, Active>]
+            const existing = HashMap.get(jobs, id)
+            if (Option.isSome(existing) && existing.value.info.status === "running") {
+              return [{ info: snapshot(existing.value) }, jobs] as readonly [StartResult, Jobs]
             }
             const scope = yield* Scope.fork(state.scope, "parallel")
             const token = {}
@@ -232,12 +234,9 @@ export const make = Effect.gen(function* () {
               next: 1,
               tail,
               promoted,
-              onPromote: input.onPromote,
+              onPromote: Option.fromUndefinedOr(input.onPromote),
             }
-            return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
-              StartResult,
-              Map<string, Active>,
-            ]
+            return [{ info: snapshot(job), scope, token }, HashMap.set(jobs, id, job)] as readonly [StartResult, Jobs]
           }),
         )
         if ("scope" in result)
@@ -246,7 +245,7 @@ export const make = Effect.gen(function* () {
             id,
             result.token,
             0,
-            restore(input.run).pipe(Effect.ensuring(Deferred.succeed(tail, undefined))),
+            restore(input.run).pipe(Effect.ensuring(Deferred.done(tail, Exit.void))),
           )
         return result.info
       }),
@@ -257,22 +256,20 @@ export const make = Effect.gen(function* () {
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const tail = yield* Deferred.make<void>()
-        const result = yield* SynchronizedRef.modify(
-          state.jobs,
-          (jobs): readonly [ExtendResult, Map<string, Active>] => {
-            const job = jobs.get(input.id)
-            if (!job || job.info.status !== "running") return [{ extended: false }, jobs]
-            return [
-              { extended: true, previous: job.tail, scope: job.scope, tail, token: job.token, sequence: job.next },
-              new Map(jobs).set(input.id, {
-                ...job,
-                pending: job.pending + 1,
-                next: job.next + 1,
-                tail,
-              }),
-            ]
-          },
-        )
+        const result = yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [ExtendResult, Jobs] => {
+          const found = HashMap.get(jobs, input.id)
+          if (Option.isNone(found) || found.value.info.status !== "running") return [{ extended: false }, jobs]
+          const job = found.value
+          return [
+            { extended: true, previous: job.tail, scope: job.scope, tail, token: job.token, sequence: job.next },
+            HashMap.set(jobs, input.id, {
+              ...job,
+              pending: job.pending + 1,
+              next: job.next + 1,
+              tail,
+            }),
+          ]
+        })
         if (!result.extended) return false
         yield* fork(
           result.scope,
@@ -281,7 +278,7 @@ export const make = Effect.gen(function* () {
           result.sequence,
           Deferred.await(result.previous).pipe(
             Effect.andThen(restore(input.run)),
-            Effect.ensuring(Deferred.succeed(result.tail, undefined)),
+            Effect.ensuring(Deferred.done(result.tail, Exit.void)),
           ),
         )
         return true
@@ -290,8 +287,9 @@ export const make = Effect.gen(function* () {
   })
 
   const wait: Interface["wait"] = Effect.fn("BackgroundJob.wait")(function* (input) {
-    const job = (yield* SynchronizedRef.get(state.jobs)).get(input.id)
-    if (!job) return { timedOut: false }
+    const found = HashMap.get(yield* SynchronizedRef.get(state.jobs), input.id)
+    if (Option.isNone(found)) return { timedOut: false }
+    const job = found.value
     if (job.info.status !== "running") return { info: snapshot(job), timedOut: false }
     if (input.timeout === undefined) return { info: yield* Deferred.await(job.done), timedOut: false }
     if (input.timeout <= 0) return { info: snapshot(job), timedOut: true }
@@ -301,8 +299,9 @@ export const make = Effect.gen(function* () {
   })
 
   const waitForPromotion: Interface["waitForPromotion"] = Effect.fn("BackgroundJob.waitForPromotion")(function* (id) {
-    const job = (yield* SynchronizedRef.get(state.jobs)).get(id)
-    if (!job || job.info.status !== "running") return yield* Effect.never
+    const found = HashMap.get(yield* SynchronizedRef.get(state.jobs), id)
+    if (Option.isNone(found) || found.value.info.status !== "running") return yield* Effect.never
+    const job = found.value
     if (job.info.metadata?.background === true) return snapshot(job)
     return yield* Deferred.await(job.promoted)
   })
@@ -311,13 +310,15 @@ export const make = Effect.gen(function* () {
     const result = yield* SynchronizedRef.modifyEffect(
       state.jobs,
       Effect.fnUntraced(function* (jobs) {
-        const job = jobs.get(id)
-        if (!job || job.info.status !== "running") return [{}, jobs] as readonly [PromoteResult, Map<string, Active>]
+        const found = HashMap.get(jobs, id)
+        if (Option.isNone(found) || found.value.info.status !== "running")
+          return [{ onPromote: Option.none() }, jobs] as readonly [PromoteResult, Jobs]
+        const job = found.value
         if (job.info.metadata?.background === true)
-          return [{ info: snapshot(job) }, jobs] as readonly [PromoteResult, Map<string, Active>]
+          return [{ info: snapshot(job), onPromote: Option.none() }, jobs] as readonly [PromoteResult, Jobs]
         const next = {
           ...job,
-          onPromote: undefined,
+          onPromote: Option.none(),
           info: {
             ...job.info,
             metadata: { ...job.info.metadata, background: true },
@@ -325,24 +326,25 @@ export const make = Effect.gen(function* () {
         }
         return [
           { info: snapshot(next), onPromote: job.onPromote, promoted: job.promoted },
-          new Map(jobs).set(id, next),
-        ] as readonly [PromoteResult, Map<string, Active>]
+          HashMap.set(jobs, id, next),
+        ] as readonly [PromoteResult, Jobs]
       }),
     )
     if (result.info && result.promoted) yield* Deferred.succeed(result.promoted, result.info).pipe(Effect.ignore)
-    if (result.onPromote) yield* result.onPromote.pipe(Effect.ignore)
+    if (Option.isSome(result.onPromote)) yield* result.onPromote.value.pipe(Effect.ignore)
     return result.info
   })
 
   const cancel: Interface["cancel"] = Effect.fn("BackgroundJob.cancel")(function* (id) {
     const completed_at = yield* Clock.currentTimeMillis
-    const result = yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [FinishResult, Map<string, Active>] => {
-      const job = jobs.get(id)
-      if (!job) return [{}, jobs]
+    const result = yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [FinishResult, Jobs] => {
+      const found = HashMap.get(jobs, id)
+      if (Option.isNone(found)) return [{}, jobs]
+      const job = found.value
       if (job.info.status !== "running") return [{ info: snapshot(job) }, jobs]
       const next = {
         ...job,
-        onPromote: undefined,
+        onPromote: Option.none(),
         pending: 0,
         info: {
           ...job.info,
@@ -350,7 +352,7 @@ export const make = Effect.gen(function* () {
           completed_at,
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [{ info: snapshot(next), done: job.done, scope: job.scope }, HashMap.set(jobs, id, next)]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
     if (result.scope) yield* Scope.close(result.scope, Exit.void)

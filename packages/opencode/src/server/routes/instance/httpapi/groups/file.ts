@@ -1,4 +1,3 @@
-import { FileSystem } from "@opencode-ai/core/filesystem"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { LSP } from "@/lsp/lsp"
 import { Schema } from "effect"
@@ -15,12 +14,12 @@ import { described } from "./metadata"
 export const FileQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   path: Schema.String,
-})
+}).annotate({ description: "Query parameters that select a file path" })
 
 export const FindTextQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   pattern: Schema.String,
-})
+}).annotate({ description: "Query parameters for a text search" })
 
 export const FindFileQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
@@ -30,12 +29,12 @@ export const FindFileQuery = Schema.Struct({
   limit: Schema.optional(
     Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(200)),
   ),
-})
+}).annotate({ description: "Query parameters for a file search" })
 
 export const FindSymbolQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   query: Schema.String,
-})
+}).annotate({ description: "Query parameters for a symbol search" })
 
 export const LegacyMatch = Schema.Struct({
   path: Schema.Struct({ text: Schema.String }),
@@ -49,7 +48,7 @@ export const LegacyMatch = Schema.Struct({
       end: NonNegativeInt,
     }),
   ),
-})
+}).annotate({ description: "Text search match" })
 
 export const LegacyEntry = Schema.Struct({
   name: Schema.String,

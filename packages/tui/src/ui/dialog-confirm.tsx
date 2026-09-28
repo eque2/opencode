@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Effect, Option } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
@@ -72,7 +73,7 @@ export function DialogConfirm(props: DialogConfirmProps) {
             <box
               paddingLeft={1}
               paddingRight={1}
-              backgroundColor={key === store.active ? theme.primary : undefined}
+              backgroundColor={key === store.active ? theme.primary : "transparent"}
               onMouseUp={() => {
                 if (key === "confirm") props.onConfirm?.()
                 if (key === "cancel") props.onCancel?.()
@@ -90,19 +91,26 @@ export function DialogConfirm(props: DialogConfirmProps) {
   )
 }
 
-DialogConfirm.show = (dialog: DialogContext, title: string, message: string, label?: string) => {
-  return new Promise<DialogConfirmResult>((resolve) => {
-    dialog.replace(
-      () => (
-        <DialogConfirm
-          title={title}
-          message={message}
-          onConfirm={() => resolve(true)}
-          onCancel={() => resolve(false)}
-          label={label}
-        />
-      ),
-      () => resolve(undefined),
-    )
-  })
-}
+// Resolves true on confirm, false on cancel, and undefined when the dialog closes without a choice.
+DialogConfirm.show = (
+  dialog: DialogContext,
+  title: string,
+  message: string,
+  label?: string,
+): Promise<DialogConfirmResult> =>
+  Effect.runPromise(
+    Effect.callback<Option.Option<boolean>>((resume) => {
+      dialog.replace(
+        () => (
+          <DialogConfirm
+            title={title}
+            message={message}
+            onConfirm={() => resume(Effect.succeed(Option.some(true)))}
+            onCancel={() => resume(Effect.succeed(Option.some(false)))}
+            label={label}
+          />
+        ),
+        () => resume(Effect.succeedNone),
+      )
+    }).pipe(Effect.map(Option.getOrUndefined)),
+  )

@@ -16,12 +16,12 @@ const storage: AsyncStorage = {
 }
 
 beforeAll(async () => {
-  mock.module("@opencode-ai/session-ui/v2/session-review-v2", () => ({
+  await mock.module("@opencode-ai/session-ui/v2/session-review-v2", () => ({
     SESSION_REVIEW_V2_SIDEBAR_WIDTH_DEFAULT: 240,
     SESSION_REVIEW_V2_SIDEBAR_WIDTH_MIN: 200,
     SESSION_REVIEW_V2_SIDEBAR_WIDTH_MAX: 480,
   }))
-  mock.module("@/context/platform", () => ({
+  await mock.module("@/context/platform", () => ({
     usePlatform: () => ({ platform: "desktop", storage: () => storage }),
   }))
 
@@ -34,7 +34,7 @@ test("enables sidebar motion only after custom width hydration", async () => {
       const state = createReviewPanelV2State()
       const transition =
         "sidebarTransition" in state && typeof state.sidebarTransition === "function"
-          ? (state.sidebarTransition as () => boolean)
+          ? state.sidebarTransition
           : undefined
 
       try {

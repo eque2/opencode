@@ -1,7 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Config } from "@/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import type { MessageV2 } from "@/session/message-v2"
 import photonWasm from "@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" }
 import { Context, Effect, Layer, Schema } from "effect"
 import path from "node:path"
@@ -88,79 +87,81 @@ const layer = Layer.effect(
 
       const photon = yield* loadPhoton
 
-      const decoded = yield* Effect.try({
-        try: () => photon.PhotonImage.new_from_byteslice(Buffer.from(base64, "base64")),
-        catch: () => new DecodeError(),
-      }).pipe(Effect.tapError((error) => Effect.logWarning("failed to decode image", { error })))
+      // PhotonImage holds WASM memory, so it is freed on every exit path.
+      return yield* Effect.acquireUseRelease(
+        Effect.try({
+          try: () => photon.PhotonImage.new_from_byteslice(Buffer.from(base64, "base64")),
+          catch: () => new DecodeError(),
+        }).pipe(Effect.tapError((error) => Effect.logWarning("failed to decode image", { error }))),
+        (decoded) =>
+          Effect.gen(function* () {
+            const originalWidth = decoded.get_width()
+            const originalHeight = decoded.get_height()
+            if (originalWidth <= info.maxWidth && originalHeight <= info.maxHeight && bytes <= info.maxBase64Bytes)
+              return input
+            if (!info.autoResize)
+              return yield* new SizeError({
+                bytes,
+                max: info.maxBase64Bytes,
+                width: originalWidth,
+                height: originalHeight,
+                max_width: info.maxWidth,
+                max_height: info.maxHeight,
+              })
 
-      try {
-        const originalWidth = decoded.get_width()
-        const originalHeight = decoded.get_height()
-        if (originalWidth <= info.maxWidth && originalHeight <= info.maxHeight && bytes <= info.maxBase64Bytes)
-          return input
-        if (!info.autoResize)
-          return yield* new SizeError({
-            bytes,
-            max: info.maxBase64Bytes,
-            width: originalWidth,
-            height: originalHeight,
-            max_width: info.maxWidth,
-            max_height: info.maxHeight,
-          })
+            const scale = Math.min(1, info.maxWidth / originalWidth, info.maxHeight / originalHeight)
+            for (const size of Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((acc) => {
+              const previous = acc.at(-1) ?? {
+                width: Math.max(1, Math.round(originalWidth * scale)),
+                height: Math.max(1, Math.round(originalHeight * scale)),
+              }
+              const next =
+                acc.length === 0
+                  ? previous
+                  : {
+                      width: previous.width === 1 ? 1 : Math.max(1, Math.floor(previous.width * 0.75)),
+                      height: previous.height === 1 ? 1 : Math.max(1, Math.floor(previous.height * 0.75)),
+                    }
+              return acc.some((item) => item.width === next.width && item.height === next.height) ? acc : [...acc, next]
+            }, [])) {
+              const resized = photon.resize(decoded, size.width, size.height, photon.SamplingFilter.Lanczos3)
+              const candidate = [
+                { data: Buffer.from(resized.get_bytes()).toString("base64"), mime: "image/png" },
+                ...JPEG_QUALITIES.map((quality) => ({
+                  data: Buffer.from(resized.get_bytes_jpeg(quality)).toString("base64"),
+                  mime: "image/jpeg",
+                })),
+              ]
+                .map((item) => ({ ...item, bytes: Buffer.byteLength(item.data, "utf8") }))
+                .find((item) => item.bytes <= info.maxBase64Bytes)
+              resized.free()
 
-        const scale = Math.min(1, info.maxWidth / originalWidth, info.maxHeight / originalHeight)
-        for (const size of Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((acc) => {
-          const previous = acc.at(-1) ?? {
-            width: Math.max(1, Math.round(originalWidth * scale)),
-            height: Math.max(1, Math.round(originalHeight * scale)),
-          }
-          const next =
-            acc.length === 0
-              ? previous
-              : {
-                  width: previous.width === 1 ? 1 : Math.max(1, Math.floor(previous.width * 0.75)),
-                  height: previous.height === 1 ? 1 : Math.max(1, Math.floor(previous.height * 0.75)),
+              if (candidate) {
+                yield* Effect.logInfo("using resized image", {
+                  from_mime: input.mime,
+                  to_mime: candidate.mime,
+                  from: `${originalWidth}x${originalHeight}`,
+                  to: `${size.width}x${size.height}`,
+                })
+                return {
+                  ...input,
+                  mime: candidate.mime,
+                  url: `data:${candidate.mime};base64,${candidate.data}`,
                 }
-          return acc.some((item) => item.width === next.width && item.height === next.height) ? acc : [...acc, next]
-        }, [])) {
-          const resized = photon.resize(decoded, size.width, size.height, photon.SamplingFilter.Lanczos3)
-          const candidate = [
-            { data: Buffer.from(resized.get_bytes()).toString("base64"), mime: "image/png" },
-            ...JPEG_QUALITIES.map((quality) => ({
-              data: Buffer.from(resized.get_bytes_jpeg(quality)).toString("base64"),
-              mime: "image/jpeg",
-            })),
-          ]
-            .map((item) => ({ ...item, bytes: Buffer.byteLength(item.data, "utf8") }))
-            .find((item) => item.bytes <= info.maxBase64Bytes)
-          resized.free()
-
-          if (candidate) {
-            yield* Effect.logInfo("using resized image", {
-              from_mime: input.mime,
-              to_mime: candidate.mime,
-              from: `${originalWidth}x${originalHeight}`,
-              to: `${size.width}x${size.height}`,
-            })
-            return {
-              ...input,
-              mime: candidate.mime,
-              url: `data:${candidate.mime};base64,${candidate.data}`,
+              }
             }
-          }
-        }
 
-        return yield* new SizeError({
-          bytes,
-          max: info.maxBase64Bytes,
-          width: originalWidth,
-          height: originalHeight,
-          max_width: info.maxWidth,
-          max_height: info.maxHeight,
-        })
-      } finally {
-        decoded.free()
-      }
+            return yield* new SizeError({
+              bytes,
+              max: info.maxBase64Bytes,
+              width: originalWidth,
+              height: originalHeight,
+              max_width: info.maxWidth,
+              max_height: info.maxHeight,
+            })
+          }),
+        (decoded) => Effect.sync(() => decoded.free()),
+      )
     })
 
     return Service.of({ normalize })

@@ -333,8 +333,12 @@ function databaseUrl() {
   return process.env.DATABASE_URL ?? Resource.StatsDatabase.url
 }
 
-function stringValue(value: unknown) {
-  return value == null ? "" : String(value)
+function stringValue(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value)
+  if (value instanceof Date) return value.toString()
+  return JSON.stringify(value)
 }
 
 function numberValue(value: unknown) {
@@ -595,7 +599,7 @@ export function buildRetentionEntries(rows: RetentionMetricRow[]): RetentionEntr
   const cohortDates = [...new Set(rows.map((row) => row.cohortDate))].toSorted().slice(-RETENTION_COHORT_WEEKS)
   const aggregate = rows
     .filter((row) => cohortDates.includes(row.cohortDate))
-    .reduce<Map<string, Omit<RetentionEntry, "author" | "rate" | "rank">>>((result, row) => {
+    .reduce((result, row) => {
       const current = result.get(row.model)
       result.set(row.model, {
         model: row.model,
@@ -604,7 +608,7 @@ export function buildRetentionEntries(rows: RetentionMetricRow[]): RetentionEntr
         retainedUserWeeks: (current?.retainedUserWeeks ?? 0) + row.retainedUsers,
       })
       return result
-    }, new Map())
+    }, new Map<string, Omit<RetentionEntry, "author" | "rate" | "rank">>())
   const entries = [...aggregate.values()].map((item) => ({
     ...item,
     author: formatProvider(item.provider),

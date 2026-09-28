@@ -1,7 +1,6 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer, Queue } from "effect"
-import { Flag } from "@opencode-ai/core/flag/flag"
-import { GlobalBus, type GlobalEvent } from "@/bus/global"
+import { Effect, Layer, Schema } from "effect"
+import { GlobalBus } from "@/bus/global"
 import { Worktree } from "@/worktree"
 import { Server } from "../../src/server/server"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
@@ -9,21 +8,12 @@ import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { TestFailure } from "../fixture/test-failure"
+import { takeGlobalBusEvent } from "./global-bus"
 
 const stateLayer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const original = {
-      OPENCODE_EXPERIMENTAL_WORKSPACES: Flag.OPENCODE_EXPERIMENTAL_WORKSPACES,
-    }
-
-    Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
-
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = original.OPENCODE_EXPERIMENTAL_WORKSPACES
-        await resetDatabase()
-      }),
-    )
+    yield* Effect.addFinalizer(() => Effect.promise(() => resetDatabase()))
   }),
 )
 
@@ -31,7 +21,7 @@ const it = testEffect(stateLayer)
 const worktreeTest = process.platform === "win32" ? it.instance.skip : it.instance
 type TestServer = ReturnType<typeof Server.Default>["app"]
 type CreatedWorktree = { directory: string }
-type ScopedWorktree = { directory: string; body: CreatedWorktree; ready: Effect.Effect<void, Error> }
+type ScopedWorktree = { directory: string; body: CreatedWorktree; ready: Effect.Effect<void, TestFailure> }
 
 function serverScoped() {
   return Effect.sync(() => Server.Default().app)
@@ -45,35 +35,34 @@ function withRequestTimeout(effect: Effect.Effect<Response>, label: string, ms =
   return effect.pipe(
     Effect.timeoutOrElse({
       duration: `${ms} millis`,
-      orElse: () => Effect.fail(new Error(`${label} timed out after ${ms}ms`)),
+      orElse: () => Effect.fail(new TestFailure({ message: `${label} timed out after ${ms}ms` })),
     }),
   )
 }
 
-function json<T>(response: Response) {
-  return Effect.promise(() => response.json() as Promise<T>)
+function json<S extends Schema.Constraint>(response: Response, schema: S) {
+  return Effect.promise(() => response.json()).pipe(Effect.flatMap(Schema.decodeUnknownEffect(schema)))
 }
+
+// The create routes return a Worktree.Info or a Workspace.Info; the tests read directory and
+// assert other fields, so the rest of the body is kept.
+const CreatedWorktree = Schema.StructWithRest(Schema.Struct({ directory: Schema.String }), [
+  Schema.Record(Schema.String, Schema.Unknown),
+])
 
 function readyWatcher() {
   return Effect.gen(function* () {
-    const events = yield* Queue.bounded<GlobalEvent>(1)
-    const on = (event: GlobalEvent) => {
-      if (event.payload.type === Worktree.Event.Ready.type) Queue.offerUnsafe(events, event)
-    }
-
-    GlobalBus.on("event", on)
-    yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
+    const subscription = yield* GlobalBus.subscribe
 
     return (directory: string) =>
-      Effect.gen(function* () {
-        while (true) {
-          const event = yield* Queue.take(events)
-          if (event.directory === directory) return
-        }
-      }).pipe(
+      takeGlobalBusEvent(
+        subscription,
+        (event) => event.payload.type === Worktree.Event.Ready.type && event.directory === directory,
+      ).pipe(
+        Effect.asVoid,
         Effect.timeoutOrElse({
           duration: "10 seconds",
-          orElse: () => Effect.fail(new Error(`timed out waiting for worktree.ready: ${directory}`)),
+          orElse: () => Effect.fail(new TestFailure({ message: `timed out waiting for worktree.ready: ${directory}` })),
         }),
       )
   })
@@ -83,7 +72,7 @@ function removeCreatedWorktree(input: {
   server: TestServer
   rootDirectory: string
   worktreeDirectory: string
-  ready: Effect.Effect<void, Error>
+  ready: Effect.Effect<void, TestFailure>
 }) {
   return Effect.gen(function* () {
     yield* input.ready.pipe(Effect.timeout("1 second"), Effect.ignore)
@@ -102,7 +91,7 @@ function removeCreatedWorktree(input: {
       const message = yield* Effect.promise(() => removed.text())
       throw new Error(`failed to remove worktree: ${removed.status} ${message}`)
     }
-    const ok = yield* json<boolean>(removed)
+    const ok = yield* json(removed, Schema.Boolean)
     if (!ok) throw new Error(`failed to remove worktree ${input.worktreeDirectory}`)
   })
 }
@@ -128,7 +117,7 @@ function createWorktreeScoped(input: {
         throw new Error(`${input.timeoutLabel} failed: ${response.status} ${message}`)
       }
       expect(response.status).toBe(200)
-      const body = yield* json<CreatedWorktree>(response)
+      const body = yield* json(response, CreatedWorktree)
       return { directory: body.directory, body, ready: waitReady(body.directory) } satisfies ScopedWorktree
     }),
     (created) =>
@@ -145,7 +134,7 @@ function setProjectStartCommand(input: { server: TestServer; directory: string; 
   return Effect.gen(function* () {
     const current = yield* request(input.server, `/project/current?directory=${encodeURIComponent(input.directory)}`)
     expect(current.status).toBe(200)
-    const project = yield* json<{ id: string }>(current)
+    const project = yield* json(current, Schema.Struct({ id: Schema.String }))
     const updated = yield* request(
       input.server,
       `/project/${project.id}?directory=${encodeURIComponent(input.directory)}`,

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { Effect, Schema, Stream } from "effect"
+import { Effect, HashSet, Predicate, Schema, Stream } from "effect"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import {
@@ -19,8 +19,10 @@ export { isRecord }
 export const Json = Schema.fromJsonString(Schema.Unknown)
 export const decodeJson = Schema.decodeUnknownSync(Json)
 export const encodeJson = Schema.encodeSync(Json)
+/** Parse JSON text into a value typed as JSON; JSON.parse output always is one. */
+const decodeJsonValue = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))
 const isJson = Schema.is(Schema.Json)
-export const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
+export const JsonObject = Schema.JsonObject
 export const optionalArray = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.Array(schema))
 export const optionalNull = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.NullOr(schema))
 
@@ -48,11 +50,7 @@ export interface ToolAccumulator {
  * Anthropic-style providers (which don't surface a total) still get a
  * sensible aggregate on the input + output axes.
  */
-export const totalTokens = (
-  inputTokens: number | undefined,
-  outputTokens: number | undefined,
-  total: number | undefined,
-) => {
+export const totalTokens = (inputTokens: number | undefined, outputTokens: number | undefined, total?: number) => {
   if (total !== undefined) return total
   if (inputTokens === undefined && outputTokens === undefined) return undefined
   return (inputTokens ?? 0) + (outputTokens ?? 0)
@@ -153,7 +151,10 @@ export const wrappedSystemUpdate = Effect.fn("ProviderShared.wrappedSystemUpdate
  * routes: `Invalid JSON input for <route> tool call <name>`.
  */
 export const parseToolInput = (route: string, name: string, raw: string) =>
-  parseJson(route, raw || "{}", `Invalid JSON input for ${route} tool call ${name}`)
+  Effect.try({
+    try: () => decodeJsonValue(raw || "{}"),
+    catch: () => eventError(route, `Invalid JSON input for ${route} tool call ${name}`, raw || "{}"),
+  })
 
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
 export const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"] as const
@@ -174,10 +175,11 @@ export interface ValidatedMedia {
 export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function* (
   route: string,
   part: MediaPart,
-  supportedMimes: ReadonlySet<string>,
+  supportedMimes: Iterable<string>,
 ) {
   const mime = part.mediaType.toLowerCase()
-  if (!supportedMimes.has(mime)) return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
+  if (!HashSet.has(HashSet.fromIterable(supportedMimes), mime))
+    return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
 
   let base64: string
   if (typeof part.data !== "string") {
@@ -187,9 +189,9 @@ export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function*
   } else if (part.data.startsWith("data:")) {
     const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/s.exec(part.data)
     if (!match) return yield* invalidRequest(`${route} media data URL must contain valid base64`)
-    if (match[1]!.toLowerCase() !== mime)
+    if (match[1].toLowerCase() !== mime)
       return yield* invalidRequest(`${route} media type ${part.mediaType} does not match data URL type ${match[1]}`)
-    base64 = match[2]!
+    base64 = match[2]
   } else {
     base64 = part.data
   }
@@ -205,18 +207,18 @@ export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function*
   return { mime, base64, dataUrl: `data:${mime};base64,${base64}`, bytes } satisfies ValidatedMedia
 })
 
-export const validateToolFile = (route: string, part: ToolFileContent, supportedMimes: ReadonlySet<string>) =>
+export const validateToolFile = (route: string, part: ToolFileContent, supportedMimes: Iterable<string>) =>
   validateMedia(route, { type: "media", mediaType: part.mime, data: part.uri, filename: part.name }, supportedMimes)
 
 export const trimBaseUrl = (value: string) => value.replace(/\/+$/, "")
 
 export const toolResultText = (part: ToolResultPart) => {
-  if (part.result.type === "text") return String(part.result.value)
+  if (part.result.type === "text")
+    return Predicate.isString(part.result.value) ? part.result.value : encodeJson(part.result.value)
   if (part.result.type === "error") {
     const value = part.result.value
-    const prototype =
-      typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value)
-    const structured = Array.isArray(value) || prototype === Object.prototype || prototype === null
+    const prototype = isRecord(value) && Object.getPrototypeOf(value)
+    const structured = Array.isArray(value) || prototype === Object.prototype || Predicate.isNull(prototype)
     return structured && isJson(value) ? encodeJson(value) : String(value)
   }
   return encodeJson(part.result.value)
@@ -226,7 +228,7 @@ export const errorText = (error: unknown) => {
   if (error instanceof Error) return error.message
   if (typeof error === "string") return error
   if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") return String(error)
-  if (error === null) return "null"
+  if (Predicate.isNull(error)) return "null"
   if (error === undefined) return "undefined"
   return "Unknown stream error"
 }

@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
+import { Clock, Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Git } from "@/git"
 
@@ -24,37 +24,61 @@ const RootFile = Schema.Struct({
       root: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "Storage.RootFile", description: "The worktree root in a legacy message file" })
+
+// Legacy files do not guarantee the "ses"/"msg" prefixes that SessionID and
+// MessageID check, so these brands mark the ids without a prefix check.
+const LegacySessionID = Schema.String.pipe(Schema.brand("Storage.LegacySessionID"))
+const LegacyMessageID = Schema.String.pipe(Schema.brand("Storage.LegacyMessageID"))
 
 const SessionFile = Schema.Struct({
-  id: Schema.String,
-})
+  id: LegacySessionID,
+}).annotate({ identifier: "Storage.SessionFile", description: "The id of a legacy session info file" })
 
 const MessageFile = Schema.Struct({
-  id: Schema.String,
-})
+  id: LegacyMessageID,
+}).annotate({ identifier: "Storage.MessageFile", description: "The id of a legacy message file" })
 
 const DiffFile = Schema.Struct({
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
-})
+}).annotate({ identifier: "Storage.DiffFile", description: "The line counts of one legacy session diff" })
 
 const SummaryFile = Schema.Struct({
-  id: Schema.String,
+  id: LegacySessionID,
   projectID: Schema.String,
   summary: Schema.Struct({ diffs: Schema.Array(DiffFile) }),
-})
+}).annotate({ identifier: "Storage.SummaryFile", description: "A legacy session file that holds inline diffs" })
 
 const decodeRoot = Schema.decodeUnknownOption(RootFile)
 const decodeSession = Schema.decodeUnknownOption(SessionFile)
 const decodeMessage = Schema.decodeUnknownOption(MessageFile)
 const decodeSummary = Schema.decodeUnknownOption(SummaryFile)
+// Migration 2 rewrites a whole session file, so it keeps every field it does not know.
+const decodeFields = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Json))
+
+// Storage files hold arbitrary JSON, pretty-printed with two spaces.
+const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+// A value that JSON cannot represent is a programming defect, as it was with JSON.stringify.
+const jsonText = (value: unknown) => encodeJsonText(value).pipe(Effect.orDie)
 
 export interface Interface {
   readonly remove: (key: string[]) => Effect.Effect<void, FSUtil.Error>
-  readonly read: <T>(key: string[]) => Effect.Effect<T, Error>
-  readonly update: <T>(key: string[], fn: (draft: T) => void) => Effect.Effect<T, Error>
-  readonly write: <T>(key: string[], content: T) => Effect.Effect<void, FSUtil.Error>
+  /** Reads the JSON at `key` and decodes it with `schema`. */
+  readonly read: <S extends Schema.Codec<unknown, unknown>>(
+    key: string[],
+    schema: S,
+  ) => Effect.Effect<S["Type"], Error | Schema.SchemaError>
+  /**
+   * Decodes the JSON at `key` with `schema`, writes the encoded result of `fn`,
+   * and returns that result. Fields that `schema` does not declare are dropped.
+   */
+  readonly update: <S extends Schema.Codec<unknown, unknown>>(
+    key: string[],
+    schema: S,
+    fn: (current: S["Type"]) => S["Type"],
+  ) => Effect.Effect<S["Type"], Error | Schema.SchemaError>
+  readonly write: (key: string[], content: unknown) => Effect.Effect<void, FSUtil.Error>
   readonly list: (prefix: string[]) => Effect.Effect<string[][], FSUtil.Error>
 }
 
@@ -98,10 +122,12 @@ const MIGRATIONS: Migration[] = [
           cwd: full,
           absolute: true,
         })) {
-          const json = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "ignore" })
-          const root = Option.isSome(json) ? json.value.path?.root : undefined
-          if (!root) continue
-          worktree = root
+          const root = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "ignore" }).pipe(
+            Option.flatMapNullishOr((json) => json.path?.root),
+            Option.filter((value) => value.length > 0),
+          )
+          if (Option.isNone(root)) continue
+          worktree = root.value
           break
         }
         if (!worktree) continue
@@ -117,22 +143,19 @@ const MIGRATIONS: Migration[] = [
           .toSorted()
         if (!id) continue
         projectID = id
+        const now = yield* Clock.currentTimeMillis
 
         yield* fs.writeWithDirs(
           path.join(dir, "project", projectID + ".json"),
-          JSON.stringify(
-            {
-              id,
-              vcs: "git",
-              worktree,
-              time: {
-                created: Date.now(),
-                initialized: Date.now(),
-              },
+          yield* jsonText({
+            id,
+            vcs: "git",
+            worktree,
+            time: {
+              created: now,
+              initialized: now,
             },
-            null,
-            2,
-          ),
+          }),
         )
 
         yield* Effect.logInfo(`migrating sessions for project ${projectID}`)
@@ -144,7 +167,7 @@ const MIGRATIONS: Migration[] = [
           yield* Effect.logInfo("copying", { sessionFile, dest })
           const session = yield* fs.readJson(sessionFile)
           const info = decodeSession(session, { onExcessProperty: "ignore" })
-          yield* fs.writeWithDirs(dest, JSON.stringify(session, null, 2))
+          yield* fs.writeWithDirs(dest, yield* jsonText(session))
           if (Option.isNone(info)) continue
           yield* Effect.logInfo(`migrating messages for session ${info.value.id}`)
           for (const msgFile of yield* fs.scan(`storage/session/message/${info.value.id}/*.json`, {
@@ -158,7 +181,7 @@ const MIGRATIONS: Migration[] = [
             })
             const message = yield* fs.readJson(msgFile)
             const item = decodeMessage(message, { onExcessProperty: "ignore" })
-            yield* fs.writeWithDirs(next, JSON.stringify(message, null, 2))
+            yield* fs.writeWithDirs(next, yield* jsonText(message))
             if (Option.isNone(item)) continue
 
             yield* Effect.logInfo(`migrating parts for message ${item.value.id}`)
@@ -172,7 +195,7 @@ const MIGRATIONS: Migration[] = [
                 partFile,
                 dest: out,
               })
-              yield* fs.writeWithDirs(out, JSON.stringify(part, null, 2))
+              yield* fs.writeWithDirs(out, yield* jsonText(part))
             }
           }
         }
@@ -186,25 +209,19 @@ const MIGRATIONS: Migration[] = [
     })) {
       const raw = yield* fs.readJson(item)
       const session = decodeSummary(raw, { onExcessProperty: "ignore" })
-      if (Option.isNone(session)) continue
+      const fields = decodeFields(raw)
+      if (Option.isNone(session) || Option.isNone(fields)) continue
       const diffs = session.value.summary.diffs
-      yield* fs.writeWithDirs(
-        path.join(dir, "session_diff", session.value.id + ".json"),
-        JSON.stringify(diffs, null, 2),
-      )
+      yield* fs.writeWithDirs(path.join(dir, "session_diff", session.value.id + ".json"), yield* jsonText(diffs))
       yield* fs.writeWithDirs(
         path.join(dir, "session", session.value.projectID, session.value.id + ".json"),
-        JSON.stringify(
-          {
-            ...(raw as Record<string, unknown>),
-            summary: {
-              additions: diffs.reduce((sum, x) => sum + x.additions, 0),
-              deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
-            },
+        yield* jsonText({
+          ...fields.value,
+          summary: {
+            additions: diffs.reduce((sum, x) => sum + x.additions, 0),
+            deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
           },
-          null,
-          2,
-        ),
+        }),
       )
     }
   }),
@@ -230,7 +247,7 @@ const layer = Layer.effect(
         )
         for (let i = migration; i < MIGRATIONS.length; i++) {
           yield* Effect.logInfo("running migration", { index: i })
-          const step = MIGRATIONS[i]!
+          const step = MIGRATIONS[i]
           const exit = yield* Effect.exit(step(dir, fs, git))
           if (Exit.isFailure(exit)) {
             yield* Effect.logError("failed to run migration", { index: i, cause: exit.cause })
@@ -249,7 +266,7 @@ const layer = Layer.effect(
       body.pipe(Effect.catchIf(missing, () => fail(target)))
 
     const writeJson = Effect.fnUntraced(function* (target: string, content: unknown) {
-      yield* fs.writeWithDirs(target, JSON.stringify(content, null, 2))
+      yield* fs.writeWithDirs(target, yield* jsonText(content))
     })
 
     const withResolved = <A, E>(
@@ -269,29 +286,30 @@ const layer = Layer.effect(
       )
     })
 
-    const read: Interface["read"] = <T>(key: string[]) =>
+    const read: Interface["read"] = <S extends Schema.Codec<unknown, unknown>>(key: string[], schema: S) =>
       Effect.gen(function* () {
         const value = yield* withResolved(key, (target, rw) =>
           TxReentrantLock.withReadLock(rw, wrap(target, fs.readJson(target))),
         )
-        return value as T
+        return yield* Schema.decodeUnknownEffect(schema)(value)
       })
 
-    const update: Interface["update"] = <T>(key: string[], fn: (draft: T) => void) =>
-      Effect.gen(function* () {
-        const value = yield* withResolved(key, (target, rw) =>
-          TxReentrantLock.withWriteLock(
-            rw,
-            Effect.gen(function* () {
-              const content = yield* wrap(target, fs.readJson(target))
-              fn(content as T)
-              yield* writeJson(target, content)
-              return content
-            }),
-          ),
-        )
-        return value as T
-      })
+    const update: Interface["update"] = <S extends Schema.Codec<unknown, unknown>>(
+      key: string[],
+      schema: S,
+      fn: (current: S["Type"]) => S["Type"],
+    ) =>
+      withResolved(key, (target, rw) =>
+        TxReentrantLock.withWriteLock(
+          rw,
+          Effect.gen(function* () {
+            const current = yield* Schema.decodeUnknownEffect(schema)(yield* wrap(target, fs.readJson(target)))
+            const next = fn(current)
+            yield* writeJson(target, yield* Schema.encodeEffect(schema)(next))
+            return next
+          }),
+        ),
+      )
 
     const write: Interface["write"] = (key: string[], content: unknown) =>
       Effect.gen(function* () {

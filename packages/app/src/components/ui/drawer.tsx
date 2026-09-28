@@ -19,7 +19,7 @@ const DrawerClose = DrawerPrimitive.Close
 type DrawerOverlayProps<T extends ValidComponent = "div"> = OverlayProps<T> & { class?: string }
 
 const DrawerOverlay = <T extends ValidComponent = "div">(props: DynamicProps<T, DrawerOverlayProps<T>>) => {
-  const [, rest] = splitProps(props as DrawerOverlayProps, ["class"])
+  const [, rest] = splitProps(props, ["class"])
   const drawerContext = DrawerPrimitive.useContext()
   const overlayStyle = () => {
     const state = drawerContext.transitionState()
@@ -48,7 +48,7 @@ type DrawerContentProps<T extends ValidComponent = "div"> = ContentProps<T> & {
 }
 
 const DrawerContent = <T extends ValidComponent = "div">(props: DynamicProps<T, DrawerContentProps<T>>) => {
-  const [, rest] = splitProps(props as DrawerContentProps, ["class", "children"])
+  const [, rest] = splitProps(props, ["class", "children"])
   return (
     <DrawerPortal>
       <DrawerOverlay />

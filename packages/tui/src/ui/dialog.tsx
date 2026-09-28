@@ -4,9 +4,14 @@ import { useTheme } from "../context/theme"
 import { MouseButton, Renderable, RGBA } from "@opentui/core"
 import { createStore } from "solid-js/store"
 import { useToast } from "./toast"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { useTuiFlags } from "../context/runtime"
 import { useBindings, useOpencodeModeStack } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { MissingProviderError } from "../context/errors"
+import { Effect, Fiber, Option, Schema } from "effect"
+
+// OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
+const isMouseButton = Schema.is(Schema.Enum(MouseButton))
 
 export function Dialog(
   props: ParentProps<{
@@ -85,21 +90,30 @@ function init() {
   })
 
   let focus: Renderable | null
+  // Refocus after the dialog element has left the tree. A new call restarts the delay.
+  let refocusFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
+  function cancelRefocus() {
+    if (Option.isSome(refocusFiber)) Effect.runFork(Fiber.interrupt(refocusFiber.value))
+    refocusFiber = Option.none()
+  }
+  onCleanup(cancelRefocus)
   function refocus() {
-    setTimeout(() => {
-      if (!focus) return
-      if (focus.isDestroyed) return
-      function find(item: Renderable) {
-        for (const child of item.getChildren()) {
-          if (child === focus) return true
-          if (find(child)) return true
-        }
-        return false
+    cancelRefocus()
+    refocusFiber = Option.some(Effect.runFork(Effect.sleep("1 millis").pipe(Effect.andThen(Effect.sync(restoreFocus)))))
+  }
+  function restoreFocus() {
+    if (!focus) return
+    if (focus.isDestroyed) return
+    function find(item: Renderable) {
+      for (const child of item.getChildren()) {
+        if (child === focus) return true
+        if (find(child)) return true
       }
-      const found = find(renderer.root)
-      if (!found) return
-      focus.focus()
-    }, 1)
+      return false
+    }
+    const found = find(renderer.root)
+    if (!found) return
+    focus.focus()
   }
 
   useBindings(() => ({
@@ -184,6 +198,7 @@ export function DialogProvider(props: ParentProps) {
   const renderer = useRenderer()
   const toast = useToast()
   const clipboard = useClipboard()
+  const flags = useTuiFlags()
 
   function copySelection() {
     const text = renderer.getSelection()?.getSelectedText()
@@ -203,14 +218,14 @@ export function DialogProvider(props: ParentProps) {
         position="absolute"
         zIndex={3000}
         onMouseDown={(evt: { button: number; preventDefault(): void; stopPropagation(): void }) => {
-          if (!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
-          if (evt.button !== MouseButton.RIGHT) return
+          if (!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
+          if (!isMouseButton(evt.button) || evt.button !== MouseButton.RIGHT) return
 
           if (!copySelection()) return
           evt.preventDefault()
           evt.stopPropagation()
         }}
-        onMouseUp={!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? copySelection : undefined}
+        {...(flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? {} : { onMouseUp: copySelection })}
       >
         <Show when={value.stack.length}>
           <Dialog onClose={() => value.clear()} size={value.size}>
@@ -225,7 +240,8 @@ export function DialogProvider(props: ParentProps) {
 export function useDialog() {
   const value = useContext(ctx)
   if (!value) {
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
   return value
 }

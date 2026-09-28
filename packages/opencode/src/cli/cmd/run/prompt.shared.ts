@@ -8,13 +8,19 @@
 // the current draft is saved and history begins. Arrowing past the end
 // restores the draft.
 export { displayCharAt, displaySlice, mentionTriggerIndex } from "../prompt-display"
+import { Equal, Option, Schema } from "effect"
 import type { RunPrompt } from "./types"
 
 const HISTORY_LIMIT = 200
 
+// Prompts compare by their JSON text, as before. An absent command encodes to
+// None on both sides, so two prompts without a command still match.
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 export type PromptHistoryState = {
   items: RunPrompt[]
-  index: number | null
+  // The browse position in items. None means the user is editing the draft.
+  index: Option.Option<number>
   draft: string
 }
 
@@ -38,8 +44,8 @@ export function promptSame(a: RunPrompt, b: RunPrompt): boolean {
   return (
     a.mode === b.mode &&
     a.text === b.text &&
-    JSON.stringify(a.parts) === JSON.stringify(b.parts) &&
-    JSON.stringify(a.command) === JSON.stringify(b.command)
+    Equal.equals(encodeJson(a.parts), encodeJson(b.parts)) &&
+    Equal.equals(encodeJson(a.command), encodeJson(b.command))
   )
 }
 
@@ -65,7 +71,7 @@ export function createPromptHistory(items?: RunPrompt[]): PromptHistoryState {
 
   return {
     items: next.slice(-HISTORY_LIMIT),
-    index: null,
+    index: Option.none(),
     draft: "",
   }
 }
@@ -79,7 +85,7 @@ export function pushPromptHistory(state: PromptHistoryState, prompt: RunPrompt):
   if (state.items[state.items.length - 1] && promptSame(state.items[state.items.length - 1], next)) {
     return {
       ...state,
-      index: null,
+      index: Option.none(),
       draft: "",
     }
   }
@@ -88,7 +94,7 @@ export function pushPromptHistory(state: PromptHistoryState, prompt: RunPrompt):
   return {
     ...state,
     items,
-    index: null,
+    index: Option.none(),
     draft: "",
   }
 }
@@ -106,7 +112,7 @@ export function movePromptHistory(state: PromptHistoryState, dir: -1 | 1, text: 
     return { state, apply: false }
   }
 
-  if (state.index === null) {
+  if (Option.isNone(state.index)) {
     if (dir === 1) {
       return { state, apply: false }
     }
@@ -115,7 +121,7 @@ export function movePromptHistory(state: PromptHistoryState, dir: -1 | 1, text: 
     return {
       state: {
         ...state,
-        index: idx,
+        index: Option.some(idx),
         draft: text,
       },
       text: state.items[idx].text,
@@ -124,7 +130,7 @@ export function movePromptHistory(state: PromptHistoryState, dir: -1 | 1, text: 
     }
   }
 
-  const idx = state.index + dir
+  const idx = state.index.value + dir
   if (idx < 0) {
     return { state, apply: false }
   }
@@ -133,7 +139,7 @@ export function movePromptHistory(state: PromptHistoryState, dir: -1 | 1, text: 
     return {
       state: {
         ...state,
-        index: null,
+        index: Option.none(),
       },
       text: state.draft,
       cursor: Bun.stringWidth(state.draft),
@@ -144,7 +150,7 @@ export function movePromptHistory(state: PromptHistoryState, dir: -1 | 1, text: 
   return {
     state: {
       ...state,
-      index: idx,
+      index: Option.some(idx),
     },
     text: state.items[idx].text,
     cursor: dir === -1 ? 0 : Bun.stringWidth(state.items[idx].text),

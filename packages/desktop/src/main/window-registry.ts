@@ -1,3 +1,5 @@
+import { MutableHashMap, Option } from "effect"
+
 // Tracks open windows and the persisted window id list used to restore
 // windows (and their per-window persisted state) across app launches.
 export function createWindowRegistry<W>(persistence: {
@@ -5,9 +7,9 @@ export function createWindowRegistry<W>(persistence: {
   write: (ids: string[]) => void
   cleanup: (id: string) => void
 }) {
-  const windows = new Map<string, W>()
+  const windows = MutableHashMap.empty<string, W>()
   let quitting = false
-  let lastFocusedID: string | undefined
+  let lastFocusedID = Option.none<string>()
 
   const persisted = () => {
     const value = persistence.read()
@@ -21,25 +23,27 @@ export function createWindowRegistry<W>(persistence: {
       quitting = value
     },
     register(id: string, window: W) {
-      windows.set(id, window)
+      MutableHashMap.set(windows, id, window)
       const ids = persisted()
       if (!ids.includes(id)) persistence.write([...ids, id])
     },
     focused(id: string) {
-      lastFocusedID = id
+      lastFocusedID = Option.some(id)
     },
     lastFocused() {
-      if (!lastFocusedID) return
-      return windows.get(lastFocusedID)
+      return Option.flatMap(lastFocusedID, (id) => MutableHashMap.get(windows, id))
     },
     closed(id: string) {
-      windows.delete(id)
-      if (lastFocusedID === id) lastFocusedID = windows.keys().next().value
+      MutableHashMap.remove(windows, id)
+      // The persisted list keeps registration order, so the fallback is the
+      // oldest window that is still open.
+      if (Option.contains(lastFocusedID, id))
+        lastFocusedID = Option.fromNullishOr(persisted().find((item) => MutableHashMap.has(windows, item)))
       // Only a deliberate close (app keeps running with other windows open)
       // forgets a window. Closing the last window quits the app and fires
       // `closed` before `before-quit`, so treat it as a quit and keep the id
       // for restore on next launch.
-      if (quitting || windows.size === 0) return
+      if (quitting || MutableHashMap.size(windows) === 0) return
       persistence.write(persisted().filter((item) => item !== id))
       persistence.cleanup(id)
     },

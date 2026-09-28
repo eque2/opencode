@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, index, primaryKey, real, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { DateTime } from "effect"
 import * as DatabasePath from "../database/path"
 import { ProjectTable } from "../project/sql"
 import type { SessionMessage } from "./message"
@@ -12,12 +13,14 @@ import type { MessageID, PartID, SessionV1 } from "../v1/session"
 import { WorkspaceV2 } from "../workspace"
 import { Timestamps } from "../database/schema.sql"
 import type { SystemContext } from "../system-context/index"
-import { AgentV2 } from "../agent"
 import type { Revert } from "@opencode-ai/schema/revert"
 
 type SessionMessageData = Omit<(typeof SessionMessage.Message)["Encoded"], "type" | "id">
-type V1MessageData = Omit<SessionV1.Info, "id" | "sessionID">
-type V1PartData = Omit<SessionV1.Part, "id" | "sessionID" | "messageID">
+// The projector stores the V1 event values as they decode, so the columns use the readonly schema types.
+// Info and Part are unions; a plain Omit would merge their members and lose the discriminant.
+type DistributiveOmit<A, K extends PropertyKey> = A extends unknown ? Omit<A, K> : never
+type V1MessageData = DistributiveOmit<(typeof SessionV1.Info)["Type"], "id" | "sessionID">
+type V1PartData = DistributiveOmit<(typeof SessionV1.Part)["Type"], "id" | "sessionID" | "messageID">
 
 export const SessionTable = sqliteTable(
   "session",
@@ -151,7 +154,7 @@ export const SessionInputTable = sqliteTable(
     promoted_seq: integer(),
     time_created: integer()
       .notNull()
-      .$default(() => Date.now()),
+      .$default(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
   },
   (table) => [
     index("session_input_session_pending_delivery_seq_idx").on(

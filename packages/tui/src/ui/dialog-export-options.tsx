@@ -2,9 +2,18 @@ import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
-import { onMount, Show } from "solid-js"
+import { onCleanup, onMount, Show } from "solid-js"
+import { Effect, Fiber, Option } from "effect"
 import { useTuiConfig } from "../config"
 import { useBindings } from "../keymap"
+
+export type ExportOptions = {
+  filename: string
+  thinking: boolean
+  toolDetails: boolean
+  assistantMetadata: boolean
+  openWithoutSaving: boolean
+}
 
 export type DialogExportOptionsProps = {
   defaultFilename: string
@@ -12,13 +21,7 @@ export type DialogExportOptionsProps = {
   defaultToolDetails: boolean
   defaultAssistantMetadata: boolean
   defaultOpenWithoutSaving: boolean
-  onConfirm?: (options: {
-    filename: string
-    thinking: boolean
-    toolDetails: boolean
-    assistantMetadata: boolean
-    openWithoutSaving: boolean
-  }) => void
+  onConfirm?: (options: ExportOptions) => void
   onCancel?: () => void
 }
 
@@ -34,6 +37,10 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
     openWithoutSaving: props.defaultOpenWithoutSaving,
     active: "filename" as "filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving",
   })
+
+  // The active option row is highlighted. The box prop reads undefined as "no background".
+  const rowBackground = (row: typeof store.active) =>
+    store.active === row ? Option.some(theme.backgroundElement) : Option.none()
 
   useBindings(() => ({
     bindings: [
@@ -76,10 +83,20 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
 
   onMount(() => {
     dialog.setSize("medium")
-    setTimeout(() => {
-      if (!textarea || textarea.isDestroyed) return
-      textarea.focus()
-    }, 1)
+    // Focus after the dialog finishes mounting; the pending focus stops if the dialog closes first.
+    const focus = Effect.runFork(
+      Effect.sleep("1 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!textarea || textarea.isDestroyed) return
+            textarea.focus()
+          }),
+        ),
+      ),
+    )
+    onCleanup(() => {
+      Effect.runFork(Fiber.interrupt(focus))
+    })
     textarea.gotoLineEnd()
   })
 
@@ -126,7 +143,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "thinking" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("thinking"))}
           onMouseUp={() => setStore("active", "thinking")}
         >
           <text fg={store.active === "thinking" ? theme.primary : theme.textMuted}>
@@ -138,7 +155,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "toolDetails" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("toolDetails"))}
           onMouseUp={() => setStore("active", "toolDetails")}
         >
           <text fg={store.active === "toolDetails" ? theme.primary : theme.textMuted}>
@@ -150,7 +167,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "assistantMetadata" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("assistantMetadata"))}
           onMouseUp={() => setStore("active", "assistantMetadata")}
         >
           <text fg={store.active === "assistantMetadata" ? theme.primary : theme.textMuted}>
@@ -162,7 +179,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "openWithoutSaving" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("openWithoutSaving"))}
           onMouseUp={() => setStore("active", "openWithoutSaving")}
         >
           <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.textMuted}>
@@ -194,27 +211,24 @@ DialogExportOptions.show = (
   defaultToolDetails: boolean,
   defaultAssistantMetadata: boolean,
   defaultOpenWithoutSaving: boolean,
-) => {
-  return new Promise<{
-    filename: string
-    thinking: boolean
-    toolDetails: boolean
-    assistantMetadata: boolean
-    openWithoutSaving: boolean
-  } | null>((resolve) => {
-    dialog.replace(
-      () => (
-        <DialogExportOptions
-          defaultFilename={defaultFilename}
-          defaultThinking={defaultThinking}
-          defaultToolDetails={defaultToolDetails}
-          defaultAssistantMetadata={defaultAssistantMetadata}
-          defaultOpenWithoutSaving={defaultOpenWithoutSaving}
-          onConfirm={(options) => resolve(options)}
-          onCancel={() => resolve(null)}
-        />
-      ),
-      () => resolve(null),
-    )
-  })
+): Promise<Option.Option<ExportOptions>> => {
+  // The dialog settles once: with the confirmed options, or with none when it is cancelled or closed.
+  return Effect.runPromise(
+    Effect.callback<Option.Option<ExportOptions>>((resume) => {
+      dialog.replace(
+        () => (
+          <DialogExportOptions
+            defaultFilename={defaultFilename}
+            defaultThinking={defaultThinking}
+            defaultToolDetails={defaultToolDetails}
+            defaultAssistantMetadata={defaultAssistantMetadata}
+            defaultOpenWithoutSaving={defaultOpenWithoutSaving}
+            onConfirm={(options) => resume(Effect.succeed(Option.some(options)))}
+            onCancel={() => resume(Effect.succeed(Option.none()))}
+          />
+        ),
+        () => resume(Effect.succeed(Option.none())),
+      )
+    }),
+  )
 }

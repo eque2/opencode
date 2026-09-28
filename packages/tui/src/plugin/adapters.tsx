@@ -1,4 +1,5 @@
 import type { TuiDialogSelectOption, TuiPluginApi, TuiSlotProps } from "@opencode-ai/plugin/tui"
+import { Data, Effect } from "effect"
 import type { TuiConfig } from "../config"
 import type { useEvent } from "../context/event"
 import type { useRoute } from "../context/route"
@@ -19,6 +20,11 @@ import { createCommandShim } from "./command-shim"
 import type { PluginRoutes } from "./api"
 export type { RouteMap } from "./api"
 export { createPluginRoutes, createTuiApi } from "./api"
+
+/** A host API member that only a plugin-scoped API implements was called on the host API. */
+class PluginContextError extends Data.TaggedError("TuiPluginAdapters.PluginContextError")<{
+  readonly message: string
+}> {}
 
 type Input = {
   version: string
@@ -90,9 +96,9 @@ function pickOption<Value>(item: SelectOption<Value>): TuiDialogSelectOption<Val
   }
 }
 
+// DialogSelect calls onMove and onSelect through `?.`, so a no-op in place of a missing callback behaves the same.
 function mapOptionCb<Value>(cb?: (item: TuiDialogSelectOption<Value>) => void) {
-  if (!cb) return
-  return (item: SelectOption<Value>) => cb(pickOption(item))
+  return (item: SelectOption<Value>) => cb?.(pickOption(item))
 }
 
 function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
@@ -110,7 +116,7 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       return sync.path
     },
     get vcs() {
-      if (!sync.data.vcs) return
+      if (!sync.data.vcs) return undefined
       return {
         branch: sync.data.vcs.branch,
         default_branch: sync.data.vcs.default_branch,
@@ -156,7 +162,7 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
         .map(([name, item]) => ({
           name,
           status: item.status,
-          error: item.status === "failed" ? item.error : undefined,
+          ...(item.status === "failed" ? { error: item.error } : {}),
         }))
     },
   }
@@ -305,27 +311,30 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
     renderer: input.renderer,
     slots: {
       register() {
-        throw new Error("slots.register is only available in plugin context")
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) TuiSlots.register (@opencode-ai/plugin/tui) returns the slot id synchronously; the host API has no slot registry, so it has no id to return and throws
+        throw new PluginContextError({ message: "slots.register is only available in plugin context" })
       },
     },
     plugins: {
       list() {
         return []
       },
-      async activate() {
-        return false
+      activate() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async deactivate() {
-        return false
+      deactivate() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async add() {
-        return false
+      add() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async install() {
-        return {
-          ok: false,
-          message: "plugins.install is only available in plugin context",
-        }
+      install() {
+        return Effect.runPromise(
+          Effect.succeed({
+            ok: false,
+            message: "plugins.install is only available in plugin context",
+          }),
+        )
       },
     },
     theme: {
@@ -341,8 +350,10 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
       set(name) {
         return input.theme.set(name)
       },
-      async install(_jsonPath) {
-        throw new Error("theme.install is only available in plugin context")
+      install() {
+        return Effect.runPromise(
+          Effect.fail(new PluginContextError({ message: "theme.install is only available in plugin context" })),
+        )
       },
       mode() {
         return input.theme.mode()

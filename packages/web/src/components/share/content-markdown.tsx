@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { marked } from "marked"
 import { codeToHtml } from "shiki"
 import markedShiki from "marked-shiki"
@@ -36,9 +37,8 @@ interface Props {
 export function ContentMarkdown(props: Props) {
   const [html] = createResource(
     () => strip(props.text),
-    async (markdown) => {
-      return markedWithShiki.parse(markdown)
-    },
+    // marked-shiki already sets async: true, so passing it here only selects the Promise overload.
+    (markdown) => Effect.runPromise(Effect.promise(() => markedWithShiki.parse(markdown, { async: true }))),
   )
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()
@@ -47,8 +47,8 @@ export function ContentMarkdown(props: Props) {
   return (
     <div
       class={style.root}
-      data-highlight={props.highlight === true ? true : undefined}
-      data-expanded={expanded() || props.expand === true ? true : undefined}
+      {...(props.highlight === true ? { "data-highlight": true } : {})}
+      {...(expanded() || props.expand === true ? { "data-expanded": true } : {})}
     >
       <div data-slot="markdown" ref={overflow.ref} innerHTML={html()} />
 

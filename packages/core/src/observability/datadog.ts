@@ -1,4 +1,18 @@
-import { Config, Duration, Effect, Formatter, Logger, LogLevel, Option, Redacted, Schedule } from "effect"
+import {
+  Array as Arr,
+  Config,
+  Duration,
+  Effect,
+  Formatter,
+  HashSet,
+  Logger,
+  LogLevel,
+  Option,
+  Predicate,
+  Redacted,
+  Schedule,
+  Schema,
+} from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import os from "os"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -28,7 +42,7 @@ type Entry = Record<string, unknown>
 // Secrets are always redacted. Content keys follow the `content` switch because prompts and file bodies may hold personal data.
 const SECRET = /api[-_]?key|authorization|password|secret|token|cookie|credential/i
 const BEARER = /(bearer\s+)[\w.~+/=-]+/gi
-const CONTENT = new Set([
+const CONTENT = HashSet.make(
   "prompt",
   "system",
   "messages",
@@ -41,19 +55,21 @@ const CONTENT = new Set([
   "result",
   "diff",
   "command",
-])
+)
 
 // Datadog intake limits: 1000 entries and 5 MB per request.
 const MAX_ENTRIES = 1000
 const MAX_BYTES = 4_500_000
 
-/** Resolves the settings, or undefined when the sink must not run. */
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
+
+/** Resolves the settings, or none when the sink must not run. */
 export const settings = Effect.gen(function* () {
   const value = yield* config
-  return value.enabled && Option.isSome(value.apiKey) ? value : undefined
+  return value.enabled && Option.isSome(value.apiKey) ? Option.some(value) : Option.none<Settings>()
 }).pipe(
   // A bad value must not stop startup; the sink stays off instead.
-  Effect.orElseSucceed(() => undefined),
+  Effect.orElseSucceed(() => Option.none<Settings>()),
 )
 
 export function logger(settings: Settings) {
@@ -61,7 +77,9 @@ export function logger(settings: Settings) {
   const apiKey = Option.match(settings.apiKey, { onNone: () => "", onSome: Redacted.value })
   const include = categoryFilter(settings.categories)
   const format = Logger.make((options) =>
-    LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level) ? entry(options, settings, include) : undefined,
+    LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)
+      ? entry(options, settings, include)
+      : Option.none(),
   )
   return Effect.gen(function* () {
     const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
@@ -70,7 +88,7 @@ export function logger(settings: Settings) {
         .execute(
           HttpClientRequest.post(url).pipe(
             HttpClientRequest.setHeader("DD-API-KEY", apiKey),
-            HttpClientRequest.bodyText(JSON.stringify(batch), "application/json"),
+            HttpClientRequest.bodyText(encodeJson(batch), "application/json"),
           ),
         )
         .pipe(
@@ -82,24 +100,27 @@ export function logger(settings: Settings) {
         )
     return yield* Logger.batched(format, {
       window: settings.flushInterval,
-      flush: (items) => Effect.forEach(chunks(items.filter((item) => item !== undefined)), send, { discard: true }),
+      flush: (items) => Effect.forEach(chunks(Arr.getSomes(items)), send, { discard: true }),
     })
   })
 }
 
-/** Maps one Effect log record to a Datadog log entry, or undefined when its category is filtered out. */
+/** Maps one Effect log record to a Datadog log entry, or none when its category is filtered out. */
 export function entry(
   options: Logger.Options<unknown>,
   settings: Settings,
   include = categoryFilter(settings.categories),
 ) {
   const structured = Logger.formatStructured.log(options)
-  const category = String(structured.annotations.category ?? "general")
-  if (!include(category)) return undefined
+  const category = Option.fromNullishOr(structured.annotations.category).pipe(
+    Option.map(text),
+    Option.getOrElse(() => "general"),
+  )
+  if (!include(category)) return Option.none<Entry>()
   const messages = Array.isArray(options.message) ? options.message : [options.message]
   const attributes = Object.assign({}, ...messages.filter(plain), structured.annotations)
   const span = options.fiber.cache.span
-  return {
+  return Option.some<Entry>({
     ...Object.fromEntries(
       Object.entries(attributes).map(([key, value]) => [key, redact(value, settings.content, key)]),
     ),
@@ -126,7 +147,7 @@ export function entry(
           dd: { trace_id: decimal(span.traceId), span_id: decimal(span.spanId) },
         }
       : {}),
-  } satisfies Entry
+  })
 }
 
 /** Parses "llm,tool.-tool.read" style lists: prefixes to include, "-" prefixes to exclude, "*" for all. */
@@ -145,13 +166,13 @@ export function categoryFilter(value: string) {
 
 function redact(input: unknown, content: Settings["content"], key = ""): unknown {
   if (key && SECRET.test(key)) return "[REDACTED]"
-  if (key && CONTENT.has(key) && content !== "full") return content === "omit" ? omitted(input) : hash(input)
+  if (key && HashSet.has(CONTENT, key) && content !== "full") return content === "omit" ? omitted(input) : hash(input)
   if (typeof input === "string") return input.replace(BEARER, "$1[REDACTED]")
   if (Array.isArray(input)) return input.map((value) => redact(value, content))
   if (input instanceof Date) return input.toISOString()
   // Provider errors carry the request body in enumerable fields, so an error keeps only its name and message.
   if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
-  if (input === null || typeof input !== "object") return input
+  if (!Predicate.isObject(input)) return input
   return Object.fromEntries(Object.entries(input).map(([name, value]) => [name, redact(value, content, name)]))
 }
 
@@ -166,7 +187,7 @@ function hash(input: unknown) {
 function chunks(items: Array<Entry>) {
   return items
     .reduce<Array<{ items: Array<Entry>; bytes: number }>>((result, item) => {
-      const bytes = JSON.stringify(item).length
+      const bytes = encodeJson(item).length
       const last = result.at(-1)
       if (last && last.items.length < MAX_ENTRIES && last.bytes + bytes < MAX_BYTES) {
         last.items.push(item)
@@ -187,9 +208,9 @@ function text(input: unknown) {
 }
 
 function plain(input: unknown): input is Record<string, unknown> {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) return false
-  const prototype = Object.getPrototypeOf(input)
-  return prototype === Object.prototype || prototype === null
+  if (!Predicate.isObject(input)) return false
+  const prototype: unknown = Object.getPrototypeOf(input)
+  return prototype === Object.prototype || Predicate.isNull(prototype)
 }
 
 export * as Datadog from "./datadog"

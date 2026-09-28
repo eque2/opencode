@@ -10,8 +10,9 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Logo } from "@opencode-ai/ui/logo"
 import { useNavigate } from "@solidjs/router"
-import { DateTime } from "luxon"
+import { DateTime, Option } from "effect"
 import { createMemo, For, Match, Switch } from "solid-js"
+import { formatRelativeTime } from "./home-time"
 
 export function LegacyHome() {
   const sync = useServerSync()
@@ -49,12 +50,14 @@ export function LegacyHome() {
     const conn = server.current
     if (!conn) return
 
-    const resolve = (result: string | string[] | null) => {
-      if (Array.isArray(result)) {
-        result.forEach((directory) => openProject(conn, directory))
+    const resolve = (result: Option.Option<string | string[]>) => {
+      if (Option.isNone(result)) return
+      const picked = result.value
+      if (Array.isArray(picked)) {
+        picked.forEach((directory) => openProject(conn, directory))
         return
       }
-      if (result) openProject(conn, result)
+      if (picked) openProject(conn, picked)
     }
 
     pickDirectory({
@@ -108,7 +111,15 @@ export function LegacyHome() {
                   >
                     {project.worktree.replace(homedir(), "~")}
                     <div class="text-14-regular text-text-weak">
-                      {DateTime.fromMillis(project.time.updated ?? project.time.created).toRelative()}
+                      {Option.getOrUndefined(
+                        formatRelativeTime({
+                          target: project.time.updated ?? project.time.created,
+                          base: DateTime.nowUnsafe(),
+                          zone: DateTime.zoneMakeLocal(),
+                          // The relative text keeps the system locale. It does not follow the app language.
+                          locale: new Intl.DateTimeFormat().resolvedOptions().locale,
+                        }),
+                      )}
                     </div>
                   </Button>
                 )}

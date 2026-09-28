@@ -1,5 +1,6 @@
 import { type ComponentProps, createMemo, Show, splitProps } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Effect } from "effect"
 import { Card, CardDescription } from "@opencode-ai/ui/card"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -86,12 +87,17 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
     return parts.slice(1).join(": ").trim() || cleaned()
   })
 
-  const copy = async () => {
+  const copy = () => {
     const text = cleaned()
     if (!text) return
-    await navigator.clipboard.writeText(text)
-    setState("copied", true)
-    setTimeout(() => setState("copied", false), 2000)
+    Effect.runFork(
+      Effect.promise(() => navigator.clipboard.writeText(text)).pipe(
+        Effect.andThen(Effect.sync(() => setState("copied", true))),
+        Effect.andThen(Effect.sleep("2 seconds")),
+        Effect.andThen(Effect.sync(() => setState("copied", false))),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    )
   }
 
   return (
@@ -114,7 +120,7 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
                       <a
                         data-slot="basic-tool-tool-subtitle"
                         class="clickable subagent-link"
-                        href={split.href!}
+                        href={split.href}
                         onClick={(event) => {
                           event.stopPropagation()
                           split.onSubtitleClick?.(event)
@@ -146,7 +152,7 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => {
                       e.stopPropagation()
-                      void copy()
+                      copy()
                     }}
                     aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.toolErrorCard.copyError")}
                   />

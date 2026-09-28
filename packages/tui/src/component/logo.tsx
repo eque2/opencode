@@ -8,7 +8,7 @@ export function Logo() {
 
   const renderLine = (line: string, fg: RGBA, bold: boolean): JSX.Element[] => {
     const shadow = tint(theme.background, fg, 0.25)
-    const attrs = bold ? TextAttributes.BOLD : undefined
+    const attrs = bold ? TextAttributes.BOLD : TextAttributes.NONE
     return Array.from(line).map((char) => {
       if (char === "_") {
         return (

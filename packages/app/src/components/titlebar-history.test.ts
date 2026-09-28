@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { applyPath, backPath, forwardPath, type TitlebarHistory } from "./titlebar-history"
 
 function history(): TitlebarHistory {
-  return { stack: [], index: 0, action: undefined }
+  return { stack: [], index: 0, action: Option.none() }
 }
 
 describe("titlebar history", () => {
@@ -49,7 +50,7 @@ describe("titlebar history", () => {
     const state: TitlebarHistory = {
       stack: ["/", "/a", "/b"],
       index: 2,
-      action: undefined,
+      action: Option.none(),
     }
 
     const back = backPath(state)
@@ -58,6 +59,6 @@ describe("titlebar history", () => {
     const next = applyPath(back!.state, back!.to, 10)
     expect(next.stack).toEqual(["/", "/a", "/b"])
     expect(next.index).toBe(1)
-    expect(next.action).toBeUndefined()
+    expect(next.action).toEqual(Option.none())
   })
 })

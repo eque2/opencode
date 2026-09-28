@@ -30,7 +30,8 @@ export const stringifyToJsonValue = (input: unknown): JsonValue | undefined => {
     if (json === undefined) {
       return undefined
     }
-    return JSON.parse(json) as JsonValue
+    const parsed: unknown = JSON.parse(json)
+    return isJsonValue(parsed) ? parsed : undefined
   } catch {
     return undefined
   }
@@ -43,8 +44,21 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (value === null || typeof value !== "object") {
     return false
   }
-  const prototype = Object.getPrototypeOf(value as object)
+  const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null
+}
+
+/**
+ * Checks that a value, and every nested value, is a JsonValue.
+ */
+const isJsonValue = (value: unknown): value is JsonValue => {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue)
+  }
+  return isPlainObject(value) && Object.values(value).every(isJsonValue)
 }
 
 /**
@@ -62,7 +76,7 @@ const serializeSearchParams = (params: URLSearchParams): JsonValue => {
     }
 
     if (Array.isArray(existing)) {
-      ;(existing as string[]).push(value)
+      existing.push(value)
     } else {
       result[key] = [existing, value]
     }

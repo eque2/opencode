@@ -3,7 +3,7 @@ import { Project } from "@/project/project"
 import { $ } from "bun"
 import path from "path"
 import { tmpdirScoped } from "../fixture/fixture"
-import { GlobalBus } from "../../src/bus/global"
+import { collectGlobalBusEvents } from "../server/global-bus"
 import { Database } from "@opencode-ai/core/database/database"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { SessionTable } from "@opencode-ai/core/session/sql"
@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm"
 import { Hash } from "@opencode-ai/core/util/hash"
 import { SessionID } from "@/session/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
-import { Cause, Effect, Exit, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Layer, Sink, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -49,11 +49,11 @@ function mockGitFailure(failArg: string) {
               exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
               isRunning: Effect.succeed(false),
               kill: () => Effect.void,
-              stdin: { [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") } as any,
+              stdin: Sink.drain,
               stdout: Stream.empty,
               stderr: Stream.make(encoder.encode("fatal: simulated failure\n")),
               all: Stream.empty,
-              getInputFd: () => ({ [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") }) as any,
+              getInputFd: () => Sink.drain,
               getOutputFd: () => Stream.empty,
               unref: Effect.succeed(Effect.void),
             })
@@ -194,7 +194,7 @@ describe("Project.fromDirectory", () => {
       const rootResult = yield* projects.fromDirectory(tmp)
       const rootProject = rootResult.project
       const remoteID = remoteProjectID("github.com/acme/app")
-      const sessionID = crypto.randomUUID() as SessionID
+      const sessionID = SessionID.descending()
       const workspaceID = WorkspaceV2.ID.ascending()
 
       yield* db
@@ -588,18 +588,14 @@ describe("Project.update", () => {
       const tmp = yield* tmpdirScoped({ git: true })
       const result = yield* project.fromDirectory(tmp)
 
-      let eventPayload: any = null
-      const on = (data: any) => {
-        eventPayload = data
-      }
-      GlobalBus.on("event", on)
-      yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
+      const events = yield* collectGlobalBusEvents
 
       yield* project.update({ projectID: result.project.id, name: "Updated Name" })
 
+      const eventPayload = (yield* events).at(-1) ?? null
       expect(eventPayload).not.toBeNull()
-      expect(eventPayload.payload.type).toBe("project.updated")
-      expect(eventPayload.payload.properties.name).toBe("Updated Name")
+      expect(eventPayload?.payload.type).toBe("project.updated")
+      expect(eventPayload?.payload.properties.name).toBe("Updated Name")
     }),
   )
 
@@ -703,14 +699,11 @@ describe("Project.addSandbox and Project.removeSandbox", () => {
       const result = yield* project.fromDirectory(tmp)
       const sandboxDir = path.join(tmp, "sandbox-event")
 
-      const events: any[] = []
-      const on = (evt: any) => events.push(evt)
-      GlobalBus.on("event", on)
-      yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
+      const events = yield* collectGlobalBusEvents
 
       yield* project.addSandbox(result.project.id, sandboxDir)
 
-      expect(events.some((e) => e.payload.type === Project.Event.Updated.type)).toBe(true)
+      expect((yield* events).some((e) => e.payload.type === Project.Event.Updated.type)).toBe(true)
     }),
   )
 })

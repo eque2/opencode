@@ -134,7 +134,6 @@ interface RequestDescriptor {
   readonly body?: unknown
   readonly successStatus: number
   readonly declaredStatuses: ReadonlyArray<number>
-  readonly empty: boolean
 }
 
 export function make(options: ClientOptions) {
@@ -145,7 +144,7 @@ export function make(options: ClientOptions) {
     for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)
     const headers = new Headers(options.headers)
     for (const [key, value] of Object.entries(descriptor.headers ?? {})) {
-      if (value !== undefined && value !== null) headers.set(key, String(value))
+      if (isPrimitive(value)) headers.set(key, String(value))
     }
     for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)
     if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")
@@ -155,63 +154,99 @@ export function make(options: ClientOptions) {
         method: descriptor.method,
         signal: requestOptions?.signal,
         headers,
-        body: descriptor.body === undefined ? undefined : JSON.stringify(descriptor.body),
+        // eslint-disable-next-line effect/no-json-stringify-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+        ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),
       } satisfies RequestInit,
     }
   }
 
+  // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
       const prepared = prepare(descriptor, requestOptions)
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       return await fetch(prepared.url, prepared.init)
     } catch (cause) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       throw new ClientError("Transport", { cause })
     }
   }
 
+  // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
     } catch {}
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
   }
 
+  // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
-    if (descriptor.empty) {
-      try {
-        await response.body?.cancel()
-      } catch {}
-      return undefined as A
-    }
-    return (await json(response)) as A
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+    const body = await json(response)
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (c) zero-Effect Promise root of @opencode-ai/client: by contract it returns parsed wire JSON as the declared output type without a runtime decoder, because import-boundaries.test.ts forbids Schema in this bundle
+    return body as A
+  }
+
+  // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+  const requestEmpty = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<void> => {
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+    const response = await execute(descriptor, requestOptions)
+    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+    try {
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+      await response.body?.cancel()
+    } catch {}
   }
 
   const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     async *[Symbol.asyncIterator]() {
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       const response = await execute(descriptor, requestOptions)
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       if (response.status !== descriptor.successStatus) await responseError(response, descriptor)
       if (!isContentType(response, "text/event-stream")) {
+        // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         try {
+          // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           await response.body?.cancel()
         } catch {}
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         throw new ClientError("UnsupportedContentType")
       }
-      if (response.body === null) throw new ClientError("MalformedResponse")
+      // eslint-disable-next-line effect/no-null-use-option -- (a) DOM fetch boundary: Response.body is typed ReadableStream<Uint8Array> | null, and null means the response has no body
+      if (response.body === null) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+        throw new ClientError("MalformedResponse")
+      }
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
+      // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       try {
         while (true) {
           let next
+          // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           try {
+            // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
             next = await reader.read()
           } catch (cause) {
+            // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
             throw new ClientError("Transport", { cause })
           }
           buffer += decoder.decode(next.value, { stream: !next.done })
+          // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")
           const trailingCarriageReturn = !next.done && buffer.endsWith("\r")
           if (trailingCarriageReturn) buffer = buffer.slice(0, -1)
@@ -227,9 +262,14 @@ export function make(options: ClientOptions) {
               .flatMap((line) => (line.startsWith("data:") ? [line.slice(5).trimStart()] : []))
               .join("\n")
             if (data !== "") {
+              // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
               try {
-                yield JSON.parse(data) as A
+                // eslint-disable-next-line effect/no-json-parse-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+                const value: unknown = JSON.parse(data)
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (c) zero-Effect Promise root of @opencode-ai/client: by contract it returns parsed wire JSON as the declared output type without a runtime decoder, because import-boundaries.test.ts forbids Schema in this bundle
+                yield value as A
               } catch (cause) {
+                // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
                 throw new ClientError("MalformedResponse", { cause })
               }
             }
@@ -238,7 +278,9 @@ export function make(options: ClientOptions) {
           if (next.done) return
         }
       } finally {
+        // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         try {
+          // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           await reader.cancel()
         } catch {}
         reader.releaseLock()
@@ -250,7 +292,7 @@ export function make(options: ClientOptions) {
     health: {
       get: (requestOptions?: RequestOptions) =>
         request<HealthGetOutput>(
-          { method: "GET", path: `/api/health`, successStatus: 200, declaredStatuses: [401, 400], empty: false },
+          { method: "GET", path: `/api/health`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ),
     },
@@ -263,7 +305,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -277,7 +318,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -300,7 +340,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -317,19 +356,12 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
       active: (requestOptions?: RequestOptions) =>
         request<{ readonly data: SessionsActiveOutput }>(
-          {
-            method: "GET",
-            path: `/api/session/active`,
-            successStatus: 200,
-            declaredStatuses: [401, 400],
-            empty: false,
-          },
+          { method: "GET", path: `/api/session/active`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ).then((value) => value.data),
       get: (input: SessionsGetInput, requestOptions?: RequestOptions) =>
@@ -339,31 +371,34 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      switchAgent: (input: SessionsSwitchAgentInput, requestOptions?: RequestOptions) =>
-        request<SessionsSwitchAgentOutput>(
+      switchAgent: (
+        input: SessionsSwitchAgentInput,
+        requestOptions?: RequestOptions,
+      ): Promise<SessionsSwitchAgentOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/agent`,
             body: { agent: input["agent"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      switchModel: (input: SessionsSwitchModelInput, requestOptions?: RequestOptions) =>
-        request<SessionsSwitchModelOutput>(
+      switchModel: (
+        input: SessionsSwitchModelInput,
+        requestOptions?: RequestOptions,
+      ): Promise<SessionsSwitchModelOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/model`,
             body: { model: input["model"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -375,29 +410,26 @@ export function make(options: ClientOptions) {
             body: { id: input["id"], prompt: input["prompt"], delivery: input["delivery"], resume: input["resume"] },
             successStatus: 200,
             declaredStatuses: [409, 404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      compact: (input: SessionsCompactInput, requestOptions?: RequestOptions) =>
-        request<SessionsCompactOutput>(
+      compact: (input: SessionsCompactInput, requestOptions?: RequestOptions): Promise<SessionsCompactOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/compact`,
             successStatus: 204,
             declaredStatuses: [404, 503, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      wait: (input: SessionsWaitInput, requestOptions?: RequestOptions) =>
-        request<SessionsWaitOutput>(
+      wait: (input: SessionsWaitInput, requestOptions?: RequestOptions): Promise<SessionsWaitOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/wait`,
             successStatus: 204,
             declaredStatuses: [404, 503, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -409,29 +441,26 @@ export function make(options: ClientOptions) {
             body: { messageID: input["messageID"], files: input["files"] },
             successStatus: 200,
             declaredStatuses: [404, 500, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      clear: (input: SessionsClearInput, requestOptions?: RequestOptions) =>
-        request<SessionsClearOutput>(
+      clear: (input: SessionsClearInput, requestOptions?: RequestOptions): Promise<SessionsClearOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/revert/clear`,
             successStatus: 204,
             declaredStatuses: [404, 500, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      commit: (input: SessionsCommitInput, requestOptions?: RequestOptions) =>
-        request<SessionsCommitOutput>(
+      commit: (input: SessionsCommitInput, requestOptions?: RequestOptions): Promise<SessionsCommitOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/revert/commit`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -442,7 +471,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/context`,
             successStatus: 200,
             declaredStatuses: [404, 500, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -454,7 +482,6 @@ export function make(options: ClientOptions) {
             query: { limit: input["limit"], after: input["after"] },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -466,18 +493,16 @@ export function make(options: ClientOptions) {
             query: { after: input["after"] },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ),
-      interrupt: (input: SessionsInterruptInput, requestOptions?: RequestOptions) =>
-        request<SessionsInterruptOutput>(
+      interrupt: (input: SessionsInterruptInput, requestOptions?: RequestOptions): Promise<SessionsInterruptOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/interrupt`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -488,7 +513,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/message/${encodeURIComponent(input.messageID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -502,7 +526,6 @@ export function make(options: ClientOptions) {
             query: { limit: input["limit"], order: input["order"], cursor: input["cursor"] },
             successStatus: 200,
             declaredStatuses: [400, 404, 500, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -516,7 +539,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -530,7 +552,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -542,7 +563,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [404, 503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -556,7 +576,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -568,12 +587,14 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      connectKey: (input: IntegrationsConnectKeyInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsConnectKeyOutput>(
+      connectKey: (
+        input: IntegrationsConnectKeyInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsConnectKeyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/integration/${encodeURIComponent(input.integrationID)}/connect/key`,
@@ -581,7 +602,6 @@ export function make(options: ClientOptions) {
             body: { key: input["key"], label: input["label"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -594,7 +614,6 @@ export function make(options: ClientOptions) {
             body: { methodID: input["methodID"], inputs: input["inputs"], label: input["label"] },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -606,12 +625,14 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      attemptComplete: (input: IntegrationsAttemptCompleteInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsAttemptCompleteOutput>(
+      attemptComplete: (
+        input: IntegrationsAttemptCompleteInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsAttemptCompleteOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/integration/attempt/${encodeURIComponent(input.attemptID)}/complete`,
@@ -619,26 +640,27 @@ export function make(options: ClientOptions) {
             body: { code: input["code"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      attemptCancel: (input: IntegrationsAttemptCancelInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsAttemptCancelOutput>(
+      attemptCancel: (
+        input: IntegrationsAttemptCancelInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsAttemptCancelOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/integration/attempt/${encodeURIComponent(input.attemptID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
     },
     credentials: {
-      update: (input: CredentialsUpdateInput, requestOptions?: RequestOptions) =>
-        request<CredentialsUpdateOutput>(
+      update: (input: CredentialsUpdateInput, requestOptions?: RequestOptions): Promise<CredentialsUpdateOutput> =>
+        requestEmpty(
           {
             method: "PATCH",
             path: `/api/credential/${encodeURIComponent(input.credentialID)}`,
@@ -646,19 +668,17 @@ export function make(options: ClientOptions) {
             body: { label: input["label"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
-      remove: (input: CredentialsRemoveInput, requestOptions?: RequestOptions) =>
-        request<CredentialsRemoveOutput>(
+      remove: (input: CredentialsRemoveInput, requestOptions?: RequestOptions): Promise<CredentialsRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/credential/${encodeURIComponent(input.credentialID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -672,7 +692,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -684,18 +703,19 @@ export function make(options: ClientOptions) {
             query: { projectID: input?.["projectID"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      removeSaved: (input: PermissionsRemoveSavedInput, requestOptions?: RequestOptions) =>
-        request<PermissionsRemoveSavedOutput>(
+      removeSaved: (
+        input: PermissionsRemoveSavedInput,
+        requestOptions?: RequestOptions,
+      ): Promise<PermissionsRemoveSavedOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/permission/saved/${encodeURIComponent(input.id)}`,
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -715,7 +735,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -726,7 +745,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -737,19 +755,17 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission/${encodeURIComponent(input.requestID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      reply: (input: PermissionsReplyInput, requestOptions?: RequestOptions) =>
-        request<PermissionsReplyOutput>(
+      reply: (input: PermissionsReplyInput, requestOptions?: RequestOptions): Promise<PermissionsReplyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission/${encodeURIComponent(input.requestID)}/reply`,
             body: { reply: input["reply"], message: input["message"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -763,7 +779,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"], path: input?.["path"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -775,7 +790,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"], query: input["query"], type: input["type"], limit: input["limit"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -789,7 +803,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -803,7 +816,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -811,7 +823,7 @@ export function make(options: ClientOptions) {
     events: {
       subscribe: (requestOptions?: RequestOptions): AsyncIterable<EventsSubscribeOutput> =>
         sse<EventsSubscribeOutput>(
-          { method: "GET", path: `/api/event`, successStatus: 200, declaredStatuses: [401, 400], empty: false },
+          { method: "GET", path: `/api/event`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ),
     },
@@ -824,7 +836,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -843,7 +854,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -855,7 +865,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [404, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -868,19 +877,17 @@ export function make(options: ClientOptions) {
             body: { title: input["title"], size: input["size"] },
             successStatus: 200,
             declaredStatuses: [404, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      remove: (input: PtysRemoveInput, requestOptions?: RequestOptions) =>
-        request<PtysRemoveOutput>(
+      remove: (input: PtysRemoveInput, requestOptions?: RequestOptions): Promise<PtysRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/pty/${encodeURIComponent(input.ptyID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [404, 401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -894,7 +901,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -905,30 +911,27 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      reply: (input: QuestionsReplyInput, requestOptions?: RequestOptions) =>
-        request<QuestionsReplyOutput>(
+      reply: (input: QuestionsReplyInput, requestOptions?: RequestOptions): Promise<QuestionsReplyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question/${encodeURIComponent(input.requestID)}/reply`,
             body: { answers: input["answers"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      reject: (input: QuestionsRejectInput, requestOptions?: RequestOptions) =>
-        request<QuestionsRejectOutput>(
+      reject: (input: QuestionsRejectInput, requestOptions?: RequestOptions): Promise<QuestionsRejectOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question/${encodeURIComponent(input.requestID)}/reject`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -942,7 +945,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -957,12 +959,11 @@ export function make(options: ClientOptions) {
             body: { strategy: input["strategy"], directory: input["directory"], name: input["name"] },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
-      remove: (input: ProjectCopiesRemoveInput, requestOptions?: RequestOptions) =>
-        request<ProjectCopiesRemoveOutput>(
+      remove: (input: ProjectCopiesRemoveInput, requestOptions?: RequestOptions): Promise<ProjectCopiesRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/experimental/project/${encodeURIComponent(input.projectID)}/copy`,
@@ -970,19 +971,20 @@ export function make(options: ClientOptions) {
             body: { directory: input["directory"], force: input["force"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      refresh: (input: ProjectCopiesRefreshInput, requestOptions?: RequestOptions) =>
-        request<ProjectCopiesRefreshOutput>(
+      refresh: (
+        input: ProjectCopiesRefreshInput,
+        requestOptions?: RequestOptions,
+      ): Promise<ProjectCopiesRefreshOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/experimental/project/${encodeURIComponent(input.projectID)}/copy/refresh`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -991,6 +993,7 @@ export function make(options: ClientOptions) {
 }
 
 function appendQuery(params: URLSearchParams, key: string, value: unknown): void {
+  // eslint-disable-next-line effect/no-null-use-option -- (b) JavaScript null in caller query values typed unknown: null is skipped like undefined, because Object.entries(null) throws
   if (value === undefined || value === null) return
   if (Array.isArray(value)) {
     for (const item of value) appendQuery(params, key, item)
@@ -1000,26 +1003,43 @@ function appendQuery(params: URLSearchParams, key: string, value: unknown): void
     for (const [child, item] of Object.entries(value)) appendQuery(params, `${key}[${child}]`, item)
     return
   }
-  params.append(key, String(value))
+  if (isPrimitive(value)) params.append(key, String(value))
 }
 
+function isPrimitive(value: unknown): value is string | number | boolean | bigint {
+  return (
+    typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+  )
+}
+
+// eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
 async function json(response: Response): Promise<unknown> {
   if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
     } catch {}
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
+  // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   try {
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     text = await response.text()
   } catch (cause) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("Transport", { cause })
   }
+  // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   if (text === "") throw new ClientError("MalformedResponse")
+  // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   try {
+    // eslint-disable-next-line effect/no-json-parse-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     return JSON.parse(text)
   } catch (cause) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("MalformedResponse", { cause })
   }
 }

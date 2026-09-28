@@ -143,9 +143,9 @@ function isRecord(item: unknown): item is IngestEvent {
 }
 
 function routeEvent(event: IngestEvent): LakeRoute | undefined {
-  if (typeof event._datalake_key !== "string") return
+  if (typeof event._datalake_key !== "string") return undefined
   const match = event._datalake_key.match(LAKE_TYPE)
-  if (!match?.[1] || !match[2]) return
+  if (!match?.[1] || !match[2]) return undefined
   return {
     database: match[1],
     table: match[2],

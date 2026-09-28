@@ -46,11 +46,11 @@ export function TextInputV2(props: TextInputV2Props) {
   return (
     <div
       data-component="text-input-v2"
-      data-disabled={local.disabled ? "" : undefined}
-      data-invalid={local.invalid ? "" : undefined}
-      data-numeric={local.numeric ? "" : undefined}
+      bool:data-disabled={!!local.disabled}
+      bool:data-invalid={!!local.invalid}
+      bool:data-numeric={!!local.numeric}
       data-appearance={local.appearance ?? "base"}
-      data-leading-icon={local.leadingIcon ? "" : undefined}
+      bool:data-leading-icon={!!local.leadingIcon}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
@@ -64,7 +64,7 @@ export function TextInputV2(props: TextInputV2Props) {
           {...inputProps}
           type={inputProps.type ?? "text"}
           disabled={local.disabled}
-          aria-invalid={local.invalid ? true : undefined}
+          {...(local.invalid ? { "aria-invalid": true } : {})}
           data-slot="text-input-v2-input"
         />
       </div>

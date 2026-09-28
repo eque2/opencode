@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HashMap, Option } from "effect"
 import { filterReviewFiles, reviewDiffDirectory, reviewDiffKinds, reviewDiffNeedsLoad } from "./review-diff-kinds"
 
 describe("reviewDiffKinds", () => {
@@ -8,16 +9,16 @@ describe("reviewDiffKinds", () => {
       { file: "src/b.ts", additions: 0, deletions: 2, status: "deleted" },
     ])
 
-    expect(kinds.get("src/a.ts")).toBe("add")
-    expect(kinds.get("src/b.ts")).toBe("del")
-    expect(kinds.get("src")).toBe("mix")
+    expect(HashMap.get(kinds, "src/a.ts")).toEqual(Option.some("add"))
+    expect(HashMap.get(kinds, "src/b.ts")).toEqual(Option.some("del"))
+    expect(HashMap.get(kinds, "src")).toEqual(Option.some("mix"))
   })
 
   test("normalizes file and directory paths", () => {
     const kinds = reviewDiffKinds([{ file: "\\src//lib/a.ts/", additions: 1, deletions: 1, status: "modified" }])
 
-    expect(kinds.get("src/lib/a.ts")).toBe("mix")
-    expect(kinds.get("src/lib")).toBe("mix")
+    expect(HashMap.get(kinds, "src/lib/a.ts")).toEqual(Option.some("mix"))
+    expect(HashMap.get(kinds, "src/lib")).toEqual(Option.some("mix"))
   })
 })
 

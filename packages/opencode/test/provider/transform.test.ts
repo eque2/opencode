@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { ProviderTransform } from "@/provider/transform"
 import { LLMRequestPrep } from "@/session/llm/request"
+import { MessageID, SessionID } from "@/session/schema"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import type { Plugin } from "@/plugin"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
@@ -9,11 +12,90 @@ import { generateText, jsonSchema, type ModelMessage } from "ai"
 import { createAmazonBedrock, type AmazonBedrockLanguageModelOptions } from "@ai-sdk/amazon-bedrock"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createVertexAnthropic } from "@ai-sdk/google-vertex/anthropic"
+import type { JSONSchema7 } from "@ai-sdk/provider"
+import type { Provider } from "@/provider/provider"
+
+type ModelFixture = Omit<Partial<Provider.Model>, "id" | "providerID" | "api" | "capabilities" | "cost" | "limit"> & {
+  id?: string
+  providerID?: string
+  api?: Partial<Provider.Model["api"]>
+  capabilities?: Partial<Omit<Provider.Model["capabilities"], "input" | "output">> & {
+    input?: Partial<Provider.Model["capabilities"]["input"]>
+    output?: Partial<Provider.Model["capabilities"]["output"]>
+  }
+  cost?: Partial<Provider.Model["cost"]>
+  limit?: Partial<Provider.Model["limit"]>
+}
+
+const noModalities = { text: false, audio: false, image: false, video: false, pdf: false }
+
+// Builds a complete Provider.Model from the fields a test sets. The other fields get
+// empty or false values, which no ProviderTransform branch selects on.
+function fixtureModel(input: ModelFixture): Provider.Model {
+  return {
+    name: "",
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "",
+    ...input,
+    id: ModelV2.ID.make(input.id ?? ""),
+    providerID: ProviderV2.ID.make(input.providerID ?? ""),
+    api: { id: "", url: "", npm: "", ...input.api },
+    capabilities: {
+      temperature: false,
+      reasoning: false,
+      attachment: false,
+      toolcall: false,
+      interleaved: false,
+      ...input.capabilities,
+      input: { ...noModalities, ...input.capabilities?.input },
+      output: { ...noModalities, ...input.capabilities?.output },
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 }, ...input.cost },
+    limit: { context: 0, output: 0, ...input.limit },
+  }
+}
+
+// Returns the parts of a message, and fails the test when the content is plain text.
+function parts(message: ModelMessage) {
+  if (typeof message.content === "string") throw new Error(`expected ${message.role} message parts, got text`)
+  return message.content
+}
+
+// Returns the provider options of one message part. Approval parts carry none.
+function partOptions(message: ModelMessage, index: number) {
+  const part = parts(message)[index]
+  return "providerOptions" in part ? part.providerOptions : undefined
+}
+
+// Reads a nested value from JSON data. Like a plain property chain, it fails when a
+// container on the path is missing, and returns undefined only for the last key.
+function at(value: unknown, ...path: Array<string | number>): unknown {
+  return path.reduce((node, key) => {
+    if (typeof node !== "object" || node === null) throw new TypeError(`cannot read ${String(key)} of ${String(node)}`)
+    return Reflect.get(node, key)
+  }, value)
+}
+
+// Parses the JSON body of a captured fetch call. The AI SDKs send each body as a JSON string.
+function requestJson(init: RequestInit | undefined) {
+  const body = init?.body
+  if (typeof body !== "string") throw new Error("expected a JSON string request body")
+  return JSON.parse(body)
+}
+
+// Returns the URL of a captured fetch call.
+function requestUrl(input: Parameters<typeof fetch>[0]) {
+  if (typeof input === "string") return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
 
 describe("ProviderTransform.options - setCacheKey", () => {
   const sessionID = "test-session-123"
 
-  const mockModel = {
+  const mockModel = fixtureModel({
     id: "anthropic/claude-3-5-sonnet",
     providerID: "anthropic",
     api: {
@@ -43,7 +125,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
     status: "active",
     options: {},
     headers: {},
-  } as any
+  })
 
   test("should set promptCacheKey when providerOptions.setCacheKey is true", () => {
     const result = ProviderTransform.options({
@@ -78,7 +160,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set promptCacheKey for openai provider by default", () => {
-    const openaiModel = {
+    const openaiModel = fixtureModel({
       ...mockModel,
       providerID: "openai",
       api: {
@@ -86,18 +168,18 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.openai.com",
         npm: "@ai-sdk/openai",
       },
-    }
+    })
     const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
     expect(result.promptCacheKey).toBe(sessionID)
   })
 
   test("should set promptCacheKey for the OpenAI SDK regardless of provider ID", () => {
     const result = ProviderTransform.options({
-      model: {
+      model: fixtureModel({
         ...mockModel,
         providerID: "custom-openai",
         api: { id: "gpt-5", url: "https://example.com", npm: "@ai-sdk/openai" },
-      },
+      }),
       sessionID,
       providerOptions: {},
     })
@@ -106,11 +188,11 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should not set promptCacheKey for the OpenAI-compatible SDK by provider name", () => {
     const result = ProviderTransform.options({
-      model: {
+      model: fixtureModel({
         ...mockModel,
         providerID: "openai",
         api: { id: "gpt-5", url: "https://example.com", npm: "@ai-sdk/openai-compatible" },
-      },
+      }),
       sessionID,
       providerOptions: {},
     })
@@ -118,7 +200,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should not set promptCacheKey for openai when explicitly disabled", () => {
-    const openaiModel = {
+    const openaiModel = fixtureModel({
       ...mockModel,
       providerID: "openai",
       api: {
@@ -126,7 +208,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.openai.com",
         npm: "@ai-sdk/openai",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: openaiModel,
       sessionID,
@@ -136,7 +218,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set promptCacheKey for the xAI SDK by default regardless of provider ID", () => {
-    const xaiModel = {
+    const xaiModel = fixtureModel({
       ...mockModel,
       providerID: "custom-xai",
       api: {
@@ -144,13 +226,13 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.x.ai",
         npm: "@ai-sdk/xai",
       },
-    }
+    })
     const result = ProviderTransform.options({ model: xaiModel, sessionID, providerOptions: {} })
     expect(result.promptCacheKey).toBe(sessionID)
   })
 
   test("should not set promptCacheKey for the xAI SDK when explicitly disabled", () => {
-    const xaiModel = {
+    const xaiModel = fixtureModel({
       ...mockModel,
       providerID: "xai",
       api: {
@@ -158,7 +240,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.x.ai",
         npm: "@ai-sdk/xai",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: xaiModel,
       sessionID,
@@ -168,7 +250,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set store=false for openai provider", () => {
-    const openaiModel = {
+    const openaiModel = fixtureModel({
       ...mockModel,
       providerID: "openai",
       api: {
@@ -176,7 +258,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.openai.com",
         npm: "@ai-sdk/openai",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: openaiModel,
       sessionID,
@@ -186,7 +268,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set store=false for xAI provider by default", () => {
-    const xaiModel = {
+    const xaiModel = fixtureModel({
       ...mockModel,
       providerID: "xai",
       api: {
@@ -194,7 +276,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.x.ai",
         npm: "@ai-sdk/xai",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: xaiModel,
       sessionID,
@@ -205,7 +287,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set store=false for xAI SDK regardless of provider ID", () => {
-    const xaiModel = {
+    const xaiModel = fixtureModel({
       ...mockModel,
       providerID: "custom-xai",
       api: {
@@ -213,7 +295,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://api.x.ai",
         npm: "@ai-sdk/xai",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: xaiModel,
       sessionID,
@@ -223,7 +305,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   })
 
   test("should set store=false for azure provider by default", () => {
-    const azureModel = {
+    const azureModel = fixtureModel({
       ...mockModel,
       providerID: "azure",
       api: {
@@ -231,7 +313,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
         url: "https://azure.com",
         npm: "@ai-sdk/azure",
       },
-    }
+    })
     const result = ProviderTransform.options({
       model: azureModel,
       sessionID,
@@ -243,11 +325,11 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should disable the Azure cache key without disabling store=false", () => {
     const result = ProviderTransform.options({
-      model: {
+      model: fixtureModel({
         ...mockModel,
         providerID: "azure",
         api: { id: "gpt-5", url: "https://azure.com", npm: "@ai-sdk/azure" },
-      },
+      }),
       sessionID,
       providerOptions: { setCacheKey: false },
     })
@@ -257,11 +339,11 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should keep the Azure cache key for gpt-5.5 early return", () => {
     const result = ProviderTransform.options({
-      model: {
+      model: fixtureModel({
         ...mockModel,
         providerID: "azure",
         api: { id: "gpt-5.5", url: "https://azure.com", npm: "@ai-sdk/azure" },
-      },
+      }),
       sessionID,
       providerOptions: {},
     })
@@ -273,7 +355,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
   for (const npm of ["@ai-sdk/deepinfra", "@ai-sdk/cerebras"]) {
     test(`should set the snake-case cache key for ${npm}`, () => {
       const result = ProviderTransform.options({
-        model: { ...mockModel, providerID: "custom", api: { ...mockModel.api, npm } },
+        model: fixtureModel({ ...mockModel, providerID: "custom", api: { ...mockModel.api, npm } }),
         sessionID,
         providerOptions: {},
       })
@@ -284,7 +366,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should set promptCacheKey for the Mistral SDK", () => {
     const result = ProviderTransform.options({
-      model: { ...mockModel, providerID: "custom", api: { ...mockModel.api, npm: "@ai-sdk/mistral" } },
+      model: fixtureModel({ ...mockModel, providerID: "custom", api: { ...mockModel.api, npm: "@ai-sdk/mistral" } }),
       sessionID,
       providerOptions: {},
     })
@@ -293,11 +375,11 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should not send an undocumented OpenRouter prompt_cache_key", () => {
     const result = ProviderTransform.options({
-      model: {
+      model: fixtureModel({
         ...mockModel,
         providerID: "openrouter",
         api: { ...mockModel.api, npm: "@openrouter/ai-sdk-provider" },
-      },
+      }),
       sessionID,
       providerOptions: {},
     })
@@ -309,7 +391,7 @@ describe("ProviderTransform.options - zai/zhipuai thinking", () => {
   const sessionID = "test-session-123"
 
   const createModel = (providerID: string) =>
-    ({
+    fixtureModel({
       id: `${providerID}/glm-4.6`,
       providerID,
       api: {
@@ -339,7 +421,7 @@ describe("ProviderTransform.options - zai/zhipuai thinking", () => {
       status: "active",
       options: {},
       headers: {},
-    }) as any
+    })
 
   for (const providerID of ["zai-coding-plan", "zai", "zhipuai-coding-plan", "zhipuai"]) {
     test(`${providerID} should set thinking cfg`, () => {
@@ -359,7 +441,7 @@ describe("ProviderTransform.options - zai/zhipuai thinking", () => {
 
 describe("ProviderTransform.options - minimax m3 thinking", () => {
   const createModel = (npm: string) =>
-    ({
+    fixtureModel({
       id: "minimax/minimax-m3",
       providerID: "minimax",
       api: {
@@ -369,7 +451,7 @@ describe("ProviderTransform.options - minimax m3 thinking", () => {
       },
       capabilities: { reasoning: true },
       limit: { output: 64_000 },
-    }) as any
+    })
 
   test("explicitly enables adaptive thinking with the anthropic SDK", () => {
     expect(
@@ -394,7 +476,7 @@ describe("ProviderTransform.options - google thinkingConfig gating", () => {
   const sessionID = "test-session-123"
 
   const createGoogleModel = (reasoning: boolean, npm: "@ai-sdk/google" | "@ai-sdk/google-vertex") =>
-    ({
+    fixtureModel({
       id: `${npm === "@ai-sdk/google" ? "google" : "google-vertex"}/gemini-2.0-flash`,
       providerID: npm === "@ai-sdk/google" ? "google" : "google-vertex",
       api: {
@@ -424,7 +506,7 @@ describe("ProviderTransform.options - google thinkingConfig gating", () => {
       status: "active",
       options: {},
       headers: {},
-    }) as any
+    })
 
   test("does not set thinkingConfig for google models without reasoning capability", () => {
     const result = ProviderTransform.options({
@@ -460,7 +542,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
   const sessionID = "test-session-123"
 
   const createGpt5Model = (apiId: string) =>
-    ({
+    fixtureModel({
       id: `openai/${apiId}`,
       providerID: "openai",
       api: {
@@ -483,7 +565,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
       status: "active",
       options: {},
       headers: {},
-    }) as any
+    })
 
   test("gpt-5.2 should have textVerbosity set to low", () => {
     const model = createGpt5Model("gpt-5.2")
@@ -493,7 +575,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
   })
 
   test("Bedrock Mantle gpt-5.5 uses OpenAI Responses defaults", () => {
-    const model = {
+    const model = fixtureModel({
       ...createGpt5Model("openai.gpt-5.5"),
       id: "amazon-bedrock/openai.gpt-5.5",
       providerID: "amazon-bedrock",
@@ -502,7 +584,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
         url: "https://bedrock-mantle.us-east-2.api.aws/openai/v1",
         npm: "@ai-sdk/amazon-bedrock/mantle",
       },
-    }
+    })
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
     expect(result.store).toBe(false)
     expect(result.reasoningEffort).toBe("medium")
@@ -512,7 +594,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
   })
 
   test("openai-compatible gpt-5 models omit Responses-only reasoningSummary", () => {
-    const model = {
+    const model = fixtureModel({
       ...createGpt5Model("gpt-5.4"),
       id: "cortecs/gpt-5.4",
       providerID: "cortecs",
@@ -521,7 +603,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
         url: "https://api.cortecs.ai/v1",
         npm: "@ai-sdk/openai-compatible",
       },
-    }
+    })
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
     expect(result.reasoningEffort).toBe("medium")
     expect(result.reasoningSummary).toBeUndefined()
@@ -530,7 +612,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
   })
 
   test("azure chat completions omit Responses-only reasoning options after variants merge", async () => {
-    const model = {
+    const model = fixtureModel({
       ...createGpt5Model("gpt-5.4"),
       id: "azure/gpt-5.4",
       providerID: "azure",
@@ -546,43 +628,54 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
           include: ["reasoning.encrypted_content"],
         },
       },
+    })
+    const plugin: Plugin.Interface = {
+      trigger: (_name, _input, output) => Effect.succeed(output),
+      list: () => Effect.succeed([]),
+      init: () => Effect.void,
     }
     const result = await Effect.runPromise(
-      LLMRequestPrep.prepare({
-        user: {
-          id: "msg_user-test",
-          sessionID,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "test",
-          model: { providerID: "azure", modelID: "gpt-5.4", variant: "high" },
-        } as any,
-        sessionID,
-        model,
-        agent: {
-          name: "test",
-          mode: "primary",
-          options: {},
-          permission: [],
-        } as any,
-        system: [],
-        messages: [{ role: "user", content: "Hello" }],
-        tools: {
-          lookup: {
-            description: "Look up a value",
-            inputSchema: jsonSchema({ type: "object", properties: {} }),
+      Effect.gen(function* () {
+        const flags = yield* RuntimeFlags.Service
+        return yield* LLMRequestPrep.prepare({
+          user: {
+            id: MessageID.make("msg_user-test"),
+            sessionID: SessionID.make("ses_test-session-123"),
+            role: "user",
+            time: { created: Date.now() },
+            agent: "test",
+            model: { providerID: ProviderV2.ID.make("azure"), modelID: ModelV2.ID.make("gpt-5.4"), variant: "high" },
           },
-        },
-        provider: { id: "azure", options: { useCompletionUrls: true } } as any,
-        auth: undefined,
-        plugin: {
-          trigger: (_name: string, _input: unknown, output: unknown) => Effect.succeed(output),
-          list: () => Effect.succeed([]),
-          init: () => Effect.void,
-        } as any,
-        flags: { outputTokenMax: 32_000, client: "test" } as any,
-        isWorkflow: false,
-      }),
+          sessionID,
+          model,
+          agent: {
+            name: "test",
+            mode: "primary",
+            options: {},
+            permission: [],
+          },
+          system: [],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {
+            lookup: {
+              description: "Look up a value",
+              inputSchema: jsonSchema({ type: "object", properties: {} }),
+            },
+          },
+          provider: {
+            id: ProviderV2.ID.make("azure"),
+            name: "",
+            source: "custom",
+            env: [],
+            options: { useCompletionUrls: true },
+            models: {},
+          },
+          auth: undefined,
+          plugin,
+          flags,
+          isWorkflow: false,
+        })
+      }).pipe(Effect.provide(RuntimeFlags.layer({ outputTokenMax: 32_000, client: "test" }))),
     )
     expect(result.params.options.reasoningEffort).toBe("high")
     expect(result.params.options.reasoningSummary).toBeUndefined()
@@ -631,7 +724,7 @@ describe("ProviderTransform.options - gpt-5 reasoningEffort", () => {
   const sessionID = "test-session-123"
 
   const createModel = (apiId: string) =>
-    ({
+    fixtureModel({
       id: `azure/${apiId}`,
       providerID: "azure",
       api: {
@@ -673,7 +766,7 @@ describe("ProviderTransform.options - gpt-5 reasoningEffort", () => {
       status: "active",
       options: {},
       headers: {},
-    }) as any
+    })
 
   test("gpt-5-chat should NOT set reasoningEffort", () => {
     const result = ProviderTransform.options({
@@ -720,7 +813,7 @@ describe("ProviderTransform.options - gateway", () => {
   const sessionID = "test-session-123"
 
   const createModel = (id: string) =>
-    ({
+    fixtureModel({
       id,
       providerID: "vercel",
       api: {
@@ -751,7 +844,7 @@ describe("ProviderTransform.options - gateway", () => {
       options: {},
       headers: {},
       release_date: "2024-01-01",
-    }) as any
+    })
 
   test("puts gateway defaults under gateway key", () => {
     const model = createModel("anthropic/claude-sonnet-4")
@@ -766,7 +859,7 @@ describe("ProviderTransform.options - gateway", () => {
 
 describe("ProviderTransform.providerOptions", () => {
   const createModel = (overrides: Partial<any> = {}) =>
-    ({
+    fixtureModel({
       id: "test/test-model",
       providerID: "test",
       api: {
@@ -798,7 +891,7 @@ describe("ProviderTransform.providerOptions", () => {
       headers: {},
       release_date: "2024-01-01",
       ...overrides,
-    }) as any
+    })
 
   test("uses sdk key for non-gateway models", () => {
     const model = createModel({
@@ -1084,7 +1177,7 @@ describe("ProviderTransform.providerOptions", () => {
         apiKey: "test-key",
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
-            sent = { headers: new Headers(args[1]?.headers), body: JSON.parse(String(args[1]?.body)) }
+            sent = { headers: new Headers(args[1]?.headers), body: requestJson(args[1]) }
             return Response.json({
               type: "message",
               id: "msg_1",
@@ -1126,9 +1219,9 @@ describe("ProviderTransform.providerOptions", () => {
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
             sent = {
-              url: String(args[0]),
+              url: requestUrl(args[0]),
               headers: new Headers(args[1]?.headers),
-              body: JSON.parse(String(args[1]?.body)),
+              body: requestJson(args[1]),
             }
             return Response.json({
               type: "message",
@@ -1170,7 +1263,7 @@ describe("ProviderTransform.providerOptions", () => {
         region: "us-east-1",
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
-            body = JSON.parse(String(args[1]?.body))
+            body = requestJson(args[1])
             return Response.json({
               output: { message: { role: "assistant", content: [{ text: "ok" }] } },
               stopReason: "end_turn",
@@ -1301,7 +1394,7 @@ describe("ProviderTransform.providerOptions", () => {
     ).toEqual({
       gateway: { order: ["vertex", "anthropic"] },
       anthropic: { thinking: { type: "enabled", budgetTokens: 12_000 } },
-    } as any)
+    })
   })
 
   test("falls back to gateway key when model id has no provider slug", () => {
@@ -1368,12 +1461,12 @@ describe("ProviderTransform.providerOptions", () => {
 
 describe("ProviderTransform.schema - gemini array items", () => {
   test("adds missing items for array properties", () => {
-    const geminiModel = {
+    const geminiModel = fixtureModel({
       providerID: "google",
       api: {
         id: "gemini-3-pro",
       },
-    } as any
+    })
 
     const schema = {
       type: "object",
@@ -1381,22 +1474,22 @@ describe("ProviderTransform.schema - gemini array items", () => {
         nodes: { type: "array" },
         edges: { type: "array", items: { type: "string" } },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.nodes.items).toBeDefined()
-    expect(result.properties.edges.items.type).toBe("string")
+    expect(at(result, "properties", "nodes", "items")).toBeDefined()
+    expect(at(result, "properties", "edges", "items", "type")).toBe("string")
   })
 })
 
 describe("ProviderTransform.schema - gemini nested array items", () => {
-  const geminiModel = {
+  const geminiModel = fixtureModel({
     providerID: "google",
     api: {
       id: "gemini-3-pro",
     },
-  } as any
+  })
 
   test("adds type to 2D array with empty inner items", () => {
     const schema = {
@@ -1410,12 +1503,12 @@ describe("ProviderTransform.schema - gemini nested array items", () => {
           },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
     // Inner items should have a default type
-    expect(result.properties.values.items.items.type).toBe("string")
+    expect(at(result, "properties", "values", "items", "items", "type")).toBe("string")
   })
 
   test("adds items and type to 2D array with missing inner items", () => {
@@ -1427,12 +1520,12 @@ describe("ProviderTransform.schema - gemini nested array items", () => {
           items: { type: "array" }, // No items at all
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.data.items.items).toBeDefined()
-    expect(result.properties.data.items.items.type).toBe("string")
+    expect(at(result, "properties", "data", "items", "items")).toBeDefined()
+    expect(at(result, "properties", "data", "items", "items", "type")).toBe("string")
   })
 
   test("handles deeply nested arrays (3D)", () => {
@@ -1450,12 +1543,12 @@ describe("ProviderTransform.schema - gemini nested array items", () => {
           },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.matrix.items.items.items).toBeDefined()
-    expect(result.properties.matrix.items.items.items.type).toBe("string")
+    expect(at(result, "properties", "matrix", "items", "items", "items")).toBeDefined()
+    expect(at(result, "properties", "matrix", "items", "items", "items", "type")).toBe("string")
   })
 
   test("preserves existing item types in nested arrays", () => {
@@ -1470,12 +1563,12 @@ describe("ProviderTransform.schema - gemini nested array items", () => {
           },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
     // Should preserve the explicit type
-    expect(result.properties.numbers.items.items.type).toBe("number")
+    expect(at(result, "properties", "numbers", "items", "items", "type")).toBe("number")
   })
 
   test("handles mixed nested structures with objects and arrays", () => {
@@ -1495,11 +1588,11 @@ describe("ProviderTransform.schema - gemini nested array items", () => {
           },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.spreadsheetData.properties.rows.items.items.type).toBe("string")
+    expect(at(result, "properties", "spreadsheetData", "properties", "rows", "items", "items", "type")).toBe("string")
   })
 })
 
@@ -1510,12 +1603,12 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
   // @ai-sdk/google rewrites these, but OpenAI-compatible transports such as
   // GitHub Copilot (proxying to Gemini) forward them verbatim and the backend
   // rejects the array form.
-  const geminiModel = {
+  const geminiModel = fixtureModel({
     providerID: "google",
     api: {
       id: "gemini-3-pro",
     },
-  } as any
+  })
 
   test("splits a multi-type array into anyOf and drops the type array", () => {
     const schema = {
@@ -1523,15 +1616,15 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       properties: {
         status: { type: ["number", "string"], description: "status filter" },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.status.type).toBeUndefined()
-    expect(result.properties.status.anyOf).toEqual([{ type: "number" }, { type: "string" }])
-    expect(result.properties.status.nullable).toBeUndefined()
+    expect(at(result, "properties", "status", "type")).toBeUndefined()
+    expect(at(result, "properties", "status", "anyOf")).toEqual([{ type: "number" }, { type: "string" }])
+    expect(at(result, "properties", "status", "nullable")).toBeUndefined()
     // Sibling keywords stay alongside the generated anyOf.
-    expect(result.properties.status.description).toBe("status filter")
+    expect(at(result, "properties", "status", "description")).toBe("status filter")
   })
 
   test("lifts null into nullable for a nullable type array", () => {
@@ -1540,13 +1633,13 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       properties: {
         maybe: { type: ["string", "null"], description: "nullable string" },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.maybe.type).toBeUndefined()
-    expect(result.properties.maybe.anyOf).toEqual([{ type: "string" }])
-    expect(result.properties.maybe.nullable).toBe(true)
+    expect(at(result, "properties", "maybe", "type")).toBeUndefined()
+    expect(at(result, "properties", "maybe", "anyOf")).toEqual([{ type: "string" }])
+    expect(at(result, "properties", "maybe", "nullable")).toBe(true)
   })
 
   test("collapses an all-null type array to type null", () => {
@@ -1555,22 +1648,22 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       properties: {
         nothing: { type: ["null"] },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.nothing.type).toBe("null")
-    expect(result.properties.nothing.anyOf).toBeUndefined()
+    expect(at(result, "properties", "nothing", "type")).toBe("null")
+    expect(at(result, "properties", "nothing", "anyOf")).toBeUndefined()
   })
 
   test("rewrites type arrays for gemini served through github-copilot", () => {
-    const copilotGeminiModel = {
+    const copilotGeminiModel = fixtureModel({
       providerID: "github-copilot",
       api: {
         id: "gemini-3.5-flash",
         npm: "@ai-sdk/github-copilot",
       },
-    } as any
+    })
 
     const schema = {
       type: "object",
@@ -1580,23 +1673,23 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       },
       required: ["hook_id"],
       additionalProperties: false,
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(copilotGeminiModel, schema) as any
+    const result = ProviderTransform.schema(copilotGeminiModel, schema)
 
-    expect(result.properties.status.anyOf).toEqual([{ type: "number" }, { type: "string" }])
-    expect(result.properties.status.type).toBeUndefined()
-    expect(result.properties.hook_id.type).toBe("number")
+    expect(at(result, "properties", "status", "anyOf")).toEqual([{ type: "number" }, { type: "string" }])
+    expect(at(result, "properties", "status", "type")).toBeUndefined()
+    expect(at(result, "properties", "hook_id", "type")).toBe("number")
   })
 })
 
 describe("ProviderTransform.schema - gemini combiner nodes", () => {
-  const geminiModel = {
+  const geminiModel = fixtureModel({
     providerID: "google",
     api: {
       id: "gemini-3-pro",
     },
-  } as any
+  })
 
   const walk = (node: any, cb: (node: any, path: (string | number)[]) => void, path: (string | number)[] = []) => {
     if (node === null || typeof node !== "object") {
@@ -1611,7 +1704,7 @@ describe("ProviderTransform.schema - gemini combiner nodes", () => {
   }
 
   test("keeps edits.items.anyOf without adding type", () => {
-    const schema = {
+    const schema: JSONSchema7 = {
       type: "object",
       properties: {
         edits: {
@@ -1640,16 +1733,16 @@ describe("ProviderTransform.schema - gemini combiner nodes", () => {
         },
       },
       required: ["edits"],
-    } as any
+    }
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(Array.isArray(result.properties.edits.items.anyOf)).toBe(true)
-    expect(result.properties.edits.items.type).toBeUndefined()
+    expect(Array.isArray(at(result, "properties", "edits", "items", "anyOf"))).toBe(true)
+    expect(at(result, "properties", "edits", "items", "type")).toBeUndefined()
   })
 
   test("does not add sibling keys to combiner nodes during sanitize", () => {
-    const schema = {
+    const schema: JSONSchema7 = {
       type: "object",
       properties: {
         edits: {
@@ -1674,9 +1767,9 @@ describe("ProviderTransform.schema - gemini combiner nodes", () => {
           ],
         },
       },
-    } as any
+    }
     const input = JSON.parse(JSON.stringify(schema))
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
     walk(result, (node, path) => {
       const hasCombiner = Array.isArray(node.anyOf) || Array.isArray(node.oneOf) || Array.isArray(node.allOf)
@@ -1691,12 +1784,12 @@ describe("ProviderTransform.schema - gemini combiner nodes", () => {
 })
 
 describe("ProviderTransform.schema - gemini non-object properties removal", () => {
-  const geminiModel = {
+  const geminiModel = fixtureModel({
     providerID: "google",
     api: {
       id: "gemini-3-pro",
     },
-  } as any
+  })
 
   test("removes properties from non-object types", () => {
     const schema = {
@@ -1707,12 +1800,12 @@ describe("ProviderTransform.schema - gemini non-object properties removal", () =
           properties: { invalid: { type: "string" } },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.data.type).toBe("string")
-    expect(result.properties.data.properties).toBeUndefined()
+    expect(at(result, "properties", "data", "type")).toBe("string")
+    expect(at(result, "properties", "data", "properties")).toBeUndefined()
   })
 
   test("removes required from non-object types", () => {
@@ -1725,12 +1818,12 @@ describe("ProviderTransform.schema - gemini non-object properties removal", () =
           required: ["invalid"],
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.data.type).toBe("array")
-    expect(result.properties.data.required).toBeUndefined()
+    expect(at(result, "properties", "data", "type")).toBe("array")
+    expect(at(result, "properties", "data", "required")).toBeUndefined()
   })
 
   test("removes properties and required from nested non-object types", () => {
@@ -1748,13 +1841,13 @@ describe("ProviderTransform.schema - gemini non-object properties removal", () =
           },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.outer.properties.inner.type).toBe("number")
-    expect(result.properties.outer.properties.inner.properties).toBeUndefined()
-    expect(result.properties.outer.properties.inner.required).toBeUndefined()
+    expect(at(result, "properties", "outer", "properties", "inner", "type")).toBe("number")
+    expect(at(result, "properties", "outer", "properties", "inner", "properties")).toBeUndefined()
+    expect(at(result, "properties", "outer", "properties", "inner", "required")).toBeUndefined()
   })
 
   test("keeps properties and required on object types", () => {
@@ -1767,22 +1860,22 @@ describe("ProviderTransform.schema - gemini non-object properties removal", () =
           required: ["name"],
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(geminiModel, schema) as any
+    const result = ProviderTransform.schema(geminiModel, schema)
 
-    expect(result.properties.data.type).toBe("object")
-    expect(result.properties.data.properties).toBeDefined()
-    expect(result.properties.data.required).toEqual(["name"])
+    expect(at(result, "properties", "data", "type")).toBe("object")
+    expect(at(result, "properties", "data", "properties")).toBeDefined()
+    expect(at(result, "properties", "data", "required")).toEqual(["name"])
   })
 
   test("does not affect non-gemini providers", () => {
-    const openaiModel = {
+    const openaiModel = fixtureModel({
       providerID: "openai",
       api: {
         id: "gpt-4",
       },
-    } as any
+    })
 
     const schema = {
       type: "object",
@@ -1792,22 +1885,22 @@ describe("ProviderTransform.schema - gemini non-object properties removal", () =
           properties: { invalid: { type: "string" } },
         },
       },
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(openaiModel, schema) as any
+    const result = ProviderTransform.schema(openaiModel, schema)
 
-    expect(result.properties.data.properties).toBeDefined()
+    expect(at(result, "properties", "data", "properties")).toBeDefined()
   })
 })
 
 describe("ProviderTransform.schema - openai supported schema subset", () => {
-  const openaiModel = {
+  const openaiModel = fixtureModel({
     providerID: "openai",
     api: {
       id: "gpt-4.1",
       npm: "@ai-sdk/openai",
     },
-  } as any
+  })
 
   test("removes unsupported JSON Schema keywords recursively", () => {
     const result = ProviderTransform.schema(openaiModel, {
@@ -1865,7 +1958,7 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
       },
       required: ["query"],
       additionalProperties: false,
-    } as any) as any
+    } satisfies JSONSchema7)
 
     expect(result).toEqual({
       type: "object",
@@ -1926,9 +2019,9 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
           minimum: 0,
         },
       },
-    } as any) as any
+    } satisfies JSONSchema7)
 
-    expect(result.properties.value).toEqual({
+    expect(at(result, "properties", "value")).toEqual({
       $ref: "#/$defs/Value",
       description: "Referenced value",
     })
@@ -1945,13 +2038,13 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
 
   test("does not sanitize non-openai providers", () => {
     const result = ProviderTransform.schema(
-      {
+      fixtureModel({
         providerID: "anthropic",
         api: {
           id: "claude-sonnet-4",
           npm: "@ai-sdk/anthropic",
         },
-      } as any,
+      }),
       {
         type: "object",
         properties: {
@@ -1960,10 +2053,10 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
             pattern: "^https://",
           },
         },
-      } as any,
-    ) as any
+      } satisfies JSONSchema7,
+    )
 
-    expect(result.properties.query.pattern).toBe("^https://")
+    expect(at(result, "properties", "query", "pattern")).toBe("^https://")
   })
 
   test.each([
@@ -1973,13 +2066,13 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
   ])("sanitizes %s models using %s", (providerID, npm) => {
     expect(
       ProviderTransform.schema(
-        {
+        fixtureModel({
           providerID,
           api: {
             id: "custom-model",
             npm,
           },
-        } as any,
+        }),
         {
           type: "object",
           properties: {
@@ -1988,7 +2081,7 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
               pattern: "^https://",
             },
           },
-        } as any,
+        } satisfies JSONSchema7,
       ),
     ).toEqual({
       type: "object",
@@ -2002,12 +2095,12 @@ describe("ProviderTransform.schema - openai supported schema subset", () => {
 })
 
 describe("ProviderTransform.schema - moonshot $ref siblings", () => {
-  const moonshotModel = {
+  const moonshotModel = fixtureModel({
     providerID: "moonshotai",
     api: {
       id: "kimi-k2",
     },
-  } as any
+  })
 
   test("removes sibling descriptions from referenced tool parameter schemas", () => {
     const schema = {
@@ -2074,25 +2167,25 @@ describe("ProviderTransform.schema - moonshot $ref siblings", () => {
       },
       description: "Request message for GenerateVariants.",
       additionalProperties: false,
-    } as any
+    } satisfies JSONSchema7
 
-    const result = ProviderTransform.schema(moonshotModel, schema) as any
+    const result = ProviderTransform.schema(moonshotModel, schema)
 
-    expect(result.properties.variantOptions).toEqual({
+    expect(at(result, "properties", "variantOptions")).toEqual({
       $ref: "#/$defs/VariantOptions",
     })
-    expect(result.$defs.VariantOptions.description).toBe(schema.$defs.VariantOptions.description)
+    expect(at(result, "$defs", "VariantOptions", "description")).toBe(schema.$defs.VariantOptions.description)
   })
 
   test("also runs for kimi models outside the moonshot provider", () => {
     const result = ProviderTransform.schema(
-      {
+      fixtureModel({
         providerID: "openrouter",
         name: "Kimi K2",
         api: {
           id: "moonshotai/kimi-k2",
         },
-      } as any,
+      }),
       {
         type: "object",
         properties: {
@@ -2107,10 +2200,10 @@ describe("ProviderTransform.schema - moonshot $ref siblings", () => {
             type: "object",
           },
         },
-      } as any,
-    ) as any
+      } satisfies JSONSchema7,
+    )
 
-    expect(result.properties.value).toEqual({
+    expect(at(result, "properties", "value")).toEqual({
       $ref: "#/$defs/Value",
     })
   })
@@ -2137,9 +2230,9 @@ describe("ProviderTransform.schema - moonshot $ref siblings", () => {
           },
         },
       },
-    } as any) as any
+    } satisfies JSONSchema7)
 
-    expect(result.properties.codeSpec.properties.accessibility.properties.renderedSize.items).toEqual({
+    expect(at(result, "properties", "codeSpec", "properties", "accessibility", "properties", "renderedSize", "items")).toEqual({
       type: "number",
     })
   })
@@ -2173,8 +2266,8 @@ describe("ProviderTransform.message - Mistral tool call IDs", () => {
               },
             ],
           },
-        ] as any,
-        {
+        ],
+        fixtureModel({
           id: `custom/${id}`,
           providerID: "custom",
           api: {
@@ -2182,7 +2275,7 @@ describe("ProviderTransform.message - Mistral tool call IDs", () => {
             url: "https://example.com/v1",
             npm: "@ai-sdk/openai-compatible",
           },
-        } as any,
+        }),
         {},
       )
 
@@ -2209,7 +2302,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(
       msgs,
@@ -2271,7 +2364,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
           { type: "text", text: "Answer" },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(
       msgs,
@@ -2319,7 +2412,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
 })
 
 describe("ProviderTransform.message - surrogate sanitization", () => {
-  const model = {
+  const model = fixtureModel({
     id: "test/test-model",
     providerID: "test",
     api: {
@@ -2342,7 +2435,7 @@ describe("ProviderTransform.message - surrogate sanitization", () => {
     status: "active",
     options: {},
     headers: {},
-  } as any
+  })
 
   test("replaces lone surrogates in model-visible text", () => {
     const lone = "\uD83D"
@@ -2410,28 +2503,28 @@ describe("ProviderTransform.message - surrogate sanitization", () => {
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    const result = ProviderTransform.message(msgs, model, {})
 
     expect(result[0].content).toBe(expected("system"))
     expect(result[1].content).toBe(expected("user string"))
-    expect(result[2].content[0].text).toBe(expected("user text"))
+    expect(at(result, 2, "content", 0, "text")).toBe(expected("user text"))
     expect(result[3].content).toBe(expected("assistant string"))
-    expect(result[4].content[0].text).toBe(expected("assistant text"))
-    expect(result[4].content[1].text).toBe(expected("assistant reasoning"))
-    expect(result[4].content[3].output.value).toBe(expected("assistant tool text"))
-    expect(result[4].content[4].output.value).toBe(expected("assistant tool error"))
-    expect(result[4].content[5].output.value[0].text).toBe(expected("assistant tool content"))
-    expect(result[5].content[0].output.value).toBe(expected("tool text"))
-    expect(result[5].content[1].output.value).toBe(expected("tool error"))
-    expect(result[5].content[2].output.value[0].text).toBe(expected("tool content"))
+    expect(at(result, 4, "content", 0, "text")).toBe(expected("assistant text"))
+    expect(at(result, 4, "content", 1, "text")).toBe(expected("assistant reasoning"))
+    expect(at(result, 4, "content", 3, "output", "value")).toBe(expected("assistant tool text"))
+    expect(at(result, 4, "content", 4, "output", "value")).toBe(expected("assistant tool error"))
+    expect(at(result, 4, "content", 5, "output", "value", 0, "text")).toBe(expected("assistant tool content"))
+    expect(at(result, 5, "content", 0, "output", "value")).toBe(expected("tool text"))
+    expect(at(result, 5, "content", 1, "output", "value")).toBe(expected("tool error"))
+    expect(at(result, 5, "content", 2, "output", "value", 0, "text")).toBe(expected("tool content"))
     expect(result[2].content[1]).toEqual({ type: "image", image: "data:image/png;base64,abcd" })
   })
 })
 
 describe("ProviderTransform.message - empty image handling", () => {
-  const mockModel = {
+  const mockModel = fixtureModel({
     id: "anthropic/claude-3-5-sonnet",
     providerID: "anthropic",
     api: {
@@ -2461,7 +2554,7 @@ describe("ProviderTransform.message - empty image handling", () => {
     status: "active",
     options: {},
     headers: {},
-  } as any
+  })
 
   test("should replace empty base64 image with error text", () => {
     const msgs = [
@@ -2472,7 +2565,7 @@ describe("ProviderTransform.message - empty image handling", () => {
           { type: "image", image: "data:image/png;base64," },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, mockModel, {})
 
@@ -2496,7 +2589,7 @@ describe("ProviderTransform.message - empty image handling", () => {
           { type: "image", image: `data:image/png;base64,${validBase64}` },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, mockModel, {})
 
@@ -2518,7 +2611,7 @@ describe("ProviderTransform.message - empty image handling", () => {
           { type: "image", image: "data:image/jpeg;base64," },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, mockModel, {})
 
@@ -2534,7 +2627,7 @@ describe("ProviderTransform.message - empty image handling", () => {
 })
 
 describe("ProviderTransform.message - anthropic empty content filtering", () => {
-  const anthropicModel = {
+  const anthropicModel = fixtureModel({
     id: "anthropic/claude-3-5-sonnet",
     providerID: "anthropic",
     api: {
@@ -2564,14 +2657,14 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     status: "active",
     options: {},
     headers: {},
-  } as any
+  })
 
   test("filters out messages with empty string content", () => {
     const msgs = [
       { role: "user", content: "Hello" },
       { role: "assistant", content: "" },
       { role: "user", content: "World" },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2590,7 +2683,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "" },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2609,7 +2702,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "reasoning", text: "" },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2629,7 +2722,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         ],
       },
       { role: "user", content: "World" },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2647,7 +2740,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "tool-call", toolCallId: "123", toolName: "bash", input: { command: "ls" } },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2671,7 +2764,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "Result" },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
@@ -2682,7 +2775,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
   })
 
   test("filters empty content for bedrock provider", () => {
-    const bedrockModel = {
+    const bedrockModel = fixtureModel({
       ...anthropicModel,
       id: "amazon-bedrock/anthropic.claude-opus-4-6",
       providerID: "amazon-bedrock",
@@ -2691,7 +2784,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         url: "https://bedrock-runtime.us-east-1.amazonaws.com",
         npm: "@ai-sdk/amazon-bedrock",
       },
-    }
+    })
 
     const msgs = [
       { role: "user", content: "Hello" },
@@ -2703,7 +2796,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "Answer" },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, bedrockModel, {})
 
@@ -2714,7 +2807,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
   })
 
   describe("Bedrock reasoning replay", () => {
-    const model = {
+    const model = fixtureModel({
       ...anthropicModel,
       id: "amazon-bedrock/anthropic.claude-opus-4-6",
       providerID: "amazon-bedrock",
@@ -2723,13 +2816,13 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         url: "https://bedrock-runtime.us-east-1.amazonaws.com",
         npm: "@ai-sdk/amazon-bedrock",
       },
-    }
+    })
 
     for (const cached of [false, true]) {
       test(`omits unsigned reasoning before SDK conversion (caching: ${cached})`, async () => {
         const selected = cached
           ? model
-          : { ...model, id: "amazon-bedrock/openai.gpt-oss-120b", api: { ...model.api, id: "openai.gpt-oss-120b" } }
+          : fixtureModel({ ...model, id: "amazon-bedrock/openai.gpt-oss-120b", api: { ...model.api, id: "openai.gpt-oss-120b" } })
         const messages = ProviderTransform.message(
           [
             { role: "user", content: "Think" },
@@ -2753,7 +2846,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           region: "us-east-1",
           fetch: Object.assign(
             async (...args: Parameters<typeof fetch>) => {
-              const body = JSON.parse(String(args[1]?.body))
+              const body = requestJson(args[1])
               expect(body.messages).toEqual([
                 { role: "user", content: [{ text: "Think" }] },
                 {
@@ -2789,7 +2882,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
                 content: [{ type: "reasoning", text: "", providerOptions: { [namespace]: { [field]: "opaque" } } }],
               },
             ],
-            namespace === "custom-bedrock" ? { ...model, providerID: namespace } : model,
+            namespace === "custom-bedrock" ? fixtureModel({ ...model, providerID: namespace }) : model,
             {},
           )
           expect(result).toHaveLength(1)
@@ -2842,7 +2935,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
   })
 
   test("does not filter for non-anthropic providers", () => {
-    const openaiModel = {
+    const openaiModel = fixtureModel({
       ...anthropicModel,
       providerID: "openai",
       api: {
@@ -2850,7 +2943,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         url: "https://api.openai.com",
         npm: "@ai-sdk/openai",
       },
-    }
+    })
 
     const msgs = [
       { role: "assistant", content: "" },
@@ -2858,7 +2951,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         role: "assistant",
         content: [{ type: "text", text: "" }],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, openaiModel, {})
 
@@ -2877,9 +2970,9 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "tool-call", toolCallId: "toolu_2", toolName: "glob", input: { pattern: "**/*.pdf" } },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, anthropicModel, {}) as any[]
+    const result = ProviderTransform.message(msgs, anthropicModel, {})
 
     expect(result).toHaveLength(1)
     expect(result[0].content).toMatchObject([
@@ -2891,7 +2984,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 })
 
 describe("ProviderTransform.message - strip openai metadata when store=false", () => {
-  const openaiModel = {
+  const openaiModel = fixtureModel({
     id: "openai/gpt-5",
     providerID: "openai",
     api: {
@@ -2914,7 +3007,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
     status: "active",
     options: {},
     headers: {},
-  } as any
+  })
 
   test("strips OpenAI itemId and preserves reasoningEncryptedContent when store=false", () => {
     const msgs = [
@@ -2942,21 +3035,21 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, openaiModel, { store: false })
 
     expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(partOptions(result[0], 1)?.openai?.itemId).toBeUndefined()
   })
 
   test("uses the SDK package namespace rather than provider ID", () => {
-    const zenModel = {
+    const zenModel = fixtureModel({
       ...openaiModel,
       providerID: "zen",
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -2982,14 +3075,14 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, zenModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, zenModel, { store: false })
 
     expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(partOptions(result[0], 1)?.openai?.itemId).toBeUndefined()
   })
 
   test("preserves other OpenAI options", () => {
@@ -3009,16 +3102,16 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, openaiModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.openai?.otherOption).toBe("value")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.otherOption).toBe("value")
   })
 
   test("strips Azure itemId from the Azure namespace", () => {
-    const azureModel = {
+    const azureModel = fixtureModel({
       ...openaiModel,
       providerID: "azure",
       api: {
@@ -3026,7 +3119,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://example.openai.azure.com",
         npm: "@ai-sdk/azure",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3041,17 +3134,17 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, azureModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, azureModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.azure?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.azure?.otherOption).toBe("value")
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_openai")
+    expect(partOptions(result[0], 0)?.azure?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.azure?.otherOption).toBe("value")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_openai")
   })
 
   test("strips Bedrock Mantle itemId from the OpenAI namespace", () => {
-    const mantleModel = {
+    const mantleModel = fixtureModel({
       ...openaiModel,
       providerID: "amazon-bedrock",
       api: {
@@ -3059,7 +3152,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://bedrock-mantle.us-east-2.api.aws/openai/v1",
         npm: "@ai-sdk/amazon-bedrock/mantle",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3074,18 +3167,18 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, mantleModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, mantleModel, { store: false })
 
     expect(result[0].providerOptions?.openai?.itemId).toBeUndefined()
     expect(result[0].providerOptions?.openai?.otherOption).toBe("root-value")
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.openai?.reasoningEncryptedContent).toBe("encrypted")
   })
 
   test("strips GitHub Copilot itemId from the copilot namespace, preserving other copilot options", () => {
-    const copilotModel = {
+    const copilotModel = fixtureModel({
       ...openaiModel,
       id: "github-copilot/gpt-5.5",
       providerID: "github-copilot",
@@ -3094,7 +3187,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.githubcopilot.com",
         npm: "@ai-sdk/github-copilot",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3119,18 +3212,18 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, copilotModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, copilotModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.copilot?.itemId).toBeUndefined()
-    expect(result[0].content[0].providerOptions?.copilot?.reasoningEncryptedContent).toBe("encrypted")
-    expect(result[0].content[1].providerOptions?.copilot?.itemId).toBeUndefined()
-    expect(result[0].content[1].providerOptions?.copilot?.reasoningEffort).toBe("medium")
+    expect(partOptions(result[0], 0)?.copilot?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 0)?.copilot?.reasoningEncryptedContent).toBe("encrypted")
+    expect(partOptions(result[0], 1)?.copilot?.itemId).toBeUndefined()
+    expect(partOptions(result[0], 1)?.copilot?.reasoningEffort).toBe("medium")
   })
 
   test("leaves a stray openai namespace on a Copilot model untouched, since Copilot's Responses model only reads the copilot namespace", () => {
-    const copilotModel = {
+    const copilotModel = fixtureModel({
       ...openaiModel,
       id: "github-copilot/gpt-5.5",
       providerID: "github-copilot",
@@ -3139,7 +3232,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.githubcopilot.com",
         npm: "@ai-sdk/github-copilot",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3153,11 +3246,11 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, copilotModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, copilotModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_456")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_456")
   })
 
   test("preserves metadata for openai package when store is true", () => {
@@ -3176,16 +3269,16 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     // openai package preserves itemId regardless of store value
-    const result = ProviderTransform.message(msgs, openaiModel, { store: true }) as any[]
+    const result = ProviderTransform.message(msgs, openaiModel, { store: true })
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_123")
   })
 
   test("preserves metadata for non-openai packages when store is false", () => {
-    const anthropicModel = {
+    const anthropicModel = fixtureModel({
       ...openaiModel,
       providerID: "anthropic",
       api: {
@@ -3193,7 +3286,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.anthropic.com",
         npm: "@ai-sdk/anthropic",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3209,16 +3302,16 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     // store=false preserves metadata for non-openai packages
-    const result = ProviderTransform.message(msgs, anthropicModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, anthropicModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_123")
   })
 
   test("preserves metadata using providerID key when store is false", () => {
-    const opencodeModel = {
+    const opencodeModel = fixtureModel({
       ...openaiModel,
       providerID: "opencode",
       api: {
@@ -3226,7 +3319,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.opencode.ai",
         npm: "@ai-sdk/openai-compatible",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3243,16 +3336,16 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, opencodeModel, { store: false })
 
-    expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_123")
-    expect(result[0].content[0].providerOptions?.opencode?.otherOption).toBe("value")
+    expect(partOptions(result[0], 0)?.opencode?.itemId).toBe("msg_123")
+    expect(partOptions(result[0], 0)?.opencode?.otherOption).toBe("value")
   })
 
   test("preserves itemId across all providerOptions keys", () => {
-    const opencodeModel = {
+    const opencodeModel = fixtureModel({
       ...openaiModel,
       providerID: "opencode",
       api: {
@@ -3260,7 +3353,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.opencode.ai",
         npm: "@ai-sdk/openai-compatible",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3281,20 +3374,20 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
+    const result = ProviderTransform.message(msgs, opencodeModel, { store: false })
 
     expect(result[0].providerOptions?.openai?.itemId).toBe("msg_root")
     expect(result[0].providerOptions?.opencode?.itemId).toBe("msg_opencode")
     expect(result[0].providerOptions?.extra?.itemId).toBe("msg_extra")
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_openai_part")
-    expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_opencode_part")
-    expect(result[0].content[0].providerOptions?.extra?.itemId).toBe("msg_extra_part")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_openai_part")
+    expect(partOptions(result[0], 0)?.opencode?.itemId).toBe("msg_opencode_part")
+    expect(partOptions(result[0], 0)?.extra?.itemId).toBe("msg_extra_part")
   })
 
   test("does not strip metadata for non-openai packages when store is not false", () => {
-    const anthropicModel = {
+    const anthropicModel = fixtureModel({
       ...openaiModel,
       providerID: "anthropic",
       api: {
@@ -3302,7 +3395,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
         url: "https://api.anthropic.com",
         npm: "@ai-sdk/anthropic",
       },
-    }
+    })
     const msgs = [
       {
         role: "assistant",
@@ -3318,17 +3411,17 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, anthropicModel, {}) as any[]
+    const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(partOptions(result[0], 0)?.openai?.itemId).toBe("msg_123")
   })
 })
 
 describe("ProviderTransform.message - providerOptions key remapping", () => {
   const createModel = (providerID: string, npm: string) =>
-    ({
+    fixtureModel({
       id: `${providerID}/test-model`,
       providerID,
       api: {
@@ -3351,7 +3444,7 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
       status: "active",
       options: {},
       headers: {},
-    }) as any
+    })
 
   test("azure keeps 'azure' key and does not remap to 'openai'", () => {
     const model = createModel("azure", "@ai-sdk/azure")
@@ -3363,7 +3456,7 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
           azure: { someOption: "value" },
         },
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, model, {})
 
@@ -3389,15 +3482,15 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
           "azure-cognitive-services": { someOption: "value" },
         },
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
-    const part = result[0].content[0] as any
+    const result = ProviderTransform.message(msgs, model, {})
+    const partProviderOptions = partOptions(result[0], 0)
 
     expect(result[0].providerOptions?.azure).toEqual({ someOption: "value" })
     expect(result[0].providerOptions?.["azure-cognitive-services"]).toBeUndefined()
-    expect(part.providerOptions?.azure).toEqual({ part: true })
-    expect(part.providerOptions?.["azure-cognitive-services"]).toBeUndefined()
+    expect(partProviderOptions?.azure).toEqual({ part: true })
+    expect(partProviderOptions?.["azure-cognitive-services"]).toBeUndefined()
   })
 
   test("copilot remaps providerID to 'copilot' key", () => {
@@ -3410,7 +3503,7 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
           copilot: { someOption: "value" },
         },
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, model, {})
 
@@ -3428,7 +3521,7 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
           "my-bedrock": { someOption: "value" },
         },
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, model, {})
 
@@ -3439,7 +3532,7 @@ describe("ProviderTransform.message - providerOptions key remapping", () => {
 
 describe("ProviderTransform.message - claude w/bedrock custom inference profile", () => {
   test("adds cachePoint", () => {
-    const model = {
+    const model = fixtureModel({
       id: "amazon-bedrock/custom-claude-sonnet-4.5",
       providerID: "amazon-bedrock",
       api: {
@@ -3451,14 +3544,14 @@ describe("ProviderTransform.message - claude w/bedrock custom inference profile"
       capabilities: {},
       options: {},
       headers: {},
-    } as any
+    })
 
     const msgs = [
       {
         role: "user",
         content: "Hello",
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
     const result = ProviderTransform.message(msgs, model, {})
 
@@ -3474,7 +3567,7 @@ describe("ProviderTransform.message - claude w/bedrock custom inference profile"
 
 describe("ProviderTransform.message - bedrock caching with non-bedrock providerID", () => {
   test("applies cache options at message level when npm package is amazon-bedrock", () => {
-    const model = {
+    const model = fixtureModel({
       id: "aws/us.anthropic.claude-opus-4-6-v1",
       providerID: "aws",
       api: {
@@ -3486,7 +3579,7 @@ describe("ProviderTransform.message - bedrock caching with non-bedrock providerI
       capabilities: {},
       options: {},
       headers: {},
-    } as any
+    })
 
     const msgs = [
       {
@@ -3497,9 +3590,9 @@ describe("ProviderTransform.message - bedrock caching with non-bedrock providerI
         role: "user",
         content: [{ type: "text", text: "Hello" }],
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    const result = ProviderTransform.message(msgs, model, {})
 
     // Cache should be at the message level and not the content-part level
     expect(result[0].providerOptions?.bedrock).toEqual({
@@ -3511,7 +3604,7 @@ describe("ProviderTransform.message - bedrock caching with non-bedrock providerI
 
 describe("ProviderTransform.message - cache control on gateway", () => {
   const createModel = (overrides: Partial<any> = {}) =>
-    ({
+    fixtureModel({
       id: "anthropic/claude-sonnet-4",
       providerID: "vercel",
       api: {
@@ -3535,7 +3628,7 @@ describe("ProviderTransform.message - cache control on gateway", () => {
       options: {},
       headers: {},
       ...overrides,
-    }) as any
+    })
 
   test("gateway does not set cache control for anthropic models", () => {
     const model = createModel()
@@ -3548,9 +3641,9 @@ describe("ProviderTransform.message - cache control on gateway", () => {
         role: "user",
         content: "Hello",
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    const result = ProviderTransform.message(msgs, model, {})
 
     expect(result[0].content).toBe("You are a helpful assistant")
     expect(result[0].providerOptions).toBeUndefined()
@@ -3574,9 +3667,9 @@ describe("ProviderTransform.message - cache control on gateway", () => {
         role: "user",
         content: "Hello",
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    const result = ProviderTransform.message(msgs, model, {})
 
     expect(result[0].providerOptions).toEqual({
       anthropic: {
@@ -3620,9 +3713,9 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     const msgs = [
       { role: "system", content: "You are a helpful assistant" },
       { role: "user", content: "Hello" },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, { cacheControl: { type: "ephemeral" } }) as any[]
+    const result = ProviderTransform.message(msgs, model, { cacheControl: { type: "ephemeral" } })
     expect(result.every((message) => message.providerOptions === undefined)).toBe(true)
   })
 
@@ -3645,9 +3738,9 @@ describe("ProviderTransform.message - cache control on gateway", () => {
         role: "user",
         content: "Hello",
       },
-    ] as any[]
+    ] satisfies ModelMessage[]
 
-    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    const result = ProviderTransform.message(msgs, model, {})
 
     expect(result[0].providerOptions).toEqual({
       anthropic: {
@@ -3687,20 +3780,20 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 describe("ProviderTransform.temperature - Cohere North", () => {
   test("defaults north-mini-code models to 1.0", () => {
     expect(
-      ProviderTransform.temperature({
+      ProviderTransform.temperature(fixtureModel({
         id: "cohere/North-Mini-Code-1-0-latest",
         api: { id: "North-Mini-Code-1-0-latest" },
-      } as any),
+      })),
     ).toBe(1.0)
   })
 })
 
 describe("ProviderTransform sampling defaults - Qwen", () => {
   test.each(["Qwen3.8-27B", "qwen3-coder-30b-a3b-instruct"])('leaves sampling unset for "%s"', (id) => {
-    const model = {
+    const model = fixtureModel({
       id: `custom/${id}`,
       api: { id },
-    } as any
+    })
 
     expect(ProviderTransform.temperature(model)).toBeUndefined()
     expect(ProviderTransform.topP(model)).toBeUndefined()
@@ -3710,16 +3803,16 @@ describe("ProviderTransform sampling defaults - Qwen", () => {
 
 describe("ProviderTransform sampling defaults - Gemini", () => {
   const model = (id: string) =>
-    ({
+    fixtureModel({
       id: `google/${id}`,
       api: { id },
-    }) as any
+    })
 
   const alias = (id: string, apiID: string) =>
-    ({
+    fixtureModel({
       id,
       api: { id: apiID },
-    }) as any
+    })
 
   test.each([
     "gemini-3.5-flash-lite",
@@ -3767,11 +3860,11 @@ describe("ProviderTransform sampling defaults - Gemini", () => {
 
 describe("ProviderTransform sampling defaults - DeepSeek", () => {
   const model = (providerID: string, id: string) =>
-    ({
+    fixtureModel({
       id: `${providerID}/${id}`,
       providerID,
       api: { id },
-    }) as any
+    })
 
   test.each([
     ["deepseek", "deepseek-v4-flash"],
@@ -3797,16 +3890,25 @@ describe("ProviderTransform sampling defaults - DeepSeek", () => {
 })
 
 describe("ProviderTransform.reasoningVariants", () => {
-  const model = (reasoning_options: ModelsDev.Model["reasoning_options"]) => ({ reasoning_options }) as ModelsDev.Model
+  const model = (reasoning_options: ModelsDev.Model["reasoning_options"]): ModelsDev.Model => ({
+    id: ModelsDev.ModelID.make("test-model"),
+    name: "",
+    release_date: "",
+    attachment: false,
+    reasoning: true,
+    tool_call: false,
+    limit: { context: 0, output: 0 },
+    reasoning_options,
+  })
   const target = (npm: string, id = "test-model", family = "") =>
-    ({
+    fixtureModel({
       id,
       providerID: "test",
       family,
       api: { id, npm, url: "" },
       capabilities: { reasoning: true },
       limit: { output: 64_000 },
-    }) as any
+    })
 
   test("respects explicitly empty reasoning options", () => {
     expect(ProviderTransform.reasoningVariants(model([]), target("@ai-sdk/openai"))).toEqual({})
@@ -3867,7 +3969,7 @@ describe("ProviderTransform.reasoningVariants", () => {
     ["merge-gateway-ai-sdk-provider", { reasoningEffort: "high" }],
     ["@ai-sdk/amazon-bedrock", { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } }],
   ])("converts effort for %s", (npm, expected, ...args) => {
-    const id = args[0] as string | undefined
+    const id = typeof args[0] === "string" ? args[0] : undefined
     expect(ProviderTransform.reasoningVariants(model([{ type: "effort", values: ["high"] }]), target(npm, id))).toEqual(
       { high: expected },
     )
@@ -3891,7 +3993,7 @@ describe("ProviderTransform.reasoningVariants", () => {
       region: "us-east-1",
       fetch: Object.assign(
         async (...args: Parameters<typeof fetch>) => {
-          sent.push(JSON.parse(String(args[1]?.body)))
+          sent.push(requestJson(args[1]))
           return Response.json({
             output: { message: { role: "assistant", content: [{ text: "ok" }] } },
             stopReason: "end_turn",
@@ -5944,7 +6046,7 @@ describe("ProviderTransform.variants", () => {
 
 describe("ProviderTransform.smallOptions - gpt-5 chat/search", () => {
   const createModel = (apiId: string) => {
-    const model = {
+    const model = fixtureModel({
       id: `openai/${apiId}`,
       providerID: "openai",
       api: {
@@ -5955,7 +6057,7 @@ describe("ProviderTransform.smallOptions - gpt-5 chat/search", () => {
       capabilities: { reasoning: true },
       limit: { output: 64_000 },
       release_date: "2026-01-01",
-    } as any
+    })
     model.variants = ProviderTransform.variants(model)
     return model
   }
@@ -5998,7 +6100,7 @@ describe("ProviderTransform.smallOptions - gpt-5 chat/search", () => {
 
 test("ProviderTransform.smallOptions preserves the weakest OpenRouter reasoning effort", () => {
   expect(
-    ProviderTransform.smallOptions({
+    ProviderTransform.smallOptions(fixtureModel({
       providerID: "openrouter",
       api: {
         id: "google/gemini-3.5-flash",
@@ -6009,13 +6111,13 @@ test("ProviderTransform.smallOptions preserves the weakest OpenRouter reasoning 
         medium: { reasoning: { effort: "medium" } },
         high: { reasoning: { effort: "high" } },
       },
-    } as any),
+    })),
   ).toEqual({ reasoning: { effort: "low" } })
 })
 
 describe("ProviderTransform.smallOptions - google thinking controls", () => {
   const createGoogleModel = (apiId: string) => {
-    const model = {
+    const model = fixtureModel({
       id: `google/${apiId}`,
       providerID: "google",
       api: {
@@ -6025,7 +6127,7 @@ describe("ProviderTransform.smallOptions - google thinking controls", () => {
       },
       capabilities: { reasoning: true },
       limit: { output: 64_000 },
-    } as any
+    })
     model.variants = ProviderTransform.variants(model)
     return model
   }
@@ -6065,7 +6167,7 @@ describe("ProviderTransform.smallOptions - google thinking controls", () => {
 
 describe("ProviderTransform.providerOptions - ai-gateway-provider", () => {
   const createModel = (overrides: Partial<any> = {}) =>
-    ({
+    fixtureModel({
       id: "cloudflare-ai-gateway/openai/gpt-5.4",
       providerID: "cloudflare-ai-gateway",
       api: {
@@ -6089,7 +6191,7 @@ describe("ProviderTransform.providerOptions - ai-gateway-provider", () => {
       headers: {},
       release_date: "2026-03-05",
       ...overrides,
-    }) as any
+    })
 
   test("routes options under openaiCompatible (the key @ai-sdk/openai-compatible reads)", () => {
     // Regression: previously fell back to providerID="cloudflare-ai-gateway",
@@ -6100,7 +6202,7 @@ describe("ProviderTransform.providerOptions - ai-gateway-provider", () => {
 })
 
 describe("ProviderTransform.providerOptions - merge-gateway-ai-sdk-provider", () => {
-  const model = {
+  const model = fixtureModel({
     id: "merge-gateway/openai/gpt-5.6-sol",
     providerID: "merge-gateway",
     api: {
@@ -6109,7 +6211,7 @@ describe("ProviderTransform.providerOptions - merge-gateway-ai-sdk-provider", ()
       npm: "merge-gateway-ai-sdk-provider",
     },
     capabilities: { reasoning: true },
-  } as any
+  })
 
   test("routes normalized effort under the adapter's mergeGateway key", () => {
     expect(ProviderTransform.providerOptions(model, { reasoningEffort: "high" })).toEqual({
@@ -6120,7 +6222,7 @@ describe("ProviderTransform.providerOptions - merge-gateway-ai-sdk-provider", ()
 
 describe("ProviderTransform.options - kimi family adaptive thinking", () => {
   const createModel = (overrides: Record<string, any> = {}) =>
-    ({
+    fixtureModel({
       id: "moonshotai/kimi-k2-thinking",
       providerID: "moonshotai",
       api: {
@@ -6144,7 +6246,7 @@ describe("ProviderTransform.options - kimi family adaptive thinking", () => {
       options: {},
       headers: {},
       ...overrides,
-    }) as any
+    })
 
   test("uses adaptive thinking with effort instead of budget tokens", () => {
     const result = ProviderTransform.options({ model: createModel(), sessionID: "s1", providerOptions: {} })

@@ -8,6 +8,7 @@ import {
   type DiffRenderable,
   type ScrollBoxRenderable,
 } from "@opentui/core"
+import { Array as Arr, Effect, Equal, HashSet, MutableHashMap, Option, Order, Schema } from "effect"
 import { LANGUAGE_EXTENSIONS } from "../../util/filetype"
 import { useBindings, useCommandShortcut } from "../../keymap"
 import { useTheme } from "../../context/theme"
@@ -15,7 +16,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import path from "path"
 import { createEffect, createMemo, createResource, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { DiffViewerFileTree } from "./diff-viewer-file-tree"
-import { Panel, PanelGroup, Separator } from "./diff-viewer-ui"
+import { Panel, PanelGroup, Separator, type SeparatorEdge } from "./diff-viewer-ui"
 import { DialogSelect } from "../../ui/dialog-select"
 import { getScrollAcceleration } from "../../util/scroll"
 import {
@@ -47,6 +48,27 @@ type DiffMode = "git" | "branch" | "last-turn"
 type DiffViewerFocus = "patches" | "files"
 type DiffView = "split" | "unified"
 type SelectedHunk = { readonly fileIndex: number; readonly hunkIndex: number; readonly scrollTop: number }
+type DiffRouteParams = {
+  readonly mode?: DiffMode
+  readonly sessionID?: string
+  readonly messageID?: string
+  readonly returnRoute?: TuiRouteCurrent
+}
+
+class DiffLoadError extends Schema.TaggedError<DiffLoadError>()("TuiDiffViewer.LoadError", {
+  cause: Schema.Defect(),
+}) {}
+
+// Waits on an SDK diff request. A rejection becomes a DiffLoadError, so the resource still enters its error state.
+function loadDiff<A>(request: () => Promise<A>) {
+  return Effect.tryPromise({ try: request, catch: (cause) => new DiffLoadError({ cause }) })
+}
+
+// Option values are new objects on every set. Compare them by value, so an unchanged value does not notify,
+// as it did not when the signals held plain numbers and strings.
+const byValue = { equals: Equal.equals }
+
+const byContentY = Order.mapInput(Order.Number, (item: { readonly contentY: number }) => item.contentY)
 
 type DiffFile = {
   readonly file: string
@@ -78,8 +100,13 @@ function filetype(input?: string) {
   return language
 }
 
-function storedView(value: unknown): DiffView | undefined {
-  if (value === "split" || value === "unified") return value
+function storedView(value: unknown): Option.Option<DiffView> {
+  return value === "split" || value === "unified" ? Option.some(value) : Option.none()
+}
+
+// A stored boolean setting, or the fallback when the key is absent or holds another kind of value.
+function storedFlag(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback
 }
 
 function diffSourceLabel(mode: DiffMode) {
@@ -92,49 +119,53 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const dimensions = useTerminalDimensions()
   const themeState = useTheme()
   const theme = () => props.api.theme.current
-  const params = () =>
-    ("params" in props.api.route.current ? props.api.route.current.params : undefined) as
-      | {
-          mode?: DiffMode
-          sessionID?: string
-          messageID?: string
-          returnRoute?: TuiRouteCurrent
-        }
-      | undefined
-  const mode = () => params()?.mode ?? "git"
+  const params = (): DiffRouteParams =>
+    "params" in props.api.route.current ? ((props.api.route.current.params as DiffRouteParams | undefined) ?? {}) : {}
+  const mode = () => params().mode ?? "git"
   const diffInput = createMemo(() => {
-    const sessionID = params()?.sessionID
+    const sessionID = params().sessionID
     return {
       mode: mode(),
       sessionID,
-      messageID: params()?.messageID,
-      directory: sessionID ? props.api.state.session.get(sessionID)?.directory : undefined,
+      messageID: params().messageID,
+      directory: Option.fromNullishOr(sessionID).pipe(
+        Option.filter((id) => id !== ""),
+        Option.flatMapNullishOr((id) => props.api.state.session.get(id)?.directory),
+      ),
     }
   })
-  const [diff] = createResource(diffInput, async (input) => {
-    if (input.mode === "last-turn") {
-      const sessionID = input.sessionID
-      if (!sessionID) return []
-      const result = await props.api.client.session.diff(
-        { sessionID, messageID: input.messageID },
-        { throwOnError: true },
-      )
-      return normalizeDiffs(result.data ?? [])
-    }
+  const [diff] = createResource(diffInput, (input) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (input.mode === "last-turn") {
+          const sessionID = input.sessionID
+          if (!sessionID) return []
+          const result = yield* loadDiff(() =>
+            props.api.client.session.diff({ sessionID, messageID: input.messageID }, { throwOnError: true }),
+          )
+          return normalizeDiffs(result.data ?? [])
+        }
 
-    const result = await props.api.client.vcs.diff(
-      { directory: input.directory, mode: input.mode, context: VCS_DIFF_CONTEXT_LINES },
-      { throwOnError: true },
-    )
-    return normalizeDiffs(result.data ?? [])
-  })
+        const vcsMode = input.mode
+        const result = yield* loadDiff(() =>
+          props.api.client.vcs.diff(
+            {
+              ...Option.match(input.directory, { onNone: () => ({}), onSome: (directory) => ({ directory }) }),
+              mode: vcsMode,
+              context: VCS_DIFF_CONTEXT_LINES,
+            },
+            { throwOnError: true },
+          ),
+        )
+        return normalizeDiffs(result.data ?? [])
+      }),
+    ),
+  )
   const files = createMemo(() => diff() ?? [])
   const [focus, setFocus] = createSignal<DiffViewerFocus>("patches")
-  const [fileTreeEnabled, setFileTreeEnabled] = createSignal(
-    props.api.kv.get<boolean>(KV_SHOW_FILE_TREE, true) !== false,
-  )
+  const [fileTreeEnabled, setFileTreeEnabled] = createSignal(storedFlag(props.api.kv.get(KV_SHOW_FILE_TREE), true))
   const showFileTree = createMemo(() => showDiffViewerFileTree(fileTreeEnabled(), files().length))
-  const [singlePatch, setSinglePatch] = createSignal(props.api.kv.get<boolean>(KV_SINGLE_PATCH, false) === true)
+  const [singlePatch, setSinglePatch] = createSignal(storedFlag(props.api.kv.get(KV_SINGLE_PATCH), false))
   const patchPaneWidth = createMemo(() => dimensions().width - (showFileTree() ? 33 : 0) - 4)
   const patchLeftBorder = createMemo<BorderSides[]>(() => (showFileTree() ? ["left"] : []))
   const splitAvailable = createMemo(() => patchPaneWidth() >= MIN_SPLIT_WIDTH)
@@ -142,15 +173,15 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     if (props.api.tuiConfig.diff_style === "stacked") return "unified"
     return splitAvailable() ? "split" : "unified"
   })
-  const [viewOverride, setViewOverride] = createSignal<DiffView | undefined>(storedView(props.api.kv.get(KV_VIEW)))
-  const view = createMemo(() => (splitAvailable() ? (viewOverride() ?? defaultView()) : "unified"))
+  const [viewOverride, setViewOverride] = createSignal(storedView(props.api.kv.get(KV_VIEW)), byValue)
+  const view = createMemo(() => (splitAvailable() ? Option.getOrElse(viewOverride(), defaultView) : "unified"))
   const fileTree = createMemo(() => buildFileTree(files()))
-  const [expandedFileNodes, setExpandedFileNodes] = createSignal<ReadonlySet<number>>(new Set())
-  const [highlightedFileNode, setHighlightedFileNode] = createSignal<number | undefined>()
-  const [lastHighlightedFileNode, setLastHighlightedFileNode] = createSignal<number | undefined>()
-  const [activePatchFileIndex, setActivePatchFileIndex] = createSignal<number | undefined>()
-  const [selectedFileIndex, setSelectedFileIndex] = createSignal<number | undefined>()
-  const [reviewedFileNames, setReviewedFileNames] = createSignal<ReadonlySet<string>>(new Set())
+  const [expandedFileNodes, setExpandedFileNodes] = createSignal(HashSet.empty<number>())
+  const [highlightedFileNode, setHighlightedFileNode] = createSignal(Option.none<number>(), byValue)
+  const [lastHighlightedFileNode, setLastHighlightedFileNode] = createSignal(Option.none<number>(), byValue)
+  const [activePatchFileIndex, setActivePatchFileIndex] = createSignal(Option.none<number>(), byValue)
+  const [selectedFileIndex, setSelectedFileIndex] = createSignal(Option.none<number>(), byValue)
+  const [reviewedFileNames, setReviewedFileNames] = createSignal(HashSet.empty<string>())
   const patchScrollAcceleration = createMemo(() => getScrollAcceleration(props.api.tuiConfig))
   const fileRows = createMemo(() => flattenFileTree(fileTree(), expandedFileNodes()))
   const patchFileIndexes = createMemo(() => orderedPatchFileIndexes(flattenFileTree(fileTree())))
@@ -160,54 +191,58 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const previousHunkShortcut = useCommandShortcut("diff.previous_hunk")
   const nextFileShortcut = useCommandShortcut("diff.next_file")
   const previousFileShortcut = useCommandShortcut("diff.previous_file")
-  const toggleFileTreeShortcut = useCommandShortcut("diff.toggle_file_tree")
-  const singlePatchShortcut = useCommandShortcut("diff.single_patch")
   const switchSourceShortcut = useCommandShortcut("diff.switch_source")
-  const toggleViewShortcut = useCommandShortcut("diff.toggle_view")
   const markReviewedShortcut = useCommandShortcut("diff.mark_reviewed")
   const helpShortcut = useCommandShortcut("diff.help")
   let scroll: ScrollBoxRenderable | undefined
-  const patchNodeByFileIndex = new Map<number, BoxRenderable>()
-  const diffNodeByFileIndex = new Map<number, DiffRenderable>()
-  const [selectedHunk, setSelectedHunk] = createSignal<SelectedHunk | undefined>()
-  const [pendingPatchScrollFileIndex, setPendingPatchScrollFileIndex] = createSignal<number | undefined>()
+  const patchNodeByFileIndex = MutableHashMap.empty<number, BoxRenderable>()
+  const diffNodeByFileIndex = MutableHashMap.empty<number, DiffRenderable>()
+  const [selectedHunk, setSelectedHunk] = createSignal(Option.none<SelectedHunk>())
+  const [pendingPatchScrollFileIndex, setPendingPatchScrollFileIndex] = createSignal(Option.none<number>(), byValue)
   const [patchFillerHeight, setPatchFillerHeight] = createSignal(0)
 
   onCleanup(() => props.api.ui.dialog.clear())
 
   createEffect(() => {
     setExpandedFileNodes(allExpandedFileTreeDirectories(fileTree()))
-    setHighlightedFileNode(undefined)
-    setLastHighlightedFileNode(undefined)
-    setActivePatchFileIndex(undefined)
-    setSelectedFileIndex(undefined)
-    setSelectedHunk(undefined)
-    setReviewedFileNames(new Set<string>())
+    setHighlightedFileNode(Option.none())
+    setLastHighlightedFileNode(Option.none())
+    setActivePatchFileIndex(Option.none())
+    setSelectedFileIndex(Option.none())
+    setSelectedHunk(Option.none())
+    setReviewedFileNames(HashSet.empty())
   })
 
+  const highlightedRow = () =>
+    Option.flatMap(highlightedFileNode(), (node) => Arr.findFirst(fileRows(), (row) => row.id === node))
+
   const ensureHighlightedFileNode = () => {
-    const highlighted = highlightedFileNode()
-    if (highlighted !== undefined && fileRows().some((row) => row.id === highlighted)) return
-    const lastHighlighted = lastHighlightedFileNode()
-    const next =
-      lastHighlighted !== undefined && fileRows().some((row) => row.id === lastHighlighted)
-        ? lastHighlighted
-        : fileRows().find((row) => row.fileIndex !== undefined)?.id
-    setHighlightedFileNode(next)
+    const visible = (node: number) => fileRows().some((row) => row.id === node)
+    if (Option.exists(highlightedFileNode(), visible)) return
+    setHighlightedFileNode(
+      Option.filter(lastHighlightedFileNode(), visible).pipe(
+        Option.orElse(() =>
+          Option.map(
+            Arr.findFirst(fileRows(), (row) => row.fileIndex !== undefined),
+            (row) => row.id,
+          ),
+        ),
+      ),
+    )
   }
 
-  const setHighlighted = (node: number | undefined) => {
+  const setHighlighted = (node: Option.Option<number>) => {
     setHighlightedFileNode(node)
-    if (node !== undefined) setLastHighlightedFileNode(node)
+    if (Option.isSome(node)) setLastHighlightedFileNode(node)
   }
 
   const moveFileSelection = (offset: number) =>
     setHighlighted(moveFileTreeSelection(fileRows(), highlightedFileNode(), offset))
 
   const clearFileTreePatchState = () => {
-    setHighlightedFileNode(undefined)
-    setActivePatchFileIndex(undefined)
-    setSelectedHunk(undefined)
+    setHighlightedFileNode(Option.none())
+    setActivePatchFileIndex(Option.none())
+    setSelectedHunk(Option.none())
   }
 
   const scrollPatchNodeToTop = (patchNode: BoxRenderable) => {
@@ -222,72 +257,79 @@ function DiffViewer(props: { api: TuiPluginApi }) {
 
   const revealFileTreeFile = (fileIndex: number) => {
     const selection = fileTreeFileSelection(fileTree(), fileIndex)
-    if (!selection) return
-    setExpandedFileNodes((expanded) => {
-      const next = new Set(expanded)
-      selection.expandedNodes.forEach((node) => next.add(node))
-      return next
-    })
-    setHighlighted(selection.highlightedNode)
+    if (Option.isNone(selection)) return
+    const { expandedNodes, highlightedNode } = selection.value
+    setExpandedFileNodes((expanded) => HashSet.union(expanded, HashSet.fromIterable(expandedNodes)))
+    setHighlighted(Option.some(highlightedNode))
   }
 
   const selectPatchFile = (fileIndex: number) => {
     revealFileTreeFile(fileIndex)
-    setActivePatchFileIndex(fileIndex)
-    setSelectedFileIndex(fileIndex)
+    setActivePatchFileIndex(Option.some(fileIndex))
+    setSelectedFileIndex(Option.some(fileIndex))
   }
 
-  const scrollToFileIndex = (fileIndex: number | undefined) => {
-    if (fileIndex === undefined) return
+  const scrollToPatchNode = (fileIndex: number) => {
+    const patchNode = MutableHashMap.get(patchNodeByFileIndex, fileIndex)
+    if (Option.isSome(patchNode)) scrollPatchNodeToTop(patchNode.value)
+  }
+
+  const scrollToFileIndex = (fileIndex: number) => {
     selectPatchFile(fileIndex)
-    const patchNode = patchNodeByFileIndex.get(fileIndex)
-    if (patchNode) scrollPatchNodeToTop(patchNode)
+    scrollToPatchNode(fileIndex)
   }
 
-  const jumpToFileIndex = (fileIndex: number | undefined) => {
-    if (fileIndex === undefined) return
-    setSelectedHunk(undefined)
+  const jumpToFileIndex = (fileIndex: number) => {
+    setSelectedHunk(Option.none())
     scrollToFileIndex(fileIndex)
   }
 
-  const currentPatchFileIndex = () => {
-    if (!scroll) return undefined
-    const viewportContentY = scroll.scrollTop + 1
-    const entries = patchFileIndexes()
-      .map((fileIndex) => ({
-        fileIndex,
-        node: patchNodeByFileIndex.get(fileIndex),
-      }))
-      .filter((entry): entry is { fileIndex: number; node: BoxRenderable } => Boolean(entry.node))
-      .map((entry) => ({
-        ...entry,
-        contentY: scroll!.scrollTop + entry.node.y - scroll!.viewport.y,
-      }))
-      .sort((left, right) => left.contentY - right.contentY)
-    return entries.findLast((entry) => entry.contentY <= viewportContentY)?.fileIndex ?? entries[0]?.fileIndex
+  const currentPatchFileIndex = (): Option.Option<number> => {
+    const patchScroll = scroll
+    if (!patchScroll) return Option.none()
+    const viewportContentY = patchScroll.scrollTop + 1
+    const entries = Arr.sort(
+      patchFileIndexes().flatMap((fileIndex) =>
+        Option.toArray(
+          Option.map(MutableHashMap.get(patchNodeByFileIndex, fileIndex), (node) => ({
+            fileIndex,
+            contentY: patchScroll.scrollTop + node.y - patchScroll.viewport.y,
+          })),
+        ),
+      ),
+      byContentY,
+    )
+    return Arr.findLast(entries, (entry) => entry.contentY <= viewportContentY).pipe(
+      Option.orElse(() => Arr.head(entries)),
+      Option.map((entry) => entry.fileIndex),
+    )
   }
 
   const jumpRelativePatchFile = (offset: number) => {
-    setSelectedHunk(undefined)
-    const next = movePatchFileIndex(patchFileIndexes(), selectedFileIndex() ?? activePatchFileIndex(), offset)
+    setSelectedHunk(Option.none())
+    const next = movePatchFileIndex(
+      patchFileIndexes(),
+      Option.orElse(selectedFileIndex(), activePatchFileIndex),
+      offset,
+    )
+    if (Option.isNone(next)) return
     if (singlePatch()) {
-      if (next === undefined) return
-      selectPatchFile(next)
+      selectPatchFile(next.value)
       scrollSinglePatchToTop()
       return
     }
-    scrollToFileIndex(next)
+    scrollToFileIndex(next.value)
   }
 
   const jumpRelativeHunk = (offset: -1 | 1) => {
     const patchScroll = scroll
     if (!patchScroll) return
-    const hunks = visiblePatchFiles()
-      .flatMap((entry) => {
-        const node = diffNodeByFileIndex.get(entry.fileIndex)
-        if (!node || node.isDestroyed) return []
-        const contentY = patchScroll.scrollTop + node.y - patchScroll.viewport.y
-        return node.diff
+    const hunks = Arr.sort(
+      visiblePatchFiles().flatMap((entry) => {
+        const node = MutableHashMap.get(diffNodeByFileIndex, entry.fileIndex)
+        if (Option.isNone(node) || node.value.isDestroyed) return []
+        const contentY = patchScroll.scrollTop + node.value.y - patchScroll.viewport.y
+        return node.value.diff
           .split("\n")
           .flatMap((line, row) => (line.startsWith("@@") ? [row] : []))
           .map((row, hunkIndex) => ({
@@ -295,33 +337,42 @@ function DiffViewer(props: { api: TuiPluginApi }) {
             hunkIndex,
             contentY: contentY + row,
           }))
-      })
-      .sort((left, right) => left.contentY - right.contentY)
-    const selected = selectedHunk()
-    const selectedIndex =
-      selected?.scrollTop === patchScroll.scrollTop
-        ? hunks.findIndex((hunk) => hunk.fileIndex === selected.fileIndex && hunk.hunkIndex === selected.hunkIndex)
-        : -1
-    const next =
-      selectedIndex !== -1
-        ? hunks[selectedIndex + offset]
-        : offset === 1
-          ? hunks.find((hunk) => hunk.contentY > patchScroll.scrollTop)
-          : hunks.findLast((hunk) => hunk.contentY < patchScroll.scrollTop)
-    if (!next) return
-    selectPatchFile(next.fileIndex)
-    patchScroll.scrollTo(next.contentY)
-    setSelectedHunk({ fileIndex: next.fileIndex, hunkIndex: next.hunkIndex, scrollTop: patchScroll.scrollTop })
+      }),
+      byContentY,
+    )
+    const selectedIndex = selectedHunk().pipe(
+      Option.filter((selected) => selected.scrollTop === patchScroll.scrollTop),
+      Option.flatMap((selected) =>
+        Arr.findFirstIndex(
+          hunks,
+          (hunk) => hunk.fileIndex === selected.fileIndex && hunk.hunkIndex === selected.hunkIndex,
+        ),
+      ),
+    )
+    const next = Option.match(selectedIndex, {
+      onSome: (index) => Arr.get(hunks, index + offset),
+      onNone: () =>
+        offset === 1
+          ? Arr.findFirst(hunks, (hunk) => hunk.contentY > patchScroll.scrollTop)
+          : Arr.findLast(hunks, (hunk) => hunk.contentY < patchScroll.scrollTop),
+    })
+    if (Option.isNone(next)) return
+    const hunk = next.value
+    selectPatchFile(hunk.fileIndex)
+    patchScroll.scrollTo(hunk.contentY)
+    setSelectedHunk(
+      Option.some({ fileIndex: hunk.fileIndex, hunkIndex: hunk.hunkIndex, scrollTop: patchScroll.scrollTop }),
+    )
   }
 
-  const highlightedPatchFileIndex = () => fileRows().find((row) => row.id === highlightedFileNode())?.fileIndex
-  const firstPatchFileIndex = () => fileRows().find((row) => row.fileIndex !== undefined)?.fileIndex
+  const firstPatchFileIndex = () =>
+    Arr.findFirst(fileRows(), (row) => row.fileIndex !== undefined).pipe(
+      Option.flatMapNullishOr((row) => row.fileIndex),
+    )
+  const patchEntry = (fileIndex: number) => Option.map(Arr.get(files(), fileIndex), (file) => ({ file, fileIndex }))
   const visiblePatchFiles = createMemo(() => {
     if (!singlePatch()) {
-      return patchFileIndexes().flatMap((fileIndex) => {
-        const file = files()[fileIndex]
-        return file ? [{ file, fileIndex }] : []
-      })
+      return patchFileIndexes().flatMap((fileIndex) => Option.toArray(patchEntry(fileIndex)))
     }
     const fileIndex = singlePatchFileIndex(
       selectedFileIndex(),
@@ -329,25 +380,24 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       currentPatchFileIndex(),
       firstPatchFileIndex(),
     )
-    const file = fileIndex === undefined ? undefined : files()[fileIndex]
-    return file && fileIndex !== undefined ? [{ file, fileIndex }] : []
+    return Option.toArray(Option.flatMap(fileIndex, patchEntry))
   })
 
   const ensureHighlightedPatchFile = () => {
-    const fileIndex = currentPatchFileIndex() ?? activePatchFileIndex() ?? firstPatchFileIndex()
-    if (fileIndex === undefined) return
-    selectPatchFile(fileIndex)
+    const fileIndex = currentPatchFileIndex().pipe(
+      Option.orElse(activePatchFileIndex),
+      Option.orElse(firstPatchFileIndex),
+    )
+    if (Option.isSome(fileIndex)) selectPatchFile(fileIndex.value)
   }
 
   const scrollToPatchFileIndexAfterRender = (fileIndex: number) => {
-    setPendingPatchScrollFileIndex(fileIndex)
+    setPendingPatchScrollFileIndex(Option.some(fileIndex))
     requestAnimationFrame(() => {
-      const patchNode = patchNodeByFileIndex.get(fileIndex)
-      if (patchNode) scrollPatchNodeToTop(patchNode)
+      scrollToPatchNode(fileIndex)
       requestAnimationFrame(() => {
-        const patchNode = patchNodeByFileIndex.get(fileIndex)
-        if (patchNode) scrollPatchNodeToTop(patchNode)
-        setPendingPatchScrollFileIndex(undefined)
+        scrollToPatchNode(fileIndex)
+        setPendingPatchScrollFileIndex(Option.none())
       })
     })
   }
@@ -362,9 +412,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const measurePatchFiller = () => {
     requestAnimationFrame(() => {
       if (!scroll) return
-      const entries = visiblePatchFiles()
-        .map((entry) => patchNodeByFileIndex.get(entry.fileIndex))
-        .filter((node): node is BoxRenderable => Boolean(node))
+      const entries = visiblePatchFiles().flatMap((entry) =>
+        Option.toArray(MutableHashMap.get(patchNodeByFileIndex, entry.fileIndex)),
+      )
       if (entries.length === 0) {
         setPatchFillerHeight(0)
         return
@@ -377,14 +427,14 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   }
 
   const registerPatchNode = (fileIndex: number, element: BoxRenderable) => {
-    patchNodeByFileIndex.set(fileIndex, element)
+    MutableHashMap.set(patchNodeByFileIndex, fileIndex, element)
     measurePatchFiller()
-    if (pendingPatchScrollFileIndex() !== fileIndex) return
+    if (!Option.contains(pendingPatchScrollFileIndex(), fileIndex)) return
     requestAnimationFrame(() => {
       scrollPatchNodeToTop(element)
       requestAnimationFrame(() => {
         scrollPatchNodeToTop(element)
-        setPendingPatchScrollFileIndex(undefined)
+        setPendingPatchScrollFileIndex(Option.none())
       })
     })
   }
@@ -397,9 +447,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   })
 
   const toggleSelectedFileTreeRow = () => {
-    const highlighted = fileRows().find((row) => row.id === highlightedFileNode())
-    if (highlighted?.fileIndex !== undefined) {
-      jumpToFileIndex(highlighted.fileIndex)
+    const fileIndex = Option.flatMapNullishOr(highlightedRow(), (row) => row.fileIndex)
+    if (Option.isSome(fileIndex)) {
+      jumpToFileIndex(fileIndex.value)
       return
     }
     setExpandedFileNodes((expanded) => toggleFileTreeDirectory(fileTree(), expanded, highlightedFileNode()))
@@ -407,27 +457,25 @@ function DiffViewer(props: { api: TuiPluginApi }) {
 
   const clickFileTreeRow = (row: FileTreeRow) => {
     setFocus("files")
-    setHighlighted(row.id)
+    setHighlighted(Option.some(row.id))
     if (row.fileIndex !== undefined) {
       jumpToFileIndex(row.fileIndex)
       return
     }
-    setExpandedFileNodes((expanded) => toggleFileTreeDirectory(fileTree(), expanded, row.id))
+    setExpandedFileNodes((expanded) => toggleFileTreeDirectory(fileTree(), expanded, Option.some(row.id)))
   }
 
   const toggleSelectedFileReviewed = () => {
     const fileIndex =
       focus() === "files"
-        ? fileRows().find((row) => row.id === highlightedFileNode())?.fileIndex
-        : (selectedFileIndex() ?? activePatchFileIndex() ?? currentPatchFileIndex())
-    const file = fileIndex === undefined ? undefined : files()[fileIndex]?.file
-    if (!file) return
-    setReviewedFileNames((reviewed) => {
-      const next = new Set(reviewed)
-      if (next.has(file)) next.delete(file)
-      else next.add(file)
-      return next
-    })
+        ? Option.flatMapNullishOr(highlightedRow(), (row) => row.fileIndex)
+        : selectedFileIndex().pipe(Option.orElse(activePatchFileIndex), Option.orElse(currentPatchFileIndex))
+    const file = Option.flatMap(fileIndex, (index) => Arr.get(files(), index))
+    if (Option.isNone(file)) return
+    const name = file.value.file
+    setReviewedFileNames((reviewed) =>
+      HashSet.has(reviewed, name) ? HashSet.remove(reviewed, name) : HashSet.add(reviewed, name),
+    )
   }
 
   const commands = [
@@ -436,13 +484,16 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       title: "Close diff viewer",
       category: "VCS",
       run() {
-        const returnRoute = params()?.returnRoute
+        const returnRoute = Option.fromNullishOr(params().returnRoute)
         props.api.ui.dialog.clear()
 
-        props.api.route.navigate(
-          returnRoute?.name ?? "home",
-          returnRoute && "params" in returnRoute ? returnRoute.params : undefined,
-        )
+        Option.match(returnRoute, {
+          onNone: () => props.api.route.navigate("home"),
+          onSome: (route) =>
+            "params" in route
+              ? props.api.route.navigate(route.name, route.params)
+              : props.api.route.navigate(route.name),
+        })
       },
     },
     {
@@ -519,7 +570,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       run: focusRunner({
         files() {
           const highlighted = highlightedFileNode()
-          if (highlighted !== undefined && expandedFileNodes().has(highlighted)) {
+          if (Option.exists(highlighted, (node) => HashSet.has(expandedFileNodes(), node))) {
             setHighlighted(moveFileTreeSelectionToFirstChild(fileRows(), highlighted))
             return
           }
@@ -548,8 +599,11 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       run: focusRunner({
         files() {
           const highlighted = highlightedFileNode()
-          const node = highlighted === undefined ? undefined : fileTree().nodes[highlighted]
-          if (node?.kind !== "directory" || !expandedFileNodes().has(node.id)) {
+          const expandedDirectory = highlighted.pipe(
+            Option.flatMap((node) => Arr.get(fileTree().nodes, node)),
+            Option.exists((node) => node.kind === "directory" && HashSet.has(expandedFileNodes(), node.id)),
+          )
+          if (!expandedDirectory) {
             setHighlighted(moveFileTreeSelectionToParent(fileRows(), highlighted))
             return
           }
@@ -629,7 +683,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       title: "Toggle single patch view",
       category: "VCS",
       run() {
-        setSelectedHunk(undefined)
+        setSelectedHunk(Option.none())
         if (!singlePatch()) {
           ensureHighlightedPatchFile()
           setSinglePatch(true)
@@ -637,18 +691,21 @@ function DiffViewer(props: { api: TuiPluginApi }) {
           scrollSinglePatchToTop()
           return
         }
-        const fileIndex =
-          visiblePatchFiles()[0]?.fileIndex ??
-          singlePatchFileIndex(
-            selectedFileIndex(),
-            activePatchFileIndex(),
-            currentPatchFileIndex(),
-            firstPatchFileIndex(),
-          )
-        if (fileIndex !== undefined) selectPatchFile(fileIndex)
+        const fileIndex = Arr.head(visiblePatchFiles()).pipe(
+          Option.map((entry) => entry.fileIndex),
+          Option.orElse(() =>
+            singlePatchFileIndex(
+              selectedFileIndex(),
+              activePatchFileIndex(),
+              currentPatchFileIndex(),
+              firstPatchFileIndex(),
+            ),
+          ),
+        )
+        if (Option.isSome(fileIndex)) selectPatchFile(fileIndex.value)
         setSinglePatch(false)
         props.api.kv.set(KV_SINGLE_PATCH, false)
-        if (fileIndex !== undefined) scrollToPatchFileIndexAfterRender(fileIndex)
+        if (Option.isSome(fileIndex)) scrollToPatchFileIndexAfterRender(fileIndex.value)
       },
     },
     {
@@ -665,9 +722,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       category: "VCS",
       run() {
         if (!splitAvailable()) return
-        setSelectedHunk(undefined)
+        setSelectedHunk(Option.none())
         const next = view() === "split" ? "unified" : "split"
-        setViewOverride(next)
+        setViewOverride(Option.some(next))
         props.api.kv.set(KV_VIEW, next)
       },
     },
@@ -719,9 +776,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
             dialog.clear()
             props.api.route.navigate(ROUTE, {
               mode: option.value,
-              sessionID: params()?.sessionID,
-              messageID: params()?.messageID,
-              returnRoute: params()?.returnRoute,
+              sessionID: params().sessionID,
+              messageID: params().messageID,
+              returnRoute: params().returnRoute,
             })
           },
         }))}
@@ -800,7 +857,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                 </Show>
 
                 <Panel flexGrow={1} minHeight={0} border="none">
-                  <Separator axis="x" start={showFileTree() ? "edge-out" : undefined} />
+                  <PatchSeparator edge="edge-out" fileTree={showFileTree()} />
                   <scrollbox
                     ref={(element: ScrollBoxRenderable) => (scroll = element)}
                     flexGrow={1}
@@ -811,10 +868,12 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                   >
                     <For each={visiblePatchFiles()}>
                       {(entry, index) => {
-                        const reviewed = () => reviewedFileNames().has(entry.file.file)
+                        const reviewed = () => HashSet.has(reviewedFileNames(), entry.file.file)
                         return (
                           <box ref={(element: BoxRenderable) => registerPatchNode(entry.fileIndex, element)}>
-                            {index() !== 0 ? <Separator axis="x" start={showFileTree() ? "edge" : undefined} /> : null}
+                            <Show when={index() !== 0}>
+                              <PatchSeparator edge="edge" fileTree={showFileTree()} />
+                            </Show>
                             <box
                               flexDirection="row"
                               gap={1}
@@ -833,7 +892,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                                 -{entry.file.deletions}
                               </text>
                             </box>
-                            <Separator axis="x" start={showFileTree() ? "edge" : undefined} />
+                            <PatchSeparator edge="edge" fileTree={showFileTree()} />
                             <Show
                               when={entry.file.patch}
                               fallback={<text fg={theme().textMuted}>No patch available for this file.</text>}
@@ -841,7 +900,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                               {(patch) => (
                                 <box border={patchLeftBorder()} borderColor={theme().border}>
                                   <diff
-                                    ref={(element: DiffRenderable) => diffNodeByFileIndex.set(entry.fileIndex, element)}
+                                    ref={(element: DiffRenderable) =>
+                                      MutableHashMap.set(diffNodeByFileIndex, entry.fileIndex, element)
+                                    }
                                     diff={patch()}
                                     view={view()}
                                     filetype={reviewed() ? PLAIN_TEXT_FILETYPE : filetype(entry.file.file)}
@@ -873,7 +934,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                       <box height={patchFillerHeight()} border={patchLeftBorder()} borderColor={theme().border} />
                     </Show>
                   </scrollbox>
-                  <Separator axis="x" start={showFileTree() ? "edge-in" : undefined} />
+                  <PatchSeparator edge="edge-in" fileTree={showFileTree()} />
                 </Panel>
               </PanelGroup>
             </Match>
@@ -940,6 +1001,15 @@ function DiffViewer(props: { api: TuiPluginApi }) {
         </Panel>
       </PanelGroup>
     </box>
+  )
+}
+
+// A horizontal separator that joins the file tree border with the given edge while the file tree shows.
+function PatchSeparator(props: { readonly edge: SeparatorEdge; readonly fileTree: boolean }) {
+  return (
+    <Show when={props.fileTree} fallback={<Separator axis="x" />}>
+      <Separator axis="x" start={props.edge} />
+    </Show>
   )
 }
 
@@ -1042,34 +1112,38 @@ function DiffViewerHelpDialog() {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.route.register([
-    {
-      name: ROUTE,
-      render: () => <DiffViewer api={api} />,
-    },
-  ])
-
-  api.keymap.registerLayer({
-    commands: [
-      {
-        name: "diff.open",
-        title: "Open diff viewer",
-        slashName: "diff",
-        category: "VCS",
-        namespace: "palette",
-        run() {
-          api.route.navigate(ROUTE, {
-            mode: "git",
-            sessionID: "params" in api.route.current ? api.route.current.params?.sessionID : undefined,
-            returnRoute: api.route.current,
-          })
-          api.ui.dialog.clear()
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.route.register([
+        {
+          name: ROUTE,
+          render: () => <DiffViewer api={api} />,
         },
-      },
-    ],
-  })
-}
+      ])
+
+      api.keymap.registerLayer({
+        commands: [
+          {
+            name: "diff.open",
+            title: "Open diff viewer",
+            slashName: "diff",
+            category: "VCS",
+            namespace: "palette",
+            run() {
+              const current = api.route.current
+              api.route.navigate(ROUTE, {
+                mode: "git",
+                ...("params" in current ? { sessionID: current.params?.sessionID } : {}),
+                returnRoute: current,
+              })
+              api.ui.dialog.clear()
+            },
+          },
+        ],
+      })
+    }),
+  )
 
 export default {
   id: "diff-viewer",

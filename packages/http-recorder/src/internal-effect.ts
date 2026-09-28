@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { Deferred, Effect, Layer, Option, Ref } from "effect"
+import { Deferred, Effect, Exit, HashSet, Layer, Option, Ref } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -30,7 +30,7 @@ export interface RecordReplayOptions {
   readonly match?: RequestMatcher
 }
 
-const TEXT_CONTENT_TYPES = new Set([
+const TEXT_CONTENT_TYPES = HashSet.make(
   "application/graphql",
   "application/javascript",
   "application/json",
@@ -39,7 +39,7 @@ const TEXT_CONTENT_TYPES = new Set([
   "application/xml",
   "application/yaml",
   "image/svg+xml",
-])
+)
 
 const isTextContentType = (contentType: string | undefined) => {
   const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase()
@@ -48,7 +48,7 @@ const isTextContentType = (contentType: string | undefined) => {
     mediaType.startsWith("text/") ||
     mediaType.endsWith("+json") ||
     mediaType.endsWith("+xml") ||
-    TEXT_CONTENT_TYPES.has(mediaType)
+    HashSet.has(TEXT_CONTENT_TYPES, mediaType)
   )
 }
 
@@ -64,16 +64,13 @@ const captureResponseBody = (response: HttpClientResponse.HttpClientResponse, co
 const decodeResponseBody = (snapshot: ResponseSnapshot) =>
   snapshot.bodyEncoding === "base64" ? Buffer.from(snapshot.body, "base64") : snapshot.body
 
-const responseFromSnapshot = (request: HttpClientRequest.HttpClientRequest, snapshot: ResponseSnapshot) =>
-  HttpClientResponse.fromWeb(
-    request,
-    new Response(
-      request.method === "HEAD" || snapshot.status === 204 || snapshot.status === 205 || snapshot.status === 304
-        ? null
-        : decodeResponseBody(snapshot),
-      snapshot,
-    ),
-  )
+const responseFromSnapshot = (request: HttpClientRequest.HttpClientRequest, snapshot: ResponseSnapshot) => {
+  const body =
+    request.method === "HEAD" || snapshot.status === 204 || snapshot.status === 205 || snapshot.status === 304
+      ? Option.none()
+      : Option.some(decodeResponseBody(snapshot))
+  return HttpClientResponse.fromWeb(request, new Response(Option.getOrUndefined(body), snapshot))
+}
 
 export const redactedErrorRequest = (request: HttpClientRequest.HttpClientRequest) =>
   HttpClientRequest.makeWith(
@@ -119,7 +116,7 @@ export const recordingLayer = (
 
       if (mode === "record") {
         const initial = yield* Deferred.make<void>()
-        yield* Deferred.succeed(initial, undefined)
+        yield* Deferred.done(initial, Exit.void)
         const tail = yield* Ref.make(initial)
         return HttpClient.make((request) =>
           Effect.gen(function* () {
@@ -148,7 +145,7 @@ export const recordingLayer = (
                   ),
                 )
               return responseFromSnapshot(request, responseSnapshot)
-            }).pipe(Effect.ensuring(Deferred.succeed(completed, undefined)))
+            }).pipe(Effect.ensuring(Deferred.done(completed, Exit.void)))
           }),
         )
       }
@@ -160,7 +157,7 @@ export const recordingLayer = (
           const claimed = yield* replay
             .claim((interaction, index, interactions) => {
               const result = selectSequential(interactions, incoming, match, index)
-              if (result.interaction) return Effect.void
+              if (Option.isSome(result.interaction)) return Effect.void
               return Effect.fail(
                 transportError(request, `Fixture "${name}" does not match the current request: ${result.detail}.`),
               )

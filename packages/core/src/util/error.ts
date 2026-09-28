@@ -1,13 +1,25 @@
-import { Schema } from "effect"
+import { Data, Predicate, Schema } from "effect"
 
-export abstract class NamedError extends Error {
+/**
+ * Base of the named error family. Data.Error makes every instance a yieldable failure in Effect.gen.
+ * The constructor keeps the Error contract (message, options) that subclasses in other packages call.
+ */
+export abstract class NamedError extends Data.Error {
+  constructor(message?: string, options?: ErrorOptions) {
+    super()
+    // As with Error, message and cause are own non-enumerable properties, so JSON output stays { name, data }.
+    // Reflect.defineProperty returns a boolean; Object.defineProperty would return this Effect-able instance.
+    Reflect.defineProperty(this, "message", { value: message ?? "", writable: true, configurable: true })
+    if (options && "cause" in options) {
+      Reflect.defineProperty(this, "cause", { value: options.cause, writable: true, configurable: true })
+    }
+  }
+
   abstract schema(): Schema.Top
   abstract toObject(): { name: string; data: unknown }
 
   static hasName(error: unknown, name: string): boolean {
-    return (
-      typeof error === "object" && error !== null && "name" in error && (error as Record<string, unknown>).name === name
-    )
+    return Predicate.isObjectOrArray(error) && "name" in error && error.name === name
   }
 
   static create<Name extends string, Fields extends Schema.Struct.Fields>(

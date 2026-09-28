@@ -1,6 +1,7 @@
 // @refresh reload
 
 import * as Sentry from "@sentry/solid"
+import { Data, Effect, Option, Result, String as Str } from "effect"
 import { render } from "solid-js/web"
 import { AppBaseProviders, AppInterface } from "@/app"
 import { loadInitialLocale } from "@/context/language"
@@ -13,6 +14,9 @@ import pkg from "../package.json"
 import { ServerConnection } from "./context/server"
 
 const DEFAULT_SERVER_URL_KEY = "opencode.settings.dat:defaultServerUrl"
+
+/** The page has no #root element to mount the app into. */
+class RootNotFoundError extends Data.TaggedError("App.RootNotFoundError")<{ readonly message: string }> {}
 
 const getLocale = () => {
   if (typeof navigator !== "object") return "en" as const
@@ -30,55 +34,60 @@ const getRootNotFoundError = () => {
   return locale === "zh" ? (zh[key] ?? en[key]) : en[key]
 }
 
-const getStorage = (key: string) => {
-  if (typeof localStorage === "undefined") return null
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+/** Runs a localStorage call. None when there is no storage or the call throws (quota, blocked storage). */
+const tryStorage = <A,>(run: () => A): Option.Option<A> => {
+  if (typeof localStorage === "undefined") return Option.none()
+  return Result.getSuccess(Result.try(run))
 }
 
-const setStorage = (key: string, value: string | null) => {
-  if (typeof localStorage === "undefined") return
-  try {
-    if (value !== null) {
-      localStorage.setItem(key, value)
-      return
-    }
-    localStorage.removeItem(key)
-  } catch {
-    return
-  }
+const getStorage = (key: string): Option.Option<string> =>
+  Option.flatMap(
+    tryStorage(() => localStorage.getItem(key)),
+    (value) => Option.fromNullishOr(value),
+  )
+
+/** Stores the value, or removes the key for None. A storage failure is ignored. */
+const setStorage = (key: string, value: Option.Option<string>) => {
+  tryStorage(() =>
+    Option.match(value, {
+      onNone: () => localStorage.removeItem(key),
+      onSome: (text) => localStorage.setItem(key, text),
+    }),
+  )
 }
 
-const readDefaultServerUrl = () => getStorage(DEFAULT_SERVER_URL_KEY)
-const writeDefaultServerUrl = (url: string | null) => setStorage(DEFAULT_SERVER_URL_KEY, url)
+/** The stored default server URL. An empty string counts as no URL. */
+const readDefaultServerUrl = () => Option.filter(getStorage(DEFAULT_SERVER_URL_KEY), Str.isNonEmpty)
+const writeDefaultServerUrl = (url: Option.Option<string>) => setStorage(DEFAULT_SERVER_URL_KEY, url)
 
-const notify: Platform["notify"] = async (title, description, onClick) => {
-  if (!("Notification" in window)) return
+const notify: Platform["notify"] = (title, description, onClick) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      if (!("Notification" in window)) return
 
-  const permission =
-    Notification.permission === "default"
-      ? await Notification.requestPermission().catch(() => "denied")
-      : Notification.permission
+      // A failed permission request counts as a denial.
+      const permission =
+        Notification.permission === "default"
+          ? yield* Effect.tryPromise(() => Notification.requestPermission()).pipe(Effect.orElseSucceed(() => "denied"))
+          : Notification.permission
 
-  if (permission !== "granted") return
+      if (permission !== "granted") return
 
-  const inView = document.visibilityState === "visible" && document.hasFocus()
-  if (inView) return
+      const inView = document.visibilityState === "visible" && document.hasFocus()
+      if (inView) return
 
-  const notification = new Notification(title, {
-    body: description ?? "",
-    icon: "https://opencode.ai/favicon-96x96-v3.png",
-  })
+      const notification = new Notification(title, {
+        body: description ?? "",
+        icon: "https://opencode.ai/favicon-96x96-v3.png",
+      })
 
-  notification.onclick = () => {
-    window.focus()
-    onClick?.()
-    notification.close()
-  }
-}
+      notification.onclick = () => {
+        window.focus()
+        onClick?.()
+        notification.close()
+      }
+    }),
+  )
 
 const openExternal: Platform["openExternal"] = (value) => {
   if (!URL.canParse(value)) return
@@ -87,14 +96,15 @@ const openExternal: Platform["openExternal"] = (value) => {
   window.open(url.href, "_blank", "noopener,noreferrer")
 }
 
-const restart: Platform["restart"] = async () => {
-  window.location.reload()
-}
+const restart: Platform["restart"] = () => Effect.runPromise(Effect.sync(() => window.location.reload()))
 
-const root = document.getElementById("root")
-if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
-  throw new Error(getRootNotFoundError())
-}
+/** The #root element that index.html provides. None when it is missing or not an HTML element. */
+const root = Option.liftPredicate(
+  document.getElementById("root"),
+  (element): element is HTMLElement => element instanceof HTMLElement,
+)
+// A dev build stops at module load with a readable error when #root is missing.
+if (import.meta.env.DEV) Option.getOrThrowWith(root, () => new RootNotFoundError({ message: getRootNotFoundError() }))
 
 const getCurrentUrl = () => {
   if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
@@ -103,17 +113,14 @@ const getCurrentUrl = () => {
   return location.origin
 }
 
-const getDefaultUrl = () => {
-  const lsDefault = readDefaultServerUrl()
-  if (lsDefault) return lsDefault
-  return getCurrentUrl()
-}
+const getDefaultUrl = () => Option.getOrElse(readDefaultServerUrl(), getCurrentUrl)
 
+/** Removes auth_token from the address bar. Only the URL changes; the history entry keeps its state. */
 const clearAuthToken = () => {
   const params = new URLSearchParams(location.search)
   if (!params.has("auth_token")) return
   params.delete("auth_token")
-  history.replaceState(null, "", location.pathname + (params.size ? `?${params}` : "") + location.hash)
+  history.replaceState(history.state, "", location.pathname + (params.size ? `?${params}` : "") + location.hash)
 }
 
 const platform: Platform = {
@@ -123,11 +130,12 @@ const platform: Platform = {
   openExternal,
   restart,
   notify,
-  getDefaultServer: async () => {
-    const stored = readDefaultServerUrl()
-    return stored ? ServerConnection.Key.make(stored) : null
-  },
-  setDefaultServer: writeDefaultServerUrl,
+  // Platform.getDefaultServer and setDefaultServer use null for "no default server".
+  getDefaultServer: () =>
+    Effect.runPromise(
+      Effect.sync(() => Option.getOrNull(Option.map(readDefaultServerUrl(), (url) => ServerConnection.Key.make(url)))),
+    ),
+  setDefaultServer: (url) => writeDefaultServerUrl(Option.fromNullishOr(url)),
 }
 
 if (import.meta.env.VITE_SENTRY_DSN) {
@@ -149,7 +157,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   })
 }
 
-if (root instanceof HTMLElement) {
+if (Option.isSome(root)) {
   void loadInitialLocale().then((locale) => {
     const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
     clearAuthToken()
@@ -174,7 +182,7 @@ if (root instanceof HTMLElement) {
           </AppBaseProviders>
         </PlatformProvider>
       ),
-      root,
+      root.value,
     )
   })
 }

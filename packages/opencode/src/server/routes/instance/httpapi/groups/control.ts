@@ -7,12 +7,12 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const AuthParams = Schema.Struct({
   providerID: ProviderV2.ID,
-})
+}).annotate({ description: "Path parameters that identify the provider" })
 
 const LogQuery = Schema.Struct({
   directory: Schema.optional(Schema.String),
   workspace: Schema.optional(Schema.String),
-})
+}).annotate({ description: "Query parameters that route a log entry" })
 
 export const LogInput = Schema.Struct({
   service: Schema.String.annotate({ description: "Service name for the log entry" }),
@@ -23,7 +23,7 @@ export const LogInput = Schema.Struct({
     Schema.Literal("warn"),
   ]).annotate({ description: "Log level" }),
   message: Schema.String.annotate({ description: "Log message" }),
-  extra: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+  extra: Schema.optional(Schema.Record(Schema.String, Schema.Json)).annotate({
     description: "Additional metadata for the log entry",
   }),
 })

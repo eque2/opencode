@@ -12,7 +12,9 @@ import {
 import { Portal } from "solid-js/web"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createStore } from "solid-js/store"
+import { Effect } from "effect"
 import { useI18n } from "../context/i18n"
+import { createFiberSlot } from "../hooks/create-fiber-slot"
 
 export type ScrollViewThumbVisibility = "hover" | "scroll"
 
@@ -33,8 +35,8 @@ export interface ScrollViewProps extends ComponentProps<"div"> {
 }
 
 export const scrollKey = (event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">) => {
-  if (event.altKey || event.ctrlKey || event.metaKey) return
-  if (event.shiftKey && event.key !== " ") return
+  if (event.altKey || event.ctrlKey || event.metaKey) return undefined
+  if (event.shiftKey && event.key !== " ") return undefined
 
   switch (event.key) {
     case "PageDown":
@@ -52,9 +54,13 @@ export const scrollKey = (event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey
     case " ":
       return event.shiftKey ? "page-up" : "page-down"
   }
+  return undefined
 }
 
-export function canScrollKey(element: HTMLElement, key: NonNullable<ReturnType<typeof scrollKey>>) {
+export function canScrollKey(
+  element: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+  key: NonNullable<ReturnType<typeof scrollKey>>,
+) {
   const up = key === "up" || key === "page-up" || key === "home"
   return up ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight
 }
@@ -64,18 +70,17 @@ export function scrollKeyOwner(
   target: EventTarget | null,
   key: NonNullable<ReturnType<typeof scrollKey>>,
 ) {
-  const element = target instanceof Element ? target : undefined
-  const owner = element?.closest<HTMLElement>("[data-scrollable]")
+  if (!(target instanceof Element)) return root
+  const owner = target.closest<HTMLElement>("[data-scrollable]")
   if (!owner || owner === root) return root
   if (!root.contains(owner)) return owner
   return canScrollKey(owner, key) ? owner : root
 }
 
 export function isScrollKeyTarget(target: EventTarget | null, key: NonNullable<ReturnType<typeof scrollKey>>) {
-  const element = target instanceof HTMLElement ? target : undefined
-  if (!element) return true
-  if (["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable) return false
-  if ((key === "page-up" || key === "page-down") && element.closest('button, a[href], [role="button"]')) return false
+  if (!(target instanceof HTMLElement)) return true
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable) return false
+  if ((key === "page-up" || key === "page-down") && target.closest('button, a[href], [role="button"]')) return false
   return true
 }
 
@@ -152,12 +157,11 @@ export function ScrollView(props: ScrollViewProps) {
   const thumbTop = () => state.thumbTop
   const showThumb = () => state.showThumb
 
-  let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined
+  const scrollIdle = createFiberSlot()
 
   const markScrolling = () => {
     setState("isScrolling", true)
-    if (scrollIdleTimer !== undefined) clearTimeout(scrollIdleTimer)
-    scrollIdleTimer = setTimeout(() => setState("isScrolling", false), 800)
+    scrollIdle.run(Effect.sleep("800 millis").pipe(Effect.andThen(Effect.sync(() => setState("isScrolling", false)))))
   }
 
   const thumbVisible = () => {
@@ -165,10 +169,6 @@ export function ScrollView(props: ScrollViewProps) {
     if (isScrolling()) return true
     return local.thumbVisibility === "hover" && isHovered()
   }
-
-  onCleanup(() => {
-    if (scrollIdleTimer !== undefined) clearTimeout(scrollIdleTimer)
-  })
 
   const updateThumb = () => {
     if (!viewportRef) return
@@ -206,10 +206,7 @@ export function ScrollView(props: ScrollViewProps) {
       local.viewportRef(viewportRef)
     }
 
-    createResizeObserver(
-      () => [viewportRef, viewportRef.firstElementChild, thumbMount()].filter(Boolean) as HTMLElement[],
-      updateThumb,
-    )
+    createResizeObserver(() => [viewportRef, viewportRef.firstElementChild, thumbMount()], updateThumb)
 
     updateThumb()
   })
@@ -352,26 +349,26 @@ export function ScrollView(props: ScrollViewProps) {
         onScroll={(e) => {
           updateThumb()
           markScrolling()
-          if (typeof events.onScroll === "function") events.onScroll(e as any)
+          if (typeof events.onScroll === "function") events.onScroll(e)
         }}
         onWheel={(e) => {
           markScrolling()
           const handler = events.onWheel
-          if (typeof handler === "function") handler(e as any)
-          if (Array.isArray(handler)) handler[0](handler[1], e as any)
+          if (typeof handler === "function") handler(e)
+          if (Array.isArray(handler)) handler[0](handler[1], e)
         }}
-        onTouchStart={events.onTouchStart as any}
-        onTouchMove={events.onTouchMove as any}
-        onTouchEnd={events.onTouchEnd as any}
-        onTouchCancel={events.onTouchCancel as any}
-        onPointerDown={events.onPointerDown as any}
-        onClick={events.onClick as any}
+        onTouchStart={events.onTouchStart}
+        onTouchMove={events.onTouchMove}
+        onTouchEnd={events.onTouchEnd}
+        onTouchCancel={events.onTouchCancel}
+        onPointerDown={events.onPointerDown}
+        onClick={events.onClick}
         tabIndex={0}
         role="region"
         aria-label={i18n.t("ui.scrollView.ariaLabel")}
         onKeyDown={(e) => {
           onKeyDown(e)
-          if (typeof events.onKeyDown === "function") events.onKeyDown(e as any)
+          if (typeof events.onKeyDown === "function") events.onKeyDown(e)
         }}
       >
         {local.children}

@@ -1,9 +1,9 @@
 import path from "path"
-import { Context, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { Clock, Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
-import { Flag } from "./flag/flag"
+import { FlagConfig } from "./flag/flag"
 import { Flock } from "./util/flock"
 import { Hash } from "./util/hash"
 import { FSUtil } from "./fs-util"
@@ -20,8 +20,6 @@ const InterleavedField = Schema.Union([
   Schema.String,
 ])
 
-const USER_AGENT = `opencode/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
-
 const CostTier = Schema.Struct({
   input: Schema.Finite,
   output: Schema.Finite,
@@ -31,7 +29,7 @@ const CostTier = Schema.Struct({
     type: Schema.Literal("context"),
     size: Schema.Finite,
   }),
-})
+}).annotate({ identifier: "ModelsDev.CostTier" })
 
 const Cost = Schema.Struct({
   input: Schema.Finite,
@@ -47,7 +45,7 @@ const Cost = Schema.Struct({
       cache_write: Schema.optional(Schema.Finite),
     }),
   ),
-})
+}).annotate({ identifier: "ModelsDev.Cost" })
 
 const ReasoningOption = Schema.Union([
   Schema.Struct({
@@ -64,14 +62,21 @@ const ReasoningOption = Schema.Union([
   }),
 ])
 
+export const ProviderID = Schema.String.pipe(Schema.brand("ModelsDev.ProviderID"))
+export type ProviderID = typeof ProviderID.Type
+
+export const ModelID = Schema.String.pipe(Schema.brand("ModelsDev.ModelID"))
+export type ModelID = typeof ModelID.Type
+
 export const Model = Schema.Struct({
-  id: Schema.String,
+  id: ModelID,
   name: Schema.String,
   family: Schema.optional(Schema.String),
   release_date: Schema.String,
   attachment: Schema.Boolean,
   reasoning: Schema.Boolean,
-  temperature: Schema.Boolean,
+  // models.dev leaves `temperature` out for some models; consumers default it.
+  temperature: Schema.optional(Schema.Boolean),
   tool_call: Schema.Boolean,
   reasoning_options: Schema.optional(Schema.Array(ReasoningOption)),
   interleaved: Schema.optional(
@@ -117,23 +122,54 @@ export const Model = Schema.Struct({
   provider: Schema.optional(
     Schema.Struct({ npm: Schema.optional(Schema.String), api: Schema.optional(Schema.String) }),
   ),
-})
+}).annotate({ identifier: "ModelsDev.Model" })
 export type Model = Schema.Schema.Type<typeof Model>
 
 export const Provider = Schema.Struct({
   api: Schema.optional(Schema.String),
   name: Schema.String,
   env: Schema.Array(Schema.String),
-  id: Schema.String,
+  id: ProviderID,
   npm: Schema.optional(Schema.String),
   models: Schema.Record(Schema.String, Model),
-})
+}).annotate({ identifier: "ModelsDev.Provider" })
 
 export type Provider = Schema.Schema.Type<typeof Provider>
 
 export const Event = ModelsDev.Event
 
 declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined
+
+// models.dev changes on its own schedule, so these schemas can fall behind the catalog. The catalog is
+// checked one provider and one model at a time: an entry that does not match is left out and logged,
+// and the rest of the catalog still loads. Only a file that is not a JSON object fails as a whole.
+// The checks are guards, not decodes, so a kept entry is the parsed object itself, undeclared keys included.
+const Entries = Schema.Record(Schema.String, Schema.ObjectKeyword).annotate({ identifier: "ModelsDev.Entries" })
+const ProviderEntry = Schema.Struct({ ...Provider.fields, models: Entries }).annotate({
+  identifier: "ModelsDev.ProviderEntry",
+})
+const decodeEntries = Schema.decodeUnknownEffect(Entries)
+const decodeEntriesText = Schema.decodeUnknownEffect(Schema.fromJsonString(Entries))
+const isProviderEntry = Schema.is(ProviderEntry)
+const isModel = Schema.is(Model)
+
+const toCatalog = Effect.fnUntraced(function* (entries: Record<string, object>) {
+  const [skippedProviders, providers] = Record.partition(entries, (entry) =>
+    isProviderEntry(entry) ? Result.succeed(entry) : Result.fail(entry),
+  )
+  const decoded = Record.map(providers, (provider) =>
+    Record.partition(provider.models, (model) => (isModel(model) ? Result.succeed(model) : Result.fail(model))),
+  )
+  const skipped = [
+    ...Record.keys(skippedProviders),
+    ...Record.toEntries(decoded).flatMap(([providerID, [skippedModels]]) =>
+      Record.keys(skippedModels).map((modelID) => `${providerID}/${modelID}`),
+    ),
+  ]
+  if (skipped.length > 0)
+    yield* Effect.logWarning("Skipped models.dev entries that do not match the schema", { skipped })
+  return Record.map(providers, (provider, providerID): Provider => ({ ...provider, models: decoded[providerID][1] }))
+})
 
 export interface Interface {
   readonly get: () => Effect.Effect<Record<string, Provider>>
@@ -157,7 +193,12 @@ const layer = Layer.effect(
       ),
     )
 
-    const source = Flag.OPENCODE_MODELS_URL || "https://models.opencode.ai"
+    // The variables are optional, so a ConfigError is a defect. An empty variable counts as not set.
+    const source = Option.getOrElse(
+      yield* FlagConfig.OPENCODE_MODELS_URL.pipe(Effect.orDie),
+      () => "https://models.opencode.ai",
+    )
+    const modelsPath = yield* FlagConfig.OPENCODE_MODELS_PATH.pipe(Effect.orDie)
     const filepath = path.join(
       Global.Path.cache,
       source === "https://models.opencode.ai" ? "models.json" : `models-${Hash.fast(source)}.json`,
@@ -166,42 +207,49 @@ const layer = Layer.effect(
     const lockKey = `models-dev:${filepath}`
 
     const fresh = Effect.fnUntraced(function* () {
-      const stat = yield* fs.stat(filepath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (!stat) return false
-      const mtime = Option.getOrElse(stat.mtime, () => new Date(0)).getTime()
-      return Date.now() - mtime < Duration.toMillis(ttl)
+      const stat = yield* fs.stat(filepath).pipe(Effect.option)
+      if (Option.isNone(stat)) return false
+      // A file without an mtime counts as written at the epoch, so it is stale.
+      const mtime = Option.match(stat.value.mtime, { onNone: () => 0, onSome: (date) => date.getTime() })
+      return (yield* Clock.currentTimeMillis) - mtime < Duration.toMillis(ttl)
     })
 
     const fetchApi = Effect.fn("ModelsDev.fetchApi")(function* () {
+      // The CLI sets OPENCODE_CLIENT after start, so each request reads the live value.
+      const client = yield* FlagConfig.OPENCODE_CLIENT.pipe(Effect.orDie)
       return yield* HttpClientRequest.get(`${source}/api.json`).pipe(
-        HttpClientRequest.setHeader("User-Agent", USER_AGENT),
+        HttpClientRequest.setHeader("User-Agent", `opencode/${InstallationChannel}/${InstallationVersion}/${client}`),
         http.execute,
         Effect.flatMap((res) => res.text),
         Effect.timeout("10 seconds"),
       )
     })
 
-    const loadFromDisk = fs.readJson(Flag.OPENCODE_MODELS_PATH ?? filepath).pipe(
+    const loadFromDisk = fs.readJson(Option.getOrElse(modelsPath, () => filepath)).pipe(
+      Effect.flatMap(decodeEntries),
+      Effect.flatMap(toCatalog),
+      Effect.map(Option.some),
       Effect.catch((error) => {
+        // A cache file that does not parse, or does not hold a JSON object, is corrupt: remove it to refetch.
         if (
-          Flag.OPENCODE_MODELS_PATH === undefined &&
-          error._tag === "FileSystemError" &&
-          error.method === "readJson"
+          Option.isNone(modelsPath) &&
+          (error._tag === "SchemaError" || (error._tag === "FileSystemError" && error.method === "readJson"))
         ) {
-          return fs.remove(filepath, { force: true }).pipe(Effect.ignore, Effect.as(undefined))
+          return fs
+            .remove(filepath, { force: true })
+            .pipe(Effect.ignore, Effect.as(Option.none<Record<string, Provider>>()))
         }
-        return Effect.succeed(undefined)
+        return Effect.succeed(Option.none<Record<string, Provider>>())
       }),
-      Effect.map((v) => v as Record<string, Provider> | undefined),
     )
 
     const loadSnapshot = Effect.sync(() =>
-      typeof OPENCODE_MODELS_DEV === "undefined" ? undefined : OPENCODE_MODELS_DEV,
+      typeof OPENCODE_MODELS_DEV === "undefined" ? Option.none() : Option.some(OPENCODE_MODELS_DEV),
     )
 
     const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
       const text = yield* fetchApi()
-      const tempfile = `${filepath}.${process.pid}.${Date.now()}.tmp`
+      const tempfile = `${filepath}.${process.pid}.${yield* Clock.currentTimeMillis}.tmp`
       yield* fs.writeWithDirs(tempfile, text).pipe(
         Effect.andThen(fs.rename(tempfile, filepath)),
         Effect.catch((error) =>
@@ -216,10 +264,11 @@ const layer = Layer.effect(
 
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
-      if (fromDisk) return fromDisk
+      if (Option.isSome(fromDisk)) return fromDisk.value
       const snapshot = yield* loadSnapshot
-      if (snapshot) return snapshot
-      if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
+      if (Option.isSome(snapshot)) return snapshot.value
+      // Read when the catalog loads, from the ConfigProvider of the fiber that calls get().
+      if (yield* FlagConfig.OPENCODE_DISABLE_MODELS_FETCH) return {}
       // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
       const text = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -227,7 +276,7 @@ const layer = Layer.effect(
           return yield* fetchAndWrite()
         }),
       )
-      return JSON.parse(text) as Record<string, Provider>
+      return yield* decodeEntriesText(text).pipe(Effect.flatMap(toCatalog))
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
@@ -252,7 +301,8 @@ const layer = Layer.effect(
       )
     })
 
-    if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
+    const fetchDisabled = yield* FlagConfig.OPENCODE_DISABLE_MODELS_FETCH.pipe(Effect.orDie)
+    if (!fetchDisabled && !process.argv.includes("--get-yargs-completions")) {
       // Schedule.spaced runs the effect once, then waits between completions.
       yield* Effect.forkScoped(refresh().pipe(Effect.repeat(Schedule.spaced("60 minutes")), Effect.ignore))
     }

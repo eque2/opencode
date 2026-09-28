@@ -8,13 +8,14 @@ import { createMemo, createResource, createSignal } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
 import { useGlobal } from "@/context/global"
-import { cleanPickerInput, createDirectorySearch, displayPickerPath } from "./directory-picker-domain"
+import { cleanPickerInput, createDirectorySearch, displayPickerPath, pickerPathOption } from "./directory-picker-domain"
 import type { Path } from "@opencode-ai/sdk/v2/client"
+import { Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 
 interface DialogSelectDirectoryProps {
   title?: string
   multiple?: boolean
-  onSelect: (result: string | string[] | null) => void
+  onSelect: (result: string | string[]) => void
   server: ServerConnection.Any
 }
 
@@ -36,16 +37,16 @@ function toRow(absolute: string, home: string, group: Row["group"]): Row {
   }
 
   const search = Array.from(
-    new Set([full, withSlash(full), tilde, withSlash(tilde), getFilename(full)].filter(Boolean)),
+    MutableHashSet.fromIterable([full, withSlash(full), tilde, withSlash(tilde), getFilename(full)].filter(Boolean)),
   ).join("\n")
   return { absolute: full, search, group }
 }
 
 function uniqueRows(rows: Row[]) {
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   return rows.filter((row) => {
-    if (seen.has(row.absolute)) return false
-    seen.add(row.absolute)
+    if (MutableHashSet.has(seen, row.absolute)) return false
+    MutableHashSet.add(seen, row.absolute)
     return true
   })
 }
@@ -59,33 +60,38 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
   const [filter, setFilter] = createSignal("")
   let list: ListRef | undefined
 
-  const missingHome = createMemo(() => !sync.data.path.home)
-  const [fallbackPath] = createResource(
-    () => (missingHome() ? true : undefined),
-    async (): Promise<Path | undefined> => {
-      if ((await sdk.protocol) !== "v1") return
-      return sdk.client.path
-        .get()
-        .then((result) => result.data)
-        .catch(() => undefined)
-    },
-    { initialValue: undefined },
-  )
+  // A v1 server can leave the home path out of its sync data, so the dialog asks for the path once.
+  const loadFallbackPath = Effect.gen(function* () {
+    const protocol = yield* Effect.promise(() => sdk.protocol)
+    if (protocol !== "v1") return Option.none<Path>()
+    return yield* Effect.tryPromise(() => sdk.client.path.get()).pipe(
+      Effect.map((result) => Option.fromNullishOr(result.data)),
+      Effect.orElseSucceed(() => Option.none<Path>()),
+    )
+  })
 
-  const home = createMemo(() => sync.data.path.home || fallbackPath()?.home || "")
+  // A false source skips the fetch, as an undefined source did.
+  const missingHome = createMemo(() => !sync.data.path.home)
+  const [fallbackPath] = createResource(missingHome, () => Effect.runPromise(loadFallbackPath), {
+    initialValue: Option.none<Path>(),
+  })
+  const fallback = (field: "home" | "directory") =>
+    Option.match(fallbackPath(), { onNone: () => "", onSome: (path) => path[field] })
+
+  const home = createMemo(() => sync.data.path.home || fallback("home"))
   const start = createMemo(
-    () => sync.data.path.home || sync.data.path.directory || fallbackPath()?.home || fallbackPath()?.directory,
+    () => sync.data.path.home || sync.data.path.directory || fallback("home") || fallback("directory"),
   )
 
   const directories = createDirectorySearch({
     sdk,
     home,
-    base: start,
+    base: () => pickerPathOption(start()),
   })
 
   const recentProjects = createMemo(() => {
     const projects = serverCtx.projects.list()
-    const byProject = new Map<string, number>()
+    const byProject = MutableHashMap.empty<string, number>()
 
     for (const project of projects) {
       let at = 0
@@ -98,11 +104,15 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
           if (updated > at) at = updated
         }
       }
-      byProject.set(project.worktree, at)
+      MutableHashMap.set(byProject, project.worktree, at)
     }
 
     return projects
-      .map((project, index) => ({ project, at: byProject.get(project.worktree) ?? 0, index }))
+      .map((project, index) => ({
+        project,
+        at: Option.getOrElse(MutableHashMap.get(byProject, project.worktree), () => 0),
+        index,
+      }))
       .sort((a, b) => b.at - a.at || a.index - b.index)
       .map(({ project }) => {
         const row = toRow(project.worktree, home(), "recent")
@@ -114,14 +124,18 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
       })
   })
 
-  const items = async (value: string) => {
-    const results = await directories(value)
-    const directoryRows = results.map((absolute) => toRow(absolute, home(), "folders"))
-    // Cap the idle list only. Once a query narrows the results, every project stays searchable.
-    const recent = recentProjects()
-    const visible = value ? recent : recent.slice(0, RECENT_PROJECT_LIMIT)
-    return uniqueRows([...visible, ...directoryRows])
-  }
+  const items = (value: string) =>
+    Effect.runPromise(
+      directories(value).pipe(
+        Effect.map((results) => {
+          const directoryRows = results.map((absolute) => toRow(absolute, home(), "folders"))
+          // Cap the idle list only. Once a query narrows the results, every project stays searchable.
+          const recent = recentProjects()
+          const visible = value ? recent : recent.slice(0, RECENT_PROJECT_LIMIT)
+          return uniqueRows([...visible, ...directoryRows])
+        }),
+      ),
+    )
 
   function resolve(absolute: string) {
     props.onSelect(props.multiple ? [absolute] : absolute)

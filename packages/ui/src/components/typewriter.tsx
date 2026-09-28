@@ -1,8 +1,18 @@
-import { createEffect, onCleanup, Show, type ValidComponent } from "solid-js"
+import { Effect, Random } from "effect"
+import { createEffect, Show, type ValidComponent } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
+import { createFiberSlot } from "../hooks/create-fiber-slot"
 
-export const Typewriter = <T extends ValidComponent = "p">(props: { text?: string; class?: string; as?: T }) => {
+// Mostly quick keystrokes, with an occasional hesitation or long pause.
+const typingDelay = Effect.gen(function* () {
+  const roll = yield* Random.next
+  if (roll < 0.05) return yield* Random.nextBetween(150, 250)
+  if (roll < 0.15) return yield* Random.nextBetween(80, 140)
+  return yield* Random.nextBetween(30, 80)
+})
+
+export const Typewriter = (props: { text?: string; class?: string; as?: ValidComponent }) => {
   const [store, setStore] = createStore({
     typing: false,
     displayed: "",
@@ -13,35 +23,25 @@ export const Typewriter = <T extends ValidComponent = "p">(props: { text?: strin
     const text = props.text
     if (!text) return
 
-    let i = 0
-    const timeouts: ReturnType<typeof setTimeout>[] = []
+    // Made inside the effect, so the effect's cleanup interrupts the run for the previous text.
+    const typing = createFiberSlot()
     setStore("typing", true)
     setStore("displayed", "")
     setStore("cursor", true)
 
-    const getTypingDelay = () => {
-      const random = Math.random()
-      if (random < 0.05) return 150 + Math.random() * 100
-      if (random < 0.15) return 80 + Math.random() * 60
-      return 30 + Math.random() * 50
-    }
-
-    const type = () => {
-      if (i < text.length) {
-        setStore("displayed", text.slice(0, i + 1))
-        i++
-        timeouts.push(setTimeout(type, getTypingDelay()))
-      } else {
+    typing.run(
+      Effect.gen(function* () {
+        yield* Effect.sleep("200 millis")
+        for (let i = 1; i <= text.length; i++) {
+          setStore("displayed", text.slice(0, i))
+          const delay = yield* typingDelay
+          yield* Effect.sleep(delay)
+        }
         setStore("typing", false)
-        timeouts.push(setTimeout(() => setStore("cursor", false), 2000))
-      }
-    }
-
-    timeouts.push(setTimeout(type, 200))
-
-    onCleanup(() => {
-      for (const timeout of timeouts) clearTimeout(timeout)
-    })
+        yield* Effect.sleep("2 seconds")
+        setStore("cursor", false)
+      }),
+    )
   })
 
   return (

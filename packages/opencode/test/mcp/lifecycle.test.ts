@@ -14,7 +14,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Effect, Exit } from "effect"
+import { Cause, Effect, Exit, Fiber, Schema } from "effect"
 import type { MCP as MCPNS } from "../../src/mcp/index"
 import { MCP } from "../../src/mcp/index"
 import { McpOAuthCallback } from "../../src/mcp/oauth-callback"
@@ -133,7 +133,8 @@ function lifecycleServer(input?: { capabilities?: ServerCapabilities; instructio
         },
         close: async () => {
           await current.protocol.close().catch(() => {})
-          http.stop(true)
+          // Do not wait: stop(true) stays pending while a request handler is still open.
+          void http.stop(true)
         },
       }
     }),
@@ -167,7 +168,8 @@ function hangingLifecycleServer() {
         url: http.url.toString(),
         close: async () => {
           await protocol.close().catch(() => {})
-          http.stop(true)
+          // Do not wait: stop(true) stays pending while a request handler is still open.
+          void http.stop(true)
         },
       }
     }),
@@ -543,18 +545,19 @@ it.instance("remote timeout aborts both real HTTP transport attempts", () =>
   }),
 )
 
+class CallbackRejected extends Schema.TaggedError<CallbackRejected>()("CallbackRejected", {
+  cause: Schema.Defect(),
+}) {}
+
 it.live("McpOAuthCallback.cancelPending rejects the pending callback", () =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => McpOAuthCallback.waitForCallback("abc123hexstate", "my-mcp-server")),
-    (callback) =>
-      Effect.gen(function* () {
-        McpOAuthCallback.cancelPending("my-mcp-server")
-        const exit = yield* Effect.tryPromise({
-          try: () => callback,
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-        }).pipe(Effect.exit)
-        expect(Exit.isFailure(exit)).toBe(true)
-      }),
-    () => Effect.promise(() => McpOAuthCallback.stop()).pipe(Effect.ignore),
-  ),
+  Effect.gen(function* () {
+    // Start immediately so the callback is registered before it is cancelled.
+    const callback = yield* Effect.tryPromise({
+      try: () => McpOAuthCallback.waitForCallback("abc123hexstate", "my-mcp-server"),
+      catch: (cause) => new CallbackRejected({ cause }),
+    }).pipe(Effect.forkChild({ startImmediately: true }))
+    McpOAuthCallback.cancelPending("my-mcp-server")
+    const exit = yield* Fiber.await(callback)
+    expect(Exit.isFailure(exit)).toBe(true)
+  }).pipe(Effect.ensuring(Effect.promise(() => McpOAuthCallback.stop()).pipe(Effect.ignore))),
 )

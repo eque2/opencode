@@ -1,7 +1,7 @@
 import { afterEach, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { fileURLToPath } from "url"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
@@ -26,8 +26,9 @@ it.instance(
   () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
-      const ctx = yield* InstanceRef
-      if (!ctx) throw new Error("InstanceRef not provided")
+      const instance = yield* InstanceRef
+      if (Option.isNone(instance)) throw new Error("InstanceRef not provided")
+      const ctx = instance.value
 
       const directory = yield* Effect.promise(async () => {
         await Promise.resolve()

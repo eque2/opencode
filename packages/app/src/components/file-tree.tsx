@@ -17,6 +17,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { Array as Arr, Effect, HashMap, HashSet, MutableHashSet, Option, Order } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 const MAX_DEPTH = 128
@@ -28,8 +29,8 @@ export function pathToFileUrl(filepath: string): string {
 export type Kind = "add" | "del" | "mix"
 
 export type Filter = {
-  files: Set<string>
-  dirs: Set<string>
+  files: HashSet.HashSet<string>
+  dirs: HashSet.HashSet<string>
 }
 
 export function shouldListRoot(input: { level: number; dir?: { loaded?: boolean; loading?: boolean } }) {
@@ -52,12 +53,16 @@ export function shouldListExpanded(input: {
 
 export function dirsToExpand(input: {
   level: number
-  filter?: { dirs: Set<string> }
+  filter: Option.Option<{ dirs: HashSet.HashSet<string> }>
   expanded: (dir: string) => boolean
 }) {
   if (input.level !== 0) return []
-  if (!input.filter) return []
-  return [...input.filter.dirs].filter((dir) => !input.expanded(dir))
+  if (Option.isNone(input.filter)) return []
+  // HashSet has no insertion order; sorting keeps every parent ahead of its children.
+  return Arr.sort(
+    Arr.filter(Array.from(input.filter.value.dirs), (dir) => !input.expanded(dir)),
+    Order.String,
+  )
 }
 
 const kindLabel = (kind: Kind) => {
@@ -78,33 +83,44 @@ const kindDotColor = (kind: Kind) => {
   return "background-color: var(--icon-diff-modified-base)"
 }
 
-export const visibleKind = (node: FileNode, kinds?: ReadonlyMap<string, Kind>, marks?: Set<string>) => {
-  const kind = kinds?.get(node.path)
-  if (!kind) return
-  if (!marks?.has(node.path)) return
-  return kind
+export const visibleKind = (
+  node: FileNode,
+  kinds?: HashMap.HashMap<string, Kind>,
+  marks?: HashSet.HashSet<string>,
+): Option.Option<Kind> => {
+  if (!kinds || !marks || !HashSet.has(marks, node.path)) return Option.none()
+  return HashMap.get(kinds, node.path)
 }
 
-const buildDragImage = (target: HTMLElement) => {
+const buildDragImage = (target: HTMLElement): Option.Option<HTMLDivElement> => {
   const icon = target.querySelector('[data-component="file-icon"]') ?? target.querySelector("svg")
   const text = target.querySelector("span")
-  if (!icon || !text) return
+  if (!icon || !text) return Option.none()
 
   const image = document.createElement("div")
   image.className =
     "flex items-center gap-x-2 px-2 py-1 bg-surface-raised-base rounded-md border border-border-base text-12-regular text-text-strong"
   image.style.position = "absolute"
   image.style.top = "-1000px"
-  image.innerHTML = (icon as SVGElement).outerHTML + (text as HTMLSpanElement).outerHTML
-  return image
+  image.innerHTML = icon.outerHTML + text.outerHTML
+  return Option.some(image)
 }
 
 export const withFileDragImage = (event: DragEvent) => {
-  const image = buildDragImage(event.currentTarget as HTMLElement)
-  if (!image) return
+  if (!(event.currentTarget instanceof HTMLElement)) return
+  const built = buildDragImage(event.currentTarget)
+  if (Option.isNone(built)) return
+  const image = built.value
   document.body.appendChild(image)
   event.dataTransfer?.setDragImage(image, 0, 12)
-  setTimeout(() => document.body.removeChild(image), 0)
+  // The browser captures the drag image after dragstart returns, so the
+  // element leaves the page on the next task, as setTimeout(fn, 0) did.
+  Effect.runFork(
+    Effect.sleep("0 millis").pipe(
+      Effect.andThen(Effect.sync(() => document.body.removeChild(image))),
+      Effect.tapCause((cause) => Effect.logError(cause)),
+    ),
+  )
 }
 
 const FileTreeNode = (
@@ -116,8 +132,8 @@ const FileTreeNode = (
       active?: string
       nodeClass?: string
       draggable: boolean
-      kinds?: ReadonlyMap<string, Kind>
-      marks?: Set<string>
+      kinds?: HashMap.HashMap<string, Kind>
+      marks?: HashSet.HashSet<string>
       as?: "div" | "button"
     },
 ) => {
@@ -135,12 +151,8 @@ const FileTreeNode = (
     "classList",
   ])
   const kind = () => visibleKind(local.node, local.kinds, local.marks)
-  const active = () => !!kind() && !local.node.ignored
-  const color = () => {
-    const value = kind()
-    if (!value) return
-    return kindTextColor(value)
-  }
+  const active = () => Option.isSome(kind()) && !local.node.ignored
+  const color = () => (active() ? Option.map(kind(), kindTextColor) : Option.none<string>())
 
   return (
     <Dynamic
@@ -170,22 +182,21 @@ const FileTreeNode = (
           "text-text-weaker": local.node.ignored,
           "text-text-weak": !local.node.ignored && !active(),
         }}
-        style={active() ? color() : undefined}
+        style={Option.getOrUndefined(color())}
       >
         {local.node.name}
       </span>
-      {(() => {
-        const value = kind()
-        if (!value) return null
-        if (local.node.type === "file") {
-          return (
-            <span class="shrink-0 w-4 text-center text-12-medium" style={kindTextColor(value)}>
-              {kindLabel(value)}
+      <Show when={Option.getOrUndefined(kind())}>
+        {(value) =>
+          local.node.type === "file" ? (
+            <span class="shrink-0 w-4 text-center text-12-medium" style={kindTextColor(value())}>
+              {kindLabel(value())}
             </span>
+          ) : (
+            <div class="shrink-0 size-1.5 mr-1.5 rounded-full" style={kindDotColor(value())} />
           )
         }
-        return <div class="shrink-0 size-1.5 mr-1.5 rounded-full" style={kindDotColor(value)} />
-      })()}
+      </Show>
     </Dynamic>
   )
 }
@@ -198,15 +209,15 @@ export default function FileTree(props: {
   level?: number
   allowed?: readonly string[]
   modified?: readonly string[]
-  kinds?: ReadonlyMap<string, Kind>
+  kinds?: HashMap.HashMap<string, Kind>
   draggable?: boolean
   onFileClick?: (file: FileNode) => void
   onFileDoubleClick?: (file: FileNode) => void
 
-  _filter?: Filter
-  _marks?: Set<string>
-  _deeps?: Map<string, number>
-  _kinds?: ReadonlyMap<string, Kind>
+  _filter?: Option.Option<Filter>
+  _marks?: HashSet.HashSet<string>
+  _deeps?: HashMap.HashMap<string, number>
+  _kinds?: HashMap.HashMap<string, Kind>
   _chain?: readonly string[]
 }) {
   const file = useFile()
@@ -220,35 +231,30 @@ export default function FileTree(props: {
       .replaceAll("\\", "/")
   const chain = props._chain ? [...props._chain, key(props.path)] : [key(props.path)]
 
-  const filter = createMemo(() => {
+  const filter = createMemo((): Option.Option<Filter> => {
     if (props._filter) return props._filter
 
     const allowed = props.allowed
-    if (!allowed) return
+    if (!allowed) return Option.none()
 
-    const files = new Set(allowed)
-    const dirs = new Set<string>()
+    const files = HashSet.fromIterable(allowed)
+    const dirs = HashSet.fromIterable(
+      allowed.flatMap((item) => {
+        const parents = item.split("/").slice(0, -1)
+        return parents.map((_, idx) => parents.slice(0, idx + 1).join("/")).filter((dir) => dir.length > 0)
+      }),
+    )
 
-    for (const item of allowed) {
-      const parts = item.split("/")
-      const parents = parts.slice(0, -1)
-      for (const [idx] of parents.entries()) {
-        const dir = parents.slice(0, idx + 1).join("/")
-        if (dir) dirs.add(dir)
-      }
-    }
-
-    return { files, dirs }
+    return Option.some({ files, dirs })
   })
 
   const marks = createMemo(() => {
     if (props._marks) return props._marks
 
-    const out = new Set<string>()
-    for (const item of props.modified ?? []) out.add(item)
-    for (const item of props.kinds?.keys() ?? []) out.add(item)
-    if (out.size === 0) return
-    return out
+    return HashSet.union(
+      HashSet.fromIterable(props.modified ?? []),
+      props.kinds ? HashSet.fromIterable(HashMap.keys(props.kinds)) : HashSet.empty<string>(),
+    )
   })
 
   const kinds = createMemo(() => {
@@ -259,48 +265,46 @@ export default function FileTree(props: {
   const deeps = createMemo(() => {
     if (props._deeps) return props._deeps
 
-    const out = new Map<string, number>()
-
     const root = props.path
-    if (!(file.tree.state(root)?.expanded ?? false)) return out
+    if (!(file.tree.state(root)?.expanded ?? false)) return HashMap.empty<string, number>()
 
-    const seen = new Set<string>()
-    const stack: { dir: string; lvl: number; i: number; kids: string[]; max: number }[] = []
+    return HashMap.mutate(HashMap.empty<string, number>(), (out) => {
+      const seen = MutableHashSet.empty<string>()
+      const stack: { dir: string; lvl: number; i: number; kids: string[]; max: number }[] = []
 
-    const push = (dir: string, lvl: number) => {
-      const id = key(dir)
-      if (seen.has(id)) return
-      seen.add(id)
+      const push = (dir: string, lvl: number) => {
+        const id = key(dir)
+        if (MutableHashSet.has(seen, id)) return
+        MutableHashSet.add(seen, id)
 
-      const kids = file.tree
-        .children(dir)
-        .filter((node) => node.type === "directory" && (file.tree.state(node.path)?.expanded ?? false))
-        .map((node) => node.path)
+        const kids = file.tree
+          .children(dir)
+          .filter((node) => node.type === "directory" && (file.tree.state(node.path)?.expanded ?? false))
+          .map((node) => node.path)
 
-      stack.push({ dir, lvl, i: 0, kids, max: lvl })
-    }
-
-    push(root, level - 1)
-
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1]!
-
-      if (top.i < top.kids.length) {
-        const next = top.kids[top.i]!
-        top.i++
-        push(next, top.lvl + 1)
-        continue
+        stack.push({ dir, lvl, i: 0, kids, max: lvl })
       }
 
-      out.set(top.dir, top.max)
-      stack.pop()
+      push(root, level - 1)
 
-      const parent = stack[stack.length - 1]
-      if (!parent) continue
-      parent.max = Math.max(parent.max, top.max)
-    }
+      while (stack.length > 0) {
+        const top = stack[stack.length - 1]
 
-    return out
+        if (top.i < top.kids.length) {
+          const next = top.kids[top.i]
+          top.i++
+          push(next, top.lvl + 1)
+          continue
+        }
+
+        HashMap.set(out, top.dir, top.max)
+        stack.pop()
+
+        const parent = stack[stack.length - 1]
+        if (!parent) continue
+        parent.max = Math.max(parent.max, top.max)
+      }
+    })
   })
 
   createEffect(() => {
@@ -327,8 +331,9 @@ export default function FileTree(props: {
 
   const nodes = createMemo(() => {
     const nodes = file.tree.children(props.path)
-    const current = filter()
-    if (!current) return nodes
+    const filtered = filter()
+    if (Option.isNone(filtered)) return nodes
+    const current = filtered.value
 
     const parent = (path: string) => {
       const idx = path.lastIndexOf("/")
@@ -342,15 +347,15 @@ export default function FileTree(props: {
     }
 
     const out = nodes.filter((node) => {
-      if (node.type === "file") return current.files.has(node.path)
-      return current.dirs.has(node.path)
+      if (node.type === "file") return HashSet.has(current.files, node.path)
+      return HashSet.has(current.dirs, node.path)
     })
 
-    const seen = new Set(out.map((node) => node.path))
+    const seen = MutableHashSet.fromIterable(out.map((node) => node.path))
 
     for (const dir of current.dirs) {
       if (parent(dir) !== props.path) continue
-      if (seen.has(dir)) continue
+      if (MutableHashSet.has(seen, dir)) continue
       out.push({
         name: leaf(dir),
         path: dir,
@@ -358,12 +363,12 @@ export default function FileTree(props: {
         type: "directory",
         ignored: false,
       })
-      seen.add(dir)
+      MutableHashSet.add(seen, dir)
     }
 
     for (const item of current.files) {
       if (parent(item) !== props.path) continue
-      if (seen.has(item)) continue
+      if (MutableHashSet.has(seen, item)) continue
       out.push({
         name: leaf(item),
         path: item,
@@ -371,7 +376,7 @@ export default function FileTree(props: {
         type: "file",
         ignored: false,
       })
-      seen.add(item)
+      MutableHashSet.add(seen, item)
     }
 
     out.sort((a, b) => {
@@ -389,9 +394,9 @@ export default function FileTree(props: {
       <For each={nodes()}>
         {(node) => {
           const expanded = () => file.tree.state(node.path)?.expanded ?? false
-          const deep = () => deeps().get(node.path) ?? -1
+          const deep = () => Option.getOrElse(HashMap.get(deeps(), node.path), () => -1)
           const kind = () => visibleKind(node, kinds(), marks())
-          const active = () => !!kind() && !node.ignored
+          const active = () => Option.isSome(kind()) && !node.ignored
 
           return (
             <Switch>
@@ -476,13 +481,15 @@ export default function FileTree(props: {
                         mono
                       />
                     </Match>
-                    <Match when={active()}>
-                      <FileIcon
-                        node={node}
-                        class="size-4 filetree-icon filetree-icon--mono"
-                        style={kindTextColor(kind()!)}
-                        mono
-                      />
+                    <Match when={active() && Option.getOrUndefined(kind())}>
+                      {(value) => (
+                        <FileIcon
+                          node={node}
+                          class="size-4 filetree-icon filetree-icon--mono"
+                          style={kindTextColor(value())}
+                          mono
+                        />
+                      )}
                     </Match>
                     <Match when={!node.ignored}>
                       <span class="filetree-iconpair size-4">

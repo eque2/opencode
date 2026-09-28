@@ -1,7 +1,7 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
+import * as Effectable from "effect/Effectable"
 import type { CacheConfig } from "drizzle-orm/cache/core/types"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type {
   BuildSubquerySelection,
@@ -13,11 +13,9 @@ import type {
 } from "drizzle-orm/query-builders/select.types"
 import { SQL } from "drizzle-orm/sql/sql"
 import type { ColumnsSelection, SQLWrapper } from "drizzle-orm/sql/sql"
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns"
 import type { SQLiteDialect } from "drizzle-orm/sqlite-core/dialect"
 import { SQLiteSelectQueryBuilderBase } from "drizzle-orm/sqlite-core/query-builders/select"
 import type {
-  CreateSQLiteSelectFromBuilderMode,
   SelectedFields,
   SQLiteSelectConfig,
   SQLiteSelectHKTBase,
@@ -25,30 +23,29 @@ import type {
 import type { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { SQLiteViewBase } from "drizzle-orm/sqlite-core/view-base"
 import { Subquery } from "drizzle-orm/subquery"
-import { type Assume, getTableColumns } from "drizzle-orm/utils"
-import { getViewSelectedFieldsRuntime, orderSelectedFields } from "../../internal/drizzle-utils"
+import { type Assume, getTableColumns, getViewSelectedFields } from "drizzle-orm/utils"
+import { orderSelectedFields } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
+
+export type SQLiteEffectSelectPrepareConfig<T extends AnySQLiteEffectSelect> = {
+  type: "async"
+  run: T["_"]["runResult"]
+  all: T["_"]["result"]
+  get: T["_"]["result"][number] | undefined
+  values: any[][]
+  execute: T["_"]["result"]
+}
 
 export type SQLiteEffectSelectPrepare<
   T extends AnySQLiteEffectSelect,
   TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> = SQLiteEffectPreparedQuery<
-  {
-    type: "async"
-    run: T["_"]["runResult"]
-    all: T["_"]["result"]
-    get: T["_"]["result"][number] | undefined
-    values: any[][]
-    execute: T["_"]["result"]
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectSelectPrepareConfig<T>, TEffectHKT>
 
 export class SQLiteEffectSelectBuilder<
   TSelection extends SelectedFields | undefined,
   TRunResult,
   TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-  TBuilderMode extends "db" | "qb" = "db",
 > {
   static readonly [entityKind]: string = "SQLiteEffectSelectBuilder"
 
@@ -74,63 +71,50 @@ export class SQLiteEffectSelectBuilder<
 
   from<TFrom extends SQLiteTable | Subquery | SQLiteViewBase | SQL>(
     source: TFrom,
-  ): TBuilderMode extends "db"
-    ? SQLiteEffectSelectBase<
-        GetSelectTableName<TFrom>,
-        TRunResult,
-        TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
-        TSelection extends undefined ? "single" : "partial",
-        GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {},
-        false,
-        never,
-        SelectResult<
-          TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
-          TSelection extends undefined ? "single" : "partial",
-          GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {}
-        >[],
-        BuildSubquerySelection<
-          TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
-          GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {}
-        >,
-        TEffectHKT
-      >
-    : CreateSQLiteSelectFromBuilderMode<
-        TBuilderMode,
-        GetSelectTableName<TFrom>,
-        "async",
-        TRunResult,
-        TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
-        TSelection extends undefined ? "single" : "partial"
-      > {
+  ): SQLiteEffectSelectBase<
+    GetSelectTableName<TFrom>,
+    TRunResult,
+    TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
+    TSelection extends undefined ? "single" : "partial",
+    GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {},
+    false,
+    never,
+    SelectResult<
+      TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
+      TSelection extends undefined ? "single" : "partial",
+      GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {}
+    >[],
+    BuildSubquerySelection<
+      TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
+      GetSelectTableName<TFrom> extends string ? Record<GetSelectTableName<TFrom>, "not-null"> : {}
+    >,
+    TEffectHKT
+  > {
     const isPartialSelect = !!this.fields
 
-    let fields: SelectedFields
+    let fields: SQLiteSelectConfig["fields"]
     if (this.fields) {
       fields = this.fields
     } else if (is(source, Subquery)) {
-      fields = Object.fromEntries(
-        Object.keys(source._.selectedFields).map((key) => [
-          key,
-          source[key as unknown as keyof typeof source] as unknown as SelectedFields[string],
-        ]),
-      )
+      // The subquery is a selection proxy: reading a key returns the aliased field.
+      fields = Object.fromEntries(Object.keys(source._.selectedFields).map((key) => [key, Reflect.get(source, key)]))
     } else if (is(source, SQLiteViewBase)) {
-      fields = getViewSelectedFieldsRuntime(source).selectedFields as SelectedFields
+      fields = getViewSelectedFields(source)
     } else if (is(source, SQL)) {
       fields = {}
     } else {
-      fields = getTableColumns<SQLiteTable>(source)
+      fields = getTableColumns(source)
     }
 
     return new SQLiteEffectSelectBase({
       table: source,
       fields,
       isPartialSelect,
-      session: this.session as any,
+      session: this.session,
       dialect: this.dialect,
       withList: this.withList,
       distinct: this.distinct,
-    }) as any
+    })
   }
 }
 
@@ -150,34 +134,6 @@ export interface SQLiteEffectSelectHKT<TEffectHKT extends QueryEffectHKTBase = Q
   >
 }
 
-export interface SQLiteEffectSelectBase<
-  TTableName extends string | undefined,
-  TRunResult,
-  TSelection extends ColumnsSelection,
-  TSelectMode extends SelectMode = "single",
-  TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string
-    ? Record<TTableName, "not-null">
-    : {},
-  TDynamic extends boolean = false,
-  TExcludedMethods extends string = never,
-  TResult extends any[] = SelectResult<TSelection, TSelectMode, TNullabilityMap>[],
-  TSelectedFields extends ColumnsSelection = BuildSubquerySelection<TSelection, TNullabilityMap>,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends SQLiteSelectQueryBuilderBase<
-      SQLiteEffectSelectHKT<TEffectHKT>,
-      TTableName,
-      "async",
-      TRunResult,
-      TSelection,
-      TSelectMode,
-      TNullabilityMap,
-      TDynamic,
-      TExcludedMethods,
-      TResult,
-      TSelectedFields
-    >,
-    Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {}
-
 export class SQLiteEffectSelectBase<
     TTableName extends string | undefined,
     TRunResult,
@@ -192,7 +148,7 @@ export class SQLiteEffectSelectBase<
     TSelectedFields extends ColumnsSelection = BuildSubquerySelection<TSelection, TNullabilityMap>,
     TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
   >
-  extends SQLiteSelectQueryBuilderBase<
+  extends Effectable.Mixin(SQLiteSelectQueryBuilderBase)<
     SQLiteEffectSelectHKT<TEffectHKT>,
     TTableName,
     "async",
@@ -209,34 +165,48 @@ export class SQLiteEffectSelectBase<
 {
   static override readonly [entityKind]: string = "SQLiteEffectSelect"
 
-  private get effectConfig() {
-    return (this as unknown as { config: SQLiteSelectConfig }).config
+  private effectSession: SQLiteEffectSession<TEffectHKT, TRunResult, any> | undefined
+
+  constructor(config: {
+    table: SQLiteSelectConfig["table"]
+    fields: SQLiteSelectConfig["fields"]
+    isPartialSelect: boolean
+    session: SQLiteEffectSession<TEffectHKT, TRunResult, any> | undefined
+    dialect: SQLiteDialect
+    withList: Subquery[] | undefined
+    distinct: boolean | undefined
+  }) {
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) drizzle-orm SQLiteSelectQueryBuilderBase constructor declares the required key session: SQLiteSession | undefined and only stores it; SQLiteEffectSession is not a SQLiteSession, so the base gets undefined and the Effect session lives in effectSession
+    super({ ...config, session: undefined })
+    this.effectSession = config.session
   }
 
   /** @internal */
   getSQL(): SQL {
-    return this.dialect.buildSelectQuery(this.effectConfig)
+    return this.dialect.buildSelectQuery(this._.config)
   }
 
   /** @internal */
   _prepare(isOneTimeQuery = true): SQLiteEffectSelectPrepare<this, TEffectHKT> {
-    if (!this.session) {
-      throw new Error("Cannot execute a query on a query builder. Please use a database instance instead.")
+    const session = this.effectSession
+    if (!session) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) mirrors drizzle-orm SQLiteSelectBase.prepare(): SQLiteSelectPrepare<this>, a synchronous signature; upstream _prepare throws this same message when the builder has no session
+      throw new EffectDrizzleBuilderError({
+        message: "Cannot execute a query on a query builder. Please use a database instance instead.",
+      })
     }
-    const session = this.session as unknown as SQLiteEffectSession<TEffectHKT, TRunResult, any>
-    const query = session[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.dialect.sqlToQuery(this.getSQL()),
-      orderSelectedFields<SQLiteColumn>(this.effectConfig.fields),
-      "all",
-      undefined,
-      {
+    const query = session[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectSelectPrepareConfig<this>
+    >(this.dialect.sqlToQuery(this.getSQL()), "all", {
+      fields: orderSelectedFields(this._.config.fields),
+      queryMetadata: {
         type: "select",
         tables: [...this.usedTables],
       },
-      this.cacheConfig,
-    )
+      cacheConfig: this.cacheConfig,
+    })
     query.joinsNotNullableMap = this.joinsNotNullableMap
-    return query as ReturnType<this["prepare"]>
+    return query
   }
 
   $withCache(config?: { config?: CacheConfig; tag?: string; autoInvalidate?: boolean } | false) {
@@ -272,8 +242,10 @@ export class SQLiteEffectSelectBase<
   execute: ReturnType<this["prepare"]>["execute"] = (placeholderValues) => {
     return this._prepare().execute(placeholderValues)
   }
-}
 
-applyEffectWrapper(SQLiteEffectSelectBase)
+  asEffect(): Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}
 
 export type AnySQLiteEffectSelect = SQLiteEffectSelectBase<any, any, any, any, any, any, any, any, any, any>

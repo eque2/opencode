@@ -42,7 +42,7 @@ export function SortableTab(props: {
   const path = createMemo(() => file.pathFromTab(props.tab))
   const content = createMemo(() => {
     const value = path()
-    if (!value) return
+    if (!value) return undefined
     return <FileVisual path={value} temporary={props.temporary} />
   })
   return (

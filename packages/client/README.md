@@ -13,6 +13,8 @@ The Effect entrypoint uses canonical decoded values such as `Session.ID`, `Locat
 
 The Promise root remains structural and has no Core or Effect runtime dependency. `/effect` depends only on Effect, Schema, and Protocol and is browser-bundle safe. Bundle-boundary tests enforce both import graphs.
 
+The Promise error types that Protocol declares are type-only aliases of the encoded `Schema.TaggedError` types in `@opencode-ai/protocol/errors`, such as `typeof ProtocolErrors.SessionNotFoundError.Encoded`. `script/build.ts` passes them to `emitPromise` as `errorTypes`. The `is<Error>` guards stay structural, and the type-only import is erased from the runtime bundle.
+
 Effect consumers construct canonical decoded inputs:
 
 ```ts

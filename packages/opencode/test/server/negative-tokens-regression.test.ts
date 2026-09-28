@@ -8,7 +8,7 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
@@ -53,12 +53,12 @@ function seedNegativeTokenSession() {
     yield* db
       .update(PartTable)
       .set({
-        data: {
+        data: sql`${JSON.stringify({
           type: "step-finish",
           reason: "stop",
           cost: 0,
           tokens: { input: 0, output: -42, reasoning: 0, cache: { read: 0, write: 0 } },
-        } as never,
+        })}`,
       })
       .where(eq(PartTable.id, partID))
       .run()

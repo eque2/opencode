@@ -1,11 +1,12 @@
-import type * as Arr from "effect/Array"
-import { NodeFileSystem, NodeSink, NodeStream } from "@effect/platform-node"
-import * as NodePath from "@effect/platform-node/NodePath"
+import * as Arr from "effect/Array"
+import { NodeSink, NodeStream } from "@effect/platform-node"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
+import * as MutableHashMap from "effect/MutableHashMap"
+import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
@@ -50,49 +51,51 @@ const toTag = (err: NodeJS.ErrnoException): PlatformError.SystemErrorTag => {
   }
 }
 
-const flatten = (command: ChildProcess.Command) => {
-  const commands: Array<ChildProcess.StandardCommand> = []
-  const opts: Array<ChildProcess.PipeOptions> = []
-
-  const walk = (cmd: ChildProcess.Command): void => {
-    switch (cmd._tag) {
-      case "StandardCommand":
-        commands.push(cmd)
-        return
-      case "PipedCommand":
-        walk(cmd.left)
-        opts.push(cmd.options)
-        walk(cmd.right)
-        return
-    }
-  }
-
-  walk(command)
-  if (commands.length === 0) throw new Error("flatten produced empty commands array")
-  const [head, ...tail] = commands
+// A pipeline in order: every standard command, and the pipe options between neighbours.
+const flatten = (
+  command: ChildProcess.Command,
+): {
+  readonly commands: Arr.NonEmptyReadonlyArray<ChildProcess.StandardCommand>
+  readonly opts: ReadonlyArray<ChildProcess.PipeOptions>
+} => {
+  if (command._tag === "StandardCommand") return { commands: [command], opts: [] }
+  const left = flatten(command.left)
+  const right = flatten(command.right)
   return {
-    commands: [head, ...tail] as Arr.NonEmptyReadonlyArray<ChildProcess.StandardCommand>,
-    opts,
+    commands: Arr.appendAll(left.commands, right.commands),
+    opts: [...left.opts, command.options, ...right.opts],
   }
+}
+
+const systemError = (
+  method: string,
+  command: ChildProcess.Command,
+  reason: {
+    readonly tag: PlatformError.SystemErrorTag
+    readonly syscall?: string
+    readonly description?: string
+    readonly cause?: unknown
+  },
+): PlatformError.PlatformError => {
+  const cmd = flatten(command)
+    .commands.map((x) => `${x.command} ${x.args.join(" ")}`)
+    .join(" | ")
+  const { tag, ...detail } = reason
+  return PlatformError.systemError({
+    // eslint-disable-next-line effect/no-manual-tag -- (a) effect PlatformError.systemError requires the SystemErrorTag reason as its _tag option, and no other SystemError constructor exists
+    _tag: tag,
+    module: "ChildProcess",
+    method,
+    pathOrDescriptor: cmd,
+    ...detail,
+  })
 }
 
 const toPlatformError = (
   method: string,
   err: NodeJS.ErrnoException,
   command: ChildProcess.Command,
-): PlatformError.PlatformError => {
-  const cmd = flatten(command)
-    .commands.map((x) => `${x.command} ${x.args.join(" ")}`)
-    .join(" | ")
-  return PlatformError.systemError({
-    _tag: toTag(err),
-    module: "ChildProcess",
-    method,
-    pathOrDescriptor: cmd,
-    syscall: err.syscall,
-    cause: err,
-  })
-}
+): PlatformError.PlatformError => systemError(method, command, { tag: toTag(err), syscall: err.syscall, cause: err })
 
 type ExitSignal = Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
 
@@ -177,8 +180,8 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const ins = new Map<number, Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError>>()
-    const outs = new Map<number, Stream.Stream<Uint8Array, PlatformError.PlatformError>>()
+    const ins = MutableHashMap.empty<number, Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError>>()
+    const outs = MutableHashMap.empty<number, Stream.Stream<Uint8Array, PlatformError.PlatformError>>()
 
     for (const x of extra) {
       const node = proc.stdio[x.fd]
@@ -193,7 +196,7 @@ export const make = Effect.gen(function* () {
             })
           }
           if (x.config.stream) yield* Effect.forkScoped(Stream.run(x.config.stream, sink))
-          ins.set(x.fd, sink)
+          MutableHashMap.set(ins, x.fd, sink)
           break
         }
         case "output": {
@@ -208,15 +211,15 @@ export const make = Effect.gen(function* () {
             })
           }
           if (x.config.sink) stream = Stream.transduce(stream, x.config.sink)
-          outs.set(x.fd, stream)
+          MutableHashMap.set(outs, x.fd, stream)
           break
         }
       }
     }
 
     return {
-      getInputFd: (fd: number) => ins.get(fd) ?? Sink.drain,
-      getOutputFd: (fd: number) => outs.get(fd) ?? Stream.empty,
+      getInputFd: (fd: number) => Option.getOrElse(MutableHashMap.get(ins, fd), () => Sink.drain),
+      getOutputFd: (fd: number) => Option.getOrElse(MutableHashMap.get(outs, fd), () => Stream.empty),
     }
   })
 
@@ -318,7 +321,7 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.suspend(() => {
       if (proc.kill(signal)) return Effect.void
-      return Effect.fail(toPlatformError("kill", new Error("Failed to kill child process"), command))
+      return Effect.fail(systemError("kill", command, { tag: "Unknown", description: "Failed to kill child process" }))
     })
 
   const timeout =
@@ -362,135 +365,129 @@ export const make = Effect.gen(function* () {
     command: ChildProcess.Command,
   ) => Effect.Effect<ChildProcessHandle, PlatformError.PlatformError, Scope.Scope> = Effect.fnUntraced(
     function* (command) {
-      switch (command._tag) {
-        case "StandardCommand": {
-          const sin = stdin(command.options)
-          const sout = stdio(command.options, "stdout")
-          const serr = stdio(command.options, "stderr")
-          const extra = fds(command.options)
-          const dir = yield* cwd(command.options)
-
-          const [proc, signal] = yield* Effect.acquireRelease(
-            spawn(command, {
-              cwd: dir,
-              env: env(command.options),
-              stdio: stdios(sin, sout, serr, extra),
-              detached: command.options.detached ?? process.platform !== "win32",
-              shell: command.options.shell,
-              windowsHide: process.platform === "win32",
-            }),
-            Effect.fnUntraced(function* ([proc, signal]) {
-              const done = yield* Deferred.isDone(signal)
-              const kill = timeout(proc, command, command.options)
-              if (done) {
-                const [code] = yield* Deferred.await(signal)
-                if (process.platform === "win32") return yield* Effect.void
-                if (code !== 0 && Predicate.isNotNull(code)) return yield* Effect.ignore(kill(killGroup))
-                return yield* Effect.void
-              }
-              const send = (s: NodeJS.Signals) =>
-                Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
-              const sig = command.options.killSignal ?? "SIGTERM"
-              const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
-              const escalated = command.options.forceKillAfter
-                ? Effect.timeoutOrElse(attempt, {
-                    duration: command.options.forceKillAfter,
-                    orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
-                  })
-                : attempt
-              return yield* Effect.ignore(escalated)
-            }),
-          )
-
-          const fd = yield* setupFds(command, proc, extra)
-          const out = setupOutput(command, proc, sout, serr)
-          let ref = true
-          return makeHandle({
-            pid: ProcessId(proc.pid!),
-            stdin: yield* setupStdin(command, proc, sin),
-            stdout: out.stdout,
-            stderr: out.stderr,
-            all: out.all,
-            getInputFd: fd.getInputFd,
-            getOutputFd: fd.getOutputFd,
-            isRunning: Effect.map(Deferred.isDone(signal), (done) => !done),
-            exitCode: Effect.flatMap(Deferred.await(signal), ([code, signal]) => {
-              if (Predicate.isNotNull(code)) return Effect.succeed(ExitCode(code))
-              return Effect.fail(
-                toPlatformError(
-                  "exitCode",
-                  new Error(`Process interrupted due to receipt of signal: '${signal}'`),
-                  command,
-                ),
-              )
-            }),
-            kill: (opts?: ChildProcess.KillOptions) => {
-              const sig = opts?.killSignal ?? "SIGTERM"
-              const send = (s: NodeJS.Signals) =>
-                Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
-              const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
-              if (!opts?.forceKillAfter) return attempt
-              return Effect.timeoutOrElse(attempt, {
-                duration: opts.forceKillAfter,
-                orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
-              })
-            },
-            unref: Effect.sync(() => {
-              if (ref) {
-                proc.unref()
-                ref = false
-              }
-              return Effect.sync(() => {
-                if (!ref) {
-                  proc.ref()
-                  ref = true
-                }
-              })
-            }),
-          })
-        }
-        case "PipedCommand": {
-          const flat = flatten(command)
-          const [head, ...tail] = flat.commands
-          let handle = spawnCommand(head)
-          for (let i = 0; i < tail.length; i++) {
-            const next = tail[i]
-            const opts = flat.opts[i] ?? {}
-            const sin = stdin(next.options)
-            const stream = Stream.unwrap(Effect.map(handle, (x) => source(x, opts.from)))
-            const to = opts.to ?? "stdin"
-            if (to === "stdin") {
-              handle = spawnCommand(
-                ChildProcess.make(next.command, next.args, {
-                  ...next.options,
-                  stdin: { ...sin, stream },
-                }),
-              )
-              continue
-            }
-            const fd = ChildProcess.parseFdName(to)
-            if (Predicate.isUndefined(fd)) {
-              handle = spawnCommand(
-                ChildProcess.make(next.command, next.args, {
-                  ...next.options,
-                  stdin: { ...sin, stream },
-                }),
-              )
-              continue
-            }
+      if (command._tag === "PipedCommand") {
+        const flat = flatten(command)
+        const [head, ...tail] = flat.commands
+        let handle = spawnCommand(head)
+        for (let i = 0; i < tail.length; i++) {
+          const next = tail[i]
+          const opts = flat.opts[i] ?? {}
+          const sin = stdin(next.options)
+          const stream = Stream.unwrap(Effect.map(handle, (x) => source(x, opts.from)))
+          const to = opts.to ?? "stdin"
+          if (to === "stdin") {
             handle = spawnCommand(
               ChildProcess.make(next.command, next.args, {
                 ...next.options,
-                additionalFds: {
-                  ...next.options.additionalFds,
-                  [ChildProcess.fdName(fd) as `fd${number}`]: { type: "input", stream },
-                },
+                stdin: { ...sin, stream },
               }),
             )
+            continue
           }
-          return yield* handle
+          const fd = ChildProcess.parseFdName(to)
+          if (Predicate.isUndefined(fd)) {
+            handle = spawnCommand(
+              ChildProcess.make(next.command, next.args, {
+                ...next.options,
+                stdin: { ...sin, stream },
+              }),
+            )
+            continue
+          }
+          handle = spawnCommand(
+            ChildProcess.make(next.command, next.args, {
+              ...next.options,
+              additionalFds: {
+                ...next.options.additionalFds,
+                [ChildProcess.fdName(fd)]: { type: "input", stream },
+              },
+            }),
+          )
         }
+        return yield* handle
       }
+
+      const sin = stdin(command.options)
+      const sout = stdio(command.options, "stdout")
+      const serr = stdio(command.options, "stderr")
+      const extra = fds(command.options)
+      const dir = yield* cwd(command.options)
+
+      const [proc, signal] = yield* Effect.acquireRelease(
+        spawn(command, {
+          cwd: dir,
+          env: env(command.options),
+          stdio: stdios(sin, sout, serr, extra),
+          detached: command.options.detached ?? process.platform !== "win32",
+          shell: command.options.shell,
+          windowsHide: process.platform === "win32",
+        }),
+        Effect.fnUntraced(function* ([proc, signal]) {
+          const done = yield* Deferred.isDone(signal)
+          const kill = timeout(proc, command, command.options)
+          if (done) {
+            const [code] = yield* Deferred.await(signal)
+            if (process.platform === "win32") return yield* Effect.void
+            if (code !== 0 && Predicate.isNotNull(code)) return yield* Effect.ignore(kill(killGroup))
+            return yield* Effect.void
+          }
+          const send = (s: NodeJS.Signals) => Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
+          const sig = command.options.killSignal ?? "SIGTERM"
+          const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
+          const escalated = command.options.forceKillAfter
+            ? Effect.timeoutOrElse(attempt, {
+                duration: command.options.forceKillAfter,
+                orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
+              })
+            : attempt
+          return yield* Effect.ignore(escalated)
+        }),
+      )
+
+      const fd = yield* setupFds(command, proc, extra)
+      const out = setupOutput(command, proc, sout, serr)
+      let ref = true
+      return makeHandle({
+        pid: ProcessId(proc.pid!),
+        stdin: yield* setupStdin(command, proc, sin),
+        stdout: out.stdout,
+        stderr: out.stderr,
+        all: out.all,
+        getInputFd: fd.getInputFd,
+        getOutputFd: fd.getOutputFd,
+        isRunning: Effect.map(Deferred.isDone(signal), (done) => !done),
+        exitCode: Effect.flatMap(Deferred.await(signal), ([code, signal]) => {
+          if (Predicate.isNotNull(code)) return Effect.succeed(ExitCode(code))
+          return Effect.fail(
+            systemError("exitCode", command, {
+              tag: "Unknown",
+              description: `Process interrupted due to receipt of signal: '${signal}'`,
+            }),
+          )
+        }),
+        kill: (opts?: ChildProcess.KillOptions) => {
+          const sig = opts?.killSignal ?? "SIGTERM"
+          const send = (s: NodeJS.Signals) => Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
+          const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
+          if (!opts?.forceKillAfter) return attempt
+          return Effect.timeoutOrElse(attempt, {
+            duration: opts.forceKillAfter,
+            orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
+          })
+        },
+        unref: Effect.sync(() => {
+          if (ref) {
+            proc.unref()
+            ref = false
+          }
+          return Effect.sync(() => {
+            if (!ref) {
+              proc.ref()
+              ref = true
+            }
+          })
+        }),
+      })
     },
   )
 

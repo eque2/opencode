@@ -1,10 +1,11 @@
-import type { ExperimentalWorkspaceAdapterListResponse, Workspace } from "@opencode-ai/sdk/v2"
+import type { ExperimentalWorkspaceAdapterListResponse, VcsApplyError, Workspace } from "@opencode-ai/sdk/v2"
+import { Data, Effect, Equivalence, Option, Predicate } from "effect"
 import { useDialog } from "../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useSync } from "../context/sync"
 import { useProject } from "../context/project"
 import { useRoute } from "../context/route"
-import { createMemo, createSignal, onMount } from "solid-js"
+import { createMemo, createSignal, onMount, type JSX } from "solid-js"
 import { errorMessage } from "../util/error"
 import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
@@ -30,6 +31,9 @@ export type WorkspaceSelection =
     }
 
 type WorkspaceSelectValue = WorkspaceSelection | { type: "existing-list" }
+
+/** Workspace id Options are equal when both are none or both hold the same id. */
+const sameWorkspaceID = Option.makeEquivalence(Equivalence.strictEqual<string>())
 type ExistingWorkspaceSelectValue = { workspace: Workspace }
 
 export function recentConnectedWorkspaces<WorkspaceInfo extends { id: string; timeUsed: number | string }>(input: {
@@ -49,27 +53,42 @@ export function warpReminderText(dir: string) {
   return `<system-reminder>The user has changed the current working directory to "${dir}". This is still the same project but at a possibly new location; take this into account when working with any files from now on.</system-reminder>`
 }
 
-async function loadWorkspaceAdapters(input: {
+/** A workspace SDK request that rejected or returned an error response. */
+class WorkspaceRequestError extends Data.TaggedError("WorkspaceRequestError")<{ readonly cause: unknown }> {}
+
+/** The warp could not apply the session's file changes to the target workspace. */
+class WorkspaceVcsConflictError extends Data.TaggedError("WorkspaceVcsConflictError")<{
+  readonly cause: VcsApplyError
+}> {}
+
+function loadWorkspaceAdapters(input: {
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
   toast: ReturnType<typeof useToast>
 }) {
   const dir = input.sync.path.directory || input.sdk.directory
-  try {
-    const response = await input.sdk.client.experimental.workspace.adapter.list({ directory: dir })
-    if (response.error) throw response.error
-    return response.data
-  } catch (err) {
-    input.toast.show({
-      title: "Failed to load workspace adapters",
-      message: errorMessage(err),
-      variant: "error",
+  return Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () => input.sdk.client.experimental.workspace.adapter.list({ directory: dir }),
+      catch: (cause) => new WorkspaceRequestError({ cause }),
     })
-    return undefined
-  }
+    if (response.error) return yield* new WorkspaceRequestError({ cause: response.error })
+    return Option.fromNullishOr(response.data)
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        input.toast.show({
+          title: "Failed to load workspace adapters",
+          message: errorMessage(error.cause),
+          variant: "error",
+        })
+        return Option.none<Adapter[]>()
+      }),
+    ),
+  )
 }
 
-export async function openWorkspaceSelect(input: {
+export function openWorkspaceSelect(input: {
   dialog: ReturnType<typeof useDialog>
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
@@ -77,15 +96,19 @@ export async function openWorkspaceSelect(input: {
   toast: ReturnType<typeof useToast>
   onSelect: (selection: WorkspaceSelection) => Promise<void> | void
 }) {
-  input.dialog.clear()
-  await input.sdk.client.experimental.workspace.syncList().catch(() => undefined)
-  await input.project.workspace.sync().catch(() => undefined)
-  const adapters = await loadWorkspaceAdapters(input)
-  if (!adapters) return
-  input.dialog.replace(() => <DialogWorkspaceSelect adapters={adapters} onSelect={input.onSelect} />)
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      input.dialog.clear()
+      yield* Effect.tryPromise(() => input.sdk.client.experimental.workspace.syncList()).pipe(Effect.ignore)
+      yield* Effect.tryPromise(() => input.project.workspace.sync()).pipe(Effect.ignore)
+      const adapters = yield* loadWorkspaceAdapters(input)
+      if (Option.isNone(adapters)) return
+      input.dialog.replace(() => <DialogWorkspaceSelect adapters={adapters.value} onSelect={input.onSelect} />)
+    }),
+  )
 }
 
-export async function warpWorkspaceSession(input: {
+export function warpWorkspaceSession(input: {
   dialog: ReturnType<typeof useDialog>
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
@@ -97,117 +120,145 @@ export async function warpWorkspaceSession(input: {
   copyChanges: boolean
   done?: () => void
 }): Promise<boolean> {
-  let result
-  try {
-    result = await input.sdk.client.experimental.workspace.warp({
-      id: input.workspaceID,
-      sessionID: input.sessionID,
-      copyChanges: input.copyChanges,
-    })
-  } catch (err) {
-    input.toast.show({
-      title: "Failed to warp session",
-      message: errorMessage(err),
-      variant: "error",
-    })
-    return false
-  }
-  if (!result?.data) {
-    if (result?.error && "name" in result.error && result.error.name === "VcsApplyError") {
-      await DialogAlert.show(
-        input.dialog,
-        "Unable to Warp Session",
-        "Unable to apply file changes to this workspace. It has existing changes that conflict or is based off a different branch. Session has not been warped.",
-      )
-      return false
-    }
-
-    input.toast.show({
-      title: "Failed to warp session",
-      message: errorMessage(result?.error ?? "no response"),
-      variant: "error",
-    })
-    return false
-  }
-
-  input.project.workspace.set(input.workspaceID)
-
-  await input.sync.bootstrap({ fatal: false }).catch(() => undefined)
-
-  const dir = input.project.instance.directory() || input.sync.path.directory
-  if (dir) {
-    await input.sdk.client.session
-      .promptAsync({
-        sessionID: input.sessionID,
-        workspace: input.workspaceID ?? undefined,
-        noReply: true,
-        parts: [
-          {
-            type: "text",
-            text: warpReminderText(dir),
-            synthetic: true,
-          },
-        ],
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const result = yield* Effect.tryPromise({
+        try: () =>
+          input.sdk.client.experimental.workspace.warp({
+            id: input.workspaceID,
+            sessionID: input.sessionID,
+            copyChanges: input.copyChanges,
+          }),
+        catch: (cause) => new WorkspaceRequestError({ cause }),
       })
-      .catch(() => undefined)
-  }
+      if (!result.data) {
+        const error = result.error
+        if (error && "name" in error && error.name === "VcsApplyError")
+          return yield* new WorkspaceVcsConflictError({ cause: error })
+        return yield* new WorkspaceRequestError({ cause: error ?? "no response" })
+      }
 
-  await Promise.all([input.project.workspace.sync(), input.sync.session.refresh()])
+      input.project.workspace.set(input.workspaceID)
 
-  if (input.done) {
-    input.done()
-    return true
-  }
-  input.dialog.clear()
-  return true
+      yield* Effect.tryPromise(() => input.sync.bootstrap({ fatal: false })).pipe(Effect.ignore)
+
+      const dir = input.project.instance.directory() || input.sync.path.directory
+      if (dir) {
+        yield* Effect.tryPromise(() =>
+          input.sdk.client.session.promptAsync({
+            sessionID: input.sessionID,
+            ...(Predicate.isNotNull(input.workspaceID) ? { workspace: input.workspaceID } : {}),
+            noReply: true,
+            parts: [
+              {
+                type: "text",
+                text: warpReminderText(dir),
+                synthetic: true,
+              },
+            ],
+          }),
+        ).pipe(Effect.ignore)
+      }
+
+      yield* Effect.all(
+        [Effect.promise(() => input.project.workspace.sync()), Effect.promise(() => input.sync.session.refresh())],
+        { concurrency: "unbounded" },
+      )
+
+      if (input.done) {
+        input.done()
+        return true
+      }
+      input.dialog.clear()
+      return true
+    }).pipe(
+      Effect.catchTags({
+        WorkspaceVcsConflictError: () =>
+          Effect.promise(() =>
+            DialogAlert.show(
+              input.dialog,
+              "Unable to Warp Session",
+              "Unable to apply file changes to this workspace. It has existing changes that conflict or is based off a different branch. Session has not been warped.",
+            ),
+          ).pipe(Effect.as(false)),
+        WorkspaceRequestError: (error) =>
+          Effect.sync(() => {
+            input.toast.show({
+              title: "Failed to warp session",
+              message: errorMessage(error.cause),
+              variant: "error",
+            })
+            return false
+          }),
+      }),
+    ),
+  )
 }
 
-export async function confirmWorkspaceFileChanges(input: {
+export function confirmWorkspaceFileChanges(input: {
   dialog: ReturnType<typeof useDialog>
   sdk: ReturnType<typeof useSDK>
   sourceWorkspaceID?: string
 }) {
-  const status = await input.sdk.client.vcs.status({ workspace: input.sourceWorkspaceID }).catch(() => undefined)
-  const fileChangeChoice = status?.data?.length
-    ? await DialogWorkspaceFileChanges.show(input.dialog, status.data)
-    : "no"
-  if (!fileChangeChoice) return
-  return fileChangeChoice === "yes"
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const status = yield* Effect.tryPromise(() =>
+        input.sdk.client.vcs.status({ workspace: input.sourceWorkspaceID }),
+      ).pipe(Effect.option)
+      const files = status.pipe(
+        Option.flatMapNullishOr((response) => response.data),
+        Option.filter((data) => data.length > 0),
+      )
+      const fileChangeChoice = Option.isSome(files)
+        ? yield* Effect.promise(() => DialogWorkspaceFileChanges.show(input.dialog, files.value))
+        : "no"
+      if (!fileChangeChoice) return undefined
+      return fileChangeChoice === "yes"
+    }),
+  )
 }
 
 export function DialogWorkspaceSelect(props: {
   adapters?: Adapter[]
   onSelect: (selection: WorkspaceSelection) => Promise<void> | void
-}) {
+}): JSX.Element {
   const dialog = useDialog()
   const project = useProject()
   const route = useRoute()
   const sync = useSync()
   const sdk = useSDK()
   const toast = useToast()
-  const [adapters, setAdapters] = createSignal<Adapter[] | undefined>(props.adapters)
-  const omittedWorkspaceID = createMemo(() => (route.data.type === "session" ? project.workspace.current() : undefined))
+  const [adapters, setAdapters] = createSignal(Option.fromNullishOr(props.adapters))
+  const omittedWorkspaceID = createMemo(
+    () => (route.data.type === "session" ? Option.fromNullishOr(project.workspace.current()) : Option.none<string>()),
+    Option.none<string>(),
+    { equals: sameWorkspaceID },
+  )
 
   onMount(() => {
     dialog.setSize("medium")
-    void (async () => {
-      if (adapters()) return
-      const res = await loadWorkspaceAdapters({ sdk, sync, toast })
-      if (!res) return
-      setAdapters(res)
-    })()
+    if (Option.isSome(adapters())) return
+    Effect.runFork(
+      loadWorkspaceAdapters({ sdk, sync, toast }).pipe(
+        Effect.tap((loaded) =>
+          Effect.sync(() => {
+            if (Option.isSome(loaded)) setAdapters(loaded)
+          }),
+        ),
+      ),
+    )
   })
 
   const options = createMemo<DialogSelectOption<WorkspaceSelectValue>[]>(() => {
-    const list = adapters()
-    if (!list) return []
+    const loaded = adapters()
+    if (Option.isNone(loaded)) return []
     const { recent, hasMore } = recentConnectedWorkspaces({
       workspaces: project.workspace.list(),
       status: project.workspace.status,
-      omitWorkspaceID: omittedWorkspaceID(),
+      omitWorkspaceID: Option.getOrUndefined(omittedWorkspaceID()),
     })
     return [
-      ...list.map((adapter) => ({
+      ...loaded.value.map((adapter) => ({
         title: adapter.name,
         value: { type: "new" as const, workspaceType: adapter.type, workspaceName: adapter.name },
         description: adapter.description,
@@ -243,7 +294,8 @@ export function DialogWorkspaceSelect(props: {
     ]
   })
 
-  if (!adapters()) return null
+  // Renders nothing: Solid renders an undefined JSX.Element as no output.
+  if (Option.isNone(adapters())) return undefined
   return (
     <DialogSelect<WorkspaceSelectValue>
       title="Warp"
@@ -274,7 +326,7 @@ export function DialogWorkspaceSelect(props: {
 }
 
 function DialogExistingWorkspaceSelect(props: {
-  omitWorkspaceID?: string
+  omitWorkspaceID: Option.Option<string>
   onSelect: (selection: WorkspaceSelection) => Promise<void> | void
 }) {
   const project = useProject()
@@ -283,7 +335,7 @@ function DialogExistingWorkspaceSelect(props: {
     project.workspace
       .list()
       .filter((workspace) => project.workspace.status(workspace.id) === "connected")
-      .filter((workspace) => workspace.id !== props.omitWorkspaceID)
+      .filter((workspace) => !Option.contains(props.omitWorkspaceID, workspace.id))
       .map((workspace: Workspace) => ({
         title: workspace.name,
         description: `(${workspace.type})`,

@@ -1,7 +1,7 @@
-import { Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
+import { Array as Arr, Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
 import type { Headers } from "effect/unstable/http"
 import * as CassetteService from "./cassette.js"
-import { canonicalizeJson, decodeJson, safeText } from "./matching.js"
+import { canonicalizeJson, decodeJson, encodeJson, safeText } from "./matching.js"
 import { makeReplayState, resolveAutoMode } from "./recorder.js"
 import type { RecordReplayMode } from "./internal-effect.js"
 import { make, type Redactor } from "./redactor.js"
@@ -51,14 +51,19 @@ const decodeEvent = (event: WebSocketEvent) =>
 const jsonOrText = (value: string) => Option.match(decodeJson(value), { onNone: () => value, onSome: canonicalizeJson })
 
 const assertClientEvent = (actual: string, expected: WebSocketEvent | undefined, index: number, asJson: boolean) =>
-  Effect.sync(() => {
+  Effect.suspend(() => {
     const matches =
       expected?.direction === "client" &&
       expected.kind === "text" &&
-      JSON.stringify(asJson ? jsonOrText(actual) : actual) ===
-        JSON.stringify(asJson ? jsonOrText(expected.body) : expected.body)
-    if (matches) return
-    throw new Error(`WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`)
+      encodeJson(asJson ? jsonOrText(actual) : actual) ===
+        encodeJson(asJson ? jsonOrText(expected.body) : expected.body)
+    return matches
+      ? Effect.void
+      : Effect.die(
+          new Error(
+            `WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`,
+          ),
+        )
   })
 
 export const makeWebSocketExecutor = <E>(
@@ -91,19 +96,20 @@ export const makeWebSocketExecutor = <E>(
       return {
         open: (request) =>
           Effect.gen(function* () {
-            const events: WebSocketEvent[] = []
+            const events = yield* Ref.make<ReadonlyArray<WebSocketEvent>>([])
             const connection = yield* options.live.open(request)
             const closed = yield* Ref.make(false)
             const closeLock = yield* Semaphore.make(1)
             return {
               sendText: (message) =>
-                Effect.sync(() => events.push(redactEvent(textEvent("client", message)))).pipe(
+                Ref.update(events, (current) => Arr.append(current, redactEvent(textEvent("client", message)))).pipe(
                   Effect.andThen(connection.sendText(message)),
                 ),
               messages: connection.messages.pipe(
                 Stream.tap((message) =>
-                  Effect.sync(() =>
-                    events.push(
+                  Ref.update(events, (current) =>
+                    Arr.append(
+                      current,
                       typeof message === "string"
                         ? redactEvent(textEvent("server", message))
                         : {
@@ -123,7 +129,7 @@ export const makeWebSocketExecutor = <E>(
                   yield* options.cassette
                     .append(
                       options.name,
-                      { transport: "websocket", open: openSnapshot(request), events },
+                      { transport: "websocket", open: openSnapshot(request), events: yield* Ref.get(events) },
                       options.metadata,
                     )
                     .pipe(Effect.orDie)
@@ -141,11 +147,11 @@ export const makeWebSocketExecutor = <E>(
         Effect.gen(function* () {
           const claimed = yield* replay
             .claim((interaction, index) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
                 const incoming = canonicalizeJson(openSnapshot(request))
-                if (interaction && JSON.stringify(incoming) === JSON.stringify(canonicalizeJson(interaction.open)))
-                  return
-                throw new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`)
+                return interaction && encodeJson(incoming) === encodeJson(canonicalizeJson(interaction.open))
+                  ? Effect.void
+                  : Effect.die(new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`))
               }),
             )
             .pipe(Effect.orDie)
@@ -160,13 +166,13 @@ export const makeWebSocketExecutor = <E>(
                 ),
               ),
             messages: Stream.fromIterable(server).pipe(Stream.map(decodeEvent)),
-            close: Effect.gen(function* () {
-              const used = yield* SynchronizedRef.get(position)
-              if (used !== client.length)
-                return yield* Effect.die(
-                  new Error(`WebSocket client frame count: expected ${client.length}, received ${used}`),
-                )
-            }),
+            close: SynchronizedRef.get(position).pipe(
+              Effect.flatMap((used) =>
+                used === client.length
+                  ? Effect.void
+                  : Effect.die(new Error(`WebSocket client frame count: expected ${client.length}, received ${used}`)),
+              ),
+            ),
           }
         }),
     }

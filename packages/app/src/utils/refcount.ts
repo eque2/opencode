@@ -1,3 +1,4 @@
+import { MutableHashMap, Option } from "effect"
 import { onCleanup } from "solid-js"
 
 export function createRefCountMap<T>(
@@ -5,28 +6,30 @@ export function createRefCountMap<T>(
   remove?: (key: string) => void,
   identity: (key: string) => string = (key) => key,
 ) {
-  const items = new Map<string, T>()
-  const refCounts = new Map<string, number>()
+  const items = MutableHashMap.empty<string, T>()
+  const refCounts = MutableHashMap.empty<string, number>()
+  const refCount = (id: string) => Option.getOrElse(MutableHashMap.get(refCounts, id), () => 0)
 
   return (key: string) => {
     const id = identity(key)
     onCleanup(() => {
-      refCounts.set(id, (refCounts.get(id) ?? 0) - 1)
-      if (refCounts.get(id) === 0) {
+      const next = refCount(id) - 1
+      MutableHashMap.set(refCounts, id, next)
+      if (next === 0) {
         remove?.(id)
-        items.delete(id)
-        refCounts.delete(id)
+        MutableHashMap.remove(items, id)
+        MutableHashMap.remove(refCounts, id)
       }
     })
 
-    const cached = items.get(id)
-    if (cached) {
-      refCounts.set(id, (refCounts.get(id) ?? 0) + 1)
-      return cached
+    const cached = MutableHashMap.get(items, id)
+    if (Option.isSome(cached)) {
+      MutableHashMap.set(refCounts, id, refCount(id) + 1)
+      return cached.value
     }
     const item = create(key)
-    items.set(id, item)
-    refCounts.set(id, 1)
+    MutableHashMap.set(items, id, item)
+    MutableHashMap.set(refCounts, id, 1)
     return item
   }
 }

@@ -1,5 +1,5 @@
 import { deflateSync, gzipSync } from "node:zlib"
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { HttpBody, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 
 // Keep the server's compressible content-type set stable across HTTP backend changes.
@@ -8,7 +8,7 @@ const COMPRESSIBLE_CONTENT_TYPE_REGEX =
 
 const NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/i
 
-const STREAMING_PATHS = new Set(["/event", "/global/event"])
+const STREAMING_PATHS = HashSet.fromIterable<string>(["/event", "/global/event"])
 const STREAMING_POST_REGEX = /^\/session\/[^/]+\/(?:message|prompt_async)$/
 
 const THRESHOLD_BYTES = 1024
@@ -45,7 +45,7 @@ export const compressionLayer = HttpRouter.middleware<{ handles: unknown }>()((e
     if (cacheControl && NO_TRANSFORM_REGEX.test(cacheControl)) return response
 
     const path = pathOf(request.url)
-    if (STREAMING_PATHS.has(path)) return response
+    if (HashSet.has(STREAMING_PATHS, path)) return response
     if (request.method === "POST" && STREAMING_POST_REGEX.test(path)) return response
 
     const contentType = body.contentType

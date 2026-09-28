@@ -1,9 +1,11 @@
-import { createEffect, onCleanup } from "solid-js"
+import { Effect, MutableHashSet, Predicate } from "effect"
+import { createEffect } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { persisted } from "@/utils/persist"
 import { DialogReleaseNotes, type Highlight } from "@/components/dialog-release-notes"
 
@@ -19,50 +21,51 @@ type ParsedRelease = {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 function getText(value: unknown): string | undefined {
   if (typeof value === "string") {
     const text = value.trim()
-    return text.length > 0 ? text : undefined
+    if (text.length === 0) return undefined
+    return text
   }
 
   if (typeof value === "number") return String(value)
-  return
+  return undefined
 }
 
 function normalizeVersion(value: string | undefined) {
   const text = value?.trim()
-  if (!text) return
+  if (!text) return undefined
   return text.startsWith("v") || text.startsWith("V") ? text.slice(1) : text
 }
 
 function parseMedia(value: unknown, alt: string): Highlight["media"] | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const type = getText(value.type)?.toLowerCase()
   const src = getText(value.src) ?? getText(value.url)
-  if (!src) return
-  if (type !== "image" && type !== "video") return
+  if (!src) return undefined
+  if (type !== "image" && type !== "video") return undefined
 
   return { type, src, alt }
 }
 
 function parseHighlight(value: unknown): Highlight | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
 
   const title = getText(value.title)
-  if (!title) return
+  if (!title) return undefined
 
   const description = getText(value.description) ?? getText(value.shortDescription)
-  if (!description) return
+  if (!description) return undefined
 
   const media = parseMedia(value.media, title)
   return { title, description, media }
 }
 
 function parseRelease(value: unknown): ParsedRelease | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const tag = getText(value.tag) ?? getText(value.tag_name) ?? getText(value.name)
 
   if (!Array.isArray(value.highlights)) {
@@ -93,8 +96,8 @@ function parseChangelog(value: unknown): ParsedRelease[] | undefined {
     return value.map(parseRelease).filter((release): release is ParsedRelease => release !== undefined)
   }
 
-  if (!isRecord(value)) return
-  if (!Array.isArray(value.releases)) return
+  if (!isRecord(value)) return undefined
+  if (!Array.isArray(value.releases)) return undefined
 
   return value.releases.map(parseRelease).filter((release): release is ParsedRelease => release !== undefined)
 }
@@ -117,11 +120,11 @@ function sliceHighlights(input: { releases: ParsedRelease[]; current?: string; p
   })()
 
   const highlights = releases.slice(start, end).flatMap((release) => release.highlights)
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   const unique = highlights.filter((highlight) => {
     const key = dedupeKey(highlight)
-    if (seen.has(key)) return false
-    seen.add(key)
+    if (MutableHashSet.has(seen, key)) return false
+    MutableHashSet.add(seen, key)
     return true
   })
   return unique.slice(0, 5)
@@ -144,20 +147,10 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
     const platform = usePlatform()
     const dialog = useDialog()
     const settings = useSettings()
-    const [store, setStore, _, ready] = persisted("highlights.v1", createStore<Store>({ version: undefined }))
+    const [store, setStore, _, ready] = persisted("highlights.v1", createStore<Store>({}))
 
-    const [range, setRange] = createStore({
-      from: undefined as string | undefined,
-      to: undefined as string | undefined,
-    })
+    const [range, setRange] = createStore<{ from?: string; to?: string }>({})
     const state = { started: false }
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const clearTimer = () => {
-      if (timer === undefined) return
-      clearTimeout(timer)
-      timer = undefined
-    }
 
     const markSeen = () => {
       if (!platform.version) return
@@ -171,34 +164,32 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
       }
 
       const fetcher = platform.fetch ?? fetch
-      const controller = new AbortController()
-      onCleanup(() => {
-        controller.abort()
-        clearTimer()
+      // The slot belongs to the current Solid effect run; its cleanup interrupts the request or the delay.
+      const load = createFiberSlot()
+
+      const loadHighlights = Effect.gen(function* () {
+        const response = yield* Effect.tryPromise((signal) =>
+          fetcher(CHANGELOG_URL, {
+            signal,
+            headers: { Accept: "application/json" },
+          }),
+        )
+        if (!response.ok) return
+        const json: unknown = yield* Effect.tryPromise(() => response.json())
+        if (!json) return
+        const highlights = loadReleaseHighlights(json, platform.version, previous)
+
+        if (highlights.length === 0) {
+          markSeen()
+          return
+        }
+
+        yield* Effect.sleep("500 millis")
+        markSeen()
+        void dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
       })
-
-      fetcher(CHANGELOG_URL, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      })
-        .then((response) => (response.ok ? (response.json() as Promise<unknown>) : undefined))
-        .then((json) => {
-          if (!json) return
-          const highlights = loadReleaseHighlights(json, platform.version, previous)
-          if (controller.signal.aborted) return
-
-          if (highlights.length === 0) {
-            markSeen()
-            return
-          }
-
-          timer = setTimeout(() => {
-            timer = undefined
-            markSeen()
-            dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
-          }, 500)
-        })
-        .catch(() => undefined)
+      // A failed changelog request or body read leaves the release notes unseen, as the old .catch did.
+      load.run(loadHighlights.pipe(Effect.ignore))
     }
 
     createEffect(() => {

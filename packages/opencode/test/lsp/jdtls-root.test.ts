@@ -2,8 +2,13 @@ import { describe, test, expect, afterAll } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import os from "os"
+import { Effect, Option } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { ProjectID } from "@opencode-ai/schema/project-id"
 import * as LSPServer from "@/lsp/server"
 import type { InstanceContext } from "@/project/instance-context"
+import type { Project } from "@/project/project"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -11,8 +16,24 @@ import type { InstanceContext } from "@/project/instance-context"
 
 const tmpBase = path.join(os.tmpdir(), "opencode-jdtls-test")
 
+// JDTLS.root reads only the directory and worktree.
+const project: Project.Info = {
+  id: ProjectID.global,
+  worktree: "/",
+  time: { created: 0, updated: 0 },
+  sandboxes: [],
+}
+
 function makeCtx(directory: string): InstanceContext {
-  return { directory, worktree: "/", project: {} as any }
+  return { directory, worktree: "/", project }
+}
+
+const fsLayer = LayerNode.compile(FSUtil.node)
+
+function jdtlsRoot(file: string, ctx: InstanceContext) {
+  return Effect.runPromise(
+    LSPServer.JDTLS.root(file, ctx).pipe(Effect.map(Option.getOrUndefined), Effect.provide(fsLayer)),
+  )
 }
 
 async function mkdirp(p: string) {
@@ -50,7 +71,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -68,7 +89,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       // Parent declares module-a as module → root is parent directory
       expect(result).toBe(root)
     })
@@ -84,7 +105,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       // findUp finds projectDir's pom.xml (only one), returns projectDir
       expect(result).toBe(projectDir)
     })
@@ -106,7 +127,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       // workspace/pom.xml does NOT declare tools/sample as module → stop at tools/sample
       expect(result).toBe(projectDir)
     })
@@ -126,7 +147,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -145,7 +166,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       // apps/pom.xml has no <module>my-app</module> → stop at my-app
       expect(result).toBe(appDir)
     })
@@ -162,7 +183,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -178,7 +199,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
   })
@@ -199,7 +220,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
 
@@ -213,7 +234,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
 
@@ -232,7 +253,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       // Gradle markers found at gradleRoot level
       expect(result).toBe(gradleRoot)
     })
@@ -247,7 +268,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
 
@@ -261,7 +282,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
 
@@ -275,7 +296,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
 
@@ -291,7 +312,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       // Gradle wrapper takes precedence
       expect(result).toBe(projectDir)
     })
@@ -312,7 +333,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(workspace))
+      const result = await jdtlsRoot(file, makeCtx(workspace))
       expect(result).toBe(projectDir)
     })
   })
@@ -329,7 +350,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBeUndefined()
     })
   })
@@ -351,7 +372,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -369,7 +390,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       // module-b is not declared as a module → stop at module-b
       expect(result).toBe(childDir)
     })
@@ -393,7 +414,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -413,7 +434,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       // Commented-out module should not be matched → stop at module-a
       expect(result).toBe(childDir)
     })
@@ -428,7 +449,7 @@ describe("JDTLS.root", () => {
       await touch(path.join(srcDir, "App.java"))
 
       const file = path.join(srcDir, "App.java")
-      const result = await LSPServer.JDTLS.root(file, makeCtx(root))
+      const result = await jdtlsRoot(file, makeCtx(root))
       expect(result).toBe(root)
     })
 
@@ -449,10 +470,10 @@ describe("JDTLS.root", () => {
       await mkdirp(mavenSrc)
       await touch(path.join(mavenSrc, "MavenApp.java"))
 
-      const gradleResult = await LSPServer.JDTLS.root(path.join(gradleSrc, "GradleApp.java"), makeCtx(workspace))
+      const gradleResult = await jdtlsRoot(path.join(gradleSrc, "GradleApp.java"), makeCtx(workspace))
       expect(gradleResult).toBe(gradleDir)
 
-      const mavenResult = await LSPServer.JDTLS.root(path.join(mavenSrc, "MavenApp.java"), makeCtx(workspace))
+      const mavenResult = await jdtlsRoot(path.join(mavenSrc, "MavenApp.java"), makeCtx(workspace))
       expect(mavenResult).toBe(mavenDir)
     })
   })

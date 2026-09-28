@@ -40,7 +40,7 @@ export function MessageNav(
                 <Match when={local.size === "compact"}>
                   <div
                     data-slot="message-nav-tick-button"
-                    data-active={message.id === local.current?.id || undefined}
+                    {...(message.id === local.current?.id ? { "data-active": "true" } : {})}
                     role="button"
                     tabindex={0}
                     onClick={handleClick}
@@ -54,7 +54,7 @@ export function MessageNav(
                     <DiffChanges changes={message.summary?.diffs ?? []} variant="bars" />
                     <div
                       data-slot="message-nav-title-preview"
-                      data-active={message.id === local.current?.id || undefined}
+                      {...(message.id === local.current?.id ? { "data-active": "true" } : {})}
                     >
                       <Show
                         when={local.getLabel?.(message) ?? message.summary?.title}

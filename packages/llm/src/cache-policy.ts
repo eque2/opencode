@@ -12,6 +12,7 @@
 //
 // Manual `cache: CacheHint` placements on individual parts are preserved —
 // this function only fills gaps the caller left empty.
+import { HashSet } from "effect"
 import { CacheHint, type CachePolicy, type CachePolicyObject } from "./schema/options"
 import { LLMRequest, Message, ToolDefinition, type ContentPart } from "./schema/messages"
 
@@ -39,7 +40,7 @@ const resolve = (policy: CachePolicy | undefined): CachePolicyObject => {
 // Protocols whose wire format ignores inline cache markers (OpenAI's implicit
 // prefix caching, Gemini's implicit + out-of-band CachedContent). Skip the
 // whole policy pass for these — emitting hints would be harmless but pointless.
-const RESPECTS_INLINE_HINTS = new Set(["anthropic-messages", "bedrock-converse"])
+const RESPECTS_INLINE_HINTS: HashSet.HashSet<string> = HashSet.make("anthropic-messages", "bedrock-converse")
 
 const makeHint = (ttlSeconds: number | undefined): CacheHint =>
   ttlSeconds !== undefined ? new CacheHint({ type: "ephemeral", ttlSeconds }) : new CacheHint({ type: "ephemeral" })
@@ -47,33 +48,57 @@ const makeHint = (ttlSeconds: number | undefined): CacheHint =>
 const markLastTool = (tools: ReadonlyArray<ToolDefinition>, hint: CacheHint): ReadonlyArray<ToolDefinition> => {
   if (tools.length === 0) return tools
   const last = tools.length - 1
-  if (tools[last]!.cache) return tools
-  return tools.map((tool, i) => (i === last ? new ToolDefinition({ ...tool, cache: hint }) : tool))
+  if (tools[last].cache) return tools
+  return tools.map((tool, i) =>
+    i === last
+      ? new ToolDefinition({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema,
+          cache: hint,
+          metadata: tool.metadata,
+          native: tool.native,
+        })
+      : tool,
+  )
 }
 
 const markLastSystem = (system: LLMRequest["system"], hint: CacheHint): LLMRequest["system"] => {
   if (system.length === 0) return system
   const last = system.length - 1
-  if (system[last]!.cache) return system
+  if (system[last].cache) return system
   return system.map((part, i) => (i === last ? { ...part, cache: hint } : part))
 }
 
 const lastIndexOfRole = (messages: ReadonlyArray<Message>, role: Message["role"]): number =>
   messages.findLastIndex((m) => m.role === role)
 
+// Only text and tool-result parts declare a `cache` field. Message
+// construction drops the key from every other part type, so those parts stay
+// as they are.
+const withCacheHint = (part: ContentPart, hint: CacheHint): ContentPart =>
+  part.type === "text" || part.type === "tool-result" ? { ...part, cache: hint } : part
+
 // Mark the last text part of `messages[index]`. If no text part exists, mark
 // the last content part regardless of type — that's the breakpoint position
 // in tool-result-only messages too.
 const markMessageAt = (messages: ReadonlyArray<Message>, index: number, hint: CacheHint): ReadonlyArray<Message> => {
   if (index < 0 || index >= messages.length) return messages
-  const target = messages[index]!
+  const target = messages[index]
   if (target.content.length === 0) return messages
   const lastTextIndex = target.content.findLastIndex((part) => part.type === "text")
   const markAt = lastTextIndex >= 0 ? lastTextIndex : target.content.length - 1
-  const existing = target.content[markAt]!
+  const existing = target.content[markAt]
   if ("cache" in existing && existing.cache) return messages
-  const nextContent = target.content.map((part, i) => (i === markAt ? ({ ...part, cache: hint } as ContentPart) : part))
-  const next = new Message({ ...target, content: nextContent })
+  const nextContent = target.content.map((part, i) => (i === markAt ? withCacheHint(part, hint) : part))
+  const next = new Message({
+    id: target.id,
+    role: target.role,
+    content: nextContent,
+    metadata: target.metadata,
+    native: target.native,
+  })
   // Single pass over `messages`, substituting the one updated entry. Long
   // conversations call this on every request, so avoid `.map()` here — its
   // closure dispatch and identity copies show up in profiling.
@@ -97,7 +122,7 @@ const markMessages = (
 }
 
 export const applyCachePolicy = (request: LLMRequest): LLMRequest => {
-  if (!RESPECTS_INLINE_HINTS.has(request.model.route.id)) return request
+  if (!HashSet.has(RESPECTS_INLINE_HINTS, request.model.route.id)) return request
   const policy = resolve(request.cache)
   if (!policy.tools && !policy.system && !policy.messages) return request
 

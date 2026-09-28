@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Effect, Fiber, Option, Random } from "effect"
 import { onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TextReveal } from "./text-reveal"
@@ -21,17 +22,17 @@ Playground for the TextReveal text transition component.
   },
 }
 
-const TEXTS = [
-  "Refactor ToolStatusTitle DOM measurement",
-  "Remove inline measure nodes",
-  "Run typechecks and report changes",
-  "Verify reduced-motion behavior",
-  "Review diff for animation edge cases",
-  "Check keyboard semantics",
-  undefined,
-  "Planning key generation details",
-  "Analyzing error handling",
-  "Considering edge cases",
+const TEXTS: ReadonlyArray<Option.Option<string>> = [
+  Option.some("Refactor ToolStatusTitle DOM measurement"),
+  Option.some("Remove inline measure nodes"),
+  Option.some("Run typechecks and report changes"),
+  Option.some("Verify reduced-motion behavior"),
+  Option.some("Review diff for animation edge cases"),
+  Option.some("Check keyboard semantics"),
+  Option.none(),
+  Option.some("Planning key generation details"),
+  Option.some("Analyzing error handling"),
+  Option.some("Considering edge cases"),
 ]
 
 const btn = (accent?: boolean) =>
@@ -111,29 +112,37 @@ export const Playground = {
     const edge = () => state.edge
     const revealTravel = () => state.revealTravel
 
-    let timer: number | undefined
-    const text = () => TEXTS[index()]
+    let cycle: Option.Option<Fiber.Fiber<never>> = Option.none()
+    const text = () => Option.getOrUndefined(TEXTS[index()])
     const next = () => setState("index", (value) => (value + 1) % TEXTS.length)
     const prev = () => setState("index", (value) => (value - 1 + TEXTS.length) % TEXTS.length)
 
+    const stopCycle = () => {
+      if (Option.isSome(cycle)) Effect.runFork(Fiber.interrupt(cycle.value))
+      cycle = Option.none()
+    }
+
     const toggleCycle = () => {
       if (cycling()) {
-        if (timer) clearTimeout(timer)
-        timer = undefined
+        stopCycle()
         setState("cycling", false)
         return
       }
       setState("cycling", true)
-      const tick = () => {
-        next()
-        timer = window.setTimeout(tick, 700 + Math.floor(Math.random() * 600))
-      }
-      timer = window.setTimeout(tick, 700 + Math.floor(Math.random() * 600))
+      cycle = Option.some(
+        Effect.runFork(
+          Effect.forever(
+            Effect.gen(function* () {
+              const jitter = yield* Random.nextIntBetween(0, 600, { halfOpen: true })
+              yield* Effect.sleep(700 + jitter)
+              next()
+            }),
+          ),
+        ),
+      )
     }
 
-    onCleanup(() => {
-      if (timer) clearTimeout(timer)
-    })
+    onCleanup(stopCycle)
 
     const spring = () => `cubic-bezier(0.34, ${bounce()}, 0.64, 1)`
     const springSoft = () => `cubic-bezier(0.34, ${bounceSoft()}, 0.64, 1)`
@@ -183,7 +192,7 @@ export const Playground = {
         <div style={{ display: "flex", gap: "6px", "flex-wrap": "wrap" }}>
           {TEXTS.map((t, i) => (
             <button onClick={() => setState("index", i)} style={btn(index() === i)}>
-              {t ?? "(none)"}
+              {Option.getOrElse(t, () => "(none)")}
             </button>
           ))}
         </div>

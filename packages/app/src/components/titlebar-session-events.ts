@@ -1,4 +1,4 @@
-import type { ServerConnection } from "@/context/server"
+import { ServerConnection } from "@/context/server"
 
 export const SESSION_TABS_REMOVED_EVENT = "opencode:session-tabs-removed"
 
@@ -27,8 +27,9 @@ export function readSessionTabsRemovedDetail(event: Event): SessionTabsRemovedDe
   if (sessionIDs.length === 0) return undefined
 
   return {
-    server:
-      "server" in detail && typeof detail.server === "string" ? (detail.server as ServerConnection.Key) : undefined,
+    ...("server" in detail && typeof detail.server === "string"
+      ? { server: ServerConnection.Key.make(detail.server) }
+      : {}),
     directory: detail.directory,
     sessionIDs,
   }

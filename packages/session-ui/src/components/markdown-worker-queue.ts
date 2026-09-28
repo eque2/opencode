@@ -1,64 +1,87 @@
+import { Effect, Fiber, MutableHashMap, Option, Scheduler } from "effect"
+
 export function createLatestWorkerQueue<T extends { key: string }>(input: {
-  run: (request: T) => Promise<void>
+  run: (request: T) => Effect.Effect<void>
   supersede: (request: T) => void
   dispose: (key: string) => void
 }) {
-  type Slot = { type: "highlight"; key: string; request?: T }
-  const jobs: Array<Slot | { type: "dispose"; key: string }> = []
-  const slots = new Map<string, Slot>()
-  let running: Promise<void> | undefined
-  let cursor = 0
+  type Slot = { readonly type: "highlight"; readonly key: string; request: Option.Option<T> }
+  type Job = Slot | { readonly type: "dispose"; readonly key: string }
+  let jobs: ReadonlyArray<Job> = []
+  const slots = MutableHashMap.empty<string, Slot>()
+  let running: Option.Option<Fiber.Fiber<void>> = Option.none()
+  // The drain yields on microtasks, as the old Promise chain did, so requests from the same turn
+  // coalesce before the first job starts.
+  const scheduler = new Scheduler.MixedScheduler("sync")
+
+  // Takes the first job. The drain calls it only while a job is queued.
+  const next = Effect.suspend(() => {
+    const [job, ...rest] = jobs
+    jobs = rest
+    if (job.type === "dispose") return Effect.sync(() => input.dispose(job.key))
+    if (Option.exists(MutableHashMap.get(slots, job.key), (slot) => slot === job)) MutableHashMap.remove(slots, job.key)
+    const request = job.request
+    job.request = Option.none()
+    if (Option.isNone(request)) return Effect.void
+    // A failed job must not stop the jobs behind it.
+    return input.run(request.value).pipe(Effect.catchCause((cause) => Effect.logError(cause)))
+  })
+
+  const drain = Effect.whileLoop({
+    while: () => jobs.length > 0,
+    body: () => next,
+    step: () => {},
+  })
 
   const schedule = () => {
-    if (running) return
-    running = Promise.resolve()
-      .then(async () => {
-        while (cursor < jobs.length) {
-          const job = jobs[cursor++]!
-          if (job.type === "dispose") {
-            input.dispose(job.key)
-            continue
-          }
-          if (slots.get(job.key) === job) slots.delete(job.key)
-          const request = job.request
-          job.request = undefined
-          if (request) await input.run(request)
-        }
-      })
-      .finally(() => {
-        jobs.splice(0, cursor)
-        cursor = 0
-        running = undefined
-        if (jobs.length > 0) schedule()
-      })
+    if (Option.isSome(running)) return
+    running = Option.some(
+      Effect.runFork(
+        Effect.yieldNow.pipe(
+          Effect.andThen(drain),
+          Effect.ensuring(
+            Effect.sync(() => {
+              running = Option.none()
+            }),
+          ),
+        ),
+        { scheduler },
+      ),
+    )
   }
+
+  const idle: Effect.Effect<void> = Effect.suspend(() =>
+    Option.match(running, {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.await(fiber).pipe(Effect.andThen(idle)),
+    }),
+  )
 
   return {
     highlight(request: T) {
-      const slot = slots.get(request.key)
-      if (slot) {
-        if (slot.request) input.supersede(slot.request)
-        slot.request = request
+      const slot = MutableHashMap.get(slots, request.key)
+      if (Option.isSome(slot)) {
+        if (Option.isSome(slot.value.request)) input.supersede(slot.value.request.value)
+        slot.value.request = Option.some(request)
         return
       }
-      const next: Slot = { type: "highlight", key: request.key, request }
-      slots.set(request.key, next)
-      jobs.push(next)
+      const created: Slot = { type: "highlight", key: request.key, request: Option.some(request) }
+      MutableHashMap.set(slots, request.key, created)
+      jobs = [...jobs, created]
       schedule()
     },
     dispose(key: string) {
-      const slot = slots.get(key)
-      if (slot?.request) input.supersede(slot.request)
-      if (slot) {
-        slot.request = undefined
-        slots.delete(key)
+      const slot = MutableHashMap.get(slots, key)
+      if (Option.isSome(slot)) {
+        if (Option.isSome(slot.value.request)) input.supersede(slot.value.request.value)
+        slot.value.request = Option.none()
+        MutableHashMap.remove(slots, key)
       }
-      jobs.push({ type: "dispose", key })
+      jobs = [...jobs, { type: "dispose", key }]
       schedule()
     },
-    pending: () => slots.size,
-    async idle() {
-      while (running) await running
-    },
+    pending: () => MutableHashMap.size(slots),
+    /** Waits until the queue has run every job, including jobs added while it waits. */
+    idle,
   }
 }

@@ -6,6 +6,7 @@ import {
   LLMEvent,
   LLMRequest,
   LLMResponse,
+  ToolCallID,
   ToolChoice,
   ToolContent,
   ToolOutput,
@@ -333,7 +334,7 @@ describe("LLMClient tools", () => {
         required: ["temperature", "condition"],
         additionalProperties: false,
       })
-      expect(Reflect.get(Reflect.get(typed?.outputSchema ?? {}, "properties") as object, "temperature")).toBeDefined()
+      expect(typed?.outputSchema).toHaveProperty(["properties", "temperature"])
       expect(dynamic?.outputSchema).toEqual(schema)
     }),
   )
@@ -447,7 +448,7 @@ describe("LLMClient tools", () => {
       )
 
       expect(events.some(LLMEvent.is.toolResult)).toBe(true)
-      expect(context).toEqual({ id: "call_ctx", name: "contextual" })
+      expect(context).toEqual({ id: ToolCallID.make("call_ctx"), name: "contextual" })
     }),
   )
 
@@ -777,7 +778,7 @@ describe("LLMClient tools", () => {
       expect(events.filter(LLMEvent.is.toolCall)).toEqual([
         {
           type: "tool-call",
-          id: "srvtoolu_abc",
+          id: ToolCallID.make("srvtoolu_abc"),
           name: "web_search",
           input: { query: "x" },
           providerExecuted: true,
@@ -812,7 +813,7 @@ describe("LLMClient tools", () => {
 
       const results = events.filter(LLMEvent.is.toolResult)
       expect(results).toHaveLength(2)
-      expect(results.map((event) => event.id).toSorted()).toEqual(["c1", "c2"])
+      expect(results.map((event) => event.id).toSorted()).toEqual([ToolCallID.make("c1"), ToolCallID.make("c2")])
     }),
   )
 })

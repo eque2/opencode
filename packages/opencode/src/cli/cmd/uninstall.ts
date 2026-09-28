@@ -3,11 +3,15 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "../../installation"
 import { Global } from "@opencode-ai/core/global"
-import fs from "fs/promises"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { Array as Arr, Config, Effect, Option } from "effect"
 import path from "path"
 import os from "os"
-import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
+import { makeRuntime } from "@/effect/run-service"
+import * as Prompt from "../effect/prompt"
 
 interface UninstallArgs {
   keepConfig: boolean
@@ -18,9 +22,14 @@ interface UninstallArgs {
 
 interface RemovalTargets {
   directories: Array<{ path: string; label: string; keep: boolean }>
-  shellConfig: string | null
-  binary: string | null
+  shellConfig: Option.Option<string>
+  binary: Option.Option<string>
 }
+
+// uninstall removes the data directory, so it must not run under AppRuntime: AppRuntime opens the
+// database in that directory, and an open file cannot be removed on Windows. The command needs
+// only the filesystem service.
+const { runPromise } = makeRuntime(FSUtil.Service, AppNodeBuilder.build(FSUtil.node))
 
 export const UninstallCommand = {
   command: "uninstall",
@@ -51,43 +60,49 @@ export const UninstallCommand = {
         default: false,
       }),
 
-  handler: async (args: UninstallArgs) => {
+  handler: (args: UninstallArgs) => runPromise(() => uninstall(args)),
+}
+
+const uninstall = Effect.fn("Cli.uninstall")(function* (args: UninstallArgs) {
+  yield* Effect.sync(() => {
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()
-    prompts.intro("Uninstall OpenCode")
+  })
+  yield* Prompt.intro("Uninstall OpenCode")
 
-    const method = await Installation.method()
-    prompts.log.info(`Installation method: ${method}`)
+  const method = yield* Effect.promise(() => Installation.method())
+  yield* Prompt.log.info(`Installation method: ${method}`)
 
-    const targets = await collectRemovalTargets(args, method)
+  const targets = yield* collectRemovalTargets(args, method)
 
-    await showRemovalSummary(targets, method)
+  yield* showRemovalSummary(targets, method)
 
-    if (!args.force && !args.dryRun) {
-      const confirm = await prompts.confirm({
+  if (!args.force && !args.dryRun) {
+    const confirm = yield* Effect.promise(() =>
+      prompts.confirm({
         message: "Are you sure you want to uninstall?",
         initialValue: false,
-      })
-      if (!confirm || prompts.isCancel(confirm)) {
-        prompts.outro("Cancelled")
-        return
-      }
-    }
-
-    if (args.dryRun) {
-      prompts.log.warn("Dry run - no changes made")
-      prompts.outro("Done")
+      }),
+    )
+    if (!confirm || prompts.isCancel(confirm)) {
+      yield* Prompt.outro("Cancelled")
       return
     }
+  }
 
-    await executeUninstall(method, targets)
+  if (args.dryRun) {
+    yield* Prompt.log.warn("Dry run - no changes made")
+    yield* Prompt.outro("Done")
+    return
+  }
 
-    prompts.outro("Done")
-  },
-}
+  yield* executeUninstall(method, targets)
 
-async function collectRemovalTargets(args: UninstallArgs, method: Installation.Method): Promise<RemovalTargets> {
+  yield* Prompt.outro("Done")
+})
+
+const collectRemovalTargets = Effect.fnUntraced(function* (args: UninstallArgs, method: Installation.Method) {
   const directories: RemovalTargets["directories"] = [
     { path: Global.Path.data, label: "Data", keep: args.keepData },
     { path: Global.Path.cache, label: "Cache", keep: false },
@@ -95,36 +110,33 @@ async function collectRemovalTargets(args: UninstallArgs, method: Installation.M
     { path: Global.Path.state, label: "State", keep: false },
   ]
 
-  const shellConfig = method === "curl" ? await getShellConfigFile() : null
-  const binary = method === "curl" ? process.execPath : null
+  const shellConfig = method === "curl" ? yield* getShellConfigFile() : Option.none<string>()
+  const binary = method === "curl" ? Option.some(process.execPath) : Option.none<string>()
 
-  return { directories, shellConfig, binary }
-}
+  return { directories, shellConfig, binary } satisfies RemovalTargets
+})
 
-async function showRemovalSummary(targets: RemovalTargets, method: Installation.Method) {
-  prompts.log.message("The following will be removed:")
+const showRemovalSummary = Effect.fnUntraced(function* (targets: RemovalTargets, method: Installation.Method) {
+  const fs = yield* FSUtil.Service
+  yield* Effect.sync(() => prompts.log.message("The following will be removed:"))
 
   for (const dir of targets.directories) {
-    const exists = await fs
-      .access(dir.path)
-      .then(() => true)
-      .catch(() => false)
-    if (!exists) continue
+    if (!(yield* fs.existsSafe(dir.path))) continue
 
-    const size = await getDirectorySize(dir.path)
+    const size = yield* getDirectorySize(dir.path)
     const sizeStr = formatSize(size)
     const status = dir.keep ? UI.Style.TEXT_DIM + "(keeping)" : ""
     const prefix = dir.keep ? "○" : "✓"
 
-    prompts.log.info(`  ${prefix} ${dir.label}: ${shortenPath(dir.path)} ${UI.Style.TEXT_DIM}(${sizeStr})${status}`)
+    yield* Prompt.log.info(`  ${prefix} ${dir.label}: ${shortenPath(dir.path)} ${UI.Style.TEXT_DIM}(${sizeStr})${status}`)
   }
 
-  if (targets.binary) {
-    prompts.log.info(`  ✓ Binary: ${shortenPath(targets.binary)}`)
+  if (Option.isSome(targets.binary)) {
+    yield* Prompt.log.info(`  ✓ Binary: ${shortenPath(targets.binary.value)}`)
   }
 
-  if (targets.shellConfig) {
-    prompts.log.info(`  ✓ Shell PATH in ${shortenPath(targets.shellConfig)}`)
+  if (Option.isSome(targets.shellConfig)) {
+    yield* Prompt.log.info(`  ✓ Shell PATH in ${shortenPath(targets.shellConfig.value)}`)
   }
 
   if (method !== "curl" && method !== "unknown") {
@@ -137,46 +149,63 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
       choco: "choco uninstall opencode",
       scoop: "scoop uninstall opencode",
     }
-    prompts.log.info(`  ✓ Package: ${cmds[method] || method}`)
+    yield* Prompt.log.info(`  ✓ Package: ${cmds[method] || method}`)
   }
-}
+})
 
-async function executeUninstall(method: Installation.Method, targets: RemovalTargets) {
-  const spinner = prompts.spinner()
-  const errors: string[] = []
+// Each removal step reports its failure as Some(message), so the summary can list them afterwards.
+const failureMessage = <E extends { readonly message: string }>(effect: Effect.Effect<void, E, FSUtil.Service>) =>
+  effect.pipe(
+    Effect.match({
+      onFailure: (error) => Option.some(error.message),
+      onSuccess: () => Option.none<string>(),
+    }),
+  )
 
-  for (const dir of targets.directories) {
-    if (dir.keep) {
-      prompts.log.step(`Skipping ${dir.label} (--keep-${dir.label.toLowerCase()})`)
-      continue
-    }
-
-    const exists = await fs
-      .access(dir.path)
-      .then(() => true)
-      .catch(() => false)
-    if (!exists) continue
-
-    spinner.start(`Removing ${dir.label}...`)
-    const err = await fs.rm(dir.path, { recursive: true, force: true }).catch((e) => e)
-    if (err) {
-      spinner.stop(`Failed to remove ${dir.label}`, 1)
-      errors.push(`${dir.label}: ${err.message}`)
-      continue
-    }
-    spinner.stop(`Removed ${dir.label}`)
+const removeDirectory = Effect.fnUntraced(function* (
+  dir: RemovalTargets["directories"][number],
+  spinner: ReturnType<typeof Prompt.spinner>,
+) {
+  const fs = yield* FSUtil.Service
+  if (dir.keep) {
+    yield* Effect.sync(() => prompts.log.step(`Skipping ${dir.label} (--keep-${dir.label.toLowerCase()})`))
+    return Option.none<string>()
   }
 
-  if (targets.shellConfig) {
-    spinner.start("Cleaning shell config...")
-    const err = await cleanShellConfig(targets.shellConfig).catch((e) => e)
-    if (err) {
-      spinner.stop("Failed to clean shell config", 1)
-      errors.push(`Shell config: ${err.message}`)
-    } else {
-      spinner.stop("Cleaned shell config")
-    }
+  if (!(yield* fs.existsSafe(dir.path))) return Option.none<string>()
+
+  yield* spinner.start(`Removing ${dir.label}...`)
+  const failure = yield* failureMessage(fs.remove(dir.path, { recursive: true, force: true }))
+  if (Option.isSome(failure)) {
+    yield* spinner.stop(`Failed to remove ${dir.label}`, 1)
+    return Option.some(`${dir.label}: ${failure.value}`)
   }
+  yield* spinner.stop(`Removed ${dir.label}`)
+  return Option.none<string>()
+})
+
+const cleanShellConfigStep = Effect.fnUntraced(function* (
+  shellConfig: string,
+  spinner: ReturnType<typeof Prompt.spinner>,
+) {
+  yield* spinner.start("Cleaning shell config...")
+  const failure = yield* failureMessage(cleanShellConfig(shellConfig))
+  if (Option.isSome(failure)) {
+    yield* spinner.stop("Failed to clean shell config", 1)
+    return Option.some(`Shell config: ${failure.value}`)
+  }
+  yield* spinner.stop("Cleaned shell config")
+  return Option.none<string>()
+})
+
+const executeUninstall = Effect.fnUntraced(function* (method: Installation.Method, targets: RemovalTargets) {
+  const spinner = Prompt.spinner()
+
+  const directoryErrors = yield* Effect.forEach(targets.directories, (dir) => removeDirectory(dir, spinner))
+  const shellError = Option.isSome(targets.shellConfig)
+    ? yield* cleanShellConfigStep(targets.shellConfig.value, spinner)
+    : Option.none<string>()
+  const errors = Arr.getSomes(Arr.append(directoryErrors, shellError))
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string[]> = {
@@ -191,51 +220,64 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
 
     const cmd = cmds[method]
     if (cmd) {
-      spinner.start(`Running ${cmd.join(" ")}...`)
-      const result = await Process.run(method === "choco" ? ["choco", "uninstall", "opencode", "-y", "-r"] : cmd, {
-        nothrow: true,
-      })
+      yield* spinner.start(`Running ${cmd.join(" ")}...`)
+      const argv = method === "choco" ? ["choco", "uninstall", "opencode", "-y", "-r"] : cmd
+      // A package manager that cannot start counts as a failed command, with exit code 1 and the
+      // failure text as its output.
+      const result = yield* AppProcess.Service.use((appProcess) =>
+        appProcess.run(ChildProcess.make(argv[0], argv.slice(1), { stdin: "ignore" })),
+      ).pipe(
+        Effect.map((out) => ({
+          code: out.exitCode,
+          text: `${out.stdout.toString("utf8")}\n${out.stderr.toString("utf8")}`,
+        })),
+        Effect.catch((error) => Effect.succeed({ code: 1, text: `\n${error.message}` })),
+        Effect.provide(AppNodeBuilder.build(AppProcess.node)),
+      )
       if (result.code !== 0) {
-        spinner.stop(`Package manager uninstall failed: exit code ${result.code}`, 1)
-        const text = `${result.stdout.toString("utf8")}\n${result.stderr.toString("utf8")}`
-        if (method === "choco" && text.includes("not running from an elevated command shell")) {
-          prompts.log.warn(`You may need to run '${cmd.join(" ")}' from an elevated command shell`)
+        yield* spinner.stop(`Package manager uninstall failed: exit code ${result.code}`, 1)
+        if (method === "choco" && result.text.includes("not running from an elevated command shell")) {
+          yield* Prompt.log.warn(`You may need to run '${cmd.join(" ")}' from an elevated command shell`)
         } else {
-          prompts.log.warn(`You may need to run manually: ${cmd.join(" ")}`)
+          yield* Prompt.log.warn(`You may need to run manually: ${cmd.join(" ")}`)
         }
       } else {
-        spinner.stop("Package removed")
+        yield* spinner.stop("Package removed")
       }
     }
   }
 
-  if (method === "curl" && targets.binary) {
-    UI.empty()
-    prompts.log.message("To finish removing the binary, run:")
-    prompts.log.info(`  rm "${targets.binary}"`)
+  if (method === "curl" && Option.isSome(targets.binary)) {
+    const binary = targets.binary.value
+    yield* Effect.sync(() => {
+      UI.empty()
+      prompts.log.message("To finish removing the binary, run:")
+    })
+    yield* Prompt.log.info(`  rm "${binary}"`)
 
-    const binDir = path.dirname(targets.binary)
+    const binDir = path.dirname(binary)
     if (binDir.includes(".opencode")) {
-      prompts.log.info(`  rmdir "${binDir}" 2>/dev/null`)
+      yield* Prompt.log.info(`  rmdir "${binDir}" 2>/dev/null`)
     }
   }
 
   if (errors.length > 0) {
-    UI.empty()
-    prompts.log.warn("Some operations failed:")
-    for (const err of errors) {
-      prompts.log.error(`  ${err}`)
-    }
+    yield* Effect.sync(() => UI.empty())
+    yield* Prompt.log.warn("Some operations failed:")
+    yield* Effect.forEach(errors, (err) => Prompt.log.error(`  ${err}`), { discard: true })
   }
 
-  UI.empty()
-  prompts.log.success("Thank you for using OpenCode!")
-}
+  yield* Effect.sync(() => UI.empty())
+  yield* Prompt.log.success("Thank you for using OpenCode!")
+})
 
-async function getShellConfigFile(): Promise<string | null> {
-  const shell = path.basename(process.env.SHELL || "bash")
+// Config.withDefault also covers an empty variable, because the env provider drops empty strings,
+// as the former `process.env.X || default` reads did.
+const getShellConfigFile = Effect.fnUntraced(function* () {
+  const fs = yield* FSUtil.Service
+  const shell = path.basename(yield* Config.String("SHELL").pipe(Config.withDefault("bash")))
   const home = os.homedir()
-  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, ".config")
+  const xdgConfig = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(path.join(home, ".config")))
 
   const configFiles: Record<string, string[]> = {
     fish: [path.join(xdgConfig, "fish", "config.fish")],
@@ -259,23 +301,20 @@ async function getShellConfigFile(): Promise<string | null> {
   const candidates = configFiles[shell] || configFiles.bash
 
   for (const file of candidates) {
-    const exists = await fs
-      .access(file)
-      .then(() => true)
-      .catch(() => false)
-    if (!exists) continue
+    if (!(yield* fs.existsSafe(file))) continue
 
-    const content = await Filesystem.readText(file).catch(() => "")
+    const content = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
     if (content.includes("# opencode") || content.includes(".opencode/bin")) {
-      return file
+      return Option.some(file)
     }
   }
 
-  return null
-}
+  return Option.none<string>()
+}, Effect.orDie)
 
-async function cleanShellConfig(file: string) {
-  const content = await Filesystem.readText(file)
+const cleanShellConfig = Effect.fnUntraced(function* (file: string) {
+  const fs = yield* FSUtil.Service
+  const content = yield* fs.readFileString(file)
   const lines = content.split("\n")
 
   const filtered: string[] = []
@@ -311,31 +350,26 @@ async function cleanShellConfig(file: string) {
   }
 
   const output = filtered.join("\n") + "\n"
-  await Filesystem.write(file, output)
-}
+  yield* fs.writeWithDirs(file, output)
+})
 
-async function getDirectorySize(dir: string): Promise<number> {
-  let total = 0
-
-  const walk = async (current: string) => {
-    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => [])
-
-    for (const entry of entries) {
-      const full = path.join(current, entry.name)
-      if (entry.isDirectory()) {
-        await walk(full)
-        continue
-      }
-      if (entry.isFile()) {
-        const stat = await fs.stat(full).catch(() => null)
-        if (stat) total += stat.size
-      }
-    }
-  }
-
-  await walk(dir)
-  return total
-}
+// Symlinks count as neither files nor directories, as the former Dirent checks did.
+const getDirectorySize = (dir: string): Effect.Effect<number, never, FSUtil.Service> =>
+  Effect.gen(function* () {
+    const fs = yield* FSUtil.Service
+    const entries = yield* fs.readDirectoryEntries(dir).pipe(Effect.orElseSucceed((): FSUtil.DirEntry[] => []))
+    const sizes = yield* Effect.forEach(entries, (entry) => {
+      const full = path.join(dir, entry.name)
+      if (entry.type === "directory") return getDirectorySize(full)
+      if (entry.type === "file")
+        return fs.stat(full).pipe(
+          Effect.map((info) => Number(info.size)),
+          Effect.orElseSucceed(() => 0),
+        )
+      return Effect.succeed(0)
+    })
+    return sizes.reduce((total, size) => total + size, 0)
+  })
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`

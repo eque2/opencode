@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component, type JSX } from "solid-js"
+import { Duration, Effect, MutableHashMap, Option } from "effect"
 import { createStore } from "solid-js/store"
 import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
@@ -13,8 +14,20 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
-const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
+// Clamps the question text to three lines while the dock is minimized.
+const minimizedQuestionText = {
+  display: "-webkit-box",
+  "-webkit-line-clamp": "3",
+  "-webkit-box-orient": "vertical",
+  overflow: "hidden",
+} satisfies JSX.CSSProperties
+
+type CachedAnswers = { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }
+
+// Unsent answers per question request, kept while the dock is closed.
+const cache = MutableHashMap.empty<ScopedKey, CachedAnswers>()
 
 function Mark(props: { multi: boolean; picked: boolean; onClick?: (event: MouseEvent) => void }) {
   return (
@@ -28,7 +41,7 @@ function Mark(props: { multi: boolean; picked: boolean; onClick?: (event: MouseE
   )
 }
 
-function Option(props: {
+function QuestionOption(props: {
   multi: boolean
   picked: boolean
   label: string
@@ -70,12 +83,15 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const questions = createMemo(() => props.request.questions)
   const total = createMemo(() => questions().length)
 
-  const cached = cache.get(cacheKey)
+  const cached = Option.getOrElse(
+    MutableHashMap.get(cache, cacheKey),
+    (): CachedAnswers => ({ tab: 0, answers: [], custom: [], customOn: [] }),
+  )
   const [store, setStore] = createStore({
-    tab: cached?.tab ?? 0,
-    answers: cached?.answers ?? ([] as QuestionAnswer[]),
-    custom: cached?.custom ?? ([] as string[]),
-    customOn: cached?.customOn ?? ([] as boolean[]),
+    tab: cached.tab,
+    answers: cached.answers,
+    custom: cached.custom,
+    customOn: cached.customOn,
     editing: false,
     focus: 0,
     minimized: false,
@@ -87,12 +103,15 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   let customRef: HTMLButtonElement | undefined
   let optsRef: HTMLButtonElement[] = []
   let replied = false
-  let focusFrame: number | undefined
+  // Focuses the custom answer input after Solid inserts it.
+  const customFocus = createFiberSlot()
+  let focusFrame: Option.Option<number> = Option.none()
 
   const question = createMemo(() => questions()[store.tab])
   const options = createMemo(() => question()?.options ?? [])
   const input = createMemo(() => store.custom[store.tab] ?? "")
-  const on = createMemo(() => store.customOn[store.tab] === true)
+  // A tab with no entry yet has the custom answer off.
+  const on = createMemo(() => store.customOn[store.tab] ?? false)
   const multi = createMemo(() => question()?.multiple === true)
   const count = createMemo(() => options().length + 1)
 
@@ -128,13 +147,17 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     setStore("answers", store.tab, next ? [next] : [])
   }
 
+  const stickyHeaderBottom = () => {
+    const scroller = document.querySelector(".scroll-view__viewport")
+    if (!(scroller instanceof HTMLElement)) return 0
+    const head = scroller.firstElementChild
+    return head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
+  }
+
   const measure = () => {
     if (!root) return
 
-    const scroller = document.querySelector(".scroll-view__viewport")
-    const head = scroller instanceof HTMLElement ? scroller.firstElementChild : undefined
-    const top =
-      head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
+    const top = stickyHeaderBottom()
     if (!top) {
       root.style.removeProperty("--question-prompt-max-height")
       return
@@ -154,7 +177,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
   const pickFocus = (tab: number = store.tab) => {
     const list = questions()[tab]?.options ?? []
-    if (store.customOn[tab] === true) return list.length
+    if (store.customOn[tab]) return list.length
     return Math.max(
       0,
       list.findIndex((item) => store.answers[tab]?.includes(item.label) ?? false),
@@ -165,22 +188,26 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     const next = clamp(i)
     setStore("focus", next)
     if (store.editing) return
-    if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
-    focusFrame = requestAnimationFrame(() => {
-      focusFrame = undefined
-      const el = next === options().length ? customRef : optsRef[next]
-      el?.focus()
-    })
+    if (Option.isSome(focusFrame)) cancelAnimationFrame(focusFrame.value)
+    focusFrame = Option.some(
+      requestAnimationFrame(() => {
+        focusFrame = Option.none()
+        const el = next === options().length ? customRef : optsRef[next]
+        el?.focus()
+      }),
+    )
   }
 
   onMount(() => {
-    let raf: number | undefined
+    let raf: Option.Option<number> = Option.none()
     const update = () => {
-      if (raf !== undefined) cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        raf = undefined
-        measure()
-      })
+      if (Option.isSome(raf)) cancelAnimationFrame(raf.value)
+      raf = Option.some(
+        requestAnimationFrame(() => {
+          raf = Option.none()
+          measure()
+        }),
+      )
     }
 
     update()
@@ -192,7 +219,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     createResizeObserver([dock, scroller], update)
 
     onCleanup(() => {
-      if (raf !== undefined) cancelAnimationFrame(raf)
+      if (Option.isSome(raf)) cancelAnimationFrame(raf.value)
     })
 
     focus(pickFocus())
@@ -207,9 +234,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   })
 
   onCleanup(() => {
-    if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
+    if (Option.isSome(focusFrame)) cancelAnimationFrame(focusFrame.value)
     if (replied) return
-    cache.set(cacheKey, {
+    MutableHashMap.set(cache, cacheKey, {
       tab: store.tab,
       answers: store.answers.map((a) => (a ? [...a] : [])),
       custom: store.custom.map((s) => s ?? ""),
@@ -230,7 +257,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     },
     onSuccess: () => {
       replied = true
-      cache.delete(cacheKey)
+      MutableHashMap.remove(cache, cacheKey)
     },
     onError: fail,
   }))
@@ -242,28 +269,31 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     },
     onSuccess: () => {
       replied = true
-      cache.delete(cacheKey)
+      MutableHashMap.remove(cache, cacheKey)
     },
     onError: fail,
   }))
 
   const sending = createMemo(() => replyMutation.isPending || rejectMutation.isPending)
 
-  const reply = async (answers: QuestionAnswer[]) => {
+  // `mutate` reports a failure through the mutation's onError toast and does
+  // not reject, so the handlers do not wait on a promise.
+  const reply = (answers: QuestionAnswer[]) => {
     if (sending()) return
-    await replyMutation.mutateAsync(answers)
+    replyMutation.mutate(answers)
   }
 
-  const reject = async () => {
+  const reject = () => {
     if (sending()) return
-    await rejectMutation.mutateAsync()
+    rejectMutation.mutate()
   }
 
-  const submit = () => void reply(questions().map((_, i) => store.answers[i] ?? []))
+  const submit = () => reply(questions().map((_, i) => store.answers[i] ?? []))
 
   const answered = (i: number) => {
     if ((store.answers[i]?.length ?? 0) > 0) return true
-    return store.customOn[i] === true && (store.custom[i] ?? "").trim().length > 0
+    if (!store.customOn[i]) return false
+    return (store.custom[i] ?? "").trim().length > 0
   }
 
   const picked = (answer: string) => store.answers[store.tab]?.includes(answer) ?? false
@@ -325,7 +355,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
     if (event.key === "Escape") {
       event.preventDefault()
-      void reject()
+      reject()
       return
     }
 
@@ -337,10 +367,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       return
     }
 
-    const target =
-      event.target instanceof HTMLElement ? event.target.closest('[data-slot="question-options"]') : undefined
     if (store.editing) return
-    if (!(target instanceof HTMLElement)) return
+    if (!(event.target instanceof HTMLElement)) return
+    if (!(event.target.closest('[data-slot="question-options"]') instanceof HTMLElement)) return
     if (event.altKey || event.ctrlKey || event.metaKey) return
 
     if (event.key === "ArrowDown" || event.key === "ArrowRight") {
@@ -396,10 +425,16 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   }
 
   const focusCustom = (el: HTMLTextAreaElement) => {
-    setTimeout(() => {
-      el.focus()
-      resizeInput(el)
-    }, 0)
+    customFocus.run(
+      Effect.sleep(Duration.zero).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            el.focus()
+            resizeInput(el)
+          }),
+        ),
+      ),
+    )
   }
 
   const toggleCustomMark = (event: MouseEvent) => {
@@ -518,15 +553,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
           </>
         }
       >
-        <div
-          data-slot="question-text"
-          style={{
-            display: store.minimized ? "-webkit-box" : undefined,
-            "-webkit-line-clamp": store.minimized ? "3" : undefined,
-            "-webkit-box-orient": store.minimized ? "vertical" : undefined,
-            overflow: store.minimized ? "hidden" : undefined,
-          }}
-        >
+        <div data-slot="question-text" style={store.minimized ? minimizedQuestionText : {}}>
           {question()?.question}
         </div>
         <Show when={!store.minimized}>
@@ -537,7 +564,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         <div
           ref={(el) => (optionsRef = el)}
           data-slot="question-options"
-          aria-hidden={store.minimized || optionsOff() ? "true" : undefined}
+          {...(store.minimized || optionsOff() ? { "aria-hidden": "true" } : {})}
           classList={{ "pointer-events-none": hidden() > 0.1 }}
           style={{
             "max-height": `${Math.max(0, store.optionsHeight * (1 - hidden()))}px`,
@@ -547,7 +574,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         >
           <For each={options()}>
             {(opt, i) => (
-              <Option
+              <QuestionOption
                 multi={multi()}
                 picked={picked(opt.label)}
                 label={opt.label}

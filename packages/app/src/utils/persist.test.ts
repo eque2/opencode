@@ -1,47 +1,65 @@
 import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { Array as Arr, Effect, MutableHashMap, Option } from "effect"
 import { ServerScope } from "./server-scope"
 
 type PersistTestingType = typeof import("./persist").PersistTesting
 type PersistType = typeof import("./persist").Persist
 type RemovePersistedType = typeof import("./persist").removePersisted
 
+type StorageOperation = "get" | "set" | "remove"
+
+function storageFailure(key: string, operation: StorageOperation): Option.Option<DOMException> {
+  if (operation === "set" && key.startsWith("opencode.quota")) {
+    return Option.some(new DOMException("quota", "QuotaExceededError"))
+  }
+  if (key.startsWith("opencode.throw")) {
+    return Option.some(new DOMException(`storage ${operation} failed`, "SecurityError"))
+  }
+  return Option.none()
+}
+
+function failStorage(key: string, operation: StorageOperation) {
+  const failure = storageFailure(key, operation)
+  // eslint-disable-next-line effect/no-throw-use-effect -- (a) the DOM Storage API reports quota and access failures only by throwing; this fake reproduces that contract
+  if (Option.isSome(failure)) throw failure.value
+}
+
 class MemoryStorage implements Storage {
-  private values = new Map<string, string>()
+  private values = MutableHashMap.empty<string, string>()
   readonly events: string[] = []
   readonly calls = { get: 0, set: 0, remove: 0 }
 
   clear() {
-    this.values.clear()
+    MutableHashMap.clear(this.values)
   }
 
   get length() {
-    return this.values.size
+    return MutableHashMap.size(this.values)
   }
 
   key(index: number) {
-    return Array.from(this.values.keys())[index] ?? null
+    return Option.getOrNull(Arr.get(Array.from(MutableHashMap.keys(this.values)), index))
   }
 
   getItem(key: string) {
     this.calls.get += 1
     this.events.push(`get:${key}`)
-    if (key.startsWith("opencode.throw")) throw new Error("storage get failed")
-    return this.values.get(key) ?? null
+    failStorage(key, "get")
+    return Option.getOrNull(MutableHashMap.get(this.values, key))
   }
 
   setItem(key: string, value: string) {
     this.calls.set += 1
     this.events.push(`set:${key}`)
-    if (key.startsWith("opencode.quota")) throw new DOMException("quota", "QuotaExceededError")
-    if (key.startsWith("opencode.throw")) throw new Error("storage set failed")
-    this.values.set(key, value)
+    failStorage(key, "set")
+    MutableHashMap.set(this.values, key, value)
   }
 
   removeItem(key: string) {
     this.calls.remove += 1
     this.events.push(`remove:${key}`)
-    if (key.startsWith("opencode.throw")) throw new Error("storage remove failed")
-    this.values.delete(key)
+    failStorage(key, "remove")
+    MutableHashMap.remove(this.values, key)
   }
 }
 
@@ -51,16 +69,20 @@ let persistTesting: PersistTestingType
 let Persist: PersistType
 let removePersisted: RemovePersistedType
 
-beforeAll(async () => {
-  mock.module("@/context/platform", () => ({
-    usePlatform: () => ({ platform: "web" }),
-  }))
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@/context/platform", () => ({
+        usePlatform: () => ({ platform: "web" }),
+      }))
 
-  const mod = await import("./persist")
-  persistTesting = mod.PersistTesting
-  Persist = mod.Persist
-  removePersisted = mod.removePersisted
-})
+      const mod = yield* Effect.promise(() => import("./persist"))
+      persistTesting = mod.PersistTesting
+      Persist = mod.Persist
+      removePersisted = mod.removePersisted
+    }),
+  ),
+)
 
 beforeEach(() => {
   storage.clear()
@@ -108,7 +130,7 @@ describe("persist localStorage resilience", () => {
   })
 
   test("normalizer rejects malformed JSON payloads", () => {
-    const result = persistTesting.normalize({ value: "ok" }, '{"value":"\\x"}')
+    const result = Option.getOrUndefined(persistTesting.normalize({ value: "ok" }, '{"value":"\\x"}'))
     expect(result).toBeUndefined()
   })
 
@@ -140,14 +162,16 @@ describe("persist localStorage resilience", () => {
     const current = persistTesting.localStorageWithPrefix(target.storage!)
     const legacyStore = persistTesting.localStorageDirect()
 
-    const result = persistTesting.migrateLegacy({
-      current,
-      legacyStore,
-      stores: [],
-      keys: target.legacy!,
-      key: target.key,
-      defaults: { value: 1 },
-    })
+    const result = Option.getOrNull(
+      persistTesting.migrateLegacy({
+        current,
+        legacyStore,
+        stores: [],
+        keys: target.legacy!,
+        key: target.key,
+        defaults: { value: 1 },
+      }),
+    )
 
     expect(result).toBe('{"value":2}')
     expect(storage.getItem(`${target.storage}:${target.key}`)).toBe('{"value":2}')
@@ -186,8 +210,8 @@ describe("persist localStorage resilience", () => {
 
   test("server workspace target preserves local storage and isolates remote storage", () => {
     const local = Persist.serverWorkspace(ServerScope.local, "/home/luke/repo", "prompt")
-    const windows = Persist.serverWorkspace("https://windows.example" as ServerScope, "/home/luke/repo", "prompt")
-    const debian = Persist.serverWorkspace("https://debian.example" as ServerScope, "/home/luke/repo", "prompt")
+    const windows = Persist.serverWorkspace(ServerScope.make("https://windows.example"), "/home/luke/repo", "prompt")
+    const debian = Persist.serverWorkspace(ServerScope.make("https://debian.example"), "/home/luke/repo", "prompt")
 
     expect(local).toEqual(Persist.workspace("/home/luke/repo", "prompt"))
     expect(windows.storage).not.toBe(local.storage)
@@ -199,13 +223,15 @@ describe("persist localStorage resilience", () => {
 
   test("server global target preserves local key and isolates remote keys", () => {
     expect(Persist.serverGlobal(ServerScope.local, "notification")).toEqual(Persist.global("notification"))
-    expect(Persist.serverGlobal("https://debian.example" as ServerScope, "notification")).toEqual({
+    expect(Persist.serverGlobal(ServerScope.make("https://debian.example"), "notification")).toEqual({
       storage: "opencode.global.dat",
       key: "https://debian.example\0notification",
     })
   })
 
   test("server global target cannot collide when scope and key contain colons", () => {
-    expect(Persist.serverGlobal("a:b" as ServerScope, "c")).not.toEqual(Persist.serverGlobal("a" as ServerScope, "b:c"))
+    expect(Persist.serverGlobal(ServerScope.make("a:b"), "c")).not.toEqual(
+      Persist.serverGlobal(ServerScope.make("a"), "b:c"),
+    )
   })
 })

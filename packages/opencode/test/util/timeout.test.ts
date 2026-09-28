@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { withTimeout } from "../../src/util/timeout"
+import { withTimeout } from "../lib/timeout"
 
 describe("util.timeout", () => {
   test("should resolve when promise completes before timeout", async () => {
@@ -16,6 +16,11 @@ describe("util.timeout", () => {
       setTimeout(() => resolve("slow"), 200)
     })
 
-    await expect(withTimeout(slowPromise, 50)).rejects.toThrow("Operation timed out after 50ms")
+    const failure: unknown = await withTimeout(slowPromise, 50).then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toMatchObject({ message: "Operation timed out after 50ms" })
   })
 })

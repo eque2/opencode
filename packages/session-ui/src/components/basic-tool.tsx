@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import type { IconProps } from "@opencode-ai/ui/icon"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
+import { Chunk, HashSet, Option, Predicate } from "effect"
 
 export type TriggerTitle = {
   title: string
@@ -16,10 +17,19 @@ export type TriggerTitle = {
   action?: JSX.Element
 }
 
-const isTriggerTitle = (val: any): val is TriggerTitle => {
+const isTriggerTitle = (val: unknown): val is TriggerTitle => {
   return (
-    typeof val === "object" && val !== null && "title" in val && (typeof Node === "undefined" || !(val instanceof Node))
+    typeof val === "object" &&
+    Predicate.isNotNull(val) &&
+    "title" in val &&
+    (typeof Node === "undefined" || !(val instanceof Node))
   )
+}
+
+// The last Match renders the trigger only when it is neither a render function nor a title object.
+function triggerElement(trigger: BasicToolProps["trigger"]): JSX.Element {
+  if (typeof trigger === "function" || isTriggerTitle(trigger)) return undefined
+  return trigger
 }
 
 export interface BasicToolProps {
@@ -45,33 +55,40 @@ export interface BasicToolProps {
 }
 
 const SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0 }
-const deferredMounts: Array<{ active: boolean; fn: () => void }> = []
-let deferredFrame: number | undefined
+let deferredMounts = Chunk.empty<{ active: boolean; fn: () => void }>()
+let deferredFrame: Option.Option<number> = Option.none()
 
 function flushDeferredMounts() {
-  while (deferredMounts.length > 0) {
-    // Timeline tools are mounted top-to-bottom, but the viewport starts at the latest turn.
-    // Pop from the end so heavy default-open bodies near the bottom become interactive first.
-    const item = deferredMounts.pop()!
+  // Timeline tools are mounted top-to-bottom, but the viewport starts at the latest turn.
+  // Take from the end so heavy default-open bodies near the bottom become interactive first.
+  let next = Chunk.last(deferredMounts)
+  while (Option.isSome(next)) {
+    const item = next.value
+    deferredMounts = Chunk.dropRight(deferredMounts, 1)
     if (item.active) {
-      deferredFrame = deferredMounts.length > 0 ? requestAnimationFrame(flushDeferredMounts) : undefined
+      deferredFrame = Chunk.isNonEmpty(deferredMounts)
+        ? Option.some(requestAnimationFrame(flushDeferredMounts))
+        : Option.none()
       item.fn()
       return
     }
+    next = Chunk.last(deferredMounts)
   }
-  deferredFrame = undefined
+  deferredFrame = Option.none()
 }
 
 function scheduleDeferredFlush() {
-  if (deferredFrame !== undefined) return
-  deferredFrame = requestAnimationFrame(() => {
-    deferredFrame = requestAnimationFrame(flushDeferredMounts)
-  })
+  if (Option.isSome(deferredFrame)) return
+  deferredFrame = Option.some(
+    requestAnimationFrame(() => {
+      deferredFrame = Option.some(requestAnimationFrame(flushDeferredMounts))
+    }),
+  )
 }
 
 function scheduleDeferredMount(fn: () => void) {
   const item = { active: true, fn }
-  deferredMounts.push(item)
+  deferredMounts = Chunk.append(deferredMounts, item)
   scheduleDeferredFlush()
   return () => {
     item.active = false
@@ -92,22 +109,25 @@ export function BasicTool(props: BasicToolProps) {
   const ready = () => state.ready
   const pending = () => props.status === "pending" || props.status === "running"
   const hasChildren = () => (props.defer ? "children" in props : props.children)
-  const dynamicTrigger = typeof props.trigger === "function" ? props.trigger(open) : undefined
+  const dynamicTrigger =
+    typeof props.trigger === "function" ? Option.fromUndefinedOr(props.trigger(open)) : Option.none<JSX.Element>()
 
-  let cancelReady: (() => void) | undefined
+  let cancelReady: Option.Option<() => void> = Option.none()
 
   const cancel = () => {
-    cancelReady?.()
-    cancelReady = undefined
+    if (Option.isSome(cancelReady)) cancelReady.value()
+    cancelReady = Option.none()
   }
 
   const scheduleReady = (initial = false) => {
     cancel()
-    cancelReady = (initial ? scheduleDeferredMount : scheduleFrameMount)(() => {
-      cancelReady = undefined
-      if (!open()) return
-      setState("ready", true)
-    })
+    cancelReady = Option.some(
+      (initial ? scheduleDeferredMount : scheduleFrameMount)(() => {
+        cancelReady = Option.none()
+        if (!open()) return
+        setState("ready", true)
+      }),
+    )
   }
 
   onCleanup(cancel)
@@ -185,13 +205,13 @@ export function BasicTool(props: BasicToolProps) {
   const trigger = () => (
     <div
       data-component="tool-trigger"
-      data-clickable={props.clickable ? "true" : undefined}
-      data-hide-details={props.hideDetails ? "true" : undefined}
+      {...(props.clickable ? { "data-clickable": "true" } : {})}
+      {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
     >
       <div data-slot="basic-tool-tool-trigger-content">
         <div data-slot="basic-tool-tool-info">
           <Switch>
-            <Match when={dynamicTrigger !== undefined}>{dynamicTrigger}</Match>
+            <Match when={Option.isSome(dynamicTrigger)}>{Option.getOrUndefined(dynamicTrigger)}</Match>
             <Match when={isTriggerTitle(props.trigger) && props.trigger}>
               {(title) => (
                 <div data-slot="basic-tool-tool-info-structured">
@@ -244,7 +264,7 @@ export function BasicTool(props: BasicToolProps) {
                 </div>
               )}
             </Match>
-            <Match when={true}>{props.trigger as JSX.Element}</Match>
+            <Match when={true}>{triggerElement(props.trigger)}</Match>
           </Switch>
         </div>
       </div>
@@ -260,7 +280,7 @@ export function BasicTool(props: BasicToolProps) {
         when={props.triggerAsLink || props.triggerHref}
         fallback={
           <Collapsible.Trigger
-            data-hide-details={props.hideDetails ? "true" : undefined}
+            {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
             onClick={props.onTriggerClick}
           >
             {trigger()}
@@ -270,9 +290,8 @@ export function BasicTool(props: BasicToolProps) {
         <Collapsible.Trigger
           as="a"
           href={props.triggerHref}
-          role={!props.triggerHref && props.clickable ? "button" : undefined}
-          tabIndex={!props.triggerHref && props.clickable ? 0 : undefined}
-          data-hide-details={props.hideDetails ? "true" : undefined}
+          {...(!props.triggerHref && props.clickable ? { role: "button", tabIndex: 0 } : {})}
+          {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
           onClick={props.onTriggerClick}
           onKeyDown={props.onTriggerKeyDown}
         >
@@ -306,11 +325,12 @@ function label(input: Record<string, unknown> | undefined) {
   return keys.map((key) => input?.[key]).find((value): value is string => typeof value === "string" && value.length > 0)
 }
 
+const argSkipKeys = HashSet.make("description", "query", "url", "filePath", "path", "pattern", "name")
+
 function args(input: Record<string, unknown> | undefined) {
   if (!input) return []
-  const skip = new Set(["description", "query", "url", "filePath", "path", "pattern", "name"])
   return Object.entries(input)
-    .filter(([key]) => !skip.has(key))
+    .filter(([key]) => !HashSet.has(argSkipKeys, key))
     .flatMap(([key, value]) => {
       if (typeof value === "string") return [`${key}=${value}`]
       if (typeof value === "number") return [`${key}=${value}`]

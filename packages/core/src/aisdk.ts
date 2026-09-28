@@ -2,7 +2,19 @@ export * as AISDK from "./aisdk"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Cause, Context, Effect, Layer, Schema, Scope } from "effect"
+import {
+  Cause,
+  Context,
+  Duration,
+  Effect,
+  Layer,
+  MutableHashMap,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+  Scope,
+} from "effect"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
@@ -23,45 +35,45 @@ export interface LanguageEvent {
   language?: LanguageModelV3
 }
 
+/** An SSE response body sent no chunk within the configured `chunkTimeout`. */
+export class ChunkTimeoutError extends Schema.TaggedError<ChunkTimeoutError>()("AISDK.ChunkTimeoutError", {
+  message: Schema.String,
+}) {}
+
 function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (typeof ms !== "number" || ms <= 0) return res
   if (!res.body) return res
   if (!res.headers.get("content-type")?.includes("text/event-stream")) return res
 
   const reader = res.body.getReader()
+
+  // The timeout aborts the request and cancels the reader with the timeout error as the reason. The
+  // cancel is not awaited, so the pending read fails at once.
+  const timedOut = Effect.gen(function* () {
+    const error = new ChunkTimeoutError({ message: "SSE read timed out" })
+    ctl.abort(error)
+    yield* Effect.promise(() => reader.cancel(error)).pipe(
+      Effect.ignoreCause,
+      Effect.forkDetach({ startImmediately: true }),
+    )
+    return yield* error
+  })
+
+  // ReadableStream reports a rejected pull or cancel as the stream error. A reader failure (for example
+  // the AbortError of an aborted request) must reach the AI SDK unchanged, so the reader promises run
+  // with Effect.promise: a rejection stays a defect, and Effect.runPromise rejects with the original value.
+  const pull = (ctrl: ReadableStreamDefaultController<Uint8Array>) =>
+    Effect.promise(() => reader.read()).pipe(
+      Effect.timeoutOrElse({ duration: Duration.millis(ms), orElse: () => timedOut }),
+      Effect.flatMap((part) => Effect.sync(() => (part.done ? ctrl.close() : ctrl.enqueue(part.value)))),
+    )
+
+  const cancel = (reason: unknown) =>
+    Effect.sync(() => ctl.abort(reason)).pipe(Effect.andThen(Effect.promise(() => reader.cancel(reason))))
+
   const body = new ReadableStream<Uint8Array>({
-    async pull(ctrl) {
-      const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
-        const id = setTimeout(() => {
-          const err = new Error("SSE read timed out")
-          ctl.abort(err)
-          reader.cancel(err).catch(() => {})
-          reject(err)
-        }, ms)
-
-        reader.read().then(
-          (part) => {
-            clearTimeout(id)
-            resolve(part)
-          },
-          (err) => {
-            clearTimeout(id)
-            reject(err)
-          },
-        )
-      })
-
-      if (part.done) {
-        ctrl.close()
-        return
-      }
-
-      ctrl.enqueue(part.value)
-    },
-    async cancel(reason) {
-      ctl.abort(reason)
-      await reader.cancel(reason)
-    },
+    pull: (ctrl) => Effect.runPromise(pull(ctrl)),
+    cancel: (reason) => Effect.runPromise(cancel(reason)),
   })
 
   return new Response(body, {
@@ -70,6 +82,29 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
     statusText: res.statusText,
   })
 }
+
+const decodeJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject))
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+const isJsonArray = (json: Schema.Json | undefined): json is ReadonlyArray<Schema.Json> => Array.isArray(json)
+const isJsonObject = (json: Schema.Json): json is Schema.JsonObject => Predicate.isObject(json)
+
+// A Responses request that is not stored cannot refer to earlier input items by id, so the ids are
+// dropped from its input items. Some(text) is the rewritten body; None leaves the body unchanged.
+const withoutInputItemIDs = (text: string) =>
+  decodeJsonObject(text).pipe(
+    Option.flatMap((body) => {
+      const input = body.input
+      if (body.store === true || !isJsonArray(input)) return Option.none()
+      return Option.some(
+        encodeJson({
+          ...body,
+          input: input.map((item) =>
+            isJsonObject(item) ? Record.remove<string, Schema.Json, "id">(item, "id") : item,
+          ),
+        }),
+      )
+    }),
+  )
 
 function prepareOptions(model: ModelV2.Info, pkg: string) {
   const options: Record<string, any> = {
@@ -82,49 +117,70 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
   const customFetch = options.fetch
   const chunkTimeout = options.chunkTimeout
   delete options.chunkTimeout
-  options.fetch = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const opts = { ...(init ?? {}) }
-    const signals = [
-      opts.signal,
-      typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined,
-      options.timeout !== undefined && options.timeout !== null && options.timeout !== false
-        ? AbortSignal.timeout(options.timeout)
-        : undefined,
-    ].filter((item): item is AbortSignal | AbortController => Boolean(item))
-    const chunkAbortCtl = signals.find((item): item is AbortController => item instanceof AbortController)
-    const abortSignals = signals.map((item) => (item instanceof AbortController ? item.signal : item))
+  const chunkTimeoutMs =
+    typeof chunkTimeout === "number" && chunkTimeout > 0 ? Option.some(chunkTimeout) : Option.none<number>()
+
+  const request = Effect.fnUntraced(function* (input: Parameters<typeof fetch>[0], init: RequestInit | undefined) {
+    // Each request gets its own controller, so an SSE chunk timeout aborts only that request.
+    const chunk = Option.map(chunkTimeoutMs, (ms) => ({ ms, ctl: new AbortController() }))
+    // `options.timeout` is read per request: SDK hooks may change the options after this point.
+    const abortSignals = [
+      ...Option.toArray(Option.fromNullishOr(init?.signal)),
+      ...Option.toArray(Option.map(chunk, (item) => item.ctl.signal)),
+      ...(Predicate.isNotNullish(options.timeout) && options.timeout !== false
+        ? [AbortSignal.timeout(options.timeout)]
+        : []),
+    ]
+    const opts: RequestInit = { ...init }
     if (abortSignals.length === 1) opts.signal = abortSignals[0]
     if (abortSignals.length > 1) opts.signal = AbortSignal.any(abortSignals)
 
     if (
       (pkg === "@ai-sdk/openai" || pkg === "@ai-sdk/azure" || pkg === "@ai-sdk/amazon-bedrock/mantle") &&
-      opts.body &&
+      Predicate.isString(opts.body) &&
       opts.method === "POST"
     ) {
-      const body = JSON.parse(opts.body as string)
-      if (body.store !== true && Array.isArray(body.input)) {
-        for (const item of body.input) {
-          if ("id" in item) delete item.id
-        }
-        opts.body = JSON.stringify(body)
-      }
+      const body = withoutInputItemIDs(opts.body)
+      if (Option.isSome(body)) opts.body = body.value
     }
 
-    const res = await (typeof customFetch === "function" ? customFetch : fetch)(input, {
-      ...opts,
-      timeout: false,
-    })
-    if (!chunkAbortCtl || typeof chunkTimeout !== "number") return res
-    return wrapSSE(res, chunkTimeout, chunkAbortCtl)
-  }
+    // A rejected fetch stays a defect, so the AI SDK gets the original error (an AbortError, a network
+    // TypeError) from Effect.runPromise.
+    const res = yield* Effect.promise<Response>(() =>
+      (typeof customFetch === "function" ? customFetch : fetch)(input, {
+        ...opts,
+        timeout: false,
+      }),
+    )
+    return Option.match(chunk, { onNone: () => res, onSome: (item) => wrapSSE(res, item.ms, item.ctl) })
+  })
+
+  // The AI SDK calls `fetch` and expects a Promise, so the Effect runs at this boundary.
+  options.fetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => Effect.runPromise(request(input, init))
 
   return options
 }
+
+// SDK instances are cached by the JSON text of the provider, the model API and the SDK options. The
+// fetch override is a function, so it is left out, as JSON.stringify did; encoding through the API
+// schema also leaves out absent optional fields such as an undefined `url`.
+const SDKKey = Schema.Struct({
+  providerID: ProviderV2.ID,
+  api: ModelV2.Api,
+  options: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "AISDK.SDKKey" })
+const encodeSDKKey = Schema.encodeSync(Schema.fromJsonString(SDKKey))
 
 export class InitError extends Schema.TaggedError<InitError>()("AISDK.InitError", {
   providerID: ProviderV2.ID,
   cause: Schema.Defect(),
 }) {}
+
+/** The cause of an InitError when a model has no AI SDK language model to build. */
+export class LanguageUnavailableError extends Schema.TaggedError<LanguageUnavailableError>()(
+  "AISDK.LanguageUnavailableError",
+  { message: Schema.String },
+) {}
 
 function initError(providerID: ProviderV2.ID) {
   return Effect.catchCause((cause) => Effect.fail(new InitError({ providerID, cause: Cause.squash(cause) })))
@@ -151,8 +207,8 @@ export const locationLayer = Layer.effect(
   Effect.gen(function* () {
     let sdkHooks: ((event: SDKEvent) => Effect.Effect<void> | void)[] = []
     let languageHooks: ((event: LanguageEvent) => Effect.Effect<void> | void)[] = []
-    const languages = new Map<string, LanguageModelV3>()
-    const sdks = new Map<string, SDK>()
+    const languages = MutableHashMap.empty<string, LanguageModelV3>()
+    const sdks = MutableHashMap.empty<string, SDK>()
 
     const register = <Event>(
       hooks: () => ((event: Event) => Effect.Effect<void> | void)[],
@@ -197,34 +253,36 @@ export const locationLayer = Layer.effect(
       runLanguage: (event) => run(languageHooks, event),
       language: Effect.fn("AISDK.language")(function* (model) {
         const key = `${model.providerID}/${model.id}/${model.request.variant ?? "default"}`
-        const existing = languages.get(key)
-        if (existing) return existing
+        const existing = MutableHashMap.get(languages, key)
+        if (Option.isSome(existing)) return existing.value
         if (model.api.type !== "aisdk")
           return yield* new InitError({
             providerID: model.providerID,
-            cause: new Error(`Unsupported api ${model.api.type}`),
+            cause: new LanguageUnavailableError({ message: `Unsupported api ${model.api.type}` }),
           })
 
         const options = prepareOptions(model, model.api.package)
-        const sdkKey = JSON.stringify({
+        const sdkKey = encodeSDKKey({
           providerID: model.providerID,
           api: model.api,
-          options,
+          options: Record.remove(options, "fetch"),
         })
-        const sdk =
-          sdks.get(sdkKey) ??
-          (yield* service.runSDK({ model, package: model.api.package, options }).pipe(initError(model.providerID))).sdk
+        const cached = MutableHashMap.get(sdks, sdkKey)
+        const sdk = Option.isSome(cached)
+          ? cached.value
+          : (yield* service.runSDK({ model, package: model.api.package, options }).pipe(initError(model.providerID)))
+              .sdk
         if (!sdk)
           return yield* new InitError({
             providerID: model.providerID,
-            cause: new Error("No AISDK provider plugin returned an SDK"),
+            cause: new LanguageUnavailableError({ message: "No AISDK provider plugin returned an SDK" }),
           })
-        sdks.set(sdkKey, sdk)
+        MutableHashMap.set(sdks, sdkKey, sdk)
         const result = yield* service.runLanguage({ model, sdk, options }).pipe(initError(model.providerID))
         const language = yield* Effect.sync(() => result.language ?? sdk.languageModel(model.api.id)).pipe(
           initError(model.providerID),
         )
-        languages.set(key, language)
+        MutableHashMap.set(languages, key, language)
         return language
       }),
     })

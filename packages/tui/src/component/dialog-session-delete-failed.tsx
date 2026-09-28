@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Effect, Option, Predicate } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog } from "../ui/dialog"
 import { createStore } from "solid-js/store"
@@ -33,16 +34,26 @@ export function DialogSessionDeleteFailed(props: {
     },
   ]
 
-  async function confirm() {
-    const result = await options.find((item) => item.id === store.active)?.run?.()
-    if (result === false) return
-    props.onDone?.()
-    if (!props.onDone) dialog.clear()
+  // opentui reads an undefined backgroundColor as its default (transparent), so an inactive option crosses as undefined.
+  const highlight = (id: (typeof options)[number]["id"]) =>
+    id === store.active ? Option.some(theme.primary) : Option.none()
+
+  function confirm() {
+    const run = options.find((item) => item.id === store.active)?.run
+    Effect.runFork(
+      Effect.gen(function* () {
+        const outcome = run?.()
+        const result = Predicate.isPromiseLike(outcome) ? yield* Effect.promise(() => outcome) : outcome
+        if (result === false) return
+        props.onDone?.()
+        if (!props.onDone) dialog.clear()
+      }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+    )
   }
 
   useBindings(() => ({
     bindings: [
-      { key: "return", desc: "Confirm recovery option", group: "Dialog", cmd: () => void confirm() },
+      { key: "return", desc: "Confirm recovery option", group: "Dialog", cmd: () => confirm() },
       { key: "left", desc: "Delete broken session", group: "Dialog", cmd: () => setStore("active", "delete") },
       { key: "up", desc: "Delete broken session", group: "Dialog", cmd: () => setStore("active", "delete") },
       { key: "right", desc: "Restore broken session", group: "Dialog", cmd: () => setStore("active", "restore") },
@@ -75,10 +86,10 @@ export function DialogSessionDeleteFailed(props: {
               paddingRight={1}
               paddingTop={1}
               paddingBottom={1}
-              backgroundColor={item.id === store.active ? theme.primary : undefined}
+              backgroundColor={Option.getOrUndefined(highlight(item.id))}
               onMouseUp={() => {
                 setStore("active", item.id)
-                void confirm()
+                confirm()
               }}
             >
               <text

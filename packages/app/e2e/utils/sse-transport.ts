@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import { Schema } from "effect"
 
 export type SseConnectionRecord = {
   id: number
@@ -52,8 +53,34 @@ type BrowserCommand<T> =
 type BrowserTransport = Window & {
   __testSseTransport?: {
     command: (command: BrowserCommand<unknown>) => unknown
+    connections: () => SseConnectionRecord[]
   }
 }
+
+// Page results cross the Playwright boundary as plain JSON, so the Node side decodes them.
+const Acknowledgement = Schema.Struct({
+  deliveryID: Schema.Number,
+  connectionID: Schema.Number,
+  bytes: Schema.Number,
+  chunkCount: Schema.Number,
+  deliveredAt: Schema.Number,
+  eventID: Schema.optionalKey(Schema.String),
+})
+
+const ConnectionRecord = Schema.Struct({
+  id: Schema.Number,
+  url: Schema.String,
+  path: Schema.Literals(["/global/event", "/event", "/api/event"]),
+  headers: Schema.Record(Schema.String, Schema.String),
+  openedAt: Schema.Number,
+  endedAt: Schema.optionalKey(Schema.Number),
+  endedBy: Schema.optionalKey(Schema.Literals(["close", "disconnect", "error", "abort"])),
+  error: Schema.optionalKey(Schema.String),
+})
+
+const decodeAcknowledgement = Schema.decodeUnknownPromise(Acknowledgement)
+const decodeAcknowledgements = Schema.decodeUnknownPromise(Schema.mutable(Schema.Array(Acknowledgement)))
+const decodeConnections = Schema.decodeUnknownPromise(Schema.mutable(Schema.Array(ConnectionRecord)))
 
 export async function installSseTransport<T>(
   page: Page,
@@ -74,6 +101,9 @@ export async function installSseTransport<T>(
       let nextDeliveryID = 0
 
       const current = () => connections.findLast((connection) => connection.endedAt === undefined)
+      const records = () => connections.map(({ controller: _controller, ...connection }) => connection)
+      const isEventPath = (path: string): path is SseConnectionRecord["path"] =>
+        path === "/global/event" || path === "/event" || path === "/api/event"
       const chunks = (bytes: Uint8Array, cuts?: readonly number[]) => {
         const boundaries = [...new Set(cuts ?? [])]
           .filter((cut) => Number.isInteger(cut) && cut > 0 && cut < bytes.byteLength)
@@ -143,8 +173,7 @@ export async function installSseTransport<T>(
       }
 
       const command = (input: BrowserCommand<unknown>) => {
-        if (input.type === "connections")
-          return connections.map(({ controller: _controller, ...connection }) => connection)
+        if (input.type === "connections") return records()
         if (input.type === "acknowledgements") return acknowledgements
         if (input.type === "end") return end(input.mode, input.message)
         const connection = current()
@@ -165,33 +194,28 @@ export async function installSseTransport<T>(
           connection.controller.enqueue(bytes)
           return encoded.map((item) => acknowledge(connection, item.bytes.byteLength, 1, item.delivery.options?.id))
         }
-        const output = chunks(encoded[0]!.bytes, input.cuts)
+        const output = chunks(encoded[0].bytes, input.cuts)
         output.forEach((chunk) => connection.controller.enqueue(chunk))
-        return acknowledge(connection, encoded[0]!.bytes.byteLength, output.length, encoded[0]!.delivery.options?.id)
+        return acknowledge(connection, encoded[0].bytes.byteLength, output.length, encoded[0].delivery.options?.id)
       }
 
-      ;(window as BrowserTransport).__testSseTransport = { command }
+      ;(window as BrowserTransport).__testSseTransport = { command, connections: records }
       const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init)
         const url = new URL(request.url)
-        if (
-          url.origin !== server ||
-          (url.pathname !== "/global/event" && url.pathname !== "/event" && url.pathname !== "/api/event")
-        )
-          return originalFetch(request)
+        const path = url.pathname
+        if (url.origin !== server || !isEventPath(path)) return originalFetch(request)
 
         const id = ++nextConnectionID
-        const record = {
-          id,
-          url: url.href,
-          path: url.pathname,
-          headers: Object.fromEntries(request.headers.entries()),
-          openedAt: performance.now(),
-        } as Connection
+        const headers = Object.fromEntries(request.headers.entries())
+        const openedAt = performance.now()
+        // ReadableStream calls start() synchronously, so cancel() always sees the record.
+        let record: Connection | undefined
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
-            record.controller = controller
-            connections.push(record)
+            const connection: Connection = { id, url: url.href, path, headers, openedAt, controller }
+            record = connection
+            connections.push(connection)
             if (retry !== undefined) controller.enqueue(encoder.encode(`retry: ${retry}\n\n`))
             if (url.pathname === "/api/event")
               controller.enqueue(
@@ -208,16 +232,16 @@ export async function installSseTransport<T>(
             request.signal.addEventListener(
               "abort",
               () => {
-                if (record.endedAt !== undefined) return
-                record.endedAt = performance.now()
-                record.endedBy = "abort"
+                if (connection.endedAt !== undefined) return
+                connection.endedAt = performance.now()
+                connection.endedBy = "abort"
                 controller.error(request.signal.reason ?? new DOMException("The operation was aborted", "AbortError"))
               },
               { once: true },
             )
           },
           cancel() {
-            if (record.endedAt !== undefined) return
+            if (!record || record.endedAt !== undefined) return
             record.endedAt = performance.now()
             record.endedBy = "disconnect"
           },
@@ -237,12 +261,12 @@ export async function installSseTransport<T>(
     { server, retry: options.retry },
   )
 
-  const command = <Result>(input: BrowserCommand<T>) =>
+  const command = (input: BrowserCommand<unknown>) =>
     page.evaluate((input) => {
       const transport = (window as BrowserTransport).__testSseTransport
       if (!transport) throw new Error("SSE transport was not installed before page load")
-      return transport.command(input as BrowserCommand<unknown>)
-    }, input) as Promise<Result>
+      return transport.command(input)
+    }, input)
 
   return {
     server,
@@ -250,7 +274,7 @@ export async function installSseTransport<T>(
       const connection = await page.waitForFunction(
         (after) => {
           const transport = (window as BrowserTransport).__testSseTransport
-          const connections = transport?.command({ type: "connections" }) as SseConnectionRecord[] | undefined
+          const connections = transport?.connections()
           return connections?.findLast((connection) => connection.id > after && connection.endedAt === undefined)
         },
         input.after ?? 0,
@@ -266,29 +290,36 @@ export async function installSseTransport<T>(
       return result
     },
     send(payload, eventOptions) {
-      return command({ type: "send", deliveries: [{ payload, options: eventOptions }], burst: false })
+      return command({ type: "send", deliveries: [{ payload, options: eventOptions }], burst: false }).then(
+        decodeAcknowledgement,
+      )
     },
     burst(payloads, eventOptions = []) {
       return command({
         type: "send",
         deliveries: payloads.map((payload, index) => ({ payload, options: eventOptions[index] })),
         burst: true,
-      })
+      }).then(decodeAcknowledgements)
     },
     split(payload, cuts, eventOptions) {
-      return command({ type: "send", deliveries: [{ payload, options: eventOptions }], burst: false, cuts: [...cuts] })
+      return command({
+        type: "send",
+        deliveries: [{ payload, options: eventOptions }],
+        burst: false,
+        cuts: [...cuts],
+      }).then(decodeAcknowledgement)
     },
     heartbeat(eventOptions) {
       return command({
         type: "send",
         deliveries: [
           {
-            payload: { directory: "global", payload: { type: "server.heartbeat", properties: {} } } as T,
+            payload: { directory: "global", payload: { type: "server.heartbeat", properties: {} } },
             options: eventOptions,
           },
         ],
         burst: false,
-      })
+      }).then(decodeAcknowledgement)
     },
     writeRaw(value, cuts, marker) {
       return command({
@@ -296,22 +327,22 @@ export async function installSseTransport<T>(
         bytes: Array.from(typeof value === "string" ? new TextEncoder().encode(value) : value),
         cuts: cuts ? [...cuts] : undefined,
         marker,
-      })
+      }).then(decodeAcknowledgement)
     },
-    close() {
-      return command({ type: "end", mode: "close" })
+    async close() {
+      await command({ type: "end", mode: "close" })
     },
-    disconnect(message) {
-      return command({ type: "end", mode: "disconnect", message })
+    async disconnect(message) {
+      await command({ type: "end", mode: "disconnect", message })
     },
-    error(message) {
-      return command({ type: "end", mode: "error", message })
+    async error(message) {
+      await command({ type: "end", mode: "error", message })
     },
     connections() {
-      return command({ type: "connections" })
+      return command({ type: "connections" }).then(decodeConnections)
     },
     acknowledgements() {
-      return command({ type: "acknowledgements" })
+      return command({ type: "acknowledgements" }).then(decodeAcknowledgements)
     },
   }
 }

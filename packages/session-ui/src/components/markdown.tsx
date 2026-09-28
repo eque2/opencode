@@ -1,4 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
+import { Effect, Fiber, HashSet, MutableHashMap, MutableHashSet, Option, Result } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -22,11 +23,9 @@ import {
   disposeMarkdownProjection,
   disposeStreamingCode,
   highlightStreamingCode,
-  MarkdownWorkerDisposedError,
-  MarkdownWorkerSupersededError,
-  MarkdownWorkerUnavailableError,
   parseMarkdown,
   projectMarkdown,
+  type MarkdownWorkerError,
 } from "./markdown-worker"
 import { markdownBlockKey, type MarkdownToken } from "./markdown-worker-protocol"
 import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-state"
@@ -67,23 +66,40 @@ function fallback(markdown: string) {
   return escape(markdown).replace(/\r\n?/g, "\n").replace(/\n/g, "<br>")
 }
 
-async function code(text: string, language: string | undefined, key: string, complete = false) {
-  try {
-    const result = await highlightStreamingCode(key, text, language ?? "text", complete)
-    return {
-      language: result.language,
-      generation: result.generation,
-      stable: result.stable,
-      unstable: result.unstable,
-    }
-  } catch (error) {
-    if (
-      !(error instanceof MarkdownWorkerDisposedError) &&
-      !(error instanceof MarkdownWorkerSupersededError) &&
-      !(error instanceof MarkdownWorkerUnavailableError)
-    )
-      console.error("Markdown highlighting worker failed", error)
-    return { language: language ?? "text", generation: 0, stable: [], unstable: [[text, ""] as MarkdownToken] }
+type CodeTokens = {
+  language: string
+  generation: number
+  stable: MarkdownToken[]
+  unstable: MarkdownToken[]
+}
+
+// Posts the highlight request now; the Effect waits for the tokens. When the request fails, the
+// text renders as one plain token, and only a failure of the worker itself is logged.
+function code(text: string, language: string | undefined, key: string, complete = false): Effect.Effect<CodeTokens> {
+  return highlightStreamingCode(key, text, language ?? "text", complete).pipe(
+    Effect.map(
+      (result): CodeTokens => ({
+        language: result.language,
+        generation: result.generation,
+        stable: result.stable,
+        unstable: result.unstable,
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        if (error._tag === "MarkdownWorkerFailedError")
+          yield* Effect.logError("Markdown highlighting worker failed", error)
+        const plain: CodeTokens = { language: language ?? "text", generation: 0, stable: [], unstable: [[text, ""]] }
+        return plain
+      }),
+    ),
+  )
+}
+
+function fallbackResult(text: string, key: string): RenderResult {
+  return {
+    text,
+    blocks: [{ key, mode: "full", raw: text, hash: checksum(text) ?? "", html: fallback(text) }],
   }
 }
 
@@ -100,33 +116,27 @@ type CopyButtonState = {
 
 const copyButtonState = new WeakMap<HTMLElement, CopyButtonState>()
 
+// The fiber that clears a button's "copied" state. A WeakMap keys it by element identity.
+const copyResets = new WeakMap<HTMLElement, Fiber.Fiber<void>>()
+
 const urlPattern = /^https?:\/\/[^\s<>()`"']+$/
 
-function codeUrl(text: string) {
+function codeUrl(text: string): Option.Option<string> {
   const href = text.trim().replace(/[),.;!?]+$/, "")
-  if (!urlPattern.test(href)) return
-  try {
-    const url = new URL(href)
-    return url.toString()
-  } catch {
-    return
-  }
+  if (!urlPattern.test(href)) return Option.none()
+  // The URL constructor throws on an invalid URL; that text stays plain code.
+  return Result.getSuccess(Result.try(() => new URL(href).toString()))
 }
 
 function createCopyButton(labels: CopyLabels) {
   const host = document.createElement("div")
   host.setAttribute("data-slot", "markdown-copy-button")
 
-  const state: Partial<CopyButtonState> = {}
-  const dispose = render(() => {
-    const [labelState, setLabels] = createSignal(labels, { equals: false })
-    const [copied, setCopied] = createSignal(false)
-    state.setLabels = setLabels
-    state.setCopied = setCopied
-    return <MarkdownCopyButton labels={labelState} copied={copied} />
-  }, host)
-  state.dispose = dispose
-  copyButtonState.set(host, state as CopyButtonState)
+  // The signals need no owner, so they are made before render and the state is complete at once.
+  const [labelState, setLabels] = createSignal(labels, { equals: false })
+  const [copied, setCopied] = createSignal(false)
+  const dispose = render(() => <MarkdownCopyButton labels={labelState} copied={copied} />, host)
+  copyButtonState.set(host, { setLabels, setCopied, dispose })
   return host
 }
 
@@ -161,7 +171,27 @@ function setCopyState(host: HTMLElement, labels: CopyLabels, copied: boolean) {
   host.removeAttribute("data-copied")
 }
 
+function scheduleCopyReset(host: HTMLElement, labels: CopyLabels) {
+  stopCopyReset(host)
+  copyResets.set(
+    host,
+    Effect.runFork(
+      Effect.sleep("2 seconds").pipe(
+        Effect.andThen(Effect.sync(() => setCopyState(host, labels, false))),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    ),
+  )
+}
+
+function stopCopyReset(host: HTMLElement) {
+  const fiber = copyResets.get(host)
+  if (fiber) Effect.runFork(Fiber.interrupt(fiber))
+  copyResets.delete(host)
+}
+
 function disposeCopyButton(host: HTMLElement) {
+  stopCopyReset(host)
   copyButtonState.get(host)?.dispose()
   copyButtonState.delete(host)
 }
@@ -176,32 +206,36 @@ function disposeCopyButtons(root: Element) {
   hosts.forEach(disposeCopyButton)
 }
 
-const shellLanguages = new Set(["bash", "sh", "shell", "zsh", "fish", "console", "terminal"])
+const shellLanguages = HashSet.fromIterable(["bash", "sh", "shell", "zsh", "fish", "console", "terminal"])
 
-function codeKind(language: string | undefined) {
-  const value = language?.toLowerCase()
-  if (!value) return
-  if (shellLanguages.has(value)) return "shell"
+function codeKind(language: Option.Option<string>): Option.Option<"shell"> {
+  return Option.flatMap(
+    language,
+    (value): Option.Option<"shell"> =>
+      HashSet.has(shellLanguages, value.toLowerCase()) ? Option.some("shell") : Option.none(),
+  )
 }
 
-function codeLanguage(block: HTMLPreElement) {
+function codeLanguage(block: HTMLPreElement): Option.Option<string> {
   const code = block.querySelector("code")
-  if (!(code instanceof HTMLElement)) return
-  return code.className.match(/(?:^|\s)language-([^\s]+)/)?.[1]
+  if (!(code instanceof HTMLElement)) return Option.none()
+  return Option.fromNullishOr(code.className.match(/(?:^|\s)language-([^\s]+)/)?.[1])
 }
 
-function applyCodeMetadata(wrapper: HTMLElement, language: string | undefined) {
+function applyCodeMetadata(wrapper: HTMLElement, language: Option.Option<string>) {
   if (!document.body.hasAttribute("data-new-layout")) {
     delete wrapper.dataset.language
     delete wrapper.dataset.codeKind
     return
   }
 
-  if (language) wrapper.dataset.language = language
+  // An empty language counts as no language, as the old truthiness checks did.
+  const name = Option.filter(language, (value) => value.length > 0)
+  if (Option.isSome(name)) wrapper.dataset.language = name.value
   else delete wrapper.dataset.language
 
-  const kind = codeKind(language)
-  if (kind) wrapper.dataset.codeKind = kind
+  const kind = codeKind(name)
+  if (Option.isSome(kind)) wrapper.dataset.codeKind = kind.value
   else delete wrapper.dataset.codeKind
 }
 
@@ -240,23 +274,24 @@ function markCodeLinks(root: HTMLDivElement) {
   const codeNodes = Array.from(root.querySelectorAll(":not(pre) > code"))
   for (const code of codeNodes) {
     const href = codeUrl(code.textContent ?? "")
-    const parentLink =
-      code.parentElement instanceof HTMLAnchorElement && code.parentElement.classList.contains("external-link")
-        ? code.parentElement
-        : null
+    const parentLink = Option.liftPredicate(
+      code.parentElement,
+      (parent): parent is HTMLAnchorElement =>
+        parent instanceof HTMLAnchorElement && parent.classList.contains("external-link"),
+    )
 
-    if (!href) {
-      if (parentLink) parentLink.replaceWith(code)
+    if (Option.isNone(href)) {
+      if (Option.isSome(parentLink)) parentLink.value.replaceWith(code)
       continue
     }
 
-    if (parentLink) {
-      parentLink.href = href
+    if (Option.isSome(parentLink)) {
+      parentLink.value.href = href.value
       continue
     }
 
     const link = document.createElement("a")
-    link.href = href
+    link.href = href.value
     link.className = "external-link"
     link.target = "_blank"
     link.rel = "noopener noreferrer"
@@ -271,7 +306,7 @@ function markInlineCode(root: HTMLDivElement) {
     if (!(code instanceof HTMLElement)) continue
     delete code.dataset.inlineCodeKind
     const kind = inlineCodeKind(code.textContent ?? "")
-    if (kind) code.dataset.inlineCodeKind = kind
+    if (Option.isSome(kind)) code.dataset.inlineCodeKind = kind.value
   }
 }
 
@@ -286,15 +321,13 @@ function decorate(root: HTMLDivElement, labels: CopyLabels) {
 }
 
 function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
-  const timeouts = new Map<HTMLElement, ReturnType<typeof setTimeout>>()
-
   const updateLabel = (button: HTMLElement) => {
     const labels = getLabels()
     const copied = button.getAttribute("data-copied") === "true"
     setCopyState(button, labels, copied)
   }
 
-  const handleClick = async (event: MouseEvent) => {
+  const handleClick = (event: MouseEvent) => {
     const target = event.target
     if (!(target instanceof Element)) return
 
@@ -305,13 +338,14 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
     if (!content) return
     const clipboard = navigator?.clipboard
     if (!clipboard) return
-    await clipboard.writeText(content)
-    const labels = getLabels()
-    setCopyState(button, labels, true)
-    const existing = timeouts.get(button)
-    if (existing) clearTimeout(existing)
-    const timeout = setTimeout(() => setCopyState(button, labels, false), 2000)
-    timeouts.set(button, timeout)
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* Effect.promise(() => clipboard.writeText(content))
+        const labels = getLabels()
+        setCopyState(button, labels, true)
+        scheduleCopyReset(button, labels)
+      }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+    )
   }
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
@@ -323,9 +357,7 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
 
   return () => {
     root.removeEventListener("click", handleClick)
-    for (const timeout of timeouts.values()) {
-      clearTimeout(timeout)
-    }
+    // Disposing each button also stops its reset fiber.
     disposeCopyButtons(root)
   }
 }
@@ -338,8 +370,8 @@ function initialResult(text: string, key: string | undefined, projection: Projec
       if (block.mode === "code") return []
       const cacheKey = `${base}:${index}:${block.mode}`
       const cached = getCachedMarkdown(cacheKey)
-      if (cached?.raw !== block.raw) return []
-      return [{ key: `${owner}:${cacheKey}`, mode: block.mode, ...cached }]
+      if (Option.isNone(cached) || cached.value.raw !== block.raw) return []
+      return [{ key: `${owner}:${cacheKey}`, mode: block.mode, ...cached.value }]
     })
     if (blocks.length === projection.blocks.length) return { text, blocks }
   }
@@ -374,18 +406,19 @@ export function Markdown(
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
   const owner = createUniqueId()
-  const activeCodeKeys = new Set<string>()
-  const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
+  const activeCodeKeys = MutableHashSet.empty<string>()
+  const completedCode = MutableHashMap.empty<string, Extract<RenderedBlock, { mode: "code" }>>()
   let streamed = false
   const [projection] = createResource(
     () => {
-      if (isServer) return
+      // false tells createResource not to fetch.
+      if (isServer) return false
       const live = local.streaming ?? false
       if (live) streamed = true
-      if (!live && !streamed) return
+      if (!live && !streamed) return false
       return { key: owner, text: local.text, live }
     },
-    (src) => projectMarkdown(src.key, src.text, src.live),
+    (src) => Effect.runPromise(projectMarkdown(src.key, src.text, src.live)),
     { initialValue: pendingProjection("") },
   )
   const currentProjection = () => {
@@ -404,82 +437,33 @@ export function Markdown(
           projection: pendingProjection(local.text),
         }
       const value = !(local.streaming ?? false) && !streamed ? completedProjection(local.text) : projection.latest
-      if (!value || value.text !== local.text) return
+      if (!value || value.text !== local.text) return false
       return {
         text: local.text,
         key: local.cacheKey,
         projection: value,
       }
     },
-    async (src) => {
-      if (isServer)
-        return {
-          text: src.text,
-          blocks: [
-            {
-              key: "server",
-              mode: "full" as const,
-              raw: src.text,
-              hash: checksum(src.text) ?? "",
-              html: fallback(src.text),
-            },
-          ],
-        } satisfies RenderResult
-      if (!src.text) return { text: src.text, blocks: [] } satisfies RenderResult
+    (src) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          if (isServer) return fallbackResult(src.text, "server")
+          if (!src.text) return { text: src.text, blocks: [] } satisfies RenderResult
 
-      const base = src.key ?? checksum(src.text)
-      return Promise.all(
-        src.projection.blocks.map(async (block, index) => {
-          const key = base ? `${base}:${index}:${block.mode}` : undefined
-          const blockKey = markdownBlockKey(owner, src.key, index, block.mode)
-
-          if (block.mode === "code") {
-            const cached = completedCode.get(blockKey)
-            if (block.complete && cached?.raw === block.raw) return cached
-            const result = await code(block.src, block.language, blockKey, block.complete)
-            const rendered = {
-              key: blockKey,
-              mode: block.mode,
-              raw: block.raw,
-              hash: String(block.raw.length),
-              complete: !!block.complete,
-              ...result,
-            }
-            if (block.complete) completedCode.set(blockKey, rendered)
-            return rendered
-          }
-
-          if (key) {
-            const cached = getCachedMarkdown(key)
-            if (cached?.raw === block.raw) {
-              touchCachedMarkdown(key, cached)
-              return { key: blockKey, mode: block.mode, ...cached }
-            }
-          }
-
-          const hash = checksum(block.raw)
-          const safe = sanitizeMarkdown(await parseMarkdown(block.src))
-          if (key && hash) touchCachedMarkdown(key, { raw: block.raw, hash, html: safe })
-          return { key: blockKey, mode: block.mode, raw: block.raw, hash: hash ?? "", html: safe }
+          const base = src.key ?? checksum(src.text)
+          // Effect.runPromise starts this program at once, so every block posts its worker request
+          // during the fetcher call, in block order, as the old async callbacks did.
+          return yield* Effect.suspend(() =>
+            Effect.all(
+              src.projection.blocks.map((block, index) => renderBlock(block, index, base, src.key)),
+              { concurrency: "unbounded" },
+            ),
+          ).pipe(
+            Effect.map((blocks): RenderResult => ({ text: src.text, blocks })),
+            Effect.catchCause(() => Effect.succeed(fallbackResult(src.text, base ?? "fallback"))),
+          )
         }),
-      )
-        .then((blocks) => ({ text: src.text, blocks }) satisfies RenderResult)
-        .catch(
-          () =>
-            ({
-              text: src.text,
-              blocks: [
-                {
-                  key: base ?? "fallback",
-                  mode: "full" as const,
-                  raw: src.text,
-                  hash: checksum(src.text) ?? "",
-                  html: fallback(src.text),
-                },
-              ],
-            }) satisfies RenderResult,
-        )
-    },
+      ),
     {
       initialValue: initialResult(
         local.text,
@@ -489,6 +473,54 @@ export function Markdown(
       ),
     },
   )
+
+  // Posts the block's worker request at once, unless a cache already holds the block.
+  function renderBlock(
+    block: Block,
+    index: number,
+    base: string | undefined,
+    cacheKey: string | undefined,
+  ): Effect.Effect<RenderedBlock, MarkdownWorkerError> {
+    const key = base ? Option.some(`${base}:${index}:${block.mode}`) : Option.none()
+    const blockKey = markdownBlockKey(owner, Option.fromNullishOr(cacheKey), index, block.mode)
+
+    if (block.mode === "code") {
+      const cached = MutableHashMap.get(completedCode, blockKey)
+      if (block.complete && Option.isSome(cached) && cached.value.raw === block.raw) return Effect.succeed(cached.value)
+      return code(block.src, block.language, blockKey, block.complete).pipe(
+        Effect.map((result) => {
+          const rendered: Extract<RenderedBlock, { mode: "code" }> = {
+            key: blockKey,
+            mode: "code",
+            raw: block.raw,
+            hash: String(block.raw.length),
+            complete: !!block.complete,
+            ...result,
+          }
+          if (block.complete) MutableHashMap.set(completedCode, blockKey, rendered)
+          return rendered
+        }),
+      )
+    }
+
+    const mode = block.mode
+    if (Option.isSome(key)) {
+      const cached = getCachedMarkdown(key.value)
+      if (Option.isSome(cached) && cached.value.raw === block.raw) {
+        touchCachedMarkdown(key.value, cached.value)
+        return Effect.succeed({ key: blockKey, mode, ...cached.value })
+      }
+    }
+
+    const hash = checksum(block.raw)
+    return parseMarkdown(block.src).pipe(
+      Effect.map((html) => {
+        const safe = sanitizeMarkdown(html)
+        if (Option.isSome(key) && hash) touchCachedMarkdown(key.value, { raw: block.raw, hash, html: safe })
+        return { key: blockKey, mode, raw: block.raw, hash: hash ?? "", html: safe }
+      }),
+    )
+  }
 
   let copyCleanup: (() => void) | undefined
 
@@ -509,12 +541,14 @@ export function Markdown(
       copy: i18n.t("ui.message.copy"),
       copied: i18n.t("ui.message.copied"),
     }
-    const nextCodeKeys = new Set(content.filter((block) => block.mode === "code").map((block) => block.key))
-    activeCodeKeys.forEach((key) => {
-      if (!nextCodeKeys.has(key)) disposeCode(key)
-    })
-    activeCodeKeys.clear()
-    nextCodeKeys.forEach((key) => activeCodeKeys.add(key))
+    const nextCodeKeys = MutableHashSet.fromIterable(
+      content.filter((block) => block.mode === "code").map((block) => block.key),
+    )
+    for (const key of activeCodeKeys) {
+      if (!MutableHashSet.has(nextCodeKeys, key)) disposeCode(key)
+    }
+    MutableHashSet.clear(activeCodeKeys)
+    for (const key of nextCodeKeys) MutableHashSet.add(activeCodeKeys, key)
     content.forEach((block, index) => updateBlock(container, index, block, labels))
     while (container.children.length > content.length) {
       const child = container.lastElementChild
@@ -535,8 +569,8 @@ export function Markdown(
   onCleanup(() => {
     if (copyCleanup) copyCleanup()
     disposeMarkdownProjection(owner)
-    activeCodeKeys.forEach(disposeCode)
-    completedCode.clear()
+    for (const key of activeCodeKeys) disposeCode(key)
+    MutableHashMap.clear(completedCode)
   })
 
   return (
@@ -563,9 +597,9 @@ function pendingBlocks(
   if (!projection || result.text === projection.text) return result.blocks
   const initial = result.blocks.length === 1 && result.blocks[0]?.key === "initial"
   return projection.blocks.map((block, index) => {
-    const current = initial ? undefined : result.blocks[index]
-    if (current && canReusePendingBlock(current, block)) return current
-    const key = markdownBlockKey(owner, cacheKey, index, block.mode)
+    const current = initial ? Option.none() : Option.fromNullishOr(result.blocks.at(index))
+    if (Option.isSome(current) && canReusePendingBlock(current.value, block)) return current.value
+    const key = markdownBlockKey(owner, Option.fromNullishOr(cacheKey), index, block.mode)
     if (block.mode !== "code")
       return { key, mode: block.mode, raw: block.raw, hash: String(block.raw.length), html: fallback(block.src) }
     return {
@@ -638,18 +672,23 @@ function updateCodeBlock(
   block: Extract<RenderedBlock, { mode: "code" }>,
   labels: CopyLabels,
 ) {
-  const existing = current instanceof HTMLDivElement && current.dataset.markdownKey === block.key ? current : undefined
-  const next = existing ?? document.createElement("div")
+  const existing = Option.liftPredicate(
+    current,
+    (element): element is HTMLDivElement =>
+      element instanceof HTMLDivElement && element.dataset.markdownKey === block.key,
+  )
+  const next = Option.getOrElse(existing, () => document.createElement("div"))
   next.dataset.markdownBlock = ""
   next.dataset.markdownKey = block.key
   next.dataset.markdownHash = block.hash
   next.dataset.markdownComplete = block.complete ? "true" : "false"
   next.style.display = "contents"
 
-  const code = existing?.querySelector("code")
-  if (code instanceof HTMLElement) {
+  const existingCode = Option.flatMapNullishOr(existing, (element) => element.querySelector("code"))
+  if (Option.isSome(existingCode)) {
+    const code = existingCode.value
     const wrapper = code.closest('[data-component="markdown-code"]')
-    if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, block.language)
+    if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, Option.some(block.language))
     code.className = `language-${block.language}`
     const previous = renderedCodeTokens.get(next)
     const reset = shouldResetCodeTokens(previous, {
@@ -680,7 +719,7 @@ function updateCodeBlock(
 
   const wrapper = document.createElement("div")
   wrapper.setAttribute("data-component", "markdown-code")
-  applyCodeMetadata(wrapper, block.language)
+  applyCodeMetadata(wrapper, Option.some(block.language))
   const pre = document.createElement("pre")
   pre.className = "shiki OpenCode"
   const codeElement = document.createElement("code")

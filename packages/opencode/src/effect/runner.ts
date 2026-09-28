@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Latch, Schema, Scope, SynchronizedRef } from "effect"
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Latch, Schema, Scope, SynchronizedRef } from "effect"
 
 export interface Runner<A, E = never> {
   readonly state: State<A, E>
@@ -30,11 +30,18 @@ interface PendingHandle<A, E> {
   work: Effect.Effect<A, E>
 }
 
-export type State<A, E> =
-  | { readonly _tag: "Idle" }
-  | { readonly _tag: "Running"; readonly run: RunHandle<A, E> }
-  | { readonly _tag: "Shell"; readonly shell: ShellHandle<A, E> }
-  | { readonly _tag: "ShellThenRun"; readonly shell: ShellHandle<A, E>; readonly run: PendingHandle<A, E> }
+export type State<A, E> = Data.TaggedEnum<{
+  Idle: {}
+  Running: { readonly run: RunHandle<A, E> }
+  Shell: { readonly shell: ShellHandle<A, E> }
+  ShellThenRun: { readonly shell: ShellHandle<A, E>; readonly run: PendingHandle<A, E> }
+}>
+
+interface StateDefinition extends Data.TaggedEnum.WithGenerics<2> {
+  readonly taggedEnum: State<this["A"], this["B"]>
+}
+
+const { Idle, Running, Shell, ShellThenRun } = Data.taggedEnum<StateDefinition>()
 
 export const make = <A, E = never>(
   scope: Scope.Scope,
@@ -44,7 +51,7 @@ export const make = <A, E = never>(
     onInterrupt?: Effect.Effect<A, E>
   },
 ): Runner<A, E> => {
-  const ref = SynchronizedRef.makeUnsafe<State<A, E>>({ _tag: "Idle" })
+  const ref = SynchronizedRef.makeUnsafe<State<A, E>>(Idle<A, E>())
   const idle = opts?.onIdle ?? Effect.void
   const onBusy = opts?.onBusy ?? Effect.void
   const onInterrupt = opts?.onInterrupt
@@ -76,7 +83,7 @@ export const make = <A, E = never>(
             if (st._tag === "Running" && st.run.id === id) yield* idle
             yield* complete(done, exit)
           }),
-          st._tag === "Running" && st.run.id === id ? ({ _tag: "Idle" } as const) : st,
+          st._tag === "Running" && st.run.id === id ? Idle<A, E>() : st,
         ] as const,
     ).pipe(Effect.flatten)
 
@@ -95,11 +102,11 @@ export const make = <A, E = never>(
       ref,
       Effect.fnUntraced(function* (st) {
         if (st._tag === "Shell" && st.shell.id === id) {
-          return [idle, { _tag: "Idle" }] as const
+          return [idle, Idle<A, E>()] as const
         }
         if (st._tag === "ShellThenRun" && st.shell.id === id) {
           const run = yield* startRun(st.run.work, st.run.done)
-          return [Effect.void, { _tag: "Running", run }] as const
+          return [Effect.void, Running({ run })] as const
         }
         return [Effect.void, st] as const
       }),
@@ -108,7 +115,7 @@ export const make = <A, E = never>(
   const stopShell = (shell: ShellHandle<A, E>) =>
     Effect.gen(function* () {
       if (shell.ready) yield* shell.ready.await.pipe(Effect.exit, Effect.asVoid)
-      yield* Deferred.succeed(shell.cancelled, undefined).pipe(Effect.asVoid)
+      yield* Deferred.done(shell.cancelled, Exit.void).pipe(Effect.asVoid)
       yield* Fiber.interrupt(shell.fiber)
     })
 
@@ -116,24 +123,18 @@ export const make = <A, E = never>(
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
-        switch (st._tag) {
-          case "Running":
-          case "ShellThenRun":
-            return [awaitDone(st.run.done), st] as const
-          case "Shell": {
-            const run = {
-              id: next(),
-              done: yield* Deferred.make<A, E | Cancelled>(),
-              work,
-            } satisfies PendingHandle<A, E>
-            return [awaitDone(run.done), { _tag: "ShellThenRun", shell: st.shell, run }] as const
-          }
-          case "Idle": {
-            const done = yield* Deferred.make<A, E | Cancelled>()
-            const run = yield* startRun(work, done)
-            return [awaitDone(done), { _tag: "Running", run }] as const
-          }
+        if (st._tag === "Running" || st._tag === "ShellThenRun") return [awaitDone(st.run.done), st] as const
+        if (st._tag === "Shell") {
+          const run = {
+            id: next(),
+            done: yield* Deferred.make<A, E | Cancelled>(),
+            work,
+          } satisfies PendingHandle<A, E>
+          return [awaitDone(run.done), ShellThenRun({ shell: st.shell, run })] as const
         }
+        const done = yield* Deferred.make<A, E | Cancelled>()
+        const run = yield* startRun(work, done)
+        return [awaitDone(done), Running({ run })] as const
       }),
     ).pipe(Effect.flatten)
 
@@ -163,42 +164,38 @@ export const make = <A, E = never>(
             }
             return yield* Effect.failCause(exit.cause)
           }),
-          { _tag: "Shell", shell },
+          Shell({ shell }),
         ] as const
       }),
     ).pipe(Effect.flatten)
 
   const cancel = SynchronizedRef.modify(ref, (st) => {
-    switch (st._tag) {
-      case "Idle":
-        return [Effect.void, st] as const
-      case "Running":
-        return [
-          Effect.gen(function* () {
-            yield* Fiber.interrupt(st.run.fiber)
-            yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.asVoid)
-            yield* idleIfCurrent()
-          }),
-          { _tag: "Idle" } as const,
-        ] as const
-      case "Shell":
-        return [
-          Effect.gen(function* () {
-            yield* stopShell(st.shell)
-            yield* idleIfCurrent()
-          }),
-          { _tag: "Idle" } as const,
-        ] as const
-      case "ShellThenRun":
-        return [
-          Effect.gen(function* () {
-            yield* stopShell(st.shell)
-            yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.asVoid)
-            yield* idleIfCurrent()
-          }),
-          { _tag: "Idle" } as const,
-        ] as const
-    }
+    if (st._tag === "Idle") return [Effect.void, st] as const
+    if (st._tag === "Running")
+      return [
+        Effect.gen(function* () {
+          yield* Fiber.interrupt(st.run.fiber)
+          yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.asVoid)
+          yield* idleIfCurrent()
+        }),
+        Idle<A, E>(),
+      ] as const
+    if (st._tag === "Shell")
+      return [
+        Effect.gen(function* () {
+          yield* stopShell(st.shell)
+          yield* idleIfCurrent()
+        }),
+        Idle<A, E>(),
+      ] as const
+    return [
+      Effect.gen(function* () {
+        yield* stopShell(st.shell)
+        yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.asVoid)
+        yield* idleIfCurrent()
+      }),
+      Idle<A, E>(),
+    ] as const
   }).pipe(Effect.flatten)
 
   return {

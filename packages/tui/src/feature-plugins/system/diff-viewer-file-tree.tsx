@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { ColorInput, RGBA, ScrollBoxRenderable } from "@opentui/core"
+import { Array as Arr, HashSet, Option } from "effect"
 import { Locale } from "../../util/locale"
 import { tint } from "../../context/theme"
 import { createEffect, createMemo, For, Match, Switch } from "solid-js"
@@ -27,23 +28,28 @@ export type DiffViewerFileTreeProps = {
   readonly error: unknown
   readonly theme: DiffViewerFileTreeTheme
   readonly focused?: boolean
-  readonly highlightedNode?: number
-  readonly selectedFileIndex?: number
-  readonly reviewedFileNames?: ReadonlySet<string>
-  readonly expandedNodes?: ReadonlySet<number>
+  readonly highlightedNode?: Option.Option<number>
+  readonly selectedFileIndex?: Option.Option<number>
+  readonly reviewedFileNames?: HashSet.HashSet<string>
+  // Absent means every directory is expanded.
+  readonly expandedNodes?: HashSet.HashSet<number>
   readonly onRowClick?: (row: FileTreeRow) => void
 }
 
 export function DiffViewerFileTree(props: DiffViewerFileTreeProps) {
   const tree = createMemo(() => buildFileTree(props.files))
   const rows = createMemo(() => flattenFileTree(tree(), props.expandedNodes))
+  const highlightedNode = () => props.highlightedNode ?? Option.none<number>()
+  const selectedFileIndex = () => props.selectedFileIndex ?? Option.none<number>()
+  const reviewedFileNames = () => props.reviewedFileNames ?? HashSet.empty<string>()
   let scroll: ScrollBoxRenderable | undefined
 
   createEffect(() => {
-    const node = props.highlightedNode
-    if (node === undefined) return
-    const selectedIndex = rows().findIndex((row) => row.id === node)
-    if (selectedIndex === -1) return
+    const highlightedIndex = Option.flatMap(highlightedNode(), (node) =>
+      Arr.findFirstIndex(rows(), (row) => row.id === node),
+    )
+    if (Option.isNone(highlightedIndex)) return
+    const selectedIndex = highlightedIndex.value
     const scrollSelectedIntoView = () => scrollFileTreeRowIntoView(scroll, selectedIndex)
     scrollSelectedIntoView()
     requestAnimationFrame(scrollSelectedIntoView)
@@ -68,12 +74,14 @@ export function DiffViewerFileTree(props: DiffViewerFileTreeProps) {
           <Match when={props.files.length > 0}>
             <For each={rows()}>
               {(row, index) => {
-                const highlighted = () => props.focused && props.highlightedNode === row.id
-                const selected = () => row.fileIndex !== undefined && props.selectedFileIndex === row.fileIndex
-                const reviewed = () => {
-                  const file = row.fileIndex === undefined ? undefined : props.files[row.fileIndex]?.file
-                  return file !== undefined && (props.reviewedFileNames?.has(file) ?? false)
-                }
+                const highlighted = () => props.focused && Option.contains(highlightedNode(), row.id)
+                const selected = () =>
+                  row.fileIndex !== undefined && Option.contains(selectedFileIndex(), row.fileIndex)
+                const reviewed = () =>
+                  Option.fromNullishOr(row.fileIndex).pipe(
+                    Option.flatMap((fileIndex) => Arr.get(props.files, fileIndex)),
+                    Option.exists((item) => HashSet.has(reviewedFileNames(), item.file)),
+                  )
                 const prefix = () => fileTreeRowPrefix(rows(), index(), row, props.expandedNodes)
                 const status = () => fileTreeRowStatus(row, props.files, reviewed())
                 const name = () =>
@@ -82,7 +90,7 @@ export function DiffViewerFileTree(props: DiffViewerFileTreeProps) {
                   <box
                     flexDirection="row"
                     width="100%"
-                    backgroundColor={highlighted() ? props.theme.primary : undefined}
+                    backgroundColor={highlighted() ? props.theme.primary : "transparent"}
                     onMouseUp={() => props.onRowClick?.(row)}
                   >
                     <text fg={highlighted() ? props.theme.background : fadedColor()} wrapMode="none" flexShrink={0}>
@@ -137,7 +145,7 @@ function fileTreeRowPrefix(
   rows: readonly FileTreeRow[],
   index: number,
   row: FileTreeRow,
-  expandedNodes: ReadonlySet<number> | undefined,
+  expandedNodes: HashSet.HashSet<number> | undefined,
 ) {
   const indentation = Array.from({ length: row.depth }, (_, depth) => {
     if (depth === 0 && !hasLaterSibling(rows, 0, 0)) return " "
@@ -145,7 +153,8 @@ function fileTreeRowPrefix(
   }).join("")
   const topRoot = index === 0 && row.depth === 0
   const branch = topRoot ? " " : hasLaterSibling(rows, index, row.depth) ? "├─ " : "└─ "
-  const marker = row.kind === "directory" ? (expandedNodes && !expandedNodes.has(row.id) ? "▸ " : "▾ ") : ""
+  const collapsed = expandedNodes !== undefined && !HashSet.has(expandedNodes, row.id)
+  const marker = row.kind === "directory" ? (collapsed ? "▸ " : "▾ ") : ""
 
   return `${indentation}${branch}${marker}`
 }

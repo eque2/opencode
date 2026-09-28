@@ -1,12 +1,5 @@
-import {
-  createContext,
-  createMemo,
-  createSignal,
-  useContext,
-  type Accessor,
-  type ParentProps,
-  type Setter,
-} from "solid-js"
+import { Option } from "effect"
+import { createContext, createMemo, createSignal, useContext, type Accessor, type ParentProps } from "solid-js"
 import { useSync } from "../../context/sync"
 import { useTuiPaths } from "../../context/runtime"
 
@@ -14,7 +7,7 @@ export type HomeSessionDestination = { type: "directory"; directory: string; sub
 
 type Context = {
   destination: Accessor<HomeSessionDestination | undefined>
-  setDestination: Setter<HomeSessionDestination | undefined>
+  setDestination: (destination: HomeSessionDestination) => void
   clear: () => void
 }
 
@@ -23,13 +16,24 @@ const HomeSessionDestinationContext = createContext<Context>()
 export function HomeSessionDestinationProvider(props: ParentProps) {
   const sync = useSync()
   const paths = useTuiPaths()
-  const [selected, setDestination] = createSignal<HomeSessionDestination>()
-  const destination = createMemo<HomeSessionDestination>(
-    () => selected() ?? { type: "directory", directory: sync.path.directory || paths.cwd, subdirectory: false },
+  const [selected, setSelected] = createSignal(Option.none<HomeSessionDestination>())
+  const destination = createMemo(() =>
+    Option.getOrElse(
+      selected(),
+      (): HomeSessionDestination => ({
+        type: "directory",
+        directory: sync.path.directory || paths.cwd,
+        subdirectory: false,
+      }),
+    ),
   )
   return (
     <HomeSessionDestinationContext.Provider
-      value={{ destination, setDestination, clear: () => setDestination(undefined) }}
+      value={{
+        destination,
+        setDestination: (value) => setSelected(Option.some(value)),
+        clear: () => setSelected(Option.none()),
+      }}
     >
       {props.children}
     </HomeSessionDestinationContext.Provider>

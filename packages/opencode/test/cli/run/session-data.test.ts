@@ -1,12 +1,31 @@
 import { describe, expect, test } from "bun:test"
+import { MutableHashSet } from "effect"
 import type { Event } from "@opencode-ai/sdk/v2"
 import { createSessionData, flushInterrupted, reduceSessionData } from "@/cli/cmd/run/session-data"
-import type { StreamCommit } from "@/cli/cmd/run/types"
+
+// The fixtures build only the event fields the reducer reads, so they are
+// checked for the Event envelope (a string type and a properties object).
+function isEventFixture(value: unknown): value is Event {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const properties: unknown = Reflect.get(value, "properties")
+  return typeof Reflect.get(value, "type") === "string" && !!properties && typeof properties === "object"
+}
+
+function asEvent(value: unknown): Event {
+  if (!isEventFixture(value)) {
+    throw new Error("event fixture needs a type and a properties object")
+  }
+
+  return value
+}
 
 function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thinking = true) {
   return reduceSessionData({
     data,
-    event: event as Event,
+    event: asEvent(event),
     sessionID: "session-1",
     thinking,
     limits: {},
@@ -159,7 +178,7 @@ describe("run session data", () => {
     const out = reduce(data, user("msg-user-1"))
 
     expect(out.commits).toEqual([])
-    expect(out.data.ids.has("txt-user-1")).toBe(true)
+    expect(MutableHashSet.has(out.data.ids, "txt-user-1")).toBe(true)
   })
 
   test("suppresses reasoning commits when thinking is disabled", () => {
@@ -175,7 +194,7 @@ describe("run session data", () => {
     )
 
     expect(out.commits).toEqual([])
-    expect(out.data.ids.has("reason-1")).toBe(true)
+    expect(MutableHashSet.has(out.data.ids, "reason-1")).toBe(true)
   })
 
   test("keeps permission precedence over queued questions", () => {
@@ -557,15 +576,13 @@ describe("run session data", () => {
       }),
     ).data
 
-    const first: StreamCommit[] = []
-    flushInterrupted(data, first)
+    const first = flushInterrupted(data)
     expect(first).toEqual([
       expect.objectContaining({ kind: "assistant", text: "unfinished", phase: "progress" }),
       expect.objectContaining({ kind: "assistant", phase: "final", interrupted: true }),
     ])
 
-    const next: StreamCommit[] = []
-    flushInterrupted(data, next)
+    const next = flushInterrupted(data)
     expect(next).toEqual([])
   })
 

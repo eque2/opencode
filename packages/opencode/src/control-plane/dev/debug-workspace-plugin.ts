@@ -1,64 +1,84 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { rename, writeFile } from "node:fs/promises"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, FileSystem, Layer, Schedule, Schema } from "effect"
+import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { randomInt } from "node:crypto"
-import { setTimeout as sleep } from "node:timers/promises"
+import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 
 const DEV_DATA_FILE = "/tmp/opencode-workspace-dev-data.json"
 const DEV_DATA_TEMP_FILE = `${DEV_DATA_FILE}.tmp`
 
-async function waitForHealth(port: number) {
+class DebugWorkspaceError extends Schema.TaggedError<DebugWorkspaceError>()("DebugWorkspaceError", {
+  message: Schema.String,
+}) {}
+
+// script/run-workspace-server reads this file; undefined env values are dropped
+// from the JSON, as before.
+const DevData = Schema.Struct({
+  port: Schema.Number,
+  id: WorkspaceV2.ID,
+  env: Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String)),
+}).annotate({ identifier: "DebugWorkspaceDevData" })
+const encodeDevData = Schema.encodeSync(Schema.fromJsonString(DevData, { space: 2 }))
+
+const DebugLayer = Layer.mergeAll(NodeFileSystem.layer, FetchHttpClient.layer)
+
+const waitForHealth = Effect.fn("DebugWorkspace.waitForHealth")(function* (port: number) {
   const url = `http://127.0.0.1:${port}/global/health`
-  const started = Date.now()
+  const http = yield* HttpClient.HttpClient
 
-  while (Date.now() - started < 30_000) {
-    try {
-      const response = await fetch(url)
-      if (response.ok) {
-        return
-      }
-    } catch {}
-
-    await sleep(250)
-  }
-
-  throw new Error(`Timed out waiting for debug server health check at ${url}`)
-}
+  yield* http.get(url).pipe(
+    Effect.flatMap((response) =>
+      response.status >= 200 && response.status < 300
+        ? Effect.void
+        : Effect.fail(new DebugWorkspaceError({ message: `Debug server health check returned ${response.status}` })),
+    ),
+    Effect.retry(Schedule.spaced("250 millis")),
+    Effect.timeoutOrElse({
+      duration: "30 seconds",
+      orElse: () =>
+        Effect.fail(new DebugWorkspaceError({ message: `Timed out waiting for debug server health check at ${url}` })),
+    }),
+  )
+})
 
 let PORT: number | undefined
 
-async function writeDebugData(port: number, id: string, env: Record<string, string | undefined>) {
-  await writeFile(
-    DEV_DATA_TEMP_FILE,
-    JSON.stringify(
-      {
-        port,
-        id,
-        env,
-      },
-      null,
-      2,
-    ),
-  )
+const writeDebugData = Effect.fn("DebugWorkspace.writeDebugData")(function* (
+  port: number,
+  id: WorkspaceV2.ID,
+  env: Record<string, string | undefined>,
+) {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.writeFileString(DEV_DATA_TEMP_FILE, encodeDevData({ port, id, env }))
+  yield* fs.rename(DEV_DATA_TEMP_FILE, DEV_DATA_FILE)
+})
 
-  await rename(DEV_DATA_TEMP_FILE, DEV_DATA_FILE)
-}
-
-export const DebugWorkspacePlugin: Plugin = async ({ experimental_workspace }) => {
+// The plugin SDK types every hook as a Promise, so each hook runs its Effect here.
+export const DebugWorkspacePlugin: Plugin = ({ experimental_workspace }) => {
   experimental_workspace.register("debug", {
     name: "Debug",
     description: "Create a debugging server",
     configure(config) {
       return config
     },
-    async create(config, env) {
-      const port = randomInt(5000, 9001)
-      PORT = port
+    create(config, env) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const port = randomInt(5000, 9001)
+          PORT = port
 
-      await writeDebugData(port, config.id, env)
+          // The plugin SDK hands the workspace ID over as a plain string.
+          const id = yield* Schema.decodeUnknownEffect(WorkspaceV2.ID)(config.id)
+          yield* writeDebugData(port, id, env)
 
-      await waitForHealth(port)
+          yield* waitForHealth(port)
+        }).pipe(Effect.provide(DebugLayer)),
+      )
     },
-    async remove(_config) {},
+    remove(_config) {
+      return Effect.runPromise(Effect.void)
+    },
     target(_config) {
       return {
         type: "remote",
@@ -67,7 +87,7 @@ export const DebugWorkspacePlugin: Plugin = async ({ experimental_workspace }) =
     },
   })
 
-  return {}
+  return Effect.runPromise(Effect.succeed({}))
 }
 
 export default DebugWorkspacePlugin

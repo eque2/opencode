@@ -9,6 +9,7 @@ import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useParams } from "@solidjs/router"
+import { Data, Effect, MutableHashMap, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { usePlatform, type DisplayBackend } from "@/context/platform"
@@ -29,13 +30,29 @@ import {
 } from "@/context/settings"
 import { decode64 } from "@/utils/base64"
 import { playSoundById, SOUND_OPTIONS } from "@/utils/sound"
+import { makeFiberSlot } from "@/utils/fiber-slot"
 import { ExternalLink } from "./external-link"
 import { SettingsList } from "./settings-list"
 
-let demoSoundState = {
-  cleanup: undefined as (() => void) | undefined,
-  timeout: undefined as NodeJS.Timeout | undefined,
+// The stop function of the demo sound that plays now, and a counter that marks the latest request.
+const demoSoundState: { cleanup: Option.Option<() => void>; run: number } = {
+  cleanup: Option.none(),
   run: 0,
+}
+// Holds the delayed start of the next demo sound.
+const demoSoundDelay = makeFiberSlot()
+
+/** A settings request that rejected. `cause` is the original rejection. */
+class SettingsGeneralRequestError extends Data.TaggedError("App.SettingsGeneralRequestError")<{
+  readonly cause: unknown
+}> {}
+
+/**
+ * Runs a settings request in the background. A failure goes to the Effect
+ * logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 }
 
 type ThemeOption = {
@@ -59,27 +76,31 @@ type ShellSelectOption = {
 // delay the playback by 100ms during quick selection changes and pause existing sounds.
 const stopDemoSound = () => {
   demoSoundState.run += 1
-  if (demoSoundState.cleanup) {
-    demoSoundState.cleanup()
+  if (Option.isSome(demoSoundState.cleanup)) {
+    demoSoundState.cleanup.value()
   }
-  clearTimeout(demoSoundState.timeout)
-  demoSoundState.cleanup = undefined
+  demoSoundDelay.interrupt()
+  demoSoundState.cleanup = Option.none()
 }
 
-const playDemoSound = (id: string | undefined) => {
+const playDemoSound = (id: Option.Option<string>) => {
   stopDemoSound()
-  if (!id) return
+  if (Option.isNone(id) || !id.value) return
 
   const run = ++demoSoundState.run
-  demoSoundState.timeout = setTimeout(() => {
-    void playSoundById(id).then((cleanup) => {
+  // Only the delay is interruptible. Once the sound starts, the stop function must still reach
+  // demoSoundState, or a newer request stops it through the run check.
+  const start = Effect.promise(() => playSoundById(id.value)).pipe(
+    Effect.map((stop) => {
+      const cleanup = Option.fromNullishOr(stop)
       if (demoSoundState.run !== run) {
-        cleanup?.()
+        if (Option.isSome(cleanup)) cleanup.value()
         return
       }
       demoSoundState.cleanup = cleanup
-    })
-  }, 100)
+    }),
+  )
+  demoSoundDelay.run(Effect.sleep("100 millis").pipe(Effect.andThen(Effect.uninterruptible(start))))
 }
 
 export const SettingsGeneral: Component = () => {
@@ -127,26 +148,56 @@ export const SettingsGeneral: Component = () => {
   const serverSdk = useServerSDK()
 
   const [shells] = createResource(
-    async () => {
-      const sdk = serverSdk()
-      if ((await sdk.protocol) === "v1") {
-        return (await sdk.client.pty.shells()).data ?? []
-      }
-      // return (await sdk.api.pty.shells()).data
-      return [] as ShellOption[]
-    },
+    () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const sdk = serverSdk()
+          if ((yield* Effect.promise(() => sdk.protocol)) === "v1") {
+            const result = yield* Effect.tryPromise({
+              try: () => sdk.client.pty.shells(),
+              catch: (cause) => new SettingsGeneralRequestError({ cause }),
+            })
+            return result.data ?? []
+          }
+          // return (await sdk.api.pty.shells()).data
+          return [] as ShellOption[]
+        }),
+      ),
     { initialValue: [] as ShellOption[] },
   )
 
-  const [displayBackend, { refetch: refetchDisplayBackend }] = createResource(
-    () => (linux() && platform.getDisplayBackend ? true : false),
-    () => Promise.resolve(platform.getDisplayBackend?.() ?? null).catch(() => null as DisplayBackend | null),
-    { initialValue: null as DisplayBackend | null },
+  // The platform may answer with a value or a Promise. A failed read shows the default backend.
+  const readDisplayBackend: Effect.Effect<Option.Option<DisplayBackend>> = Effect.suspend(
+    (): Effect.Effect<DisplayBackend | null | undefined, SettingsGeneralRequestError> => {
+      const backend = platform.getDisplayBackend?.()
+      return backend instanceof Promise
+        ? Effect.tryPromise({ try: () => backend, catch: (cause) => new SettingsGeneralRequestError({ cause }) })
+        : Effect.succeed(backend)
+    },
+  ).pipe(
+    Effect.map(Option.fromNullishOr),
+    Effect.orElseSucceed(() => Option.none<DisplayBackend>()),
   )
 
+  const [displayBackend, { refetch: refetchDisplayBackend }] = createResource(
+    () => linux() && platform.getDisplayBackend !== undefined,
+    () => Effect.runPromise(readDisplayBackend),
+    { initialValue: Option.none<DisplayBackend>() },
+  )
+
+  // The platform may answer with a value or a Promise. A failed read shows pinch zoom as off.
+  const readPinchZoom: Effect.Effect<boolean> = Effect.suspend(
+    (): Effect.Effect<boolean, SettingsGeneralRequestError> => {
+      const enabled = platform.getPinchZoomEnabled?.() ?? false
+      return enabled instanceof Promise
+        ? Effect.tryPromise({ try: () => enabled, catch: (cause) => new SettingsGeneralRequestError({ cause }) })
+        : Effect.succeed(enabled)
+    },
+  ).pipe(Effect.orElseSucceed(() => false))
+
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
-    () => (desktop() && platform.getPinchZoomEnabled ? true : false),
-    () => Promise.resolve(platform.getPinchZoomEnabled?.() ?? false).catch(() => false),
+    () => desktop() && platform.getPinchZoomEnabled !== undefined,
+    () => Effect.runPromise(readPinchZoom),
     { initialValue: false },
   )
 
@@ -161,15 +212,16 @@ export const SettingsGeneral: Component = () => {
     const list = shells.latest
     const current = serverSync().data.config.shell
 
-    const nameCounts = new Map<string, number>()
+    const nameCounts = MutableHashMap.empty<string, number>()
+    const countOf = (name: string) => Option.getOrElse(MutableHashMap.get(nameCounts, name), () => 0)
     for (const s of list) {
-      nameCounts.set(s.name, (nameCounts.get(s.name) || 0) + 1)
+      MutableHashMap.set(nameCounts, s.name, countOf(s.name) + 1)
     }
 
     const options = [
       autoOption,
       ...list.map((s) => {
-        const ambiguousName = (nameCounts.get(s.name) || 0) > 1
+        const ambiguousName = countOf(s.name) > 1
         const text = ambiguousName ? s.path : s.name
         const label = s.acceptable ? text : `${text} (${language.t("settings.general.row.shell.terminalOnly")})`
         return {
@@ -181,11 +233,8 @@ export const SettingsGeneral: Component = () => {
       }),
     ]
 
-    if (current && !options.some((o) => o.value === current)) {
-      options.push({ id: current, value: current, label: current })
-    }
-
-    return options
+    if (!current || options.some((o) => o.value === current)) return options
+    return [...options, { id: current, value: current, label: current }]
   })
 
   const onDisplayBackendChange = (checked: boolean) => {
@@ -234,7 +283,7 @@ export const SettingsGeneral: Component = () => {
     label: (o: (typeof soundOptions)[number]) => language.t(o.label),
     onHighlight: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
-      playDemoSound(option.id === "none" ? undefined : option.id)
+      playDemoSound(option.id === "none" ? Option.none() : Option.some(option.id))
     },
     onSelect: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
@@ -245,7 +294,7 @@ export const SettingsGeneral: Component = () => {
       }
       setEnabled(true)
       set(option.id)
-      playDemoSound(option.id)
+      playDemoSound(Option.some(option.id))
     },
     variant: "secondary" as const,
     size: "small" as const,
@@ -288,7 +337,7 @@ export const SettingsGeneral: Component = () => {
           title={language.t("settings.general.row.newInterfaceNotice.title")}
           description={language.t("settings.general.row.newInterfaceNotice.description")}
         >
-          <Button size="small" variant="ghost" onClick={settings.general.dismissNewInterfaceNotice}>
+          <Button size="small" variant="ghost" onClick={() => settings.general.dismissNewInterfaceNotice()}>
             {language.t("settings.general.row.newInterfaceNotice.dismiss")}
           </Button>
         </SettingsRow>
@@ -338,7 +387,13 @@ export const SettingsGeneral: Component = () => {
             onSelect={(option) => {
               if (!option) return
               if (option.value === currentShell()) return
-              serverSync().updateConfig({ shell: option.value })
+              const shell = option.value
+              runDetached(
+                Effect.tryPromise({
+                  try: () => serverSync().updateConfig({ shell }),
+                  catch: (cause) => new SettingsGeneralRequestError({ cause }),
+                }),
+              )
             }}
             variant="secondary"
             size="small"
@@ -730,7 +785,7 @@ export const SettingsGeneral: Component = () => {
               description={language.t("settings.general.row.wayland.description")}
             >
               <div data-action="settings-wayland">
-                <Switch checked={displayBackend.latest === "wayland"} onChange={onDisplayBackendChange} />
+                <Switch checked={Option.contains(displayBackend.latest, "wayland")} onChange={onDisplayBackendChange} />
               </div>
             </SettingsRow>
           </Show>

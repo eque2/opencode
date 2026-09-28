@@ -1,5 +1,6 @@
 import { Collapsible } from "@kobalte/core/collapsible"
 import { type ComponentProps, type JSX, For, Show, createMemo, splitProps } from "solid-js"
+import { Predicate } from "effect"
 import { DiffChanges } from "@opencode-ai/ui/v2/diff-changes-v2"
 import { TextShimmerV2 } from "@opencode-ai/ui/v2/text-shimmer-v2"
 import "./basic-tool-v2.css"
@@ -32,7 +33,16 @@ export interface BasicToolV2TriggerTitle {
 }
 
 const isTriggerTitle = (val: unknown): val is BasicToolV2TriggerTitle =>
-  typeof val === "object" && val !== null && "title" in val && (typeof Node === "undefined" || !(val instanceof Node))
+  typeof val === "object" &&
+  Predicate.isNotNull(val) &&
+  "title" in val &&
+  (typeof Node === "undefined" || !(val instanceof Node))
+
+// The Show fallback renders only when the trigger is not a title object.
+function triggerElement(trigger: BasicToolV2TriggerTitle | JSX.Element): JSX.Element {
+  if (isTriggerTitle(trigger)) return undefined
+  return trigger
+}
 
 export interface BasicToolV2Props extends Omit<ComponentProps<"div">, "children" | "title"> {
   trigger: BasicToolV2TriggerTitle | JSX.Element
@@ -59,11 +69,7 @@ export function BasicToolV2(props: BasicToolV2Props) {
 
   const pending = createMemo(() => local.status === "pending" || local.status === "running")
 
-  const hasChildren = createMemo(() => {
-    const c = local.children
-    if (c == null) return false
-    return true
-  })
+  const hasChildren = createMemo(() => Predicate.isNotNullish(local.children))
 
   const canExpand = createMemo(() => hasChildren() && !pending())
 
@@ -87,7 +93,7 @@ export function BasicToolV2(props: BasicToolV2Props) {
     >
       <Collapsible.Trigger as="div" role="button" data-slot="basic-tool-v2-trigger">
         <div data-slot="basic-tool-v2-labels">
-          <Show when={isTriggerTitle(local.trigger) && local.trigger} fallback={local.trigger as JSX.Element}>
+          <Show when={isTriggerTitle(local.trigger) && local.trigger} fallback={triggerElement(local.trigger)}>
             {(title) => (
               <>
                 <span data-slot="basic-tool-v2-title">
@@ -99,7 +105,7 @@ export function BasicToolV2(props: BasicToolV2Props) {
                   </span>
                   <span
                     data-slot="basic-tool-v2-subtitle"
-                    style={local.onSubtitleClick ? { cursor: "pointer" } : undefined}
+                    {...(local.onSubtitleClick ? { style: { cursor: "pointer" } } : {})}
                     onClick={(e) => {
                       if (local.onSubtitleClick) {
                         e.stopPropagation()

@@ -1,11 +1,11 @@
-import { Schema } from "effect"
+import { Array, HashSet, Option, Result, Schema } from "effect"
 import DESCRIPTION from "./shell.txt"
 import { PositiveInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "./id"
 
-const PS = new Set(["powershell", "pwsh"])
-const CMD = new Set(["cmd"])
+const PS: HashSet.HashSet<string> = HashSet.make("powershell", "pwsh")
+const CMD: HashSet.HashSet<string> = HashSet.make("cmd")
 
 export type Limits = {
   maxLines: number
@@ -25,12 +25,23 @@ export function parameterSchema() {
 export const Parameters = parameterSchema()
 export type Parameters = Schema.Schema.Type<typeof Parameters>
 
-function renderPrompt(template: string, values: Record<string, string>) {
-  return template.replace(/\$\{(\w+)\}/g, (_, key: string) => {
-    const value = values[key]
-    if (value === undefined) throw new Error(`Missing shell prompt value: ${key}`)
-    return value
-  })
+export class MissingValueError extends Schema.TaggedError<MissingValueError>()("ShellPrompt.MissingValueError", {
+  key: Schema.String,
+}) {
+  override get message() {
+    return `Missing shell prompt value: ${this.key}`
+  }
+}
+
+const PLACEHOLDER = /\$\{(\w+)\}/g
+
+function renderPrompt(template: string, values: Record<string, string>): Result.Result<string, MissingValueError> {
+  const missing = Array.findFirst(
+    Array.fromIterable(template.matchAll(PLACEHOLDER)).map((match) => match[1]),
+    (key) => !Object.hasOwn(values, key),
+  )
+  if (Option.isSome(missing)) return Result.fail(new MissingValueError({ key: missing.value }))
+  return Result.succeed(template.replace(PLACEHOLDER, (_, key: string) => values[key]))
 }
 
 function shellDisplayName(name: string) {
@@ -66,10 +77,10 @@ function chainGuidance(name: string) {
   if (name === "powershell") {
     return "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell (5.1) does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
   }
-  if (PS.has(name)) {
+  if (HashSet.has(PS, name)) {
     return "If the commands depend on each other and must run sequentially, use a single bash tool call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like New-Item before Copy-Item, Write before bash for git operations, or git add before git commit), run these operations sequentially instead."
   }
-  if (CMD.has(name)) {
+  if (HashSet.has(CMD, name)) {
     return "If the commands depend on each other and must run sequentially, use a single bash tool call with `&&` to chain them together (e.g., `mkdir out && dir out`). For instance, if one operation must complete before another starts, run these operations sequentially instead."
   }
   return "If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead."
@@ -219,9 +230,9 @@ Usage notes:
 }
 
 function profile(name: string, platform: NodeJS.Platform, limits: Limits, defaultTimeoutMs: number) {
-  const isPowerShell = PS.has(name)
+  const isPowerShell = HashSet.has(PS, name)
   const chain = chainGuidance(name)
-  if (CMD.has(name)) {
+  if (HashSet.has(CMD, name)) {
     return {
       intro: `Executes a given ${shellDisplayName(name)} command with optional timeout, ensuring proper handling and security measures.`,
       workdirSection:
@@ -270,10 +281,12 @@ function profile(name: string, platform: NodeJS.Platform, limits: Limits, defaul
   }
 }
 
+// The tool description and parameters, or MissingValueError when the template names a value
+// that the profile does not supply.
 export function render(name: string, platform: NodeJS.Platform, limits: Limits, defaultTimeoutMs: number) {
   const selected = profile(name, platform, limits, defaultTimeoutMs)
-  return {
-    description: renderPrompt(DESCRIPTION, {
+  return Result.map(
+    renderPrompt(DESCRIPTION, {
       intro: selected.intro,
       os: platform,
       shell: name,
@@ -286,8 +299,8 @@ export function render(name: string, platform: NodeJS.Platform, limits: Limits, 
       createPrInstruction: selected.createPrInstruction,
       createPrExample: selected.createPrExample,
     }),
-    parameters: parameterSchema(),
-  }
+    (description) => ({ description, parameters: parameterSchema() }),
+  )
 }
 
 export * as ShellPrompt from "./prompt"

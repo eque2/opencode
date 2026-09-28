@@ -31,7 +31,7 @@ function makeTool(id: string, executeFn?: () => void) {
   return {
     description: "test tool",
     parameters: params,
-    execute() {
+    execute: () => {
       executeFn?.()
       return Effect.succeed({ title: "test", output: "ok", metadata: {} })
     },
@@ -97,11 +97,11 @@ describe("Tool.define", () => {
         }),
       )
       const ctx = makeCtx()
-      const tool = yield* info.init()
-      const execute = tool.execute as unknown as (args: unknown, ctx: Tool.Context) => ReturnType<typeof tool.execute>
+      // The wrapped execute decodes unknown input, so call it through the untyped Tool.Def view.
+      const tool: Tool.Def = yield* Tool.init(info)
 
-      yield* execute({}, ctx)
-      yield* execute({ count: "7" }, ctx)
+      yield* tool.execute({}, ctx)
+      yield* tool.execute({ count: "7" }, ctx)
 
       expect(calls).toEqual([{ count: 5 }, { count: 7 }])
     }),
@@ -131,11 +131,11 @@ describe("Tool.define", () => {
           },
         }),
       )
-      const tool = yield* info.init()
-      const execute = tool.execute as unknown as (args: unknown, ctx: Tool.Context) => ReturnType<typeof tool.execute>
+      // The wrapped execute decodes unknown input, so call it through the untyped Tool.Def view.
+      const tool: Tool.Def = yield* Tool.init(info)
 
       // Missing required `question` field on the first questions[] entry.
-      const exit = yield* execute({ questions: [{ options: ["a"] }] }, makeCtx()).pipe(Effect.exit)
+      const exit = yield* tool.execute({ questions: [{ options: ["a"] }] }, makeCtx()).pipe(Effect.exit)
       expect(Exit.isFailure(exit)).toBe(true)
       if (!Exit.isFailure(exit)) return
 
@@ -144,7 +144,8 @@ describe("Tool.define", () => {
       const die = exit.cause.reasons.find(Cause.isDieReason)
       const error = die?.defect
       expect(error).toBeInstanceOf(Tool.InvalidArgumentsError)
-      const args = error as Tool.InvalidArgumentsError
+      if (!(error instanceof Tool.InvalidArgumentsError)) return
+      const args = error
       expect(args.tool).toBe("qtest")
       expect(args.message).toContain("qtest tool was called with invalid arguments")
       expect(args.message).toContain("Please rewrite the input")

@@ -2,15 +2,18 @@ import { describe, expect, test } from "bun:test"
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode-ai/client/promise"
 import { createV2SessionReducer } from "./server-session-v2-reducer"
 
-const event = (input: object) => input as OpenCodeEvent
-const base = { created: 1, location: { directory: "/repo" }, durable: { aggregateID: "ses_1", seq: 1, version: 1 } }
+const base = {
+  created: 1,
+  location: { directory: "/repo" },
+  durable: { aggregateID: "ses_1", seq: 1, version: 1 as const },
+}
 
 describe("v2 session reducer", () => {
   test("projects promoted input and streaming assistant content", () => {
     const reducer = createV2SessionReducer()
     let messages: SessionMessageInfo[] = []
-    const apply = (input: object) => {
-      const result = reducer.reduce(messages, event(input))
+    const apply = (input: OpenCodeEvent) => {
+      const result = reducer.reduce(messages, input)
       if (result) messages = result.messages
       return result
     }
@@ -72,8 +75,8 @@ describe("v2 session reducer", () => {
   test("folds tool, retry, and completion events", () => {
     const reducer = createV2SessionReducer()
     let messages: SessionMessageInfo[] = []
-    const apply = (input: object) => {
-      const result = reducer.reduce(messages, event(input))
+    const apply = (input: OpenCodeEvent) => {
+      const result = reducer.reduce(messages, input)
       if (result) messages = result.messages
     }
 
@@ -108,6 +111,7 @@ describe("v2 session reducer", () => {
     })
     apply({
       ...base,
+      durable: { ...base.durable, version: 2 },
       id: "evt_tool_success",
       type: "session.tool.success",
       data: {
@@ -135,21 +139,18 @@ describe("v2 session reducer", () => {
 
     expect(messages[0]).toMatchObject({
       type: "assistant",
-      retry: undefined,
       content: [{ type: "tool", id: "call_1", state: { status: "completed", content: [{ text: "done" }] } }],
     })
+    expect(messages[0]).not.toHaveProperty("retry")
   })
 
   test("requests hydration when promotion admission was missed", () => {
-    const result = createV2SessionReducer().reduce(
-      [],
-      event({
-        ...base,
-        id: "evt_promoted",
-        type: "session.input.promoted",
-        data: { sessionID: "ses_1", inputID: "msg_user" },
-      }),
-    )
+    const result = createV2SessionReducer().reduce([], {
+      ...base,
+      id: "evt_promoted",
+      type: "session.input.promoted",
+      data: { sessionID: "ses_1", inputID: "msg_user" },
+    })
 
     expect(result).toMatchObject({ sessionID: "ses_1", missing: "msg_user", touched: [] })
   })

@@ -1,8 +1,13 @@
 /** @jsxImportSource @opentui/solid */
-import { useTerminalDimensions, type JSX } from "@opentui/solid"
+import { useTerminalDimensions } from "@opentui/solid"
 import { useBindings, useKeymapSelector } from "@opentui/keymap/solid"
 import { RGBA, VignetteEffect, type KeyEvent, type Renderable } from "@opentui/core"
-import { createBindingLookup, type BindingConfig } from "@opentui/keymap/extras"
+import {
+  createBindingLookup,
+  type BindingConfig,
+  type BindingConfigItem,
+  type BindingValue,
+} from "@opentui/keymap/extras"
 import type { TuiPlugin, TuiPluginApi, TuiPluginMeta, TuiPluginModule, TuiSlotPlugin } from "@opencode-ai/plugin/tui"
 
 const tabs = ["overview", "counter", "help"]
@@ -73,6 +78,34 @@ const num = (value: unknown, fallback: number) => {
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value)
 
+const optionalBoolean = (value: unknown) => value === undefined || typeof value === "boolean"
+
+// KeyLike: a key string, or a KeyStrokeInput record with a string `name`.
+const keyLike = (value: unknown) =>
+  typeof value === "string" ||
+  (record(value) &&
+    typeof value.name === "string" &&
+    optionalBoolean(value.ctrl) &&
+    optionalBoolean(value.shift) &&
+    optionalBoolean(value.meta) &&
+    optionalBoolean(value.super) &&
+    optionalBoolean(value.hyper))
+
+const bindingItem = (value: unknown): value is BindingConfigItem<Renderable, KeyEvent> =>
+  keyLike(value) ||
+  (record(value) &&
+    keyLike(value.key) &&
+    (value.cmd === undefined || typeof value.cmd === "string" || typeof value.cmd === "function") &&
+    (value.event === undefined || value.event === "press" || value.event === "release") &&
+    optionalBoolean(value.preventDefault) &&
+    optionalBoolean(value.fallthrough))
+
+const bindingValue = (value: unknown): value is BindingValue<Renderable, KeyEvent> =>
+  value === false || value === "none" || bindingItem(value) || (Array.isArray(value) && value.every(bindingItem))
+
+const smokeBindings = (value: unknown): value is SmokeBindings =>
+  record(value) && Object.values(value).every(bindingValue)
+
 type Cfg = {
   label: string
   route: string
@@ -95,11 +128,12 @@ type State = {
 }
 
 const cfg = (options: Record<string, unknown> | undefined) => {
+  const keybinds = options?.keybinds
   return {
     label: pick(options?.label, "smoke"),
     route: pick(options?.route, "workspace-smoke"),
     vignette: Math.max(0, num(options?.vignette, 0.35)),
-    keybinds: record(options?.keybinds) ? (options.keybinds as SmokeBindings) : undefined,
+    keybinds: smokeBindings(keybinds) ? keybinds : undefined,
   }
 }
 

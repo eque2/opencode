@@ -1,4 +1,4 @@
-export const stringMethods = new Set([
+export const stringMethods = HashSet.make(
   "toLowerCase",
   "toUpperCase",
   "trim",
@@ -31,22 +31,29 @@ export const stringMethods = new Set([
   "search",
   "localeCompare",
   "normalize",
-])
+)
 
-export const stringStatics = new Set(["fromCharCode", "fromCodePoint"])
+export const stringStatics = HashSet.make("fromCharCode", "fromCodePoint")
 
-export const invokeStringStatic = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  const codes = args.map((arg) => {
-    if (typeof arg !== "number") throw new InterpreterRuntimeError(`String.${name} expects number arguments.`, node)
-    return arg
-  })
+export const invokeStringStatic = (
+  name: string,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError> => {
+  if (!args.every(Predicate.isNumber)) {
+    return Effect.fail(new InterpreterRuntimeError(`String.${name} expects number arguments.`, node))
+  }
+  const codes = args
   switch (name) {
     case "fromCharCode":
-      return String.fromCharCode(...codes)
+      return Effect.succeed(String.fromCharCode(...codes))
+    // An invalid code point throws a RangeError from the host method; Effect.sync keeps that a
+    // defect with its native name, as when the method ran inline.
     case "fromCodePoint":
-      return String.fromCodePoint(...codes)
+      return Effect.sync(() => String.fromCodePoint(...codes))
     default:
-      throw new InterpreterRuntimeError(`String.${name} is not available in CodeMode.`, node)
+      return Effect.fail(new InterpreterRuntimeError(`String.${name} is not available in CodeMode.`, node))
   }
 }
+import { Effect, HashSet, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"

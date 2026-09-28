@@ -1,5 +1,6 @@
 import { checksum } from "@opencode-ai/core/util/encode"
 import type { FilePartSource } from "@opencode-ai/sdk/v2/client"
+import { Effect } from "effect"
 import { batch, createMemo, type Accessor } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { FileSelection } from "@/context/file"
@@ -102,7 +103,7 @@ function isPartEqual(partA: ContentPart, partB: ContentPart) {
       )
     case "agent":
       return partB.type === "agent" && partA.name === partB.name
-    case "image":
+    default:
       return partB.type === "image" && partA.id === partB.id
   }
 }
@@ -153,14 +154,14 @@ export function isCommentItem(item: ContextItem | (ContextItem & { key: string }
 
 function createPromptActions(setStore: SetStoreFunction<PromptStore>) {
   return {
-    set(prompt: Prompt, cursorPosition?: number) {
+    set: (prompt: Prompt, cursorPosition?: number) => {
       const next = clonePrompt(prompt)
       batch(() => {
         setStore("prompt", next)
         if (cursorPosition !== undefined) setStore("cursor", cursorPosition)
       })
     },
-    reset() {
+    reset: () => {
       batch(() => {
         setStore("prompt", clonePrompt(DEFAULT_PROMPT))
         setStore("cursor", 0)
@@ -180,8 +181,8 @@ function promptStore(initial?: InitialPrompt): PromptStore {
   return {
     prompt:
       text === undefined ? clonePrompt(DEFAULT_PROMPT) : [{ type: "text", content: text, start: 0, end: text.length }],
-    cursor: text === undefined ? undefined : text.length,
-    model: initial?.model ? { ...initial.model } : undefined,
+    ...(text === undefined ? {} : { cursor: text.length }),
+    ...(initial?.model ? { model: { ...initial.model } } : {}),
     context: {
       items: [],
     },
@@ -257,15 +258,18 @@ export function createDraftPromptSession(draftID: string, initial?: InitialPromp
 
 export type PromptSession = ReturnType<typeof createPromptSession>
 
-export function createPromptReady(session: Accessor<PromptSession>) {
-  return Object.defineProperty(() => session().ready(), "promise", {
-    get: () => session().ready.promise,
-  }) as (() => boolean) & { readonly promise: Promise<unknown> | undefined }
+export function createPromptReady(
+  session: Accessor<PromptSession>,
+): (() => boolean) & { readonly promise: Promise<unknown> | undefined } {
+  // Object.assign gives the accessor its typed `promise` key. The getter then replaces that value, because the
+  // session changes with the route and `promise` must read the current session each time.
+  const ready = Object.assign(() => session().ready(), { promise: session().ready.promise })
+  return Object.defineProperty(ready, "promise", { get: () => session().ready.promise })
 }
 
 export function createPromptState(initial?: InitialPrompt) {
   const [store, setStore] = createStore<PromptStore>(promptStore(initial))
-  const ready = Object.assign(() => true, { promise: Promise.resolve(true) })
+  const ready = Object.assign(() => true, { promise: Effect.runPromise(Effect.succeed(true)) })
   return {
     ready,
     ...createPromptStateValue(store, setStore),

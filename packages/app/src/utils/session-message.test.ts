@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
+import { MutableHashMap, Option } from "effect"
 import { normalizeSessionMessages } from "./session-message"
 
 describe("normalizeSessionMessages", () => {
@@ -80,14 +81,14 @@ describe("normalizeSessionMessages", () => {
       model: { providerID: "anthropic", modelID: "claude", variant: "high" },
     })
     expect(result.messages[1]).toMatchObject({ id: "msg_4", role: "assistant", parentID: "msg_3", cost: 0.1 })
-    expect(result.parts.get("msg_3")?.map((part) => part.id)).toEqual([
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_3"))?.map((part) => part.id)).toEqual([
       "msg_3:text:0",
       "msg_3:file:0",
       "msg_3:file:1",
       "msg_3:agent:0",
       "msg_5:compaction",
     ])
-    expect(result.parts.get("msg_3")?.[2]).toMatchObject({
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_3"))?.[2]).toMatchObject({
       type: "file",
       source: {
         type: "file",
@@ -95,8 +96,8 @@ describe("normalizeSessionMessages", () => {
         text: { value: "@src/client.ts", start: 8, end: 22 },
       },
     })
-    expect(result.parts.get("msg_4")?.map((part) => part.id)).toEqual(["msg_4:reasoning:0", "msg_4:text:0", "call_1"])
-    expect(result.parts.get("msg_4")?.[2]).toMatchObject({
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_4"))?.map((part) => part.id)).toEqual(["msg_4:reasoning:0", "msg_4:text:0", "call_1"])
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_4"))?.[2]).toMatchObject({
       type: "tool",
       tool: "read",
       state: { status: "completed", output: "hello" },
@@ -138,8 +139,8 @@ describe("normalizeSessionMessages", () => {
       expect.objectContaining({ id: "msg_shell", role: "user" }),
       expect.objectContaining({ id: "msg_shell:assistant", role: "assistant", parentID: "msg_shell" }),
     ])
-    expect(result.parts.get("msg_shell")).toEqual([expect.objectContaining({ type: "text", text: "printf hello" })])
-    expect(result.parts.get("msg_shell:assistant")).toEqual([
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_shell"))).toEqual([expect.objectContaining({ type: "text", text: "printf hello" })])
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_shell:assistant"))).toEqual([
       expect.objectContaining({
         type: "tool",
         tool: "bash",
@@ -192,7 +193,7 @@ describe("normalizeSessionMessages", () => {
 
     const result = normalizeSessionMessages("ses_1", source)
 
-    expect(result.parts.get("msg_assistant")).toEqual([
+    expect(Option.getOrUndefined(MutableHashMap.get(result.parts, "msg_assistant"))).toEqual([
       expect.objectContaining({
         type: "tool",
         tool: "edit",

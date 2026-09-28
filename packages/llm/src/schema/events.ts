@@ -1,5 +1,5 @@
-import { Schema } from "effect"
-import { ContentBlockID, FinishReason, ProtocolID, ProviderMetadata, RouteID, ToolCallID } from "./ids"
+import { Array as Arr, Option, Schema } from "effect"
+import { ContentBlockID, FinishReason, ProtocolID, ProviderMetadata, RequestID, RouteID, ToolCallID } from "./ids"
 import { ModelSchema } from "./options"
 import { Message, ToolCallPart, ToolOutput, ToolResultPart, ToolResultValue, type ContentPart } from "./messages"
 import { ProviderFailureClassification } from "./errors"
@@ -153,7 +153,7 @@ export const ToolCall = Schema.Struct({
   type: Schema.tag("tool-call"),
   id: ToolCallID,
   name: Schema.String,
-  input: Schema.Unknown,
+  input: Schema.Json,
   providerExecuted: Schema.optional(Schema.Boolean),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.ToolCall" })
@@ -230,8 +230,8 @@ type WithUsage<Event extends { readonly usage?: Usage }> = Omit<Event, "type" | 
   readonly usage?: UsageInput
 }
 
-const contentBlockID = (value: ContentBlockID | string) => ContentBlockID.make(value)
-const toolCallID = (value: ToolCallID | string) => ToolCallID.make(value)
+const contentBlockID = (value: string) => ContentBlockID.make(value)
+const toolCallID = (value: string) => ToolCallID.make(value)
 
 /**
  * camelCase aliases for `LLMEvent.guards` (provided by `Schema.toTaggedUnion`).
@@ -239,7 +239,7 @@ const toolCallID = (value: ToolCallID | string) => ToolCallID.make(value)
  * `events.filter(LLMEvent.guards["tool-call"])`.
  */
 export const LLMEvent = Object.assign(llmEventTagged, {
-  stepStart: StepStart.make,
+  stepStart: (input: Parameters<typeof StepStart.make>[0]) => StepStart.make(input),
   textStart: (input: WithID<TextStart, ContentBlockID>) => TextStart.make({ ...input, id: contentBlockID(input.id) }),
   textDelta: (input: WithID<TextDelta, ContentBlockID>) => TextDelta.make({ ...input, id: contentBlockID(input.id) }),
   textEnd: (input: WithID<TextEnd, ContentBlockID>) => TextEnd.make({ ...input, id: contentBlockID(input.id) }),
@@ -255,24 +255,18 @@ export const LLMEvent = Object.assign(llmEventTagged, {
     ToolInputDelta.make({ ...input, id: toolCallID(input.id) }),
   toolInputEnd: (input: WithID<ToolInputEnd, ToolCallID>) => ToolInputEnd.make({ ...input, id: toolCallID(input.id) }),
   toolCall: (input: WithID<ToolCall, ToolCallID>) => ToolCall.make({ ...input, id: toolCallID(input.id) }),
-  toolResult: (input: WithID<ToolResult, ToolCallID>) =>
+  toolResult: ({ output, ...input }: WithID<ToolResult, ToolCallID>) =>
     ToolResult.make({
       ...input,
       id: toolCallID(input.id),
-      output: input.output === undefined ? undefined : ToolOutput.make(input.output.structured, input.output.content),
+      ...(output === undefined ? {} : { output: ToolOutput.make(output.structured, output.content) }),
     }),
   toolError: (input: WithID<ToolError, ToolCallID>) => ToolError.make({ ...input, id: toolCallID(input.id) }),
-  stepFinish: (input: WithUsage<StepFinish>) =>
-    StepFinish.make({
-      ...input,
-      usage: input.usage === undefined ? undefined : Usage.from(input.usage),
-    }),
-  finish: (input: WithUsage<Finish>) =>
-    Finish.make({
-      ...input,
-      usage: input.usage === undefined ? undefined : Usage.from(input.usage),
-    }),
-  providerError: ProviderErrorEvent.make,
+  stepFinish: ({ usage, ...input }: WithUsage<StepFinish>) =>
+    StepFinish.make({ ...input, ...(usage === undefined ? {} : { usage: Usage.from(usage) }) }),
+  finish: ({ usage, ...input }: WithUsage<Finish>) =>
+    Finish.make({ ...input, ...(usage === undefined ? {} : { usage: Usage.from(usage) }) }),
+  providerError: (input: Parameters<typeof ProviderErrorEvent.make>[0]) => ProviderErrorEvent.make(input),
   is: {
     stepStart: llmEventTagged.guards["step-start"],
     textStart: llmEventTagged.guards["text-start"],
@@ -295,12 +289,14 @@ export const LLMEvent = Object.assign(llmEventTagged, {
 export type LLMEvent = Schema.Schema.Type<typeof llmEventTagged>
 
 export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.PreparedRequest")({
-  id: Schema.String,
+  id: RequestID,
   route: RouteID,
   protocol: ProtocolID,
   model: ModelSchema,
-  body: Schema.Unknown,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  // Every route body is a decoded provider-native Struct; the route's own
+  // body schema has already validated its shape by the time it lands here.
+  body: Schema.ObjectKeyword,
+  metadata: Schema.optional(Schema.JsonObject),
 }) {}
 
 /**
@@ -309,7 +305,7 @@ export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.Prepared
  * request will resolve to and wants its native shape statically exposed
  * (debug UIs, request previews, plan rendering).
  *
- * The runtime body is identical — the route still emits `body: unknown` — so
+ * The runtime body is identical — the route still emits `body: object` — so
  * this is a type-level assertion the caller makes about what they expect to
  * find. The prepare runtime does not validate the assertion.
  */
@@ -329,11 +325,11 @@ const responseReasoning = (events: ReadonlyArray<LLMEvent>) =>
     .map((event) => event.text)
     .join("")
 
-const responseUsage = (events: ReadonlyArray<LLMEvent>) =>
-  events.reduce<Usage | undefined>(
-    (usage, event) => ("usage" in event && event.usage !== undefined ? event.usage : usage),
-    undefined,
-  )
+const eventUsage = (event: LLMEvent): Option.Option<Usage> =>
+  "usage" in event ? Option.fromUndefinedOr(event.usage) : Option.none()
+
+/** Usage of the latest usage-bearing event, if any. */
+const responseUsage = (events: ReadonlyArray<LLMEvent>) => Arr.findLast(events, eventUsage)
 
 interface ContentAssembly {
   readonly contentIndex: number
@@ -592,14 +588,18 @@ export namespace LLMResponse {
 
   /** Return a completed response only after a terminal finish or provider error. */
   export const complete = (state: State): LLMResponse | undefined =>
-    state.finishReason === undefined
-      ? undefined
-      : new LLMResponse({
-          message: state.message,
-          events: [...state.events],
-          usage: state.usage,
-          finishReason: state.finishReason,
-        })
+    Option.getOrUndefined(
+      Option.map(
+        Option.fromUndefinedOr(state.finishReason),
+        (finishReason) =>
+          new LLMResponse({
+            message: state.message,
+            events: [...state.events],
+            usage: state.usage,
+            finishReason,
+          }),
+      ),
+    )
 
   /** Convenience reducer for callers that already have a collected event list. */
   export const fromEvents = (events: ReadonlyArray<LLMEvent>) => complete(events.reduce(reduce, empty()))
@@ -608,7 +608,7 @@ export namespace LLMResponse {
   export const text = (response: Output) => responseText(response.events)
 
   /** Return response usage, falling back to the latest usage-bearing event. */
-  export const usage = (response: Output) => response.usage ?? responseUsage(response.events)
+  export const usage = (response: Output) => response.usage ?? Option.getOrUndefined(responseUsage(response.events))
 
   /** Return completed tool calls from a response or collected event list. */
   export const toolCalls = (response: Output) => response.events.filter(LLMEvent.is.toolCall)

@@ -2,8 +2,8 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import type * as SDK from "@opencode-ai/sdk/v2"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Effect, Exit, Layer, Option, Schema, Scope, Context, Stream } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { Effect, Exit, Layer, MutableHashMap, Option, Schema, Scope, Context } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Account } from "@/account/account"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
@@ -19,8 +19,7 @@ import { SessionShareTable } from "@opencode-ai/core/share/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { EventV2 } from "@opencode-ai/core/event"
-
-const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+import { truthyConfig } from "@opencode-ai/core/flag/flag"
 
 export type Api = {
   create: string
@@ -35,35 +34,44 @@ export type Req = {
   baseUrl: string
 }
 
+// The share service assigns this id; the sync and remove endpoints take it.
+const ShareID = Schema.String.pipe(Schema.brand("ShareNext.ShareID"))
+
 const ShareSchema = Schema.Struct({
-  id: Schema.String,
+  id: ShareID,
   url: Schema.String,
   secret: Schema.String,
-})
+}).annotate({ identifier: "ShareNext.Share", description: "A share that the share service created for a session" })
 export type Share = typeof ShareSchema.Type
 
+export class TokenError extends Schema.TaggedError<TokenError>()("ShareNext.TokenError", {
+  message: Schema.String,
+}) {}
+
 type State = {
-  queue: Map<SessionID, Map<string, Data>>
+  queue: MutableHashMap.MutableHashMap<SessionID, MutableHashMap.MutableHashMap<string, Data>>
   scope: Scope.Closeable
-  shared: Map<SessionID, Share | null>
+  // A cached None records a session that has no share row.
+  shared: MutableHashMap.MutableHashMap<SessionID, Option.Option<Share>>
 }
 
+// The share service receives these values as JSON, so the event data types serve as they are.
 type Data =
   | {
       type: "session"
-      data: SDK.Session
+      data: EventV2.Data<typeof Session.Event.Updated>["info"]
     }
   | {
       type: "message"
-      data: SDK.Message
+      data: EventV2.Data<typeof MessageV2.Event.Updated>["info"]
     }
   | {
       type: "part"
-      data: SDK.Part
+      data: EventV2.Data<typeof MessageV2.Event.PartUpdated>["part"]
     }
   | {
       type: "session_diff"
-      data: SDK.SnapshotFileDiff[]
+      data: EventV2.Data<typeof Session.Event.Diff>["diff"]
     }
   | {
       type: "model"
@@ -94,19 +102,11 @@ function api(resource: string): Api {
 const legacyApi = api("share")
 const consoleApi = api("shares")
 
+// The session, session_diff and model items have one slot each, keyed by their type.
 function key(item: Data) {
-  switch (item.type) {
-    case "session":
-      return "session"
-    case "message":
-      return `message/${item.data.id}`
-    case "part":
-      return `part/${item.data.messageID}/${item.data.id}`
-    case "session_diff":
-      return "session_diff"
-    case "model":
-      return "model"
-  }
+  if (item.type === "message") return `message/${item.data.id}`
+  if (item.type === "part") return `part/${item.data.messageID}/${item.data.id}`
+  return item.type
 }
 
 const layer = Layer.effect(
@@ -120,26 +120,30 @@ const layer = Layer.effect(
     const httpOk = HttpClient.filterStatusOk(http)
     const provider = yield* Provider.Service
     const session = yield* Session.Service
+    const disabled = yield* truthyConfig("OPENCODE_DISABLE_SHARE").pipe(Effect.orDie)
 
     function sync(sessionID: SessionID, data: Data[]) {
       return Effect.gen(function* () {
         if (disabled) return
         const share = yield* getCached(sessionID)
-        if (!share) return
+        if (Option.isNone(share)) return
 
         const s = yield* InstanceState.get(state)
-        const existing = s.queue.get(sessionID)
-        if (existing) {
+        const existing = MutableHashMap.get(s.queue, sessionID)
+        if (Option.isSome(existing)) {
           for (const item of data) {
-            existing.set(key(item), item)
+            MutableHashMap.set(existing.value, key(item), item)
           }
           return
         }
 
-        const next = new Map(data.map((item) => [key(item), item]))
-        s.queue.set(sessionID, next)
+        MutableHashMap.set(
+          s.queue,
+          sessionID,
+          MutableHashMap.fromIterable(data.map((item) => [key(item), item] as const)),
+        )
         yield* flush(sessionID).pipe(
-          Effect.delay(1000),
+          Effect.delay("1 second"),
           Effect.catchCause((cause) => Effect.logError("share flush failed", { sessionID: sessionID, cause: cause })),
           Effect.forkIn(s.scope),
         )
@@ -148,14 +152,18 @@ const layer = Layer.effect(
 
     const state: InstanceState.InstanceState<State> = yield* InstanceState.make<State>(
       Effect.fn("ShareNext.state")(function* (_ctx) {
-        const cache: State = { queue: new Map(), scope: yield* Scope.make(), shared: new Map() }
+        const cache: State = {
+          queue: MutableHashMap.empty(),
+          scope: yield* Scope.make(),
+          shared: MutableHashMap.empty(),
+        }
 
         yield* Effect.addFinalizer(() =>
           Scope.close(cache.scope, Exit.void).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                cache.queue.clear()
-                cache.shared.clear()
+                MutableHashMap.clear(cache.queue)
+                MutableHashMap.clear(cache.shared)
               }),
             ),
           ),
@@ -163,39 +171,46 @@ const layer = Layer.effect(
 
         if (disabled) return cache
 
+        // listen() hands every event as the generic Payload, so the data is checked against
+        // the event schema. The listener ends with the instance state.
         const watch = <D extends EventV2.Definition>(
           def: D,
-          fn: (data: EventV2.Data<D>) => Effect.Effect<void, unknown>,
+          fn: (data: D["data"]["Type"]) => Effect.Effect<void, unknown>,
         ) =>
-          events.listen((event) => {
-            if (event.type !== def.type || event.location?.directory !== _ctx.directory) return Effect.void
-            return fn(event.data as EventV2.Data<D>).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("share subscriber failed", { type: def.type, cause: cause }),
-              ),
-            )
+          Effect.gen(function* () {
+            const isData = Schema.is(def.data)
+            const unsubscribe = yield* events.listen((event) => {
+              if (event.type !== def.type || event.location?.directory !== _ctx.directory) return Effect.void
+              if (!isData(event.data)) return Effect.void
+              return fn(event.data).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError("share subscriber failed", { type: def.type, cause: cause }),
+                ),
+              )
+            })
+            yield* Effect.addFinalizer(() => unsubscribe)
           })
 
         yield* watch(Session.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.id, [{ type: "session", data: structuredClone(info) as SDK.Session }])
+            yield* sync(info.id, [{ type: "session", data: structuredClone(info) }])
           }),
         )
         yield* watch(MessageV2.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) as SDK.Message }])
+            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) }])
             if (info.role !== "user") return
             const model = yield* provider.getModel(info.model.providerID, info.model.modelID)
             yield* sync(info.sessionID, [{ type: "model", data: [model] }])
           }),
         )
         yield* watch(MessageV2.Event.PartUpdated, (data) =>
-          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) as SDK.Part }]),
+          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) }]),
         )
         yield* watch(Session.Event.Diff, (data) =>
-          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
+          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) }]),
         )
         yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
 
@@ -213,7 +228,7 @@ const layer = Layer.effect(
 
       const token = yield* account.token(active.value.id)
       if (Option.isNone(token)) {
-        throw new Error("No active account token available for sharing")
+        return yield* new TokenError({ message: "No active account token available for sharing" })
       }
 
       headers.authorization = `Bearer ${token.value}`
@@ -228,37 +243,38 @@ const layer = Layer.effect(
         .where(eq(SessionShareTable.session_id, sessionID))
         .get()
         .pipe(Effect.orDie)
-      if (!row) return
-      return { id: row.id, secret: row.secret, url: row.url } satisfies Share
+      return Option.map(
+        Option.fromNullishOr(row),
+        (found): Share => ({ id: ShareID.make(found.id), secret: found.secret, url: found.url }),
+      )
     })
 
     const getCached = Effect.fnUntraced(function* (sessionID: SessionID) {
       const s = yield* InstanceState.get(state)
-      if (s.shared.has(sessionID)) {
-        const cached = s.shared.get(sessionID)
-        return cached === null ? undefined : cached
-      }
+      const cached = MutableHashMap.get(s.shared, sessionID)
+      if (Option.isSome(cached)) return cached.value
 
       const share = yield* get(sessionID)
-      s.shared.set(sessionID, share ?? null)
+      MutableHashMap.set(s.shared, sessionID, share)
       return share
     })
 
     const flush = Effect.fn("ShareNext.flush")(function* (sessionID: SessionID) {
       if (disabled) return
       const s = yield* InstanceState.get(state)
-      const queued = s.queue.get(sessionID)
-      if (!queued) return
+      const queued = MutableHashMap.get(s.queue, sessionID)
+      if (Option.isNone(queued)) return
 
-      s.queue.delete(sessionID)
+      MutableHashMap.remove(s.queue, sessionID)
 
-      const share = yield* getCached(sessionID)
-      if (!share) return
+      const found = yield* getCached(sessionID)
+      if (Option.isNone(found)) return
+      const share = found.value
 
       const req = yield* request()
       const res = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.sync(share.id)}`).pipe(
         HttpClientRequest.setHeaders(req.headers),
-        HttpClientRequest.bodyJson({ secret: share.secret, data: Array.from(queued.values()) }),
+        HttpClientRequest.bodyJson({ secret: share.secret, data: Array.from(MutableHashMap.values(queued.value)) }),
         Effect.flatMap((r) => http.execute(r)),
       )
 
@@ -278,12 +294,11 @@ const layer = Layer.effect(
       const messages = yield* session.messages({ sessionID })
       const models = yield* Effect.forEach(
         Array.from(
-          new Map(
+          MutableHashMap.fromIterable(
             messages
-              .filter((msg) => msg.info.role === "user")
-              .map((msg) => (msg.info as SDK.UserMessage).model)
+              .flatMap((msg) => (msg.info.role === "user" ? [msg.info.model] : []))
               .map((item) => [`${item.providerID}/${item.modelID}`, item] as const),
-          ).values(),
+          ).pipe(MutableHashMap.values),
         ),
         (item) => provider.getModel(ProviderV2.ID.make(item.providerID), ModelV2.ID.make(item.modelID)),
         { concurrency: 8 },
@@ -308,7 +323,7 @@ const layer = Layer.effect(
     })
 
     const create = Effect.fn("ShareNext.create")(function* (sessionID: SessionID) {
-      if (disabled) return { id: "", url: "", secret: "" }
+      if (disabled) return { id: ShareID.make(""), url: "", secret: "" }
       yield* Effect.logInfo("creating share", { sessionID: sessionID })
       const req = yield* request()
       const result = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.create}`).pipe(
@@ -327,7 +342,7 @@ const layer = Layer.effect(
         .run()
         .pipe(Effect.orDie)
       const s = yield* InstanceState.get(state)
-      s.shared.set(sessionID, result)
+      MutableHashMap.set(s.shared, sessionID, Option.some(result))
       yield* full(sessionID).pipe(
         Effect.catchCause((cause) => Effect.logError("share full sync failed", { sessionID: sessionID, cause: cause })),
         Effect.forkIn(s.scope),
@@ -339,12 +354,13 @@ const layer = Layer.effect(
       if (disabled) return
       yield* Effect.logInfo("removing share", { sessionID: sessionID })
       const s = yield* InstanceState.get(state)
-      const share = yield* getCached(sessionID)
-      if (!share) {
-        s.shared.delete(sessionID)
-        s.queue.delete(sessionID)
+      const found = yield* getCached(sessionID)
+      if (Option.isNone(found)) {
+        MutableHashMap.remove(s.shared, sessionID)
+        MutableHashMap.remove(s.queue, sessionID)
         return
       }
+      const share = found.value
 
       const req = yield* request()
       yield* HttpClientRequest.delete(`${req.baseUrl}${req.api.remove(share.id)}`).pipe(
@@ -354,8 +370,8 @@ const layer = Layer.effect(
       )
 
       yield* db.delete(SessionShareTable).where(eq(SessionShareTable.session_id, sessionID)).run().pipe(Effect.orDie)
-      s.shared.delete(sessionID)
-      s.queue.delete(sessionID)
+      MutableHashMap.remove(s.shared, sessionID)
+      MutableHashMap.remove(s.queue, sessionID)
     })
 
     return Service.of({ init, url, request, create, remove })

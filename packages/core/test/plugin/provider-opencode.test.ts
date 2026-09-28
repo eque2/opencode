@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Credential } from "@opencode-ai/core/credential"
@@ -33,15 +33,19 @@ function required<T>(value: T | undefined): T {
   return value
 }
 
+class EventuallyTimeout extends Schema.TaggedError<EventuallyTimeout>()("Test.EventuallyTimeout", {
+  message: Schema.String,
+}) {}
+
 function eventually<A>(
   effect: Effect.Effect<A>,
   predicate: (value: A) => boolean,
   remaining = 1000,
-): Effect.Effect<A, Error> {
+): Effect.Effect<A, EventuallyTimeout> {
   return Effect.gen(function* () {
     const value = yield* effect
     if (predicate(value)) return value
-    if (remaining === 0) return yield* Effect.fail(new Error("Timed out waiting for value"))
+    if (remaining === 0) return yield* new EventuallyTimeout({ message: "Timed out waiting for value" })
     yield* Effect.promise(() => Bun.sleep(1))
     return yield* eventually(effect, predicate, remaining - 1)
   })

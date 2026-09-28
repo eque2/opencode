@@ -8,6 +8,7 @@ export type {
   ResolvedTheme,
   ColorValue,
   CssVarRef,
+  RgbaColor,
   V2ColorValue,
   ResolvedV2Theme,
 } from "./types"

@@ -7,18 +7,29 @@ import { useSessionLayout } from "./session-layout"
 import { useDialog } from "@opencode-ai/ui/context"
 import { DialogUsageExceeded } from "@/components/dialog-usage-exceeded"
 import { useI18n } from "@opencode-ai/ui/context"
+import { DateTime, HashSet } from "effect"
 
 const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
-const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+const GO_UPSELL_PROVIDERS = HashSet.make("opencode", "opencode-go")
+
+type GoUpsellKey =
+  | typeof GO_UPSELL_FREE_TIER_LAST_SEEN_AT
+  | typeof GO_UPSELL_FREE_TIER_DONT_SHOW
+  | typeof GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT
+  | typeof GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW
+
+// A key is absent until the dialog records a time. Data stored by earlier
+// versions holds null for a key that has no time.
+type GoUpsellState = { [K in GoUpsellKey]?: number | null }
 
 function goUpsellKeys(status: SessionStatus) {
-  if (status.type !== "retry" || !status.action) return
+  if (status.type !== "retry" || !status.action) return undefined
   const { action } = status
-  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+  if (!HashSet.has(GO_UPSELL_PROVIDERS, action.provider)) return undefined
   if (action.reason === "free_tier_limit") {
     return {
       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
@@ -31,6 +42,7 @@ function goUpsellKeys(status: SessionStatus) {
       dontShow: GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW,
     } as const
   }
+  return undefined
 }
 
 export function useUsageExceededDialogs() {
@@ -40,15 +52,7 @@ export function useUsageExceededDialogs() {
   const { t, locale } = useI18n()
   const isEnglish = () => locale() === "en"
 
-  const [goUpsellState, setGoUpsellState] = persisted(
-    Persist.global("go-upsell"),
-    createStore({
-      [GO_UPSELL_FREE_TIER_LAST_SEEN_AT]: null as null | number,
-      [GO_UPSELL_FREE_TIER_DONT_SHOW]: null as null | number,
-      [GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT]: null as null | number,
-      [GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW]: null as null | number,
-    }),
-  )
+  const [goUpsellState, setGoUpsellState] = persisted(Persist.global("go-upsell"), createStore<GoUpsellState>({}))
 
   onCleanup(
     sdk().event.on("session.status", (evt) => {
@@ -62,19 +66,19 @@ export function useUsageExceededDialogs() {
       if (!keys) return
 
       const seen = goUpsellState[keys.lastSeenAt]
-      if (seen && Date.now() - seen < GO_UPSELL_WINDOW) return
+      if (seen && DateTime.toEpochMillis(DateTime.nowUnsafe()) - seen < GO_UPSELL_WINDOW) return
       if (goUpsellState[keys.dontShow]) return
 
       if (action.reason === "free_tier_limit") {
-        dialog.show(() => (
+        void dialog.show(() => (
           <DialogUsageExceeded
             title={isEnglish() ? action.title : t("dialog.usageExceeded.freeTier.title")}
             description={isEnglish() ? action.message : t("dialog.usageExceeded.freeTier.description")}
             actionLabel={isEnglish() ? action.label : t("dialog.usageExceeded.freeTier.actionLabel")}
             link={action.link}
             onClose={(dontShowAgain) => {
-              setGoUpsellState(keys.lastSeenAt, Date.now())
-              if (dontShowAgain) setGoUpsellState(keys.dontShow, Date.now())
+              setGoUpsellState(keys.lastSeenAt, DateTime.toEpochMillis(DateTime.nowUnsafe()))
+              if (dontShowAgain) setGoUpsellState(keys.dontShow, DateTime.toEpochMillis(DateTime.nowUnsafe()))
               else {
                 void import("../../components/dialog-connect-provider").then((x) => {
                   const controller = x.useProviderConnectController()
@@ -86,15 +90,15 @@ export function useUsageExceededDialogs() {
           />
         ))
       } else if (action.reason === "account_rate_limit") {
-        dialog.show(() => (
+        void dialog.show(() => (
           <DialogUsageExceeded
             title={isEnglish() ? action.title : t("dialog.usageExceeded.accountRateLimit.title")}
             description={isEnglish() ? action.message : t("dialog.usageExceeded.accountRateLimit.description")}
             actionLabel={isEnglish() ? action.label : t("dialog.usageExceeded.accountRateLimit.actionLabel")}
             link={action.link}
             onClose={(dontShowAgain) => {
-              setGoUpsellState(keys.lastSeenAt, Date.now())
-              if (dontShowAgain) setGoUpsellState(keys.dontShow, Date.now())
+              setGoUpsellState(keys.lastSeenAt, DateTime.toEpochMillis(DateTime.nowUnsafe()))
+              if (dontShowAgain) setGoUpsellState(keys.dontShow, DateTime.toEpochMillis(DateTime.nowUnsafe()))
             }}
           />
         ))

@@ -1,7 +1,6 @@
 import { describe, expect } from "bun:test"
-import { Effect, Exit, Layer, Scope } from "effect"
+import { Effect, Exit, Layer, Result, Scope } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { Reference } from "@opencode-ai/core/reference"
@@ -40,7 +39,7 @@ describe("Reference", () => {
   it.effect("derives Git paths without exposing cache operations", () =>
     Effect.gen(function* () {
       const references = yield* Reference.Service
-      const repository = Repository.parseRemote("owner/repo")
+      const repository = Result.getOrThrow(Repository.parseRemote("owner/repo"))
       const source = Reference.GitSource.make({ type: "git", repository: "owner/repo", branch: "main" })
       yield* references.transform((editor) => editor.add("sdk", source))
 
@@ -57,7 +56,7 @@ describe("Reference", () => {
   it.effect("preserves configured Git descriptions", () =>
     Effect.gen(function* () {
       const references = yield* Reference.Service
-      const repository = Repository.parseRemote("owner/repo")
+      const repository = Result.getOrThrow(Repository.parseRemote("owner/repo"))
       const source = Reference.GitSource.make({
         type: "git",
         repository: "owner/repo",

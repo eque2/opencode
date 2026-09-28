@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Message, Model } from "@opencode-ai/llm"
+import { Message, Model, ToolCallID } from "@opencode-ai/llm"
 import * as OpenAIChat from "@opencode-ai/llm/protocols/openai-chat"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -27,15 +27,23 @@ describe("toLLMMessages", () => {
     const messages = toLLMMessages(
       [
         assistant("empty", []),
-        assistant("empty-text", [SessionMessage.AssistantText.make({ type: "text", id: "empty", text: "" })]),
-        assistant("empty-reasoning", [
-          SessionMessage.AssistantReasoning.make({ type: "reasoning", id: "empty-reasoning", text: "" }),
+        assistant("empty-text", [
+          SessionMessage.AssistantText.make({ type: "text", id: SessionMessage.TextID.make("empty"), text: "" }),
         ]),
-        assistant("text", [SessionMessage.AssistantText.make({ type: "text", id: "text", text: "Partial" })]),
+        assistant("empty-reasoning", [
+          SessionMessage.AssistantReasoning.make({
+            type: "reasoning",
+            id: SessionMessage.ReasoningID.make("empty-reasoning"),
+            text: "",
+          }),
+        ]),
+        assistant("text", [
+          SessionMessage.AssistantText.make({ type: "text", id: SessionMessage.TextID.make("text"), text: "Partial" }),
+        ]),
         assistant("reasoning", [
           SessionMessage.AssistantReasoning.make({
             type: "reasoning",
-            id: "reasoning",
+            id: SessionMessage.ReasoningID.make("reasoning"),
             text: "",
             providerMetadata: { anthropic: { signature: "sig_1" } },
           }),
@@ -148,23 +156,27 @@ Recent work
           agent: "build",
           model: { id: ModelV2.ID.make("model"), providerID: ProviderV2.ID.make("provider") },
           content: [
-            SessionMessage.AssistantText.make({ type: "text", id: "text-1", text: "Checking" }),
+            SessionMessage.AssistantText.make({
+              type: "text",
+              id: SessionMessage.TextID.make("text-1"),
+              text: "Checking",
+            }),
             SessionMessage.AssistantReasoning.make({
               type: "reasoning",
-              id: "reasoning-1",
+              id: SessionMessage.ReasoningID.make("reasoning-1"),
               text: "Think",
               providerMetadata: { anthropic: { signature: "sig_1" } },
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "pending",
+              id: SessionMessage.ToolCallID.make("pending"),
               name: "read",
               state: SessionMessage.ToolStatePending.make({ status: "pending", input: '{"path":"README.md"}' }),
               time: { created },
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "running",
+              id: SessionMessage.ToolCallID.make("running"),
               name: "read",
               state: SessionMessage.ToolStateRunning.make({
                 status: "running",
@@ -176,7 +188,7 @@ Recent work
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "completed",
+              id: SessionMessage.ToolCallID.make("completed"),
               name: "read",
               state: SessionMessage.ToolStateCompleted.make({
                 status: "completed",
@@ -196,7 +208,7 @@ Recent work
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "hosted",
+              id: SessionMessage.ToolCallID.make("hosted"),
               name: "web_search",
               provider: {
                 executed: true,
@@ -213,7 +225,7 @@ Recent work
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "hosted-failed",
+              id: SessionMessage.ToolCallID.make("hosted-failed"),
               name: "write",
               provider: { executed: true, metadata: { fake: { continuation: "failed" } } },
               state: SessionMessage.ToolStateError.make({
@@ -236,17 +248,17 @@ Recent work
     expect(messages[0]?.content).toEqual([
       { type: "text", text: "Checking" },
       { type: "reasoning", text: "Think", providerMetadata: { anthropic: { signature: "sig_1" } } },
-      { type: "tool-call", id: "pending", name: "read", input: { path: "README.md" } },
-      { type: "tool-call", id: "running", name: "read", input: { path: "README.md" } },
+      { type: "tool-call", id: ToolCallID.make("pending"), name: "read", input: { path: "README.md" } },
+      { type: "tool-call", id: ToolCallID.make("running"), name: "read", input: { path: "README.md" } },
       {
         type: "tool-call",
-        id: "completed",
+        id: ToolCallID.make("completed"),
         name: "read",
         input: { path: "README.md" },
       },
       {
         type: "tool-call",
-        id: "hosted",
+        id: ToolCallID.make("hosted"),
         name: "web_search",
         input: { query: "Effect" },
         providerExecuted: true,
@@ -254,7 +266,7 @@ Recent work
       },
       {
         type: "tool-result",
-        id: "hosted",
+        id: ToolCallID.make("hosted"),
         name: "web_search",
         providerExecuted: true,
         providerMetadata: { fake: { continuation: "hosted-result" } },
@@ -262,7 +274,7 @@ Recent work
       },
       {
         type: "tool-call",
-        id: "hosted-failed",
+        id: ToolCallID.make("hosted-failed"),
         name: "write",
         input: { path: "README.md" },
         providerExecuted: true,
@@ -270,7 +282,7 @@ Recent work
       },
       {
         type: "tool-result",
-        id: "hosted-failed",
+        id: ToolCallID.make("hosted-failed"),
         name: "write",
         providerExecuted: true,
         providerMetadata: { fake: { continuation: "failed" } },
@@ -283,7 +295,7 @@ Recent work
     expect(messages[1]?.content).toEqual([
       {
         type: "tool-result",
-        id: "completed",
+        id: ToolCallID.make("completed"),
         name: "read",
         result: {
           type: "content",
@@ -307,7 +319,7 @@ Recent work
           content: [
             SessionMessage.AssistantReasoning.make({
               type: "reasoning",
-              id: "reasoning-openai",
+              id: SessionMessage.ReasoningID.make("reasoning-openai"),
               text: "Think",
               providerMetadata: { openai: { itemId: "rs_1", reasoningEncryptedContent: "encrypted-state" } },
             }),
@@ -338,13 +350,13 @@ Recent work
           content: [
             SessionMessage.AssistantReasoning.make({
               type: "reasoning",
-              id: "reasoning-failed",
+              id: SessionMessage.ReasoningID.make("reasoning-failed"),
               text: "Partial thought",
               providerMetadata: { openai: { itemId: "rs_failed", reasoningEncryptedContent: null } },
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "hosted-failed",
+              id: SessionMessage.ToolCallID.make("hosted-failed"),
               name: "web_search",
               provider: {
                 executed: true,
@@ -373,7 +385,7 @@ Recent work
       { type: "reasoning", text: "Partial thought", providerMetadata: undefined },
       {
         type: "tool-call",
-        id: "hosted-failed",
+        id: ToolCallID.make("hosted-failed"),
         name: "web_search",
         input: { query: "Effect" },
         providerExecuted: true,
@@ -381,7 +393,7 @@ Recent work
       },
       {
         type: "tool-result",
-        id: "hosted-failed",
+        id: ToolCallID.make("hosted-failed"),
         name: "web_search",
         result: {
           type: "error",
@@ -410,13 +422,13 @@ Recent work
           content: [
             SessionMessage.AssistantReasoning.make({
               type: "reasoning",
-              id: "reasoning-old-model",
+              id: SessionMessage.ReasoningID.make("reasoning-old-model"),
               text: "Visible thought",
               providerMetadata: { anthropic: { signature: "sig_old" } },
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "hosted-old-model",
+              id: SessionMessage.ToolCallID.make("hosted-old-model"),
               name: "web_search",
               provider: {
                 executed: true,
@@ -434,7 +446,7 @@ Recent work
             }),
             SessionMessage.AssistantTool.make({
               type: "tool",
-              id: "local-old-model",
+              id: SessionMessage.ToolCallID.make("local-old-model"),
               name: "read",
               provider: {
                 executed: false,
@@ -460,7 +472,7 @@ Recent work
       { type: "text", text: "Visible thought" },
       {
         type: "tool-call",
-        id: "hosted-old-model",
+        id: ToolCallID.make("hosted-old-model"),
         name: "web_search",
         input: { query: "Effect" },
         providerExecuted: true,
@@ -468,7 +480,7 @@ Recent work
       },
       {
         type: "tool-result",
-        id: "hosted-old-model",
+        id: ToolCallID.make("hosted-old-model"),
         name: "web_search",
         result: { type: "json", value: { status: "completed" } },
         providerExecuted: true,
@@ -478,7 +490,7 @@ Recent work
       },
       {
         type: "tool-call",
-        id: "local-old-model",
+        id: ToolCallID.make("local-old-model"),
         name: "read",
         input: { path: "README.md" },
         providerExecuted: false,
@@ -488,7 +500,7 @@ Recent work
     expect(messages[1]?.content).toEqual([
       {
         type: "tool-result",
-        id: "local-old-model",
+        id: ToolCallID.make("local-old-model"),
         name: "read",
         result: { type: "json", value: { text: "Hello" } },
         providerExecuted: false,

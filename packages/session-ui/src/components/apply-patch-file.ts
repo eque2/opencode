@@ -1,3 +1,4 @@
+import { Array, Option, Predicate } from "effect"
 import { normalize, type ViewDiff } from "./session-diff"
 
 type Kind = "add" | "update" | "delete" | "move"
@@ -25,8 +26,9 @@ export type ApplyPatchFile = {
   view: ViewDiff
 }
 
-function kind(value: unknown) {
-  if (value === "add" || value === "update" || value === "delete" || value === "move") return value
+function kind(value: unknown): Option.Option<Kind> {
+  if (value === "add" || value === "update" || value === "delete" || value === "move") return Option.some(value)
+  return Option.none()
 }
 
 function status(type: Kind): "added" | "deleted" | "modified" {
@@ -35,44 +37,50 @@ function status(type: Kind): "added" | "deleted" | "modified" {
   return "modified"
 }
 
-export function patchFile(raw: unknown): ApplyPatchFile | undefined {
-  if (!raw || typeof raw !== "object") return
+const stringField = Option.liftPredicate(Predicate.isString)
+const nonEmpty = (value: string) => value.length > 0
+
+export function patchFile(raw: unknown): Option.Option<ApplyPatchFile> {
+  if (!raw || typeof raw !== "object") return Option.none()
 
   const value = raw as Raw
   const type = kind(value.type)
-  const filePath = typeof value.filePath === "string" ? value.filePath : undefined
-  const relativePath = typeof value.relativePath === "string" ? value.relativePath : filePath
-  const patch = typeof value.patch === "string" ? value.patch : typeof value.diff === "string" ? value.diff : undefined
-  const before = typeof value.before === "string" ? value.before : undefined
-  const after = typeof value.after === "string" ? value.after : undefined
+  const filePath = Option.filter(stringField(value.filePath), nonEmpty)
+  const relativePath = Option.filter(
+    Option.orElse(stringField(value.relativePath), () => filePath),
+    nonEmpty,
+  )
+  const patch = Option.orElse(stringField(value.patch), () => stringField(value.diff))
+  const before = stringField(value.before)
+  const after = stringField(value.after)
 
-  if (!type || !filePath || !relativePath) return
-  if (!patch && before === undefined && after === undefined) return
+  if (Option.isNone(type) || Option.isNone(filePath) || Option.isNone(relativePath)) return Option.none()
+  if (!Option.exists(patch, nonEmpty) && Option.isNone(before) && Option.isNone(after)) return Option.none()
 
   const additions = typeof value.additions === "number" ? value.additions : 0
   const deletions = typeof value.deletions === "number" ? value.deletions : 0
-  const movePath = typeof value.movePath === "string" ? value.movePath : undefined
+  const movePath = stringField(value.movePath)
 
-  return {
-    filePath,
-    relativePath,
-    type,
+  return Option.some({
+    filePath: filePath.value,
+    relativePath: relativePath.value,
+    type: type.value,
     additions,
     deletions,
-    movePath,
+    movePath: Option.getOrUndefined(movePath),
     view: normalize({
-      file: relativePath,
-      patch,
-      before,
-      after,
+      file: relativePath.value,
+      patch: Option.getOrUndefined(patch),
+      before: Option.getOrUndefined(before),
+      after: Option.getOrUndefined(after),
       additions,
       deletions,
-      status: status(type),
+      status: status(type.value),
     }),
-  }
+  })
 }
 
-export function patchFiles(raw: unknown) {
+export function patchFiles(raw: unknown): ApplyPatchFile[] {
   if (!Array.isArray(raw)) return []
-  return raw.map(patchFile).filter((file): file is ApplyPatchFile => !!file)
+  return Array.getSomes(raw.map(patchFile))
 }

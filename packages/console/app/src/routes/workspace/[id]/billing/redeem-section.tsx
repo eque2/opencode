@@ -8,24 +8,26 @@ import { CouponType } from "@opencode-ai/console-core/schema/billing.sql.js"
 import styles from "./redeem-section.module.css"
 import { queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const redeem = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const code = (form.get("code") as string | null)?.trim().toUpperCase()
+  const code = formText(form, "code")?.trim().toUpperCase()
   if (!code) return { error: "Coupon code is required." }
-  if (!(CouponType as readonly string[]).includes(code)) return { error: "Invalid coupon code." }
+  const coupon = CouponType.find((type) => type === code)
+  if (!coupon) return { error: "Invalid coupon code." }
 
   return json(
     await withActor(async () => {
       const actor = Actor.assert("user")
       const email = await User.getAuthEmail(actor.properties.userID)
       if (!email) return { error: "No email on account." }
-      return Billing.redeemCoupon(email, code as (typeof CouponType)[number])
+      return Billing.redeemCoupon(email, coupon)
         .then(() => ({ error: undefined, data: true }))
-        .catch((e) => ({ error: e.message as string }))
+        .catch((e: unknown) => ({ error: errorMessage(e) }))
     }, workspaceID),
     { revalidate: queryBillingInfo.key },
   )
@@ -57,10 +59,14 @@ export function RedeemSection() {
               {submission.pending ? i18n.t("workspace.redeem.redeeming") : i18n.t("workspace.redeem.redeem")}
             </button>
           </div>
-          <Show when={submission.result && (submission.result as any).error}>
-            {(err: any) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
+          <Show when={submission.result?.error}>
+            {(err) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
           </Show>
-          <Show when={submission.result && !(submission.result as any).error && (submission.result as any).data}>
+          <Show
+            when={
+              submission.result && !submission.result.error && "data" in submission.result && submission.result.data
+            }
+          >
             <div data-slot="form-success">{i18n.t("workspace.redeem.success")}</div>
           </Show>
           <input type="hidden" name="workspaceID" value={params.id} />

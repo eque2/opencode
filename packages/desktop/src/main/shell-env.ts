@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { userInfo } from "node:os"
 import { basename } from "node:path"
+import { Config, Data, Effect, Option } from "effect"
 
 const TIMEOUT = 5_000
 
@@ -9,17 +10,26 @@ type ShellEnvLogger = {
   log: (message: string) => void
 }
 
-export function resolveUserShell(envShell: string | undefined, loginShell: string | null | undefined) {
-  const resolvedLoginShell = loginShell && loginShell !== "unknown" ? loginShell : undefined
-  return envShell || resolvedLoginShell || "/bin/sh"
+export function resolveUserShell(envShell: Option.Option<string>, loginShell: Option.Option<string>) {
+  return envShell.pipe(
+    Option.filter((shell) => shell.length > 0),
+    Option.orElse(() => Option.filter(loginShell, (shell) => shell.length > 0 && shell !== "unknown")),
+    Option.getOrElse(() => "/bin/sh"),
+  )
 }
 
+class UserInfoError extends Data.TaggedError("UserInfoError")<{ readonly cause: unknown }> {}
+
 export function getUserShell() {
-  try {
-    return resolveUserShell(process.env.SHELL, userInfo().shell)
-  } catch {
-    return resolveUserShell(process.env.SHELL, undefined)
-  }
+  return Effect.gen(function* () {
+    // userInfo() throws when the OS has no entry for the current user.
+    const loginShell = yield* Effect.try({
+      try: () => userInfo().shell,
+      catch: (cause) => new UserInfoError({ cause }),
+    }).pipe(Effect.option)
+    const envShell = yield* Config.option(Config.String("SHELL"))
+    return resolveUserShell(envShell, Option.flatMap(loginShell, Option.fromNullishOr))
+  })
 }
 
 export function parseShellEnv(out: Buffer) {
@@ -33,7 +43,7 @@ export function parseShellEnv(out: Buffer) {
   return env
 }
 
-function probe(shell: string, mode: "-il" | "-l"): Probe {
+function probe(shell: string, mode: "-il" | "-l", logger: ShellEnvLogger): Probe {
   const out = spawnSync(shell, [mode, "-c", "env -0"], {
     stdio: ["ignore", "pipe", "ignore"],
     timeout: TIMEOUT,
@@ -43,18 +53,18 @@ function probe(shell: string, mode: "-il" | "-l"): Probe {
   const err = out.error as NodeJS.ErrnoException | undefined
   if (err) {
     if (err.code === "ETIMEDOUT") return { type: "Timeout" }
-    console.log(`[server] Shell env probe failed for ${shell} ${mode}: ${err.message}`)
+    logger.log(`[server] Shell env probe failed for ${shell} ${mode}: ${err.message}`)
     return { type: "Unavailable" }
   }
 
   if (out.status !== 0) {
-    console.log(`[server] Shell env probe exited with non-zero status for ${shell} ${mode}`)
+    logger.log(`[server] Shell env probe exited with non-zero status for ${shell} ${mode}`)
     return { type: "Unavailable" }
   }
 
   const env = parseShellEnv(out.stdout)
   if (Object.keys(env).length === 0) {
-    console.log(`[server] Shell env probe returned empty env for ${shell} ${mode}`)
+    logger.log(`[server] Shell env probe returned empty env for ${shell} ${mode}`)
     return { type: "Unavailable" }
   }
 
@@ -67,30 +77,30 @@ export function isNushell(shell: string) {
   return name === "nu" || name === "nu.exe" || raw.endsWith("\\nu.exe")
 }
 
-export function loadShellEnv(shell: string, logger: ShellEnvLogger) {
+export function loadShellEnv(shell: string, logger: ShellEnvLogger): Option.Option<Record<string, string>> {
   if (isNushell(shell)) {
     logger.log(`[server] Skipping shell env probe for nushell: ${shell}`)
-    return null
+    return Option.none()
   }
 
-  const interactive = probe(shell, "-il")
+  const interactive = probe(shell, "-il", logger)
   if (interactive.type === "Loaded") {
     logger.log(`[server] Loaded shell environment with -il (${Object.keys(interactive.value).length} vars)`)
-    return interactive.value
+    return Option.some(interactive.value)
   }
   if (interactive.type === "Timeout") {
     logger.log(`[server] Interactive shell env probe timed out: ${shell}`)
-    return null
+    return Option.none()
   }
 
-  const login = probe(shell, "-l")
+  const login = probe(shell, "-l", logger)
   if (login.type === "Loaded") {
     logger.log(`[server] Loaded shell environment with -l (${Object.keys(login.value).length} vars)`)
-    return login.value
+    return Option.some(login.value)
   }
 
   logger.log(`[server] Falling back to app environment: ${shell}`)
-  return null
+  return Option.none()
 }
 
 export function mergeShellEnv(shell: Record<string, string> | null, env: Record<string, string>) {

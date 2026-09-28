@@ -22,7 +22,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
-import { Deferred, Duration, Effect, Layer, Queue, Schedule, Scope, Stream } from "effect"
+import { Deferred, Duration, Effect, Layer, Queue, Schedule, Schema, Scope, Stream } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { ChildProcess } from "effect/unstable/process"
 import path from "node:path"
@@ -34,6 +34,11 @@ const opencodeRoot = path.resolve(import.meta.dir, "../../")
 const cliEntry = path.join(opencodeRoot, "src/index.ts")
 
 export const testModelID = "test/test-model"
+
+/** `opencode serve` did not print its listening line in time; `message` carries the stderr tail. */
+export class ServeNotReadyError extends Schema.TaggedError<ServeNotReadyError>()("ServeNotReadyError", {
+  message: Schema.String,
+}) {}
 
 // Wrap a Bun subprocess pipe (or any ReadableStream<Uint8Array>) as a Stream.
 // Centralizes the `evaluate` + `onError` boilerplate and tags errors with the
@@ -188,7 +193,7 @@ export type CliFixture = {
 // the surrounding Scope.
 export function withCliFixture<A, E>(
   fn: (input: CliFixture) => Effect.Effect<A, E, Scope.Scope | HttpClient.HttpClient>,
-): Effect.Effect<A, E | unknown, Scope.Scope> {
+): Effect.Effect<A, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     const llm = yield* TestLLMServer
     const fs = yield* FSUtil.Service
@@ -234,7 +239,8 @@ export function withCliFixture<A, E>(
             command: err.command,
             exitCode: err.exitCode ?? -1,
             stdout: Buffer.alloc(0),
-            stderr: Buffer.from((err.stderr ?? String(err.cause ?? err.message)) + "\n"),
+            // AppProcessError.message already describes the cause when the child wrote no stderr.
+            stderr: Buffer.from((err.stderr ?? err.message) + "\n"),
             stdoutTruncated: false,
             stderrTruncated: false,
           } satisfies AppProcess.RunResult),
@@ -366,10 +372,11 @@ export function withCliFixture<A, E>(
           duration: Duration.millis(readyTimeoutMs),
           orElse: () =>
             Effect.fail(
-              new Error(
-                `opencode serve did not become ready within ${readyTimeoutMs}ms\n` +
+              new ServeNotReadyError({
+                message:
+                  `opencode serve did not become ready within ${readyTimeoutMs}ms\n` +
                   `stderr (last 2000):\n${stderrChunks.join("").slice(-2000)}`,
-              ),
+              }),
             ),
         }),
       )
@@ -381,7 +388,7 @@ export function withCliFixture<A, E>(
         kill: () => {
           proc.kill()
         },
-        exited: proc.exited as Promise<number>,
+        exited: proc.exited,
       } satisfies ServeHandle
     })
 
@@ -408,7 +415,11 @@ export function withCliFixture<A, E>(
           // window to exit, then SIGTERM. The Effect.timeoutOrElse expresses
           // exactly that race without raw setTimeout or Promise.race.
           Effect.gen(function* () {
-            yield* Effect.sync(() => p.stdin.end())
+            yield* Effect.sync(() => {
+              // end() returns a Promise while Bun flushes buffered input. Shutdown does not wait for
+              // the flush; the timed exit wait below covers it.
+              void p.stdin.end()
+            })
             yield* Effect.promise(() => p.exited).pipe(
               Effect.timeoutOrElse({
                 duration: Duration.seconds(2),
@@ -460,7 +471,7 @@ export function withCliFixture<A, E>(
         receive: Queue.take(responses),
         // proc.stdin.end() is idempotent in Bun; no try/catch needed.
         close: () => proc.stdin.end(),
-        exited: proc.exited as Promise<number>,
+        exited: proc.exited,
       } satisfies AcpHandle
     })
 
@@ -480,12 +491,14 @@ export function withCliFixture<A, E>(
   )
 }
 
+const decodeJsonEvent = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))
+
 function parseJsonEvents(stdout: string): Array<Record<string, unknown>> {
   return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .map((line) => decodeJsonEvent(line))
 }
 
 function normalizeLines(value: string) {

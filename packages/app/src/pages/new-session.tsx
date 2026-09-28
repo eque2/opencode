@@ -1,6 +1,7 @@
 import { createPromptProjectController } from "@/components/prompt-project-selector"
 import { useTitlebarRightMount } from "@/components/titlebar"
 import { useSettings } from "@/context/settings"
+import { Effect, Option } from "effect"
 import { createEffect, createResource } from "solid-js"
 import { createNewSessionDraftController } from "./new-session/new-session-draft-controller"
 import { NewSessionStatus, NewSessionView } from "./new-session/new-session-view"
@@ -31,10 +32,18 @@ export default function NewSessionPage() {
     if (!draft.prompt.ready()) return
     draft.input.restoreFocus()
   })
-  const ready = Promise.resolve()
-  const [suspendUntilPromptReady] = createResource(
-    () => draft.prompt.readyPromise() ?? ready,
-    (promise) => promise.then(() => true),
+  // The source is an Option, so a prompt with no pending load still resolves the resource once.
+  const [suspendUntilPromptReady] = createResource(draft.prompt.readyPromise, (pending) =>
+    Effect.runPromise(
+      Option.match(pending, {
+        onNone: () => Effect.succeed(true),
+        onSome: (promise) =>
+          Effect.as(
+            Effect.promise(() => promise),
+            true,
+          ),
+      }),
+    ),
   )
 
   return (

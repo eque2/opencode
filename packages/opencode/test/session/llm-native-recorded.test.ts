@@ -11,7 +11,6 @@ import z from "zod"
 import { Auth } from "@/auth"
 import { Provider } from "@/provider/provider"
 
-import { Filesystem } from "@/util/filesystem"
 import { LLMEvent, LLMResponse } from "@opencode-ai/llm"
 import { RequestExecutor } from "@opencode-ai/llm/route"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -255,9 +254,9 @@ async function loadFixture(providerID: string, modelID: string) {
   return model
 }
 
-const modelsFixture = Filesystem.readJson<Record<string, ModelsDev.Provider>>(
-  path.join(import.meta.dir, "../tool/fixtures/models-api.json"),
-)
+const modelsFixture = Bun.file(path.join(import.meta.dir, "../tool/fixtures/models-api.json"))
+  .text()
+  .then(Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, ModelsDev.Provider))))
 
 function recordedNativeLLMLayer(scenario: RecordedScenario) {
   const auth = authLayer(scenario)

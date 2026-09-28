@@ -103,13 +103,13 @@ export function activate(context: vscode.ExtensionContext) {
   function getActiveFile() {
     const activeEditor = vscode.window.activeTextEditor
     if (!activeEditor) {
-      return
+      return undefined
     }
 
     const document = activeEditor.document
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri)
     if (!workspaceFolder) {
-      return
+      return undefined
     }
 
     // Get the relative path from workspace root

@@ -3,10 +3,10 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
-import { showToast } from "@/utils/toast"
 import { useNavigate } from "@solidjs/router"
 import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
@@ -36,36 +36,37 @@ const listServersByHealth = (
   status: Record<ServerConnection.Key, ServerHealth | undefined>,
 ) => {
   if (!list.length) return list
-  const order = new Map(list.map((url, index) => [url, index] as const))
   const rank = (value?: ServerHealth) => {
     if (value?.healthy === true) return 0
     if (value?.healthy === false) return 2
     return 1
   }
 
-  return list.slice().sort((a, b) => {
-    if (ServerConnection.key(a) === active) return -1
-    if (ServerConnection.key(b) === active) return 1
-    const diff = rank(status[ServerConnection.key(a)]) - rank(status[ServerConnection.key(b)])
-    if (diff !== 0) return diff
-    return (order.get(a) ?? 0) - (order.get(b) ?? 0)
-  })
+  // Each server carries its list position, so servers of equal rank keep the list order.
+  return list
+    .map((conn, index) => ({ conn, index }))
+    .sort((a, b) => {
+      if (ServerConnection.key(a.conn) === active) return -1
+      if (ServerConnection.key(b.conn) === active) return 1
+      const diff = rank(status[ServerConnection.key(a.conn)]) - rank(status[ServerConnection.key(b.conn)])
+      if (diff !== 0) return diff
+      return a.index - b.index
+    })
+    .map((item) => item.conn)
 }
 
-const useDefaultServerKey = (
-  get: (() => string | Promise<string | null | undefined> | null | undefined) | undefined,
-) => {
+const useDefaultServerKey = (get: () => string | Promise<string | null | undefined> | null | undefined) => {
   const [state, setState] = createStore({
-    key: undefined as ServerConnection.Key | undefined,
+    key: Option.none<ServerConnection.Key>(),
     tick: 0,
   })
 
   createEffect(() => {
     state.tick
     let dead = false
-    const result = get?.()
+    const result = get()
     if (!result) {
-      setState("key", undefined)
+      setState("key", Option.none())
       onCleanup(() => {
         dead = true
       })
@@ -75,7 +76,7 @@ const useDefaultServerKey = (
     if (result instanceof Promise) {
       void result.then((next) => {
         if (dead) return
-        setState("key", next ?? undefined)
+        setState("key", Option.map(Option.fromNullishOr(next), ServerConnection.Key.make))
       })
       onCleanup(() => {
         dead = true
@@ -83,7 +84,7 @@ const useDefaultServerKey = (
       return
     }
 
-    setState("key", ServerConnection.Key.make(result))
+    setState("key", Option.some(ServerConnection.Key.make(result)))
     onCleanup(() => {
       dead = true
     })
@@ -99,7 +100,7 @@ const useDefaultServerKey = (
 
 type ServerStatusState = {
   servers: () => ServerStatusItem[]
-  defaultKey: () => ServerConnection.Key | undefined
+  defaultKey: () => Option.Option<ServerConnection.Key>
   ariaLabel: string
   serversLabel: string
   defaultLabel: string
@@ -131,7 +132,7 @@ export function StatusPopoverServerBody() {
   })
 
   const sortedServers = createMemo(() => listServersByHealth(global.servers.list(), server.key, global.servers.health))
-  const defaultServer = useDefaultServerKey(platform.getDefaultServer)
+  const defaultServer = useDefaultServerKey(() => platform.getDefaultServer?.())
   const serverItems = createMemo(() =>
     sortedServers().map((conn) => {
       const key = ServerConnection.key(conn)
@@ -162,7 +163,7 @@ export function StatusPopoverServerBody() {
           const run = ++dialogRun
           void import("./dialog-select-server").then((x) => {
             if (dialogDead || dialogRun !== run) return
-            dialog.show(() => <x.DialogSelectServer />, defaultServer.refresh)
+            void dialog.show(() => <x.DialogSelectServer />, defaultServer.refresh)
           })
         },
       }}
@@ -224,7 +225,7 @@ function ServerStatusList(props: { state: ServerStatusState }) {
                   nameClass="text-14-regular text-text-base truncate"
                   versionClass="text-12-regular text-text-weak truncate"
                   badge={
-                    <Show when={item.key === props.state.defaultKey()}>
+                    <Show when={Option.contains(props.state.defaultKey(), item.key)}>
                       <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                         {props.state.defaultLabel}
                       </span>
@@ -260,14 +261,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const settings = useSettings()
   const protocol = useServerProtocol()
 
-  const fail = (err: unknown) => {
-    showToast({
-      variant: "error",
-      title: language.t("common.requestFailed"),
-      description: err instanceof Error ? err.message : String(err),
-    })
-  }
-
   createEffect(() => {
     if (!props.shown()) return
   })
@@ -285,7 +278,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     return listServersByHealth(list, server.key, global.servers.health)
   })
   const toggleMcp = useMcpToggle()
-  const defaultServer = useDefaultServerKey(platform.getDefaultServer)
+  const defaultServer = useDefaultServerKey(() => platform.getDefaultServer?.())
   const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
   const mcpConnected = createMemo(() => mcpNames().filter((name) => mcpStatus(name) === "connected").length)
@@ -362,7 +355,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                           nameClass="text-14-regular text-text-base truncate"
                           versionClass="text-12-regular text-text-weak truncate"
                           badge={
-                            <Show when={key === defaultServer.key()}>
+                            <Show when={Option.contains(defaultServer.key(), key)}>
                               <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                                 {language.t("common.default")}
                               </span>
@@ -386,7 +379,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                     const run = ++dialogRun
                     void import("./dialog-select-server").then((x) => {
                       if (dialogDead || dialogRun !== run) return
-                      dialog.show(() => <x.DialogSelectServer />, defaultServer.refresh)
+                      void dialog.show(() => <x.DialogSelectServer />, defaultServer.refresh)
                     })
                   }}
                 >

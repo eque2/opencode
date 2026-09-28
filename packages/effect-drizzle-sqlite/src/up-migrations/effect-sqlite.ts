@@ -1,4 +1,3 @@
-/* oxlint-disable */
 import * as Effect from "effect/Effect"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import { EffectDrizzleError } from "drizzle-orm/effect-core/errors"
@@ -12,15 +11,6 @@ import {
   type SQLiteMigrationTableRow,
 } from "./sqlite"
 import { GET_VERSION_FOR, MIGRATIONS_TABLE_VERSIONS, type UpgradeResult } from "./utils"
-
-const migrationUpgradeError = (cause: unknown) =>
-  new EffectDrizzleError({
-    message:
-      typeof cause === "object" && cause !== null && "message" in cause && typeof cause.message === "string"
-        ? cause.message
-        : String(cause),
-    cause,
-  })
 
 export const upgradeIfNeeded: <TEffectHKT extends QueryEffectHKTBase>(
   migrationsTable: string,
@@ -82,14 +72,10 @@ function upgradeFromV0<TEffectHKT extends QueryEffectHKTBase>(
     const dbRows = yield* session.all<SQLiteMigrationTableRow>(
       sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`,
     )
-    const statements = yield* Effect.try({
-      try: () =>
-        buildSQLiteMigrationBackfillStatements(
-          migrationsTable,
-          prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-        ),
-      catch: migrationUpgradeError,
-    })
+    const statements = buildSQLiteMigrationBackfillStatements(
+      migrationsTable,
+      yield* prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+    )
 
     yield* session.transaction((tx) =>
       Effect.gen(function* () {

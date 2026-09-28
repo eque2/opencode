@@ -1,46 +1,53 @@
 import { describe, expect, test } from "bun:test"
 import { createRefreshQueue } from "./queue"
 import { directoryKey } from "./utils"
+import { Chunk, Effect } from "effect"
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 10))
+const tick = Effect.sleep("10 millis")
 
 describe("createRefreshQueue", () => {
-  test("clears queued directories by normalized key", async () => {
-    const calls: string[] = []
-    const queue = createRefreshQueue({
-      paused: () => false,
-      key: directoryKey,
-      bootstrap: async () => {},
-      bootstrapInstance: (directory) => {
-        calls.push(directory)
-      },
-    })
+  test("clears queued directories by normalized key", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = Chunk.empty<string>()
+        const queue = createRefreshQueue({
+          paused: () => false,
+          key: directoryKey,
+          bootstrap: () => Effect.runPromise(Effect.void),
+          bootstrapInstance: (directory) => {
+            calls = Chunk.append(calls, directory)
+          },
+        })
 
-    queue.push("C:\\tmp\\demo")
-    queue.clear("C:/tmp/demo")
+        queue.push("C:\\tmp\\demo")
+        queue.clear("C:/tmp/demo")
 
-    await tick()
+        yield* tick
 
-    expect(calls).toEqual([])
-    queue.dispose()
-  })
+        expect(Chunk.toReadonlyArray(calls)).toEqual([])
+        queue.dispose()
+      }),
+    ))
 
-  test("passes the original directory to bootstrapInstance", async () => {
-    const calls: string[] = []
-    const queue = createRefreshQueue({
-      paused: () => false,
-      key: directoryKey,
-      bootstrap: async () => {},
-      bootstrapInstance: (directory) => {
-        calls.push(directory)
-      },
-    })
+  test("passes the original directory to bootstrapInstance", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = Chunk.empty<string>()
+        const queue = createRefreshQueue({
+          paused: () => false,
+          key: directoryKey,
+          bootstrap: () => Effect.runPromise(Effect.void),
+          bootstrapInstance: (directory) => {
+            calls = Chunk.append(calls, directory)
+          },
+        })
 
-    queue.push("C:\\tmp\\demo")
+        queue.push("C:\\tmp\\demo")
 
-    await tick()
+        yield* tick
 
-    expect(calls).toEqual(["C:\\tmp\\demo"])
-    queue.dispose()
-  })
+        expect(Chunk.toReadonlyArray(calls)).toEqual(["C:\\tmp\\demo"])
+        queue.dispose()
+      }),
+    ))
 })

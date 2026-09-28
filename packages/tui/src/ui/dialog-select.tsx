@@ -7,8 +7,9 @@ import {
   type Renderable,
 } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
+import { Effect, Equivalence, Fiber, HashMap, Option } from "effect"
 import { useTheme, selectedForeground } from "../context/theme"
-import { entries, filter, flatMap, groupBy, pipe } from "remeda"
+import { entries, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTerminalDimensions } from "@opentui/solid"
@@ -77,6 +78,9 @@ export type DialogSelectRef<T> = {
   moveTo(value: T): void
 }
 
+/** Action index Options are equal when both are none or both hold the same index. */
+const sameActionIndex = Option.makeEquivalence(Equivalence.strictEqual<number>())
+
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
   type Action = NonNullable<DialogSelectProps<T>["actions"]>[number]
   type FooterHint = NonNullable<DialogSelectProps<T>["footerHints"]>[number]
@@ -92,8 +96,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     filter: "",
     input: "keyboard" as "keyboard" | "mouse",
   })
-  const [focusedAction, setFocusedAction] = createSignal<number>()
-  const actionFocused = createMemo(() => focusedAction() !== undefined)
+  // The index of the focused footer action, if any. An equal index does not notify, as `===` did.
+  const [focusedAction, setFocusedAction] = createSignal(Option.none<number>(), {
+    equals: sameActionIndex,
+  })
+  const actionFocused = createMemo(() => Option.isSome(focusedAction()))
   let selection: { value: T; category?: string } | undefined
   let resetSelection = false
   let visibilityGeneration = 0
@@ -114,6 +121,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   let input: InputRenderable
+  // Focus the filter input after it mounts; cleanup stops a focus that is still pending.
+  let pendingFocus: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelPendingFocus = () => {
+    if (Option.isSome(pendingFocus)) Effect.runFork(Fiber.interrupt(pendingFocus.value))
+    pendingFocus = Option.none()
+  }
+  onCleanup(cancelPendingFocus)
 
   const actions = createMemo(() => props.actions ?? [])
   const shownActions = createMemo(() => actions().filter((item) => !item.hidden))
@@ -124,19 +138,18 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     }),
   )
 
-  const actionLabels = createMemo(() => {
-    const labels = new Map<string, string>()
-
-    for (const action of shownActions()) {
-      const label = formatKeyBindings(actionBindings().get(action.command), tuiConfig)
-      if (label) labels.set(action.command, label)
-    }
-
-    return labels
-  })
+  // The key label of each shown action command that has a binding.
+  const actionLabels = createMemo(() =>
+    HashMap.fromIterable(
+      shownActions().flatMap((action) => {
+        const label = formatKeyBindings(actionBindings().get(action.command), tuiConfig)
+        return label ? [[action.command, label] as const] : []
+      }),
+    ),
+  )
   const visibleActions = createMemo(() => [
     ...shownActions()
-      .map((item) => ({ ...item, label: actionLabels().get(item.command) ?? "" }))
+      .map((item) => ({ ...item, label: Option.getOrElse(HashMap.get(actionLabels(), item.command), () => "") }))
       .filter((item) => item.label),
     ...(props.footerHints ?? []),
   ])
@@ -147,17 +160,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   createEffect(() => {
-    const index = focusedAction()
-    if (index !== undefined && index >= actionItems().length) setFocusedAction(undefined)
+    if (Option.exists(focusedAction(), (index) => index >= actionItems().length)) setFocusedAction(Option.none())
   })
 
   const filtered = createMemo(() => {
     if (props.skipFilter || props.renderFilter === false) return props.options.filter((x) => x.disabled !== true)
     const needle = store.filter.toLowerCase()
-    const options = pipe(
-      props.options,
-      filter((x) => x.disabled !== true),
-    )
+    const options = props.options.filter((x) => x.disabled !== true)
     if (!needle) return options
 
     // prioritize title matches (weight: 2) over category matches (weight: 1).
@@ -178,7 +187,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   createEffect(() => {
     filtered()
     setStore("input", "keyboard")
-    setFocusedAction(undefined)
+    setFocusedAction(Option.none())
   })
 
   const flatten = createMemo(() => props.flat && store.filter.length > 0)
@@ -271,19 +280,37 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     visibilityGeneration++
   })
 
+  // Move after the filtered list renders. A new filter or current value restarts the delay,
+  // and cleanup stops a move that is still pending.
+  let pendingMove: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelPendingMove = () => {
+    if (Option.isSome(pendingMove)) Effect.runFork(Fiber.interrupt(pendingMove.value))
+    pendingMove = Option.none()
+  }
+  onCleanup(cancelPendingMove)
+
   createEffect(
     on([() => store.filter, () => props.current], ([filter, current]) => {
       if (filter.length > 0) resetSelection = true
-      setTimeout(() => {
-        if (filter.length > 0) {
-          moveTo(0, true, false)
-        } else if (current) {
-          const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
-          if (currentIndex >= 0) {
-            moveTo(currentIndex, true)
-          }
-        }
-      }, 0)
+      cancelPendingMove()
+      pendingMove = Option.some(
+        Effect.runFork(
+          Effect.sleep("1 millis").pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (filter.length > 0) {
+                  moveTo(0, true, false)
+                } else if (current) {
+                  const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
+                  if (currentIndex >= 0) {
+                    moveTo(currentIndex, true)
+                  }
+                }
+              }),
+            ),
+          ),
+        ),
+      )
     }),
   )
 
@@ -297,7 +324,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   }
 
   function moveTo(next: number, center = false, preserve = true) {
-    setFocusedAction(undefined)
+    setFocusedAction(Option.none())
     setStore("selected", next)
     const option = selected()
     if (option) {
@@ -345,8 +372,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (props.locked) return
     setStore("input", "keyboard")
     const index = focusedAction()
-    if (index !== undefined) {
-      triggerAction(actionItems()[index])
+    if (Option.isSome(index)) {
+      triggerAction(actionItems()[index.value])
       return
     }
     const option = selected()
@@ -359,11 +386,15 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (props.locked) return
     const total = actionItems().length
     if (total === 0) return
-    setFocusedAction((index) => {
-      if (index === undefined) return direction === 1 ? 0 : total - 1
-      const next = index + direction
-      return next < 0 || next >= total ? undefined : next
-    })
+    setFocusedAction((focused) =>
+      Option.match(focused, {
+        onNone: () => Option.some(direction === 1 ? 0 : total - 1),
+        onSome: (index) => {
+          const next = index + direction
+          return next < 0 || next >= total ? Option.none() : Option.some(next)
+        },
+      }),
+    )
   }
 
   useBindings(() => {
@@ -520,7 +551,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   function isActionFocused(item: VisibleAction) {
     if (props.locked) return false
     if (!isActionItem(item)) return false
-    return actionItems().indexOf(item) === focusedAction()
+    return Option.contains(focusedAction(), actionItems().indexOf(item))
   }
 
   function FooterAction(action: { item: VisibleAction }) {
@@ -545,7 +576,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       >
         <text
           fg={disabled() ? theme.textMuted : active() ? fg : theme.text}
-          attributes={active() ? TextAttributes.BOLD : undefined}
+          attributes={active() ? TextAttributes.BOLD : TextAttributes.NONE}
         >
           {item.title}
         </text>
@@ -584,11 +615,20 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               ref={(r) => {
                 input = r
                 input.traits = { status: "FILTER" }
-                setTimeout(() => {
-                  if (!input) return
-                  if (input.isDestroyed) return
-                  input.focus()
-                }, 1)
+                cancelPendingFocus()
+                pendingFocus = Option.some(
+                  Effect.runFork(
+                    Effect.sleep("1 millis").pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          if (!input) return
+                          if (input.isDestroyed) return
+                          input.focus()
+                        }),
+                      ),
+                    ),
+                  ),
+                )
               }}
               placeholder={props.placeholder ?? "Search"}
               placeholderColor={theme.textMuted}
@@ -643,7 +683,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                           onMouseMove={() => {
                             if (props.locked) return
                             setStore("input", "mouse")
-                            setFocusedAction(undefined)
+                            setFocusedAction(Option.none())
                           }}
                           onMouseUp={() => {
                             if (props.locked) return
@@ -682,13 +722,16 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                                 {option.margin}
                               </box>
                             </Show>
-                            <Option
+                            <OptionRow
                               title={option.title}
                               titleView={option.titleView}
                               footer={flatten() ? (option.category ?? option.footer) : option.footer}
                               titleWidth={option.titleWidth}
                               truncateTitle={option.truncateTitle}
-                              description={option.description !== category ? option.description : undefined}
+                              description={Option.fromNullishOr(option.description).pipe(
+                                Option.filter((description) => description !== category),
+                                Option.getOrUndefined,
+                              )}
                               active={active()}
                               current={current()}
                               muted={actionFocused()}
@@ -729,7 +772,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 }
 
-function Option(props: {
+function OptionRow(props: {
   title: string
   titleView?: JSX.Element
   description?: string
@@ -766,7 +809,7 @@ function Option(props: {
       <text
         flexGrow={1}
         fg={text()}
-        attributes={props.active && !props.muted ? TextAttributes.BOLD : undefined}
+        attributes={props.active && !props.muted ? TextAttributes.BOLD : TextAttributes.NONE}
         overflow="hidden"
         wrapMode="none"
         paddingLeft={3}

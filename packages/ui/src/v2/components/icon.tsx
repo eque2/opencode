@@ -152,7 +152,9 @@ const icons = {
 }
 
 const spriteID = "opencode-v2-icon-sprite"
-const symbol = (name: keyof typeof icons) => `opencode-v2-icon-${name}`
+type IconName = keyof typeof icons
+const isIconName = (name: string): name is IconName => Object.hasOwn(icons, name)
+const symbol = (name: string) => `opencode-v2-icon-${name}`
 let spriteInserted = false
 
 function ensureSprite() {
@@ -171,10 +173,7 @@ function ensureSprite() {
   svg.style.position = "absolute"
   svg.style.overflow = "hidden"
   svg.innerHTML = Object.entries(icons)
-    .map(
-      ([name, icon]) =>
-        `<symbol id="${symbol(name as keyof typeof icons)}" viewBox="${icon.viewBox}">${icon.body}</symbol>`,
-    )
+    .map(([name, icon]) => `<symbol id="${symbol(name)}" viewBox="${icon.viewBox}">${icon.body}</symbol>`)
     .join("")
   document.body.insertBefore(svg, document.body.firstChild)
   spriteInserted = true
@@ -187,7 +186,7 @@ export interface IconProps extends ComponentProps<"svg"> {
 
 export function Icon(props: IconProps) {
   const [split, rest] = splitProps(props, ["name", "size"])
-  const iconName = () => (icons[split.name as keyof typeof icons] ? (split.name as keyof typeof icons) : "plus")
+  const iconName = (): IconName => (isIconName(split.name) ? split.name : "plus")
   const icon = () => icons[iconName()]
   const pixelSize = split.size === "small" ? 14 : split.size === "large" ? 20 : 16
   onMount(ensureSprite)

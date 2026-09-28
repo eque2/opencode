@@ -13,6 +13,7 @@ import {
   formatKeySequence as formatKeySequenceExtra,
 } from "@opentui/keymap/extras"
 import { KeymapProvider, useKeymap, useKeymapSelector, useBindings } from "@opentui/keymap/solid"
+import { Effect, Option, Predicate } from "effect"
 import { createMemo, type Accessor } from "solid-js"
 import { useTuiConfig } from "./config"
 import { TuiKeybind } from "./config/keybind"
@@ -90,6 +91,7 @@ export function createOpencodeModeStack(keymap: OpenTuiKeymap) {
       disposed = true
       stack.length = 0
       offFields()
+      // eslint-disable-next-line effect/no-undefined-use-option -- (b) @opentui/keymap setData(name, value) removes the data key only when value is undefined
       keymap.setData(OPENCODE_MODE_KEY, undefined)
       modeStacks.delete(keymap)
     },
@@ -103,10 +105,25 @@ export function useOpencodeModeStack() {
   return getOpencodeModeStack(useOpencodeKeymap())
 }
 
-export function getOpencodeModeStack(keymap: OpenTuiKeymap) {
-  const value = modeStacks.get(keymap)
-  if (!value) throw new Error("Opencode mode stack is not registered for this keymap")
-  return value
+// A keymap without a registered mode stack has no opencode modes. It acts like a disposed stack: current() is the
+// base mode, and push() changes nothing and returns a pop that does nothing.
+const unregisteredModeStack: OpencodeModeStack = {
+  current: () => OPENCODE_BASE_MODE,
+  push: () => () => {},
+  dispose: () => {},
+}
+
+/**
+ * The mode stack that registerOpencodeKeymap created for this keymap. Without one, it logs a warning and returns a
+ * stack that keeps the base mode.
+ */
+export function getOpencodeModeStack(keymap: OpenTuiKeymap): OpencodeModeStack {
+  return Option.fromNullishOr(modeStacks.get(keymap)).pipe(
+    Option.getOrElse(() => {
+      Effect.runFork(Effect.logWarning("Opencode mode stack is not registered for this keymap"))
+      return unregisteredModeStack
+    }),
+  )
 }
 
 const KEY_ALIASES = {
@@ -116,21 +133,20 @@ const KEY_ALIASES = {
   pgup: "pageup",
 } as const
 
-function expandKeyAliases(input: string) {
+// The key with its legacy aliases replaced, or None when it has no alias.
+function expandKeyAliases(input: string): Option.Option<string> {
   const result = Object.entries(KEY_ALIASES).reduce(
     (acc, [alias, key]) => acc.replace(new RegExp(`(^|[+,\\s>])${alias}(?=$|[+,\\s<])`, "gi"), `$1${key}`),
     input,
   )
-  if (result === input) return
-  return result
+  return result === input ? Option.none() : Option.some(result)
 }
 
 function registerKeyAliases(keymap: OpenTuiKeymap) {
-  return keymap.appendBindingExpander((ctx) => {
-    const key = expandKeyAliases(ctx.input)
-    if (!key) return
-    return [{ key, displays: ctx.displays }]
-  })
+  // A BindingExpander returns undefined to leave the binding unexpanded.
+  return keymap.appendBindingExpander((ctx) =>
+    Option.getOrUndefined(Option.map(expandKeyAliases(ctx.input), (key) => [{ key, displays: ctx.displays }])),
+  )
 }
 
 const inputCommands = [
@@ -272,17 +288,17 @@ export function useCommandSlashes(): Accessor<readonly CommandSlashEntry[]> {
       const slashName = entry.command.slashName
       if (typeof slashName !== "string" || !slashName) return []
       const slashAliases = entry.command.slashAliases
+      const description = [entry.command.desc, entry.command.title].find(Predicate.isString)
       return {
         display: `/${slashName}`,
-        description:
-          typeof entry.command.desc === "string"
-            ? entry.command.desc
-            : typeof entry.command.title === "string"
-              ? entry.command.title
-              : undefined,
-        aliases: Array.isArray(slashAliases)
-          ? slashAliases.filter((alias): alias is string => typeof alias === "string").map((alias) => `/${alias}`)
-          : undefined,
+        ...(description === undefined ? {} : { description }),
+        ...(Array.isArray(slashAliases)
+          ? {
+              aliases: slashAliases
+                .filter((alias): alias is string => typeof alias === "string")
+                .map((alias) => `/${alias}`),
+            }
+          : {}),
         onSelect: () => keymap.dispatchCommand(entry.command.name),
       }
     }),

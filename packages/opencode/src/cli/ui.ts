@@ -1,5 +1,6 @@
 import { EOL } from "os"
-import { Schema } from "effect"
+import { createInterface } from "readline"
+import { Effect, Schema } from "effect"
 import { logo as glyphs } from "./logo"
 
 const wordmark = [
@@ -41,7 +42,7 @@ export function print(...message: string[]) {
 let blank = false
 export function empty() {
   if (blank) return
-  println("" + Style.TEXT_NORMAL)
+  println(Style.TEXT_NORMAL)
   blank = true
 }
 
@@ -69,29 +70,14 @@ export function logo(pad?: string) {
     bg: "\x1b[48;5;238m",
   }
   const gap = " "
-  const draw = (line: string, fg: string, shadow: string, bg: string) => {
-    const parts: string[] = []
-    for (const char of line) {
-      if (char === "_") {
-        parts.push(bg, " ", reset)
-        continue
-      }
-      if (char === "^") {
-        parts.push(fg, bg, "▀", reset)
-        continue
-      }
-      if (char === "~") {
-        parts.push(shadow, "▀", reset)
-        continue
-      }
-      if (char === " ") {
-        parts.push(" ")
-        continue
-      }
-      parts.push(fg, char, reset)
-    }
-    return parts.join("")
-  }
+  const draw = (line: string, fg: string, shadow: string, bg: string) =>
+    Array.from(line, (char) => {
+      if (char === "_") return bg + " " + reset
+      if (char === "^") return fg + bg + "▀" + reset
+      if (char === "~") return shadow + "▀" + reset
+      if (char === " ") return " "
+      return fg + char + reset
+    }).join("")
   glyphs.left.forEach((row, index) => {
     if (pad) result.push(pad)
     result.push(draw(row, left.fg, left.shadow, left.bg))
@@ -103,20 +89,21 @@ export function logo(pad?: string) {
   return result.join("").trimEnd()
 }
 
-export async function input(prompt: string): Promise<string> {
-  const readline = require("readline")
-  const rl = readline.createInterface({
+export const input = Effect.fn("UI.input")(function* (prompt: string) {
+  const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
   })
 
-  return new Promise((resolve) => {
+  return yield* Effect.callback<string>((resume) => {
     rl.question(prompt, (answer: string) => {
       rl.close()
-      resolve(answer.trim())
+      resume(Effect.succeed(answer.trim()))
     })
+    // Close the prompt when the fiber is interrupted before an answer arrives.
+    return Effect.sync(() => rl.close())
   })
-}
+})
 
 export function error(message: string) {
   if (message.startsWith("Error: ")) {

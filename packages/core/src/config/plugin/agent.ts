@@ -2,7 +2,7 @@ export * as ConfigAgentPlugin from "./agent"
 
 import { define } from "../../plugin/internal"
 import path from "path"
-import { Effect, Option, Schema } from "effect"
+import { Array, Effect, HashSet, Option, Schema } from "effect"
 import { AgentV2 } from "../../agent"
 import { Config } from "../../config"
 import { ConfigAgent } from "../agent"
@@ -21,7 +21,9 @@ const legacySources = [
   { pattern: "{agent,agents}/**/*.md", primary: false },
   { pattern: "{mode,modes}/*.md", primary: true },
 ] as const
-const decodeAgent = Schema.decodeUnknownOption(ConfigAgent.Info)
+// Decode the plain struct, not the class: primary agents get a spread copy with
+// mode "primary", and decodeConfig builds the ConfigAgent.Info instance later.
+const decodeAgent = Schema.decodeUnknownOption(Schema.Struct(ConfigAgent.Info.fields))
 const decodeLegacyAgent = Schema.decodeUnknownOption(ConfigAgentV1.Info)
 const decodeConfig = Schema.decodeUnknownOption(Config.Info)
 type PathAction =
@@ -29,7 +31,7 @@ type PathAction =
   | typeof ReadTool.name
   | typeof EditTool.name
 const pathActions = ["external_directory", "read", "edit"] as const satisfies readonly PathAction[]
-const agentKeys = new Set([
+const agentKeys = HashSet.make(
   "model",
   "variant",
   "request",
@@ -41,7 +43,7 @@ const agentKeys = new Set([
   "steps",
   "disabled",
   "permissions",
-])
+)
 
 export const Plugin = define({
   id: "config-agent",
@@ -57,14 +59,15 @@ export const Plugin = define({
             const files = yield* discover(fs, entry.path)
             return yield* Effect.forEach(files, (file) =>
               fs.readFileStringSafe(file.filepath).pipe(
-                Effect.map((content) => content && decode(file, content)),
-                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.map((content) =>
+                  Option.fromUndefinedOr(content).pipe(
+                    Option.filter((text) => text !== ""),
+                    Option.flatMap((text) => decode(file, text)),
+                  ),
+                ),
+                Effect.catch(() => Effect.succeedNone),
               ),
-            ).pipe(
-              Effect.map((documents) =>
-                documents.filter((document): document is Config.Document => document !== undefined),
-              ),
-            )
+            ).pipe(Effect.map(Array.getSomes))
           })
         }).pipe(Effect.map((documents) => documents.flat()))
         const permissions = expandPermissions(
@@ -151,29 +154,27 @@ function discover(fs: FSUtil.Interface, directory: string) {
 }
 
 function decode(file: { directory: string; filepath: string; primary: boolean }, content: string) {
-  const markdown = ConfigMarkdown.parseOption(content)
-  if (!markdown) return
-  const name = path
-    .relative(file.directory, file.filepath)
-    .replaceAll("\\", "/")
-    .replace(/^(agent|agents|mode|modes)\//, "")
-    .replace(/\.md$/, "")
-  const body = markdown.content.trim()
-  const legacy = Object.keys(markdown.data).some((key) => !agentKeys.has(key))
-  const agent = Option.getOrUndefined(
-    legacy
-      ? Option.map(
-          decodeLegacyAgent({ name, ...markdown.data, prompt: body }, { errors: "all" }),
-          ConfigMigrateV1.migrateAgent,
-        )
-      : decodeAgent({ ...markdown.data, system: body }, { errors: "all" }),
-  )
-  if (!agent) return
-  const info = Option.getOrUndefined(
-    decodeConfig({
-      agents: { [name]: file.primary ? { ...agent, mode: "primary" } : agent },
+  return Option.liftThrowable(ConfigMarkdown.parse)(content).pipe(
+    Option.flatMap((markdown) => {
+      const name = path
+        .relative(file.directory, file.filepath)
+        .replaceAll("\\", "/")
+        .replace(/^(agent|agents|mode|modes)\//, "")
+        .replace(/\.md$/, "")
+      const body = markdown.content.trim()
+      const legacy = Object.keys(markdown.data).some((key) => !HashSet.has(agentKeys, key))
+      const agent = legacy
+        ? Option.map(
+            decodeLegacyAgent({ name, ...markdown.data, prompt: body }, { errors: "all" }),
+            ConfigMigrateV1.migrateAgent,
+          )
+        : decodeAgent({ ...markdown.data, system: body }, { errors: "all" })
+      return Option.flatMap(agent, (item) =>
+        decodeConfig({
+          agents: { [name]: file.primary ? { ...item, mode: "primary" } : item },
+        }),
+      )
     }),
+    Option.map((info) => new Config.Document({ type: "document", path: file.filepath, info })),
   )
-  if (!info) return
-  return new Config.Document({ type: "document", path: file.filepath, info })
 }

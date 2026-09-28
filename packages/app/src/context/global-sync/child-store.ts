@@ -19,6 +19,27 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
+import { Data, DateTime, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+
+/**
+ * Raised when ensureChild cannot build a directory store: a persisted cache or
+ * the store root failed to initialize under the manager owner. The store
+ * accessors are synchronous Solid APIs, so the error is thrown to the nearest
+ * error boundary. The `message` is the translated text that the user sees.
+ */
+class ChildStoreError extends Data.TaggedError("ChildStoreError")<{
+  readonly message: string
+}> {}
+
+const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
+  get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
+})
+
+/** The directory query factories that a child store subscribes to. */
+export type ChildQueryOptions = Pick<
+  QueryOptionsApi,
+  "path" | "mcp" | "mcpResources" | "lsp" | "providers" | "references"
+>
 
 export function createChildStoreManager(input: {
   owner: Owner
@@ -30,27 +51,36 @@ export function createChildStoreManager(input: {
   onMcp: (directory: string, setStore: SetStoreFunction<State>) => void
   onDispose: (directory: string) => void
   translate: (key: string, vars?: Record<string, string | number>) => string
-  queryOptions: QueryOptionsApi
+  queryOptions: ChildQueryOptions
   global: {
     provider: NormalizedProviderListResponse
   }
 }) {
   const children: Record<string, [Store<State>, SetStoreFunction<State>]> = {}
-  const vcsCache = new Map<string, VcsCache>()
-  const metaCache = new Map<string, MetaCache>()
-  const iconCache = new Map<string, IconCache>()
-  const lifecycle = new Map<string, DirState>()
-  const pins = new Map<string, number>()
-  const ownerPins = new WeakMap<object, Set<string>>()
-  const disposers = new Map<string, () => void>()
-  const mcpDirectories = new Set<string>()
-  const mcpToggles = new Map<string, (enabled: boolean) => void>()
-  const activeDirectories = new Set<string>()
-  const activationToggles = new Map<string, (enabled: boolean) => void>()
+  const vcsCache = MutableHashMap.empty<string, VcsCache>()
+  const metaCache = MutableHashMap.empty<string, MetaCache>()
+  const iconCache = MutableHashMap.empty<string, IconCache>()
+  const lifecycle = MutableHashMap.empty<string, DirState>()
+  const pins = MutableHashMap.empty<string, number>()
+  const ownerPins = new WeakMap<object, MutableHashSet.MutableHashSet<string>>()
+  const disposers = MutableHashMap.empty<string, () => void>()
+  const mcpDirectories = MutableHashSet.empty<string>()
+  const mcpToggles = MutableHashMap.empty<string, (enabled: boolean) => void>()
+  const activeDirectories = MutableHashSet.empty<string>()
+  const activationToggles = MutableHashMap.empty<string, (enabled: boolean) => void>()
+  const pinCount = (key: string) => Option.getOrElse(MutableHashMap.get(pins, key), () => 0)
+  const toggle = (
+    toggles: MutableHashMap.MutableHashMap<string, (enabled: boolean) => void>,
+    key: string,
+    enabled: boolean,
+  ) => {
+    const set = MutableHashMap.get(toggles, key)
+    if (Option.isSome(set)) set.value(enabled)
+  }
 
   const markKey = (key: DirectoryKey) => {
     if (!key) return
-    lifecycle.set(key, { lastAccessAt: Date.now() })
+    MutableHashMap.set(lifecycle, key, { lastAccessAt: DateTime.toEpochMillis(DateTime.nowUnsafe()) })
     runEviction(key)
   }
 
@@ -62,23 +92,23 @@ export function createChildStoreManager(input: {
   const pin = (directory: string) => {
     const key = directoryKey(directory)
     if (!key) return
-    pins.set(key, (pins.get(key) ?? 0) + 1)
+    MutableHashMap.set(pins, key, pinCount(key) + 1)
     markKey(key)
   }
 
   const unpin = (directory: string) => {
     const key = directoryKey(directory)
     if (!key) return
-    const next = (pins.get(key) ?? 0) - 1
+    const next = pinCount(key) - 1
     if (next > 0) {
-      pins.set(key, next)
+      MutableHashMap.set(pins, key, next)
       return
     }
-    pins.delete(key)
+    MutableHashMap.remove(pins, key)
     runEviction()
   }
 
-  const pinned = (directory: string) => (pins.get(directoryKey(directory)) ?? 0) > 0
+  const pinned = (directory: string) => pinCount(directoryKey(directory)) > 0
 
   const pinForOwner = (directory: string) => {
     const current = getOwner()
@@ -86,15 +116,15 @@ export function createChildStoreManager(input: {
     if (current === input.owner) return
     const key = current as object
     const set = ownerPins.get(key)
-    if (set?.has(directory)) return
-    if (set) set.add(directory)
-    if (!set) ownerPins.set(key, new Set([directory]))
+    if (set && MutableHashSet.has(set, directory)) return
+    if (set) MutableHashSet.add(set, directory)
+    if (!set) ownerPins.set(key, MutableHashSet.make(directory))
     pin(directory)
     onCleanup(() => {
       const set = ownerPins.get(key)
       if (set) {
-        set.delete(directory)
-        if (set.size === 0) ownerPins.delete(key)
+        MutableHashSet.remove(set, directory)
+        if (MutableHashSet.size(set) === 0) ownerPins.delete(key)
       }
       unpin(directory)
     })
@@ -114,18 +144,18 @@ export function createChildStoreManager(input: {
       return false
     }
 
-    vcsCache.delete(key)
-    metaCache.delete(key)
-    iconCache.delete(key)
-    lifecycle.delete(key)
-    mcpDirectories.delete(key)
-    mcpToggles.delete(key)
-    activeDirectories.delete(key)
-    activationToggles.delete(key)
-    const dispose = disposers.get(key)
-    if (dispose) {
-      dispose()
-      disposers.delete(key)
+    MutableHashMap.remove(vcsCache, key)
+    MutableHashMap.remove(metaCache, key)
+    MutableHashMap.remove(iconCache, key)
+    MutableHashMap.remove(lifecycle, key)
+    MutableHashSet.remove(mcpDirectories, key)
+    MutableHashMap.remove(mcpToggles, key)
+    MutableHashSet.remove(activeDirectories, key)
+    MutableHashMap.remove(activationToggles, key)
+    const dispose = MutableHashMap.get(disposers, key)
+    if (Option.isSome(dispose)) {
+      dispose.value()
+      MutableHashMap.remove(disposers, key)
     }
     delete children[key]
     input.onDispose(key)
@@ -138,10 +168,10 @@ export function createChildStoreManager(input: {
     const list = pickDirectoriesToEvict({
       stores,
       state: lifecycle,
-      pins: new Set(stores.filter(pinned)),
+      pins: HashSet.fromIterable(stores.filter(pinned)),
       max: MAX_DIR_STORES,
       ttl: DIR_IDLE_TTL_MS,
-      now: Date.now(),
+      now: DateTime.toEpochMillis(DateTime.nowUnsafe()),
     }).filter((directory) => directory !== skip)
     if (list.length === 0) return
     for (const directory of list) {
@@ -149,37 +179,49 @@ export function createChildStoreManager(input: {
     }
   }
 
+  const required = <A>(value: A, messageKey: string) =>
+    Option.getOrThrowWith(
+      Option.fromNullishOr(value),
+      () => new ChildStoreError({ message: input.translate(messageKey) }),
+    )
+
   function ensureChild(directory: string) {
     const key = directoryKey(directory)
-    if (!key) console.error("No directory provided")
+    if (!key) Effect.runFork(Effect.logError("No directory provided"))
     if (!children[key]) {
-      const vcs = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
-          createStore({ value: undefined as VcsInfo | undefined }),
+      const vcs = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
+            createStore<{ value?: VcsInfo }>({}),
+          ),
         ),
+        "error.childStore.persistedCacheCreateFailed",
       )
-      if (!vcs) throw new Error(input.translate("error.childStore.persistedCacheCreateFailed"))
       const vcsStore = vcs[0]
-      vcsCache.set(key, { store: vcsStore, setStore: vcs[1], ready: vcs[3] })
+      MutableHashMap.set(vcsCache, key, { store: vcsStore, setStore: vcs[1], ready: vcs[3] })
 
-      const meta = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
-          createStore({ value: undefined as ProjectMeta | undefined }),
+      const meta = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
+            createStore<{ value?: ProjectMeta }>({}),
+          ),
         ),
+        "error.childStore.persistedProjectMetadataCreateFailed",
       )
-      if (!meta) throw new Error(input.translate("error.childStore.persistedProjectMetadataCreateFailed"))
-      metaCache.set(key, { store: meta[0], setStore: meta[1], ready: meta[3] })
+      MutableHashMap.set(metaCache, key, { store: meta[0], setStore: meta[1], ready: meta[3] })
 
-      const icon = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
-          createStore({ value: undefined as string | undefined }),
+      const icon = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
+            createStore<{ value?: string }>({}),
+          ),
         ),
+        "error.childStore.persistedProjectIconCreateFailed",
       )
-      if (!icon) throw new Error(input.translate("error.childStore.persistedProjectIconCreateFailed"))
-      iconCache.set(key, { store: icon[0], setStore: icon[1], ready: icon[3] })
+      MutableHashMap.set(iconCache, key, { store: icon[0], setStore: icon[1], ready: icon[3] })
 
       const init = () =>
         createRoot((dispose) => {
@@ -208,11 +250,13 @@ export function createChildStoreManager(input: {
             get provider_ready() {
               return instanceQueriesEnabled() && !providerQuery.isLoading
             },
-            get provider() {
-              const EMPTY = { all: new Map(), connected: [], default: {} }
+            get provider(): NormalizedProviderListResponse {
+              const EMPTY: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
               if (providerQuery.isLoading) return EMPTY
-              if (providerQuery.data?.all.size === 0 && input.global.provider.all.size > 0) return input.global.provider
-              return providerQuery.data ?? EMPTY
+              const data = providerQuery.data
+              if (data && HashMap.isEmpty(data.all) && !HashMap.isEmpty(input.global.provider.all))
+                return input.global.provider
+              return data ?? EMPTY
             },
             config: {},
             get path() {
@@ -260,9 +304,9 @@ export function createChildStoreManager(input: {
             part_text_accum_delta: {},
           })
           children[key] = child
-          disposers.set(key, dispose)
-          mcpToggles.set(key, setMcpEnabled)
-          activationToggles.set(key, setInstanceQueriesEnabled)
+          MutableHashMap.set(disposers, key, dispose)
+          MutableHashMap.set(mcpToggles, key, setMcpEnabled)
+          MutableHashMap.set(activationToggles, key, setInstanceQueriesEnabled)
 
           const onPersistedInit = (init: Promise<string> | string | null, run: () => void) => {
             if (!(init instanceof Promise)) return
@@ -292,9 +336,7 @@ export function createChildStoreManager(input: {
       runWithOwner(input.owner, init)
     }
     markKey(key)
-    const childStore = children[key]
-    if (!childStore) throw new Error(input.translate("error.childStore.storeCreateFailed"))
-    return childStore
+    return required(children[key], "error.childStore.storeCreateFailed")
   }
 
   function child(directory: string, options: ChildOptions = {}) {
@@ -323,9 +365,9 @@ export function createChildStoreManager(input: {
   }
 
   function enableMcp(directory: string, key: DirectoryKey, childStore: [Store<State>, SetStoreFunction<State>]) {
-    if (mcpDirectories.has(key)) return
-    mcpDirectories.add(key)
-    mcpToggles.get(key)?.(true)
+    if (MutableHashSet.has(mcpDirectories, key)) return
+    MutableHashSet.add(mcpDirectories, key)
+    toggle(mcpToggles, key, true)
     if (childStore[0].status !== "loading") input.onMcp(directory, childStore[1])
   }
 
@@ -334,22 +376,23 @@ export function createChildStoreManager(input: {
   // TODO(v2): After Home switches to v2.project.list and root-filtered,
   // updated-time v2.session.list, remove any Home-only passive child creation.
   function activate(key: DirectoryKey) {
-    if (activeDirectories.has(key)) return
-    activeDirectories.add(key)
-    activationToggles.get(key)?.(true)
+    if (MutableHashSet.has(activeDirectories, key)) return
+    MutableHashSet.add(activeDirectories, key)
+    toggle(activationToggles, key, true)
   }
 
   function disableMcp(directory: string) {
     const key = directoryKey(directory)
-    if (!mcpDirectories.delete(key)) return
-    mcpToggles.get(key)?.(false)
+    if (!MutableHashSet.has(mcpDirectories, key)) return
+    MutableHashSet.remove(mcpDirectories, key)
+    toggle(mcpToggles, key, false)
   }
 
   function projectMeta(directory: string, patch: ProjectMeta) {
     const key = directoryKey(directory)
     const [store, setStore] = ensureChild(directory)
-    const cached = metaCache.get(key)
-    if (!cached) return
+    const cached = MutableHashMap.get(metaCache, key)
+    if (Option.isNone(cached)) return
     const previous = store.projectMeta ?? {}
     const icon = patch.icon ? { ...previous.icon, ...patch.icon } : previous.icon
     const commands = patch.commands ? { ...previous.commands, ...patch.commands } : previous.commands
@@ -359,17 +402,17 @@ export function createChildStoreManager(input: {
       icon,
       commands,
     }
-    cached.setStore("value", next)
+    cached.value.setStore("value", next)
     setStore("projectMeta", next)
   }
 
   function projectIcon(directory: string, value: string | undefined) {
     const key = directoryKey(directory)
     const [store, setStore] = ensureChild(directory)
-    const cached = iconCache.get(key)
-    if (!cached) return
+    const cached = MutableHashMap.get(iconCache, key)
+    if (Option.isNone(cached)) return
     if (store.icon === value) return
-    cached.setStore("value", value)
+    cached.value.setStore("value", value)
     setStore("icon", value)
   }
 
@@ -384,13 +427,13 @@ export function createChildStoreManager(input: {
     pin,
     unpin,
     pinned,
-    mcp: (directory: string) => mcpDirectories.has(directoryKey(directory)),
-    active: (directory: string) => activeDirectories.has(directoryKey(directory)),
+    mcp: (directory: string) => MutableHashSet.has(mcpDirectories, directoryKey(directory)),
+    active: (directory: string) => MutableHashSet.has(activeDirectories, directoryKey(directory)),
     disableMcp,
     disposeDirectory,
     runEviction,
-    vcsCache,
-    metaCache,
-    iconCache,
+    vcsCache: cacheView(vcsCache),
+    metaCache: cacheView(metaCache),
+    iconCache: cacheView(iconCache),
   }
 }

@@ -63,7 +63,7 @@ export function buildLiteUsageBreakdown(input: { usage: number; limit: number; s
 }
 
 export function getModelQuotaLimit(limit: number, multiplier?: number) {
-  if (multiplier === undefined || multiplier <= 0) return
+  if (multiplier === undefined || multiplier <= 0) return undefined
   return limit / multiplier
 }
 

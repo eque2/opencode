@@ -1,4 +1,5 @@
 import { batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { Data, Effect, HashSet, MutableHashMap, Option } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { showToast } from "@/utils/toast"
@@ -24,7 +25,7 @@ import {
 import { createFileViewCache } from "./file/view-cache"
 import { useServerSDK } from "./server-sdk"
 import { SessionRouteKey, SessionStateKey } from "@/utils/server-scope"
-import { createFileTreeStore } from "./file/tree-store"
+import { createFileTreeStore, FileTreeListError } from "./file/tree-store"
 import { invalidateFromWatcher } from "./file/watcher"
 import {
   selectionFromLines,
@@ -45,6 +46,9 @@ export {
   setFileContentBytes,
   touchFileContent,
 }
+
+class FileReadError extends Data.TaggedError("App.FileReadError")<{ readonly cause: unknown }> {}
+class FileSearchError extends Data.TaggedError("App.FileSearchError")<{ readonly cause: unknown }> {}
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message
@@ -69,7 +73,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       SessionStateKey.from(serverSDK().scope, SessionRouteKey.fromRoute(base64Encode(sdk().directory), params.id)),
     )
 
-    const inflight = new Map<string, Promise<void>>()
+    const inflight = MutableHashMap.empty<string, Promise<void>>()
     const [store, setStore] = createStore<{
       file: Record<string, FileState>
     }>({
@@ -80,26 +84,27 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       scope,
       normalizeDir: path.normalizeDir,
       list: (dir) =>
-        sdk()
-          .client.file.list({ path: dir })
-          .then((x) => x.data ?? []),
+        Effect.tryPromise({
+          try: () => sdk().client.file.list({ path: dir }),
+          catch: (cause) => new FileTreeListError({ cause }),
+        }).pipe(Effect.map((x) => x.data ?? [])),
       onError: (message) => {
         showToast({
           variant: "error",
           title: language.t("toast.file.listFailed.title"),
-          description: message,
+          description: Option.getOrUndefined(message),
         })
       },
     })
 
-    const evictContent = (keep?: Set<string>) => {
+    const evictContent = (keep: HashSet.HashSet<string>) => {
       evictContentLru(keep, (target) => {
         if (!store.file[target]) return
         setStore(
           "file",
           target,
           produce((draft) => {
-            draft.content = undefined
+            delete draft.content
             draft.loaded = false
           }),
         )
@@ -108,7 +113,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     createEffect(() => {
       scope()
-      inflight.clear()
+      MutableHashMap.clear(inflight)
       resetFileContentLru()
       batch(() => {
         setStore("file", reconcile({}))
@@ -131,7 +136,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         file,
         produce((draft) => {
           draft.loading = true
-          draft.error = undefined
+          delete draft.error
         }),
       )
     }
@@ -164,63 +169,86 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       })
     }
 
-    const load = (input: string, options?: { force?: boolean }) => {
+    // Records a running load until it settles. A load that settles before
+    // runPromise returns is not recorded, so no settled promise stays cached.
+    const track = (key: string, program: Effect.Effect<void>) => {
+      let settled = false
+      const promise = Effect.runPromise(
+        program.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              settled = true
+              MutableHashMap.remove(inflight, key)
+            }),
+          ),
+        ),
+      )
+      if (!settled) MutableHashMap.set(inflight, key, promise)
+      return promise
+    }
+
+    const load = (input: string, options?: { force?: boolean }): Promise<void> => {
       const file = path.normalize(input)
-      if (!file) return Promise.resolve()
+      if (!file) return Effect.runPromise(Effect.void)
 
       const directory = scope()
       const key = `${directory}\n${file}`
       ensure(file)
 
       const current = store.file[file]
-      if (!options?.force && current?.loaded) return Promise.resolve()
+      if (!options?.force && current?.loaded) return Effect.runPromise(Effect.void)
 
-      const pending = inflight.get(key)
-      if (pending) return pending
+      const pending = MutableHashMap.get(inflight, key)
+      if (Option.isSome(pending)) return pending.value
 
       setLoading(file)
 
-      const promise = sdk()
-        .client.file.read({ path: file })
-        .then((x) => {
-          if (scope() !== directory) return
-          const content = x.data
-          setLoaded(file, content)
+      return track(
+        key,
+        Effect.tryPromise({
+          try: () => sdk().client.file.read({ path: file }),
+          catch: (cause) => new FileReadError({ cause }),
+        }).pipe(
+          Effect.map((x) => {
+            if (scope() !== directory) return
+            const content = x.data
+            setLoaded(file, content)
 
-          if (!content) return
-          touchFileContent(file, approxBytes(content))
-          evictContent(new Set([file]))
-        })
-        .catch((e) => {
-          if (scope() !== directory) return
-          setLoadError(file, errorMessage(e, language.t("error.chain.unknown")))
-        })
-        .finally(() => {
-          inflight.delete(key)
-        })
-
-      inflight.set(key, promise)
-      return promise
+            if (!content) return
+            touchFileContent(file, approxBytes(content))
+            evictContent(HashSet.make(file))
+          }),
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              if (scope() !== directory) return
+              setLoadError(file, errorMessage(error.cause, language.t("error.chain.unknown")))
+            }),
+          ),
+        ),
+      )
     }
 
     const search = (query: string, dirs: "true" | "false", options?: { limit?: number; signal?: AbortSignal }) =>
-      serverSDK()
-        .api.file.find(
-          {
-            location: { directory: sdk().directory },
-            query,
-            type: dirs === "true" ? "directory" : "file",
-            limit: options?.limit,
-          },
-          { signal: options?.signal },
-        )
-        .then(
-          (x) => x.data.map((entry) => path.normalize(entry.path)),
-          (error) => {
-            if (options?.signal?.aborted) throw error
-            return []
-          },
-        )
+      Effect.runPromise(
+        Effect.tryPromise({
+          try: () =>
+            serverSDK().api.file.find(
+              {
+                location: { directory: sdk().directory },
+                query,
+                type: dirs === "true" ? "directory" : "file",
+                limit: options?.limit,
+              },
+              { signal: options?.signal },
+            ),
+          catch: (cause) => new FileSearchError({ cause }),
+        }).pipe(
+          Effect.map((x) => x.data.map((entry) => path.normalize(entry.path))),
+          // An aborted search still rejects with the original abort reason; any
+          // other failure resolves to no results.
+          Effect.catch((error) => (options?.signal?.aborted ? Effect.fail(error.cause) : Effect.succeed<string[]>([]))),
+        ),
+      )
 
     const stop = sdk().event.listen((e) => {
       invalidateFromWatcher(e.details, {

@@ -1,3 +1,9 @@
+import { Chunk, HashMap, Option } from "effect"
+
+// Git quotes these control characters with a C-style escape. Any other escaped
+// character, such as a backslash or a double quote, stands for itself.
+const GIT_ESCAPES = HashMap.make(["n", "\n"], ["r", "\r"], ["t", "\t"], ["b", "\b"], ["f", "\f"], ["v", "\v"])
+
 export function stripFileProtocol(input: string) {
   if (!input.startsWith("file://")) return input
   return input.slice("file://".length)
@@ -20,18 +26,18 @@ export function unquoteGitPath(input: string) {
   if (!input.startsWith('"')) return input
   if (!input.endsWith('"')) return input
   const body = input.slice(1, -1)
-  const bytes: number[] = []
+  let bytes = Chunk.empty<number>()
 
   for (let i = 0; i < body.length; i++) {
-    const char = body[i]!
+    const char = body[i]
     if (char !== "\\") {
-      bytes.push(char.charCodeAt(0))
+      bytes = Chunk.append(bytes, char.charCodeAt(0))
       continue
     }
 
     const next = body[i + 1]
     if (!next) {
-      bytes.push("\\".charCodeAt(0))
+      bytes = Chunk.append(bytes, "\\".charCodeAt(0))
       continue
     }
 
@@ -39,45 +45,29 @@ export function unquoteGitPath(input: string) {
       const chunk = body.slice(i + 1, i + 4)
       const match = chunk.match(/^[0-7]{1,3}/)
       if (!match) {
-        bytes.push(next.charCodeAt(0))
+        bytes = Chunk.append(bytes, next.charCodeAt(0))
         i++
         continue
       }
-      bytes.push(parseInt(match[0], 8))
+      bytes = Chunk.append(bytes, parseInt(match[0], 8))
       i += match[0].length
       continue
     }
 
-    const escaped =
-      next === "n"
-        ? "\n"
-        : next === "r"
-          ? "\r"
-          : next === "t"
-            ? "\t"
-            : next === "b"
-              ? "\b"
-              : next === "f"
-                ? "\f"
-                : next === "v"
-                  ? "\v"
-                  : next === "\\" || next === '"'
-                    ? next
-                    : undefined
+    const escaped = Option.getOrElse(HashMap.get(GIT_ESCAPES, next), () => next)
 
-    bytes.push((escaped ?? next).charCodeAt(0))
+    bytes = Chunk.append(bytes, escaped.charCodeAt(0))
     i++
   }
 
-  return new TextDecoder().decode(new Uint8Array(bytes))
+  return new TextDecoder().decode(Uint8Array.from(Chunk.toReadonlyArray(bytes)))
 }
 
+// decodeURIComponent throws a URIError for a malformed escape such as "%E0%A4%A".
+const decodeUriComponent = Option.liftThrowable(decodeURIComponent)
+
 export function decodeFilePath(input: string) {
-  try {
-    return decodeURIComponent(input)
-  } catch {
-    return input
-  }
+  return Option.getOrElse(decodeUriComponent(input), () => input)
 }
 
 export function encodeFilePath(filepath: string): string {
@@ -136,7 +126,7 @@ export function createPathHelpers(scope: () => string) {
   }
 
   const pathFromTab = (tabValue: string) => {
-    if (!tabValue.startsWith("file://")) return
+    if (!tabValue.startsWith("file://")) return undefined
     return normalize(tabValue)
   }
 

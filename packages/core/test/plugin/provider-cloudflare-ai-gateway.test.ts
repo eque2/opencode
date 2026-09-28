@@ -1,6 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect, mock } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
@@ -13,7 +13,6 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   yield* CloudflareAIGatewayPlugin.effect(host)
 })
@@ -44,21 +43,12 @@ const unifiedCalls: string[] = []
 const gatewayModelCalls: unknown[] = []
 
 function captureAiGatewayOptions(options: Record<string, unknown>) {
-  const nested =
-    options.options && typeof options.options === "object" ? (options.options as Record<string, unknown>) : undefined
+  const nested = options.options
+  if (!Predicate.isObject(nested)) return { ...options }
+  const headers = nested.headers
   return {
     ...options,
-    ...(nested
-      ? {
-          options: {
-            ...nested,
-            headers:
-              nested.headers && typeof nested.headers === "object"
-                ? { ...(nested.headers as Record<string, unknown>) }
-                : nested.headers,
-          },
-        }
-      : {}),
+    options: { ...nested, headers: Predicate.isObject(headers) ? { ...headers } : headers },
   }
 }
 
@@ -78,7 +68,7 @@ function cloudflareEnv(overrides: Record<string, string | undefined> = {}) {
   }
 }
 
-mock.module("ai-gateway-provider", () => ({
+void mock.module("ai-gateway-provider", () => ({
   createAiGateway(options: Record<string, unknown>) {
     aiGatewayCalls.push(captureAiGatewayOptions(options))
     return (input: unknown) => {
@@ -92,7 +82,7 @@ mock.module("ai-gateway-provider", () => ({
   },
 }))
 
-mock.module("ai-gateway-provider/providers/unified", () => ({
+void mock.module("ai-gateway-provider/providers/unified", () => ({
   createUnified() {
     return (modelID: string) => {
       unifiedCalls.push(modelID)
@@ -112,7 +102,6 @@ describe("CloudflareAIGatewayPlugin", () => {
       },
       () =>
         Effect.gen(function* () {
-          const plugin = yield* PluginV2.Service
           const aisdk = yield* AISDK.Service
           yield* addPlugin()
           const result = yield* aisdk.runSDK({
@@ -132,7 +121,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv(), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -176,7 +164,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv(), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -205,7 +192,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv(), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -242,7 +228,6 @@ describe("CloudflareAIGatewayPlugin", () => {
       () =>
         Effect.gen(function* () {
           resetCalls()
-          const plugin = yield* PluginV2.Service
           const aisdk = yield* AISDK.Service
           yield* addPlugin()
 
@@ -273,7 +258,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined, CF_AIG_TOKEN: "cf-aig-token" }), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -295,7 +279,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv({ CLOUDFLARE_ACCOUNT_ID: undefined, CLOUDFLARE_GATEWAY_ID: undefined }), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -318,7 +301,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined, CF_AIG_TOKEN: undefined }), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -347,7 +329,6 @@ describe("CloudflareAIGatewayPlugin", () => {
       () =>
         Effect.gen(function* () {
           resetCalls()
-          const plugin = yield* PluginV2.Service
           const aisdk = yield* AISDK.Service
           yield* addPlugin()
 
@@ -370,7 +351,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv(), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 
@@ -405,7 +385,6 @@ describe("CloudflareAIGatewayPlugin", () => {
     withEnv(cloudflareEnv(), () =>
       Effect.gen(function* () {
         resetCalls()
-        const plugin = yield* PluginV2.Service
         const aisdk = yield* AISDK.Service
         yield* addPlugin()
 

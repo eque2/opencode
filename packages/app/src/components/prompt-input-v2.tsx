@@ -6,6 +6,7 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
+import { DateTime, Effect, HashMap, Option, Schema } from "effect"
 import { createEffect, createMemo, on, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
@@ -32,6 +33,24 @@ import {
   createPromptInputV2State,
   type PromptInputV2Interaction,
 } from "@opencode-ai/session-ui/v2/prompt-input/interaction"
+
+// The history metadata that the V2 controller hands back to restore(): the comment list this composer captured.
+const PromptHistoryComments = Schema.Array(
+  Schema.Struct({
+    id: Schema.String.pipe(Schema.brand("PromptHistoryComment.ID")),
+    path: Schema.String,
+    selection: Schema.Struct({
+      start: Schema.Number,
+      end: Schema.Number,
+      side: Schema.optional(Schema.Literals(["additions", "deletions"])),
+      endSide: Schema.optional(Schema.Literals(["additions", "deletions"])),
+    }),
+    comment: Schema.String,
+    time: Schema.Number,
+    origin: Schema.optional(Schema.Literals(["review", "file"])),
+    preview: Schema.optional(Schema.String),
+  }),
+)
 
 export type PromptInputV2ComposerProps = {
   class?: string
@@ -90,7 +109,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
   const language = useLanguage()
   const platform = usePlatform()
   const prompt = props.state ?? usePrompt()
-  let editor: HTMLDivElement | undefined
+  let editor = Option.none<HTMLDivElement>()
 
   const interaction = createPromptInputV2State()
   const mode = () => interaction[0].mode
@@ -111,7 +130,11 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       return [...result, path]
     }, [])
   })
-  const info = createMemo(() => (props.controls.session.id ? sync().session.get(props.controls.session.id) : undefined))
+  const info = createMemo(() => {
+    const id = props.controls.session.id
+    if (!id) return undefined
+    return sync().session.get(id)
+  })
   const working = createMemo(() => sync().data.session_working(props.controls.session.id ?? ""))
   const attachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
@@ -134,40 +157,47 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       commentCount: commentCount(),
       example: mode() === "shell" ? "git status" : "",
       suggest: false,
-      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
+      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params),
     }),
   )
   const designPlaceholder = () =>
     promptDesignPlaceholder(mode(), placeholder(), (key, params) =>
-      language.t(key as Parameters<typeof language.t>[0], params as never),
+      language.t(key as Parameters<typeof language.t>[0], params),
     )
 
   const historyComments = () => {
-    const byID = new Map(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
+    const byID = HashMap.fromIterable(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
     return prompt.context.items().flatMap((item) => {
       const comment = item.comment?.trim()
       if (!comment) return []
-      const selection = item.commentID ? byID.get(`${item.path}\n${item.commentID}`)?.selection : undefined
-      const nextSelection =
-        selection ??
-        (item.selection
-          ? ({ start: item.selection.startLine, end: item.selection.endLine } satisfies SelectedLineRange)
-          : undefined)
-      if (!nextSelection) return []
+      const saved = item.commentID ? HashMap.get(byID, `${item.path}\n${item.commentID}`) : Option.none()
+      const nextSelection = saved.pipe(
+        Option.map((entry) => entry.selection),
+        Option.orElse(() =>
+          Option.map(
+            Option.fromNullishOr(item.selection),
+            (selection) => ({ start: selection.startLine, end: selection.endLine }) satisfies SelectedLineRange,
+          ),
+        ),
+      )
+      if (Option.isNone(nextSelection)) return []
       return [
         {
           id: item.commentID ?? item.key,
           path: item.path,
-          selection: { ...nextSelection },
+          selection: { ...nextSelection.value },
           comment,
-          time: item.commentID ? (byID.get(`${item.path}\n${item.commentID}`)?.time ?? Date.now()) : Date.now(),
+          time: Option.match(saved, {
+            onNone: () => DateTime.toEpochMillis(DateTime.nowUnsafe()),
+            onSome: (entry) => entry.time,
+          }),
           origin: item.commentOrigin,
           preview: item.preview,
         } satisfies PromptHistoryComment,
       ]
     })
   }
-  const restoreHistoryComments = (items: PromptHistoryComment[]) => {
+  const restoreHistoryComments = (items: ReadonlyArray<PromptHistoryComment>) => {
     comments.replace(
       items.map((item) => ({
         id: item.id,
@@ -204,14 +234,15 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     mode,
     working,
     editor: () => editor,
-    queueScroll: () => requestAnimationFrame(() => editor?.scrollIntoView({ block: "nearest" })),
+    queueScroll: () =>
+      requestAnimationFrame(() => {
+        if (Option.isSome(editor)) editor.value.scrollIntoView({ block: "nearest" })
+      }),
     promptLength,
     addToHistory: (value, mode) => controller.addHistory(value, mode),
     resetHistoryNavigation: () => controller.resetHistory(),
     setMode: (next) => controller.dispatch({ type: next === "shell" ? "mode.shell" : "mode.normal" }),
-    setPopover: (popover) => {
-      if (!popover) controller.dispatch({ type: "popover.close" })
-    },
+    closePopover: () => controller.dispatch({ type: "popover.close" }),
     newSessionWorktree: () => props.newSessionWorktree,
     onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
     shouldQueue: props.shouldQueue,
@@ -331,18 +362,28 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         }),
       add: (value, mode) => history.add(value, mode, mode === "shell" ? [] : historyComments()),
       capture: historyComments,
-      restore: (metadata) => restoreHistoryComments(metadata as PromptHistoryComment[]),
+      restore: (metadata) => {
+        if (Schema.is(PromptHistoryComments)(metadata)) restoreHistoryComments(metadata)
+      },
     },
     commands,
     context,
-    searchContextFiles: async (query) =>
-      (await files.searchFilesAndDirectories(query)).map((path) => ({
-        id: `file:${path}`,
-        kind: "file",
-        label: path,
-        path,
-        mention: { type: "file", path, content: `@${path}`, start: 0, end: 0 },
-      })),
+    searchContextFiles: (query) =>
+      Effect.runPromise(
+        Effect.promise(() => files.searchFilesAndDirectories(query)).pipe(
+          Effect.map((paths) =>
+            paths.map(
+              (path): PromptInputV2Suggestion => ({
+                id: `file:${path}`,
+                kind: "file",
+                label: path,
+                path,
+                mention: { type: "file", path, content: `@${path}`, start: 0, end: 0 },
+              }),
+            ),
+          ),
+        ),
+      ),
     onContextRemove(item) {
       if (item?.commentID) comments.remove(item.path, item.commentID)
     },
@@ -353,17 +394,18 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       if (item) openComment(item, props, sync, layout, files, comments)
     },
     onEditor(element) {
-      editor = element as HTMLDivElement
-      props.ref?.(editor)
+      if (!(element instanceof HTMLDivElement)) return
+      editor = Option.some(element)
+      props.ref?.(element)
     },
     onSuggestionSelect(item) {
-      if (item.kind !== "command") return
+      if (item.kind !== "command") return undefined
       const selected = slashCommands().find((entry) => entry.id === item.id)
-      if (!selected || selected.type === "custom") return
+      if (!selected || selected.type === "custom") return undefined
       return () => command.trigger(selected.id, "slash")
     },
     attachments: {
-      picker: platform.openAttachmentPickerDialog,
+      picker: platform.openAttachmentPickerDialog?.bind(platform),
       directory: () => sdk().directory,
       isDialogActive: () => !!dialog.active,
       warn: () =>
@@ -378,26 +420,31 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
           title: language.t("common.requestFailed"),
           description: error instanceof Error ? error.message : String(error),
         }),
-      readClipboardImage: platform.readClipboardImage,
-      getPathForFile: platform.getPathForFile,
-      store: platform.draftStore?.putBlob,
+      readClipboardImage: platform.readClipboardImage?.bind(platform),
+      getPathForFile: platform.getPathForFile?.bind(platform),
+      store: platform.draftStore?.putBlob.bind(platform.draftStore),
     },
     view: {
       placeholder: designPlaceholder,
       get agent() {
-        return props.controls.agents.visible && props.controls.agents.options.length > 0
-          ? {
-              options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
-              current: () => props.controls.agents.current,
-              onSelect: (value: string) => props.controls.agents.select(value),
-              keybind: () => command.keybindParts("agent.cycle"),
-            }
-          : undefined
+        if (!props.controls.agents.visible || props.controls.agents.options.length === 0) return undefined
+        return {
+          options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
+          current: () => props.controls.agents.current,
+          onSelect: (value: string) => props.controls.agents.select(value),
+          keybind: () => command.keybindParts("agent.cycle"),
+        }
       },
       variant: {
         options: () => variants().map((value) => ({ id: value, label: value })),
         current: () => props.controls.model.selection.variant.current() ?? "default",
-        onSelect: (value) => props.controls.model.selection.variant.set(value === "default" ? undefined : value),
+        onSelect: (value) =>
+          props.controls.model.selection.variant.set(
+            Option.fromNullishOr(value).pipe(
+              Option.filter((variant) => variant !== "default"),
+              Option.getOrUndefined,
+            ),
+          ),
         keybind: () => command.keybindParts("model.variant.cycle"),
       },
       submit: {
@@ -408,7 +455,6 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       },
     },
   })
-  Object.defineProperty(controller, "model", { get: () => props.controls.model })
 
   command.register("prompt-input", () => [
     {
@@ -465,7 +511,12 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     ),
   )
 
-  return controller as PromptInputV2ComposerController
+  return {
+    ...controller,
+    get model() {
+      return props.controls.model
+    },
+  }
 }
 
 function PromptInputV2ModelControl(props: {
@@ -571,9 +622,11 @@ function openComment(
       })
     })
   }
-  const diffs = props.controls.session.id ? sync().data.session_diff[props.controls.session.id] : undefined
+  const sessionID = props.controls.session.id
+  const diffs = sessionID ? Option.fromNullishOr(sync().data.session_diff[sessionID]) : Option.none()
   const review =
-    item.commentOrigin === "review" || (item.commentOrigin !== "file" && diffs?.some((diff) => diff.file === item.path))
+    item.commentOrigin === "review" ||
+    (item.commentOrigin !== "file" && Option.exists(diffs, (list) => list.some((diff) => diff.file === item.path)))
   if (!props.controls.session.reviewPanel.opened()) props.controls.session.reviewPanel.open()
   if (review) {
     layout.fileTree.setTab("changes")
@@ -585,5 +638,5 @@ function openComment(
   const tab = files.tab(item.path)
   void props.controls.session.tabs.open(tab)
   props.controls.session.tabs.setActive(tab)
-  void Promise.resolve(files.load(item.path)).finally(() => queueFocus())
+  Effect.runFork(Effect.promise(() => files.load(item.path)).pipe(Effect.ensuring(Effect.sync(() => queueFocus()))))
 }

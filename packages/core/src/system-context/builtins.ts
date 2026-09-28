@@ -21,7 +21,7 @@ const builtIns = Layer.effectDiscard(
       `  Platform: ${process.platform}`,
       "</env>",
     ].join("\n")
-    const context = SystemContext.combine([
+    const context = yield* SystemContext.combine([
       SystemContext.make({
         key: SystemContext.Key.make("core/environment"),
         codec: Schema.toCodecJson(Schema.String),

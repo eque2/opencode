@@ -2,21 +2,17 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
-import { Effect, Queue } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { EventApi } from "../groups/event"
 
-function eventData(data: unknown): Sse.Event {
-  return {
-    _tag: "Event",
-    event: "message",
-    id: undefined,
-    data: JSON.stringify(data),
-  }
-}
+// Each SSE message carries one JSON value as its `data` line, with the default `message` event.
+const SseMessage = Schema.Struct({ data: Schema.fromJsonString(Schema.Unknown) }).annotate({
+  description: "SSE message",
+})
 
 function eventID() {
   return EventV2.ID.create()
@@ -39,23 +35,17 @@ function eventResponse(events: EventV2.Interface) {
       ),
       Stream.map((event) => ({ id: event.id, type: event.type, properties: event.data })),
     )
-    const disposed = Stream.callback<{ id: string; type: string; properties: unknown }>((queue) => {
-      const listener = (event: {
-        directory?: string
-        payload: { id?: string; type?: string; properties?: unknown }
-      }) => {
-        if (event.directory !== instance.directory || event.payload.type !== "server.instance.disposed") return
-        Queue.offerUnsafe(queue, {
-          id: event.payload.id ?? eventID(),
-          type: "server.instance.disposed",
-          properties: event.payload.properties ?? {},
-        })
-      }
-      return Effect.acquireRelease(
-        Effect.sync(() => GlobalBus.on("event", listener)),
-        () => Effect.sync(() => GlobalBus.off("event", listener)),
-      )
-    })
+    const disposed = GlobalBus.stream.pipe(
+      Stream.filter(
+        (event: { directory?: string; payload: { id?: string; type?: string; properties?: unknown } }) =>
+          event.directory === instance.directory && event.payload.type === "server.instance.disposed",
+      ),
+      Stream.map((event) => ({
+        id: event.payload.id ?? eventID(),
+        type: "server.instance.disposed",
+        properties: event.payload.properties ?? {},
+      })),
+    )
     const output = stream.pipe(
       Stream.merge(disposed, { haltStrategy: "left" }),
       Stream.takeUntil((event) => event.type === "server.instance.disposed"),
@@ -69,8 +59,8 @@ function eventResponse(events: EventV2.Interface) {
     return HttpServerResponse.stream(
       Stream.make({ id: eventID(), type: "server.connected", properties: {} }).pipe(
         Stream.concat(output.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
-        Stream.map(eventData),
-        Stream.pipeThroughChannel(Sse.encode()),
+        Stream.map((data) => ({ data })),
+        Stream.pipeThroughChannel(Sse.encodeSchema(SseMessage)),
         Stream.encodeText,
         Stream.ensuring(Effect.logInfo("event disconnected")),
       ),

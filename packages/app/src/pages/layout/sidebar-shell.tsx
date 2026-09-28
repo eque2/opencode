@@ -82,7 +82,7 @@ export const SidebarContent = (props: {
                   variant="ghost"
                   size="large"
                   onClick={props.onOpenProject}
-                  aria-label={typeof props.openProjectLabel === "string" ? props.openProjectLabel : undefined}
+                  {...(typeof props.openProjectLabel === "string" ? { "aria-label": props.openProjectLabel } : {})}
                 />
               </Tooltip>
             </div>

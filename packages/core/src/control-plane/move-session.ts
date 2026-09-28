@@ -74,11 +74,45 @@ const layer = Layer.effect(
     const project = yield* ProjectV2.Service
     const sessions = yield* SessionStore.Service
 
+    const captureChanges = Effect.fn("MoveSession.captureChanges")(function* (directory: AbsolutePath) {
+      const repository = yield* git.repo.discover(directory)
+      if (!repository) return yield* new CaptureChangesError({ message: "Source is not a Git repository" })
+      return yield* git.change
+        .capture({ repository, path: directory })
+        .pipe(Effect.mapError((error) => new CaptureChangesError({ message: error.message })))
+    })
+
+    const resetSourceChanges = Effect.fn("MoveSession.resetSourceChanges")(function* (directory: AbsolutePath) {
+      const repository = yield* git.repo.discover(directory)
+      if (!repository)
+        return yield* new ResetSourceChangesError({
+          directory,
+          message: "Source is not a Git repository",
+        })
+      return yield* git.change
+        .discard({
+          repository,
+          path: directory,
+          index: "preserve",
+          untracked: "remove",
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new ResetSourceChangesError({
+                directory,
+                message: error.message,
+                cause: error.cause,
+              }),
+          ),
+        )
+    })
+
     const moveSession = Effect.fn("MoveSession.moveSession")(function* (input: Input) {
       const current = yield* sessions.get(input.sessionID)
       if (!current) return yield* new SessionV2.NotFoundError({ sessionID: input.sessionID })
       const directory = AbsolutePath.make(input.destination.directory)
-      if (current.location.directory === directory) return
+      if (current.location.directory === directory) return yield* Effect.void
 
       const source = yield* project.resolve(current.location.directory)
       const destination = yield* project.resolve(directory)
@@ -87,14 +121,7 @@ const layer = Layer.effect(
       }
 
       const moveChanges = input.moveChanges && source.directory !== destination.directory
-      const sourceRepository = moveChanges ? yield* git.repo.discover(current.location.directory) : undefined
-      if (moveChanges && !sourceRepository)
-        return yield* new CaptureChangesError({ message: "Source is not a Git repository" })
-      const patch = sourceRepository
-        ? yield* git.change
-            .capture({ repository: sourceRepository, path: current.location.directory })
-            .pipe(Effect.mapError((error) => new CaptureChangesError({ message: error.message })))
-        : Git.ChangeSet.make("")
+      const patch = moveChanges ? yield* captureChanges(current.location.directory) : Git.ChangeSet.make("")
       if (patch) {
         const repository = yield* git.repo.discover(directory)
         if (!repository) return yield* new ApplyChangesError({ message: "Destination is not a Git repository" })
@@ -110,31 +137,7 @@ const layer = Layer.effect(
         timestamp: yield* DateTime.now,
       })
 
-      if (patch) {
-        const repository = yield* git.repo.discover(current.location.directory)
-        if (!repository)
-          return yield* new ResetSourceChangesError({
-            directory: current.location.directory,
-            message: "Source is not a Git repository",
-          })
-        yield* git.change
-          .discard({
-            repository,
-            path: current.location.directory,
-            index: "preserve",
-            untracked: "remove",
-          })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new ResetSourceChangesError({
-                  directory: current.location.directory,
-                  message: error.message,
-                  cause: error.cause,
-                }),
-            ),
-          )
-      }
+      return yield* patch ? resetSourceChanges(current.location.directory) : Effect.void
     })
 
     return Service.of({ moveSession })

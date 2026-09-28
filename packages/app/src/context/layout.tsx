@@ -1,3 +1,16 @@
+import {
+  Array as Arr,
+  Data,
+  DateTime,
+  Effect,
+  HashMap,
+  HashSet,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Random,
+} from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -21,6 +34,8 @@ import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./la
 import { requireServerKey } from "@/utils/session-route"
 import { type DraftTab, useTabs } from "./tabs"
 import { closeSessionTab, openSessionTab, previewSessionTab, type SessionTabs } from "./layout-tabs"
+import { createFiberSlot } from "@/utils/fiber-slot"
+import { nextFrame } from "@/utils/next-frame"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
 
@@ -34,8 +49,22 @@ const DEFAULT_TERMINAL_HEIGHT = 280
 const DEFAULT_REVIEW_PANEL_OPENED = false
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
+const isAvatarColorKey = (key: string): key is AvatarColorKey => AVATAR_COLOR_KEYS.some((item) => item === key)
+
+// Avatar colors are picked in sync Solid effects outside any fiber, so they read the default Random service directly.
+const random = Random.Random.defaultValue()
+
+/** A layout context request to the server that rejected. `cause` is the original rejection. */
+class LayoutContextRequestError extends Data.TaggedError("App.LayoutContextRequestError")<{
+  readonly cause: unknown
+}> {}
+
+/** Runs one server request as an Effect. A rejection fails with LayoutContextRequestError. */
+const layoutRequest = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new LayoutContextRequestError({ cause }) })
+
 export function getAvatarColors(key?: string) {
-  if (key && AVATAR_COLOR_KEYS.includes(key as AvatarColorKey)) {
+  if (key && isAvatarColorKey(key)) {
     return {
       background: `var(--avatar-background-${key})`,
       foreground: `var(--avatar-text-${key})`,
@@ -82,6 +111,9 @@ type TabHandoff = {
   at: number
 }
 
+/** The persisted tab handoff. An absent `tabs` key means no handoff is pending. */
+type TabHandoffState = { tabs?: TabHandoff }
+
 export type LocalProject = Partial<Project> & { worktree: string; expanded: boolean }
 export type HomeProjectSelection = { server: ServerConnection.Key; directory?: string }
 
@@ -97,9 +129,9 @@ export type LayoutRoute =
 
 const sessionPath = (key: string) => {
   const dir = SessionStateKey.route(key).split("/")[0]
-  if (!dir) return
+  if (!dir) return undefined
   const root = decode64(dir)
-  if (!root) return
+  if (!root) return undefined
   return createPathHelpers(() => root)
 }
 
@@ -109,15 +141,8 @@ const normalizeSessionTab = (path: ReturnType<typeof createPathHelpers> | undefi
   return path.tab(tab)
 }
 
-const normalizeSessionTabList = (path: ReturnType<typeof createPathHelpers> | undefined, all: string[]) => {
-  const seen = new Set<string>()
-  return all.flatMap((tab) => {
-    const value = normalizeSessionTab(path, tab)
-    if (seen.has(value)) return []
-    seen.add(value)
-    return [value]
-  })
-}
+const normalizeSessionTabList = (path: ReturnType<typeof createPathHelpers> | undefined, all: string[]) =>
+  Arr.dedupe(all.map((tab) => normalizeSessionTab(path, tab)))
 
 const normalizeStoredSessionTabs = (key: string, tabs: SessionTabs) => {
   const path = sessionPath(key)
@@ -177,15 +202,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       return { ...value, server: server.key }
     })
 
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === "object" && value !== null && !Array.isArray(value)
-
     const migrate = (value: unknown) => {
-      if (!isRecord(value)) return value
+      if (!Predicate.isObject(value)) return value
 
       const sidebar = value.sidebar
       const migratedSidebar = (() => {
-        if (!isRecord(sidebar)) return sidebar
+        if (!Predicate.isObject(sidebar)) return sidebar
         if (typeof sidebar.workspaces !== "boolean") return sidebar
         return {
           ...sidebar,
@@ -197,7 +219,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       const review = value.review
       const fileTree = value.fileTree
       const migratedFileTree = (() => {
-        if (!isRecord(fileTree)) return fileTree
+        if (!Predicate.isObject(fileTree)) return fileTree
         if (fileTree.tab === "changes" || fileTree.tab === "all") return fileTree
 
         const width = typeof fileTree.width === "number" ? fileTree.width : DEFAULT_FILE_TREE_WIDTH
@@ -210,11 +232,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       })()
 
       const migratedReview = (() => {
-        if (!isRecord(review)) return review
+        if (!Predicate.isObject(review)) return review
         if (typeof review.panelOpened === "boolean") return review
 
         const opened =
-          isRecord(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : DEFAULT_REVIEW_PANEL_OPENED
+          Predicate.isObject(fileTree) && typeof fileTree.opened === "boolean"
+            ? fileTree.opened
+            : DEFAULT_REVIEW_PANEL_OPENED
         return {
           ...review,
           panelOpened: opened,
@@ -224,16 +248,16 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       const sessionTabs = migrateLegacySessionStateKeys(value.sessionTabs)
       const sessionView = migrateLegacySessionStateKeys(value.sessionView)
       const migratedSessionTabs = (() => {
-        if (!isRecord(sessionTabs)) return sessionTabs
+        if (!Predicate.isObject(sessionTabs)) return sessionTabs
 
         let changed = false
         const next = Object.fromEntries(
           Object.entries(sessionTabs).map(([key, tabs]) => {
-            if (!isRecord(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
+            if (!Predicate.isObject(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
 
-            const current = {
+            const current: SessionTabs = {
               all: tabs.all.filter((tab): tab is string => typeof tab === "string"),
-              active: typeof tabs.active === "string" ? tabs.active : undefined,
+              ...(typeof tabs.active === "string" ? { active: tabs.active } : {}),
             }
             const normalized = normalizeStoredSessionTabs(key, current)
             if (current.all.length !== tabs.all.length) changed = true
@@ -298,9 +322,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         sessionTabs: {} as Record<string, SessionTabs>,
         sessionView: {} as Record<string, SessionView>,
-        handoff: {
-          tabs: undefined as TabHandoff | undefined,
-        },
+        handoff: {} as TabHandoffState,
         home: {
           selection: { server: server.key } as HomeProjectSelection,
         },
@@ -314,9 +336,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const MAX_SESSION_KEYS = 50
     const PENDING_MESSAGE_TTL_MS = 2 * 60 * 1000
     const usage = {
-      active: undefined as string | undefined,
+      active: Option.none<string>(),
       pruned: false,
-      used: new Map<string, number>(),
+      used: MutableHashMap.empty<string, number>(),
     }
 
     const SESSION_STATE_KEYS = [
@@ -337,11 +359,11 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           const target = session
             ? Persist.serverSession(scope, dir, session, entry.key)
             : Persist.serverWorkspace(scope, dir, entry.key)
-          void removePersisted(target, platform)
+          removePersisted(target, platform)
 
           if (scope !== ServerScope.local) continue
           const legacyKey = `${dir}/${entry.legacy}${session ? "/" + session : ""}.${entry.version}`
-          void removePersisted({ key: legacyKey }, platform)
+          removePersisted({ key: legacyKey }, platform)
         }
       }
     }
@@ -375,13 +397,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       )
 
       for (const key of drop) {
-        usage.used.delete(key)
+        MutableHashMap.remove(usage.used, key)
       }
     }
 
     function touch(sessionKey: string) {
-      usage.active = sessionKey
-      usage.used.set(sessionKey, Date.now())
+      usage.active = Option.some(sessionKey)
+      MutableHashMap.set(usage.used, sessionKey, DateTime.toEpochMillis(DateTime.nowUnsafe()))
 
       if (!ready()) return
       if (usage.pruned) return
@@ -395,7 +417,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       getSnapshot: (sessionKey) => store.sessionView[sessionKey]?.scroll,
       onFlush: (sessionKey, next) => {
         const current = store.sessionView[sessionKey]
-        const keep = usage.active ?? sessionKey
+        const keep = Option.getOrElse(usage.active, () => sessionKey)
         if (!current) {
           setStore("sessionView", sessionKey, { scroll: next })
           prune(keep)
@@ -413,9 +435,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       if (!ready()) return
       if (usage.pruned) return
       const active = usage.active
-      if (!active) return
+      if (Option.isNone(active)) return
       usage.pruned = true
-      prune(active)
+      prune(active.value)
     })
 
     onMount(() => {
@@ -434,12 +456,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     })
 
     const [colors, setColors] = createStore<Record<string, AvatarColorKey>>({})
-    const colorRequested = new Map<string, AvatarColorKey>()
+    const colorRequested = MutableHashMap.empty<string, AvatarColorKey>()
 
-    function pickAvailableColor(used: Set<string>): AvatarColorKey {
-      const available = AVATAR_COLOR_KEYS.filter((c) => !used.has(c))
-      if (available.length === 0) return AVATAR_COLOR_KEYS[Math.floor(Math.random() * AVATAR_COLOR_KEYS.length)]
-      return available[Math.floor(Math.random() * available.length)]
+    function pickAvailableColor(used: MutableHashSet.MutableHashSet<string>): AvatarColorKey {
+      const available = AVATAR_COLOR_KEYS.filter((c) => !MutableHashSet.has(used, c))
+      if (available.length === 0)
+        return AVATAR_COLOR_KEYS[Math.floor(random.nextDoubleUnsafe() * AVATAR_COLOR_KEYS.length)]
+      return available[Math.floor(random.nextDoubleUnsafe() * available.length)]
     }
 
     function enrich(project: { worktree: string; expanded: boolean }) {
@@ -459,34 +482,31 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       return base
     }
 
-    const roots = createMemo(() => {
-      const map = new Map<string, string>()
-      for (const project of serverSync().data.project) {
-        const sandboxes = project.sandboxes ?? []
-        for (const sandbox of sandboxes) {
-          map.set(sandbox, project.worktree)
-        }
-      }
-      return map
-    })
+    const roots = createMemo(() =>
+      HashMap.fromIterable(
+        serverSync().data.project.flatMap((project) =>
+          (project.sandboxes ?? []).map((sandbox) => [sandbox, project.worktree] as const),
+        ),
+      ),
+    )
 
     const rootFor = (directory: string) => {
       const map = roots()
-      if (map.size === 0) return directory
+      if (HashMap.isEmpty(map)) return directory
 
-      const visited = new Set<string>()
+      const visited = MutableHashSet.empty<string>()
       const chain = [directory]
 
       while (chain.length) {
         const current = chain[chain.length - 1]
         if (!current) return directory
 
-        const next = map.get(current)
-        if (!next) return current
+        const next = HashMap.get(map, current)
+        if (Option.isNone(next) || !next.value) return current
 
-        if (visited.has(next)) return directory
-        visited.add(next)
-        chain.push(next)
+        if (MutableHashSet.has(visited, next.value)) return directory
+        MutableHashSet.add(visited, next.value)
+        chain.push(next.value)
       }
 
       return directory
@@ -494,7 +514,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     createEffect(() => {
       const projects = server.projects.list()
-      const seen = new Set(projects.map((project) => project.worktree))
+      const seen = MutableHashSet.fromIterable(projects.map((project) => project.worktree))
 
       batch(() => {
         for (const project of projects) {
@@ -503,9 +523,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
           server.projects.remove(project.worktree)
 
-          if (!seen.has(root)) {
+          if (!MutableHashSet.has(seen, root)) {
             server.projects.open(root)
-            seen.add(root)
+            MutableHashSet.add(seen, root)
           }
 
           if (project.expanded) server.projects.expand(root)
@@ -541,13 +561,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       if (projects.length === 0) return
 
       for (const project of projects) {
-        if (project.icon?.color) colorRequested.delete(project.worktree)
+        if (project.icon?.color) MutableHashMap.remove(colorRequested, project.worktree)
       }
 
-      const used = new Set<string>()
+      const used = MutableHashSet.empty<string>()
       for (const project of projects) {
         const color = project.icon?.color ?? colors[project.worktree]
-        if (color) used.add(color)
+        if (color) MutableHashSet.add(used, color)
       }
 
       for (const project of projects) {
@@ -556,14 +576,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const existing = colors[worktree]
         const color = existing ?? pickAvailableColor(used)
         if (!existing) {
-          used.add(color)
+          MutableHashSet.add(used, color)
           setColors(worktree, color)
         }
         if (!project.id) continue
 
-        const requested = colorRequested.get(worktree)
-        if (requested === color) continue
-        colorRequested.set(worktree, color)
+        if (Option.contains(MutableHashMap.get(colorRequested, worktree), color)) continue
+        MutableHashMap.set(colorRequested, worktree, color)
 
         if (project.id === "global") {
           serverSync().project.meta(worktree, { icon: { color } })
@@ -571,44 +590,54 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         }
 
         const projectID = project.id
-        void (async () => {
-          const sdk = serverSdk()
-          if ((await sdk.protocol) !== "v1") return
-          return sdk.client.project
-            .update({ projectID, directory: worktree, icon: { color } })
-            .then((response) => response.data)
-            .then((result) => {
-              if (!result) return
-              serverSync().set("project", (items) =>
-                items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
-              )
-            })
-        })().catch(() => {
-          if (colorRequested.get(worktree) === color) colorRequested.delete(worktree)
-        })
+        const sdk = serverSdk()
+        // Any failure clears the pending request, so a later effect run can ask again.
+        Effect.runFork(
+          Effect.gen(function* () {
+            const protocol = yield* layoutRequest(() => sdk.protocol)
+            if (protocol !== "v1") return
+            const response = yield* layoutRequest(() =>
+              sdk.client.project.update({ projectID, directory: worktree, icon: { color } }),
+            )
+            const result = response.data
+            if (!result) return
+            serverSync().set("project", (items) =>
+              items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
+            )
+          }).pipe(
+            Effect.catchCause(() =>
+              Effect.sync(() => {
+                if (Option.contains(MutableHashMap.get(colorRequested, worktree), color))
+                  MutableHashMap.remove(colorRequested, worktree)
+              }),
+            ),
+          ),
+        )
       }
     })
 
-    let sessionFrame: number | undefined
-    let sessionTimer: number | undefined
+    // The owner's cleanup interrupts the slot, which cancels a pending frame or task.
+    const sessionLoad = createFiberSlot()
 
     onMount(() => {
-      sessionFrame = requestAnimationFrame(() => {
-        sessionFrame = undefined
-        sessionTimer = window.setTimeout(() => {
-          sessionTimer = undefined
-          void Promise.all(
-            server.projects.list().map((project) => {
-              return serverSync().project.loadSessions(project.worktree)
-            }),
-          )
-        }, 0)
-      })
-    })
-
-    onCleanup(() => {
-      if (sessionFrame !== undefined) cancelAnimationFrame(sessionFrame)
-      if (sessionTimer !== undefined) window.clearTimeout(sessionTimer)
+      // Load the sessions of every open project in the task after the first frame, so the layout paints first.
+      sessionLoad.run(
+        nextFrame.pipe(
+          Effect.andThen(Effect.sleep("0 millis")),
+          Effect.andThen(
+            Effect.suspend(() =>
+              Effect.forEach(
+                server.projects.list(),
+                (project) =>
+                  layoutRequest(() => serverSync().project.loadSessions(project.worktree)).pipe(
+                    Effect.catch((error) => Effect.logError(error)),
+                  ),
+                { concurrency: "unbounded", discard: true },
+              ),
+            ),
+          ),
+        ),
+      )
     })
 
     return {
@@ -623,20 +652,30 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       handoff: {
         tabs: createMemo(() => store.handoff?.tabs),
         setTabs(dir: string, id: string) {
-          setStore("handoff", "tabs", { scope: serverSdk().scope, dir, id, at: Date.now() })
+          setStore("handoff", "tabs", {
+            scope: serverSdk().scope,
+            dir,
+            id,
+            at: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+          })
         },
         clearTabs() {
           if (!store.handoff?.tabs) return
-          setStore("handoff", "tabs", undefined)
+          setStore(
+            "handoff",
+            produce((draft) => {
+              delete draft.tabs
+            }),
+          )
         },
       },
       projects: {
         list,
         recentlyClosed: createMemo(() => {
-          const known = new Set(serverSync().data.project.map((project) => pathKey(project.worktree)))
+          const known = HashSet.fromIterable(serverSync().data.project.map((project) => pathKey(project.worktree)))
           return server.projects
             .recentlyClosed()
-            .filter((worktree) => known.has(pathKey(worktree)))
+            .filter((worktree) => HashSet.has(known, pathKey(worktree)))
             .slice(0, RECENTLY_CLOSED_DISPLAY_LIMIT)
             .map((worktree) => enrich({ worktree, expanded: false }))
         }),
@@ -765,7 +804,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       },
       pendingMessage: {
         set(sessionKey: string, messageID: string) {
-          const at = Date.now()
+          const at = DateTime.toEpochMillis(DateTime.nowUnsafe())
           touch(sessionKey)
           const current = store.sessionView[sessionKey]
           if (!current) {
@@ -774,7 +813,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               pendingMessage: messageID,
               pendingMessageAt: at,
             })
-            prune(usage.active ?? sessionKey)
+            prune(Option.getOrElse(usage.active, () => sessionKey))
             return
           }
 
@@ -791,7 +830,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           const current = store.sessionView[sessionKey]
           const message = current?.pendingMessage
           const at = current?.pendingMessageAt
-          if (!message || !at) return
+          if (!message || !at) return undefined
 
           setStore(
             "sessionView",
@@ -802,7 +841,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             }),
           )
 
-          if (Date.now() - at > PENDING_MESSAGE_TTL_MS) return
+          if (DateTime.toEpochMillis(DateTime.nowUnsafe()) - at > PENDING_MESSAGE_TTL_MS) return undefined
           return message
         },
       },
@@ -812,10 +851,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const reviewMode = createMemo(() => {
           const mode = s().reviewMode
           if (mode === "git" || mode === "branch" || mode === "turn") return mode
+          return undefined
         })
         const reviewFile = createMemo(() => {
           const file = s().reviewFile
           if (typeof file === "string") return file
+          return undefined
         })
         const terminalOpened = createMemo(() => store.terminal?.opened ?? false)
         const reviewPanelOpened = createMemo(() => store.review?.panelOpened ?? DEFAULT_REVIEW_PANEL_OPENED)
@@ -929,7 +970,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             open: createMemo(() => s().reviewOpen ?? []),
             setOpen(open: string[]) {
               const session = key()
-              const next = Array.from(new Set(open))
+              const next = Arr.dedupe(open)
               const current = store.sessionView[session]
               if (!current) {
                 setStore("sessionView", session, {
@@ -1017,27 +1058,53 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               setStore("sessionTabs", session, "active", next)
             }
           },
+          /** Clears the active tab. setActive(undefined) does the same. */
+          clearActive() {
+            const session = key()
+            if (!store.sessionTabs[session]) {
+              setStore("sessionTabs", session, { all: [] })
+              return
+            }
+            setStore(
+              "sessionTabs",
+              session,
+              produce((draft) => {
+                delete draft.active
+              }),
+            )
+          },
           setAll(all: string[]) {
             const session = key()
             const next = normalizeAll(all).filter((tab) => tab !== "review")
             batch(() => {
               if (!store.sessionTabs[session]) {
-                setStore("sessionTabs", session, { all: next, active: undefined })
+                setStore("sessionTabs", session, { all: next })
               } else {
                 setStore("sessionTabs", session, "all", next)
               }
               const preview = ephemeral.sessionTabPreview[session]
-              if (preview && !next.includes(preview)) setEphemeral("sessionTabPreview", session, undefined)
+              if (preview && !next.includes(preview))
+                setEphemeral(
+                  "sessionTabPreview",
+                  produce((draft) => {
+                    delete draft[session]
+                  }),
+                )
             })
           },
-          async open(tab: string) {
-            const session = key()
-            apply(
-              session,
-              openSessionTab(
-                { tabs: store.sessionTabs[session] ?? { all: [] }, preview: ephemeral.sessionTabPreview[session] },
-                normalize(tab),
-              ),
+          // The tab API keeps its Promise contract; the update itself runs synchronously in this call.
+          open(tab: string): Promise<void> {
+            return Effect.runPromise(
+              Effect.sync(() => {
+                const session = key()
+                apply(
+                  session,
+                  openSessionTab(
+                    { tabs: store.sessionTabs[session] ?? { all: [] }, preview: ephemeral.sessionTabPreview[session] },
+                    normalize(tab),
+                  ),
+                )
+              }),
             )
           },
           previewTab(tab: string) {

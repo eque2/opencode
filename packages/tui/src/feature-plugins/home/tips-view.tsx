@@ -1,4 +1,5 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
+import { Random } from "effect"
 import { createMemo, For, type Accessor } from "solid-js"
 import { DEFAULT_THEMES, useTheme } from "../../context/theme"
 import { useCommandShortcut } from "../../keymap"
@@ -45,27 +46,20 @@ type Shortcuts = {
 type Tip = string | ((shortcuts: Shortcuts) => string | undefined)
 
 function parse(tip: string): TipPart[] {
-  const parts: TipPart[] = []
   const regex = /\{highlight\}(.*?)\{\/highlight\}/g
   const found = Array.from(tip.matchAll(regex))
-  const state = found.reduce(
-    (acc, match) => {
-      const start = match.index ?? 0
-      if (start > acc.index) {
-        acc.parts.push({ text: tip.slice(acc.index, start), highlight: false })
-      }
-      acc.parts.push({ text: match[1], highlight: true })
-      acc.index = start + match[0].length
-      return acc
-    },
-    { parts, index: 0 },
-  )
+  const initial: { parts: TipPart[]; index: number } = { parts: [], index: 0 }
+  const state = found.reduce((acc, match) => {
+    const start = match.index ?? 0
+    const plain = start > acc.index ? [{ text: tip.slice(acc.index, start), highlight: false }] : []
+    return {
+      parts: [...acc.parts, ...plain, { text: match[1], highlight: true }],
+      index: start + match[0].length,
+    }
+  }, initial)
 
-  if (state.index < tip.length) {
-    parts.push({ text: tip.slice(state.index), highlight: false })
-  }
-
-  return parts
+  if (state.index < tip.length) return [...state.parts, { text: tip.slice(state.index), highlight: false }]
+  return state.parts
 }
 
 const NO_MODELS_TIP = "Run {highlight}/connect{/highlight} to add an AI provider and start coding"
@@ -96,7 +90,8 @@ function configShortcut(api: TuiPluginApi, command: string): TipShortcut {
 
 export function Tips(props: { api: TuiPluginApi; connected?: boolean }) {
   const theme = useTheme().theme
-  const tipOffset = Math.random()
+  // Components render outside any fiber, so the draw comes straight from the default Random service.
+  const tipOffset = Random.Random.defaultValue().nextDoubleUnsafe()
   const shortcuts: Shortcuts = {
     agentCycle: useCommandShortcut("agent.cycle"),
     childFirst: configShortcut(props.api, "session.child.first"),
@@ -177,10 +172,10 @@ const TIPS: Tip[] = [
   (shortcuts) => `Use ${commandText("/new", shortcuts.sessionNew())} to start a fresh conversation session`,
   (shortcuts) => `Use ${commandText("/sessions", shortcuts.sessionList())} to list, pin, and continue sessions`,
   (shortcuts) => press(shortcuts.sessionPinToggle(), "in the session list to pin one at the top"),
-  (shortcuts) =>
-    shortcuts.sessionQuickSwitch1() && shortcuts.sessionQuickSwitch9()
-      ? `Use ${shortcutText(shortcuts.sessionQuickSwitch1())} through ${shortcutText(shortcuts.sessionQuickSwitch9())} to switch pinned sessions`
-      : undefined,
+  (shortcuts) => {
+    if (!shortcuts.sessionQuickSwitch1() || !shortcuts.sessionQuickSwitch9()) return undefined
+    return `Use ${shortcutText(shortcuts.sessionQuickSwitch1())} through ${shortcutText(shortcuts.sessionQuickSwitch9())} to switch pinned sessions`
+  },
   "Run {highlight}/compact{/highlight} to summarize long sessions near context limits",
   (shortcuts) => `Use ${commandText("/export", shortcuts.sessionExport())} to save the conversation as Markdown`,
   (shortcuts) => press(shortcuts.messagesCopy(), "to copy the assistant's last message to clipboard"),
@@ -189,10 +184,10 @@ const TIPS: Tip[] = [
   (shortcuts) => `The leader key is ${shortcutText(shortcuts.leader())}; combine with other keys for quick actions`,
   (shortcuts) => press(shortcuts.modelCycleRecent(), "to quickly switch between recently used models"),
   (shortcuts) => press(shortcuts.sessionSidebarToggle(), "in a session to show or hide the sidebar panel"),
-  (shortcuts) =>
-    shortcuts.messagesPageUp() && shortcuts.messagesPageDown()
-      ? `Use ${shortcutText(shortcuts.messagesPageUp())}/${shortcutText(shortcuts.messagesPageDown())} to navigate through conversation history`
-      : undefined,
+  (shortcuts) => {
+    if (!shortcuts.messagesPageUp() || !shortcuts.messagesPageDown()) return undefined
+    return `Use ${shortcutText(shortcuts.messagesPageUp())}/${shortcutText(shortcuts.messagesPageDown())} to navigate through conversation history`
+  },
   (shortcuts) => press(shortcuts.messagesFirst(), "to jump to the beginning of the conversation"),
   (shortcuts) => press(shortcuts.messagesLast(), "to jump to the most recent message"),
   (shortcuts) => press(shortcuts.inputNewline(), "to add newlines in your prompt"),

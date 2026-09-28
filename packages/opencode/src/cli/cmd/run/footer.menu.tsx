@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 import { TextAttributes, type ColorInput } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/solid"
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, type Accessor } from "solid-js"
+import { Option } from "effect"
 import { transparent, type RunFooterTheme } from "./theme"
 import * as Locale from "@/util/locale"
 
@@ -165,11 +166,14 @@ export function RunFooterMenu(props: {
       return
     }
 
-    const dir = props.selected() === previous + 1 ? 1 : props.selected() === previous - 1 ? -1 : undefined
+    // A one-step move scrolls with a preview margin; any other jump reveals the row.
+    const step: Option.Option<-1 | 1> =
+      props.selected() === previous + 1 ? Option.some(1) : props.selected() === previous - 1 ? Option.some(-1) : Option.none()
     setGroupOffset((value) =>
-      dir
-        ? moveOffset(value, { count: all.length, limit: limit(), selected, dir })
-        : revealOffset(value, { count: all.length, limit: limit(), selected }),
+      Option.match(step, {
+        onNone: () => revealOffset(value, { count: all.length, limit: limit(), selected }),
+        onSome: (dir) => moveOffset(value, { count: all.length, limit: limit(), selected, dir }),
+      }),
     )
     previous = props.selected()
   })
@@ -209,7 +213,7 @@ export function RunFooterMenu(props: {
   }
   const descriptionText = (item: RunFooterMenuItem) => {
     if (!item.description) {
-      return
+      return ""
     }
 
     const footerWidth = item.footer ? Bun.stringWidth(item.footer) + 1 : 0
@@ -236,11 +240,11 @@ export function RunFooterMenu(props: {
           flexDirection="row"
           backgroundColor={props.background ? props.theme().shade : transparent}
         >
-          {border() ? (
+          <Show when={border()}>
             <text fg={props.theme().border} wrapMode="none">
               ┃
             </text>
-          ) : undefined}
+          </Show>
           <box
             flexGrow={1}
             flexShrink={1}
@@ -285,11 +289,11 @@ export function RunFooterMenu(props: {
                 : transparent
           return (
             <box paddingRight={0} flexDirection="row" backgroundColor={background()}>
-              {border() ? (
+              <Show when={border()}>
                 <text fg={props.theme().highlight} bg={background()} wrapMode="none">
                   {active() ? "▌" : " "}
                 </text>
-              ) : undefined}
+              </Show>
               <box
                 flexGrow={1}
                 flexShrink={1}
@@ -301,14 +305,14 @@ export function RunFooterMenu(props: {
                   <box flexDirection="row" gap={0} flexGrow={1} flexShrink={1}>
                     <text
                       fg={active() ? props.theme().selectedText : props.theme().text}
-                      attributes={active() ? TextAttributes.BOLD : undefined}
+                      attributes={active() ? TextAttributes.BOLD : TextAttributes.NONE}
                       wrapMode="none"
                       truncate
                       flexShrink={0}
                     >
                       {row.item.display}
                     </text>
-                    {row.item.description ? (
+                    <Show when={row.item.description}>
                       <>
                         <text
                           fg={active() ? props.theme().selectedText : props.theme().muted}
@@ -327,19 +331,19 @@ export function RunFooterMenu(props: {
                           {descriptionText(row.item)}
                         </text>
                       </>
-                    ) : undefined}
+                    </Show>
                   </box>
-                  {row.item.footer ? (
+                  <Show when={row.item.footer}>
                     <text
                       fg={active() ? props.theme().selectedText : props.theme().muted}
-                      attributes={active() ? TextAttributes.BOLD : undefined}
+                      attributes={active() ? TextAttributes.BOLD : TextAttributes.NONE}
                       wrapMode="none"
                       truncate
                       flexShrink={0}
                     >
                       {row.item.footer}
                     </text>
-                  ) : undefined}
+                  </Show>
                 </box>
               </box>
             </box>

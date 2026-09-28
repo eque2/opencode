@@ -1,9 +1,15 @@
-import { JsonPointer, Schema } from "effect"
+import { HashSet, JsonPointer, Option, Predicate, Result, Schema, Struct } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.js"
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top => Schema.isSchema(schema)
 
-const renderLiteral = (value: unknown): string => JSON.stringify(value) ?? "unknown"
+/** Encodes a string as a JSON string literal (quoted and escaped). */
+export const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
+/** Encodes a JSON value as JSON text; fails for a value that is not JSON data. */
+const encodeJson = Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Json))
+
+const renderLiteral = (value: unknown): string => Result.getOrElse(encodeJson(value), () => "unknown")
 
 /**
  * Bare TypeScript identifier - usable unquoted as an object key (and, in the tool runtime,
@@ -12,13 +18,17 @@ const renderLiteral = (value: unknown): string => JSON.stringify(value) ?? "unkn
 export const identifierSegment = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /** Renders a property name as a valid TS object key: bare when an identifier, quoted otherwise. */
-const renderKey = (name: string): string => (identifierSegment.test(name) ? name : JSON.stringify(name))
+const renderKey = (name: string): string => (identifierSegment.test(name) ? name : quoteJsonString(name))
 
 const effectNumberSentinel = (schema: JsonSchema) =>
   schema.type === "string" &&
   Array.isArray(schema.enum) &&
   schema.enum.length === 1 &&
   (schema.enum[0] === "NaN" || schema.enum[0] === "Infinity" || schema.enum[0] === "-Infinity")
+
+/** The definition name that a local `#/$defs/<name>` or `#/definitions/<name>` reference targets. */
+const refName = (ref: string): Option.Option<string> =>
+  Option.map(Option.fromNullishOr(ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]), JsonPointer.unescapeToken)
 
 const intersection = (members: ReadonlyArray<string>): string => {
   const concrete = members.filter((member) => member !== "unknown")
@@ -43,16 +53,19 @@ type RenderContext = {
 const hasUnresolvedRef = (
   schema: JsonSchema,
   definitions: Readonly<Record<string, JsonSchema>>,
-  seen: ReadonlySet<string> = new Set(),
-  visited: ReadonlySet<JsonSchema> = new Set(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
+  /**
+   * The schema objects on the current path, compared by identity: a structurally equal
+   * schema reached again through a `$ref` is a new visit, so the `seen` names catch the cycle.
+   */
+  visited: ReadonlyArray<JsonSchema> = [],
 ): boolean => {
-  if (visited.has(schema)) return false
-  const nextVisited = new Set([...visited, schema])
+  if (visited.includes(schema)) return false
+  const nextVisited = [...visited, schema]
   if (schema.$ref !== undefined) {
-    const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-    const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (name === undefined || definitions[name] === undefined || seen.has(name)) return true
-    if (hasUnresolvedRef(definitions[name], definitions, new Set([...seen, name]), nextVisited)) return true
+    const name = refName(schema.$ref)
+    if (Option.isNone(name) || definitions[name.value] === undefined || HashSet.has(seen, name.value)) return true
+    if (hasUnresolvedRef(definitions[name.value], definitions, HashSet.add(seen, name.value), nextVisited)) return true
   }
   return [
     ...(schema.anyOf ?? []),
@@ -68,22 +81,19 @@ const hasUnresolvedRef = (
  * Schema constraints a TypeScript type cannot express natively but a model benefits from,
  * surfaced as JSDoc tags (`@deprecated`, `@default`, `@format`, `@minItems`, `@maxItems`).
  */
-const docTags = (schema: JsonSchema): Array<string> => {
-  const tags: Array<string> = []
-  if (schema.deprecated === true) tags.push("@deprecated")
-  if (schema.default !== undefined) {
-    try {
-      const rendered = JSON.stringify(schema.default)
-      if (rendered !== undefined) tags.push(`@default ${rendered}`)
-    } catch {
-      // unserializable default: skip rather than emit a broken tag
-    }
-  }
-  if (typeof schema.format === "string") tags.push(`@format ${schema.format}`)
-  if (typeof schema.minItems === "number") tags.push(`@minItems ${schema.minItems}`)
-  if (typeof schema.maxItems === "number") tags.push(`@maxItems ${schema.maxItems}`)
-  return tags
-}
+const docTags = (schema: JsonSchema): Array<string> => [
+  ...(schema.deprecated === true ? ["@deprecated"] : []),
+  // An unserializable default is skipped rather than emitted as a broken tag.
+  ...(schema.default === undefined
+    ? []
+    : Result.match(encodeJson(schema.default), {
+        onFailure: () => [],
+        onSuccess: (rendered) => [`@default ${rendered}`],
+      })),
+  ...(typeof schema.format === "string" ? [`@format ${schema.format}`] : []),
+  ...(typeof schema.minItems === "number" ? [`@minItems ${schema.minItems}`] : []),
+  ...(typeof schema.maxItems === "number" ? [`@maxItems ${schema.maxItems}`] : []),
+]
 
 /**
  * Format a schema `description` plus `tags` as a JSDoc comment at the given indent,
@@ -93,11 +103,12 @@ const docTags = (schema: JsonSchema): Array<string> => {
  * callers can prepend it directly to the field line.
  */
 const jsdoc = (description: string | undefined, tags: ReadonlyArray<string>, pad: string): string => {
-  const lines = [...(description === undefined ? [] : description.split("\n")), ...tags].map((line) =>
+  const all = [...(description === undefined ? [] : description.split("\n")), ...tags].map((line) =>
     line.replaceAll("*/", "* /").replace(/\s+$/, ""),
   )
-  while (lines.length > 0 && lines[0]!.trim() === "") lines.shift()
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop()
+  // Trim blank leading and trailing lines; with no content line the slice is empty.
+  const hasContent = (line: string) => line.trim() !== ""
+  const lines = all.slice(Math.max(0, all.findIndex(hasContent)), all.findLastIndex(hasContent) + 1)
   if (lines.length === 0) return ""
   if (lines.length === 1) return `${pad}/** ${lines[0]} */\n`
   const body = lines.map((line) => `${pad} *${line === "" ? "" : ` ${line}`}`).join("\n")
@@ -108,20 +119,19 @@ const renderSchema = (
   schema: JsonSchema,
   ctx: RenderContext,
   depth = 0,
-  seen: ReadonlySet<string> = new Set(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
 ): string => {
   if (depth > MAX_RENDER_DEPTH) return "unknown"
   const nested =
     schema.definitions === undefined && schema.$defs === undefined
       ? ctx
-      : { ...ctx, definitions: { ...ctx.definitions, ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) } }
+      : { ...ctx, definitions: { ...ctx.definitions, ...schema.definitions, ...schema.$defs } }
   if (schema.$ref) {
-    const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-    const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (!name || !nested.definitions[name] || seen.has(name)) return "unknown"
+    const name = refName(schema.$ref)
+    if (Option.isNone(name) || !nested.definitions[name.value] || HashSet.has(seen, name.value)) return "unknown"
     return intersection([
-      renderSchema(nested.definitions[name], nested, depth, new Set([...seen, name])),
-      renderSchema({ ...schema, $ref: undefined }, nested, depth + 1, seen),
+      renderSchema(nested.definitions[name.value], nested, depth, HashSet.add(seen, name.value)),
+      renderSchema(Struct.omit(schema, ["$ref"]), nested, depth + 1, seen),
     ])
   }
   if (schema.const !== undefined) return renderLiteral(schema.const)
@@ -152,13 +162,13 @@ const renderSchema = (
     if (members.some((member) => member === "unknown")) return "unknown"
     return intersection([
       members.join(" | "),
-      renderSchema({ ...schema, anyOf: undefined, oneOf: undefined }, nested, depth + 1, seen),
+      renderSchema(Struct.omit(schema, ["anyOf", "oneOf"]), nested, depth + 1, seen),
     ])
   }
   if (schema.allOf) {
     const members = schema.allOf.map((item) => renderSchema(item, nested, depth + 1, seen))
     if (schema.allOf.some((item) => hasUnresolvedRef(item, nested.definitions))) return "unknown"
-    return intersection([renderSchema({ ...schema, allOf: undefined }, nested, depth + 1, seen), ...members])
+    return intersection([renderSchema(Struct.omit(schema, ["allOf"]), nested, depth + 1, seen), ...members])
   }
   if (Array.isArray(schema.type)) {
     return schema.type.map((item) => renderSchema({ ...schema, type: item }, nested, depth + 1, seen)).join(" | ")
@@ -169,53 +179,54 @@ const renderSchema = (
   if (schema.type === "null") return "null"
   if (schema.type === "array") return `Array<${renderSchema(schema.items ?? {}, nested, depth + 1, seen)}>`
   if (schema.type === "object" || schema.properties) {
-    const required = new Set(schema.required ?? [])
+    const required = HashSet.fromIterable(schema.required ?? [])
     const properties = Object.entries(schema.properties ?? {})
     const additional = schema.additionalProperties
-    const indexType =
-      additional && typeof additional === "object" ? renderSchema(additional, nested, depth + 1, seen) : undefined
+    const indexType = Predicate.isObjectOrArray(additional)
+      ? Option.some(renderSchema(additional, nested, depth + 1, seen))
+      : Option.none()
     const field = ([name, value]: readonly [string, JsonSchema]) =>
-      `${renderKey(name)}${required.has(name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
+      `${renderKey(name)}${HashSet.has(required, name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
     if (!ctx.pretty) {
-      const fields = properties.map(field)
-      if (indexType !== undefined) fields.push(`[key: string]: ${indexType}`)
+      const fields = [
+        ...properties.map(field),
+        ...Option.toArray(Option.map(indexType, (type) => `[key: string]: ${type}`)),
+      ]
       return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
     }
 
     // Pretty: an indented block, each described field preceded by its JSDoc comment.
-    if (properties.length === 0 && indexType === undefined) return "{}"
+    if (properties.length === 0 && Option.isNone(indexType)) return "{}"
     const pad = "  ".repeat(depth + 1)
-    const lines = properties.map(
-      (entry) => `${jsdoc(entry[1].description, docTags(entry[1]), pad)}${pad}${field(entry)},`,
-    )
-    if (indexType !== undefined) lines.push(`${pad}[key: string]: ${indexType},`)
+    const lines = [
+      ...properties.map((entry) => `${jsdoc(entry[1].description, docTags(entry[1]), pad)}${pad}${field(entry)},`),
+      ...Option.toArray(Option.map(indexType, (type) => `${pad}[key: string]: ${type},`)),
+    ]
     return `{\n${lines.join("\n")}\n${"  ".repeat(depth)}}`
   }
   return "unknown"
 }
 
-export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false): string => {
-  try {
-    const visible = decoded ? Schema.toType(schema) : schema
-    const document = Schema.toJsonSchemaDocument(visible) as {
-      readonly schema: JsonSchema
-      readonly definitions?: Readonly<Record<string, JsonSchema>>
-    }
-    return renderSchema(document.schema, { definitions: document.definitions ?? {}, pretty })
-  } catch {
-    return "unknown"
-  }
-}
+export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false): string =>
+  Result.getOrElse(
+    Result.try(() => {
+      const visible = decoded ? Schema.toType(schema) : schema
+      const document = Schema.toJsonSchemaDocument(visible) as {
+        readonly schema: JsonSchema
+        readonly definitions?: Readonly<Record<string, JsonSchema>>
+      }
+      return renderSchema(document.schema, { definitions: document.definitions ?? {}, pretty })
+    }),
+    () => "unknown",
+  )
 
 /** Renders a raw JSON Schema document as a TypeScript type string. */
-export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string => {
-  try {
-    return renderSchema(schema, { definitions: { ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) }, pretty })
-  } catch {
-    return "unknown"
-  }
-}
+export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string =>
+  Result.getOrElse(
+    Result.try(() => renderSchema(schema, { definitions: { ...schema.definitions, ...schema.$defs }, pretty })),
+    () => "unknown",
+  )
 
 /** One input property of a tool, extracted best-effort from its input schema. */
 export type InputProperty = {
@@ -231,36 +242,34 @@ export type InputProperty = {
  * directly, resolving a trivial top-level `$ref` into `$defs`/`definitions` when present.
  * Anything unresolvable yields `[]` (search falls back to path + description).
  */
-export const inputProperties = <R>(definition: Definition<R>): Array<InputProperty> => {
-  try {
-    const document = isEffectSchema(definition.input)
-      ? (Schema.toJsonSchemaDocument(definition.input) as {
-          readonly schema: JsonSchema
-          readonly definitions?: Readonly<Record<string, JsonSchema>>
-        })
-      : {
-          schema: definition.input,
-          definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
-        }
-    const definitions = document.definitions ?? {}
-    let schema = document.schema
-    if (schema.$ref !== undefined) {
-      const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-      const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-      const resolved = name === undefined ? undefined : definitions[name]
-      if (resolved === undefined) return []
-      schema = resolved
-    }
-    const required = new Set(schema.required ?? [])
-    return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
-      name,
-      description: typeof value.description === "string" ? value.description : undefined,
-      required: required.has(name),
-    }))
-  } catch {
-    return []
-  }
-}
+export const inputProperties = <R>(definition: Definition<R>): Array<InputProperty> =>
+  Result.getOrElse(
+    Result.try((): Array<InputProperty> => {
+      const document = isEffectSchema(definition.input)
+        ? (Schema.toJsonSchemaDocument(definition.input) as {
+            readonly schema: JsonSchema
+            readonly definitions?: Readonly<Record<string, JsonSchema>>
+          })
+        : {
+            schema: definition.input,
+            definitions: { ...definition.input.definitions, ...definition.input.$defs },
+          }
+      const definitions = document.definitions ?? {}
+      const resolved =
+        document.schema.$ref === undefined
+          ? Option.some(document.schema)
+          : Option.flatMap(refName(document.schema.$ref), (name) => Option.fromNullishOr(definitions[name]))
+      if (Option.isNone(resolved)) return []
+      const schema = resolved.value
+      const required = HashSet.fromIterable(schema.required ?? [])
+      return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
+        name,
+        description: Option.getOrUndefined(Option.liftPredicate(value.description, Predicate.isString)),
+        required: HashSet.has(required, name),
+      }))
+    }),
+    () => [],
+  )
 
 /**
  * The model-visible TypeScript type of a tool's input. `pretty` renders an indented

@@ -1,12 +1,12 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Layer, Queue } from "effect"
+import { Cause, Deferred, Effect, Exit, Layer, Queue, Schema } from "effect"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { Pty } from "@opencode-ai/core/pty"
-import type { PtyID } from "@opencode-ai/core/pty/schema"
+import { PtyID } from "@opencode-ai/core/pty/schema"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { location } from "../fixture/location"
 import { testEffect } from "../lib/effect"
@@ -26,16 +26,20 @@ const it = testEffect(
 )
 const ptyTest = process.platform === "win32" ? it.live.skip : it.live
 
+const isCreated = Schema.is(Pty.Event.Created.data)
+const isExited = Schema.is(Pty.Event.Exited.data)
+const isDeleted = Schema.is(Pty.Event.Deleted.data)
+
 const subscribePtyEvents = Effect.fn("PtySessionTest.subscribePtyEvents")(function* () {
   const source = yield* EventV2.Service
   const events = yield* Queue.unbounded<PtyEvent>()
   const unsubscribe = yield* source.listen((event) => {
-    if (event.type === Pty.Event.Created.type)
-      Queue.offerUnsafe(events, { type: "created", id: (event.data as typeof Pty.Event.Created.data.Type).info.id })
-    if (event.type === Pty.Event.Exited.type)
-      Queue.offerUnsafe(events, { type: "exited", id: (event.data as typeof Pty.Event.Exited.data.Type).id })
-    if (event.type === Pty.Event.Deleted.type)
-      Queue.offerUnsafe(events, { type: "deleted", id: (event.data as typeof Pty.Event.Deleted.data.Type).id })
+    if (event.type === Pty.Event.Created.type && isCreated(event.data))
+      Queue.offerUnsafe(events, { type: "created", id: event.data.info.id })
+    if (event.type === Pty.Event.Exited.type && isExited(event.data))
+      Queue.offerUnsafe(events, { type: "exited", id: event.data.id })
+    if (event.type === Pty.Event.Deleted.type && isDeleted(event.data))
+      Queue.offerUnsafe(events, { type: "deleted", id: event.data.id })
     return Effect.void
   })
   yield* Effect.addFinalizer(() => unsubscribe)
@@ -61,7 +65,7 @@ const waitForEvents = (events: Queue.Queue<PtyEvent>, id: PtyID, count: number) 
   }).pipe(
     Effect.timeoutOrElse({
       duration: "5 seconds",
-      orElse: () => Effect.fail(new Error("timeout waiting for pty events")),
+      orElse: () => Effect.fail(new Cause.TimeoutError("timeout waiting for pty events")),
     }),
   )
 
@@ -86,7 +90,8 @@ const waitForOutput = (output: Queue.Queue<string>, text: string) =>
   }).pipe(
     Effect.timeoutOrElse({
       duration: "5 seconds",
-      orElse: () => Effect.fail(new Error(`timeout waiting for output containing ${JSON.stringify(text)}`)),
+      orElse: () =>
+        Effect.fail(new Cause.TimeoutError(`timeout waiting for output containing ${JSON.stringify(text)}`)),
     }),
   )
 
@@ -94,7 +99,7 @@ describe("pty", () => {
   it.live("returns typed not found errors for missing sessions", () =>
     Effect.gen(function* () {
       const pty = yield* Pty.Service
-      const id = "pty_missing" as PtyID
+      const id = PtyID.make("pty_missing")
 
       for (const result of [
         yield* pty.get(id).pipe(Effect.asVoid, Effect.exit),
@@ -166,6 +171,27 @@ describe("pty", () => {
       yield* waitForOutput(verify.output, "AAA")
       const leaked = yield* Queue.poll(attached.output)
       expect(leaked._tag).toBe("None")
+    }),
+  )
+
+  ptyTest("keeps delivering output when another attachment callback throws", () =>
+    Effect.gen(function* () {
+      const pty = yield* Pty.Service
+      const info = yield* createPty("cat")
+      const faulty = yield* pty.attach(info.id, {
+        cursor: -1,
+        onData: () => {
+          throw new Error("subscriber failed")
+        },
+        onEnd: () => {},
+      })
+      faulty.activate()
+      const healthy = yield* attachCollecting(info.id, -1)
+
+      yield* pty.write(info.id, "AAA\n")
+      yield* waitForOutput(healthy.output, "AAA")
+      yield* pty.write(info.id, "BBB\n")
+      yield* waitForOutput(healthy.output, "BBB")
     }),
   )
 

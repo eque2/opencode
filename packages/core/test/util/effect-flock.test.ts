@@ -6,7 +6,6 @@ import os from "os"
 import { Cause, Effect, Exit } from "effect"
 import { testEffect } from "../lib/effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { Global } from "@opencode-ai/core/global"
 import { Hash } from "@opencode-ai/core/util/hash"
@@ -321,7 +320,6 @@ describe("util.effect-flock", () => {
       })
 
       const result = yield* flock.withLock(Effect.void, "eflock:perm", dir).pipe(Effect.exit)
-      // oxlint-disable-next-line no-base-to-string -- Exit has a useful toString for test assertions
       expect(String(result)).toContain("PermissionDenied")
       yield* Effect.promise(() => fs.chmod(dir, 0o700).then(() => fs.rm(tmp, { recursive: true, force: true })))
     }),

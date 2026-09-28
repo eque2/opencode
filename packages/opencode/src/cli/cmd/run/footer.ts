@@ -29,11 +29,13 @@ import type { Keymap } from "@opentui/keymap"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { Array as Arr, Duration, Effect, Equivalence, Fiber, MutableHashSet, Option } from "effect"
 import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { RunFooterView } from "./footer.view"
+import { FooterCallbackError, fromCallback, makeFiberSlot } from "./footer.effect"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
@@ -107,8 +109,17 @@ const SKILL_ROWS = RUN_COMMAND_PANEL_ROWS
 const SUBAGENT_ROWS = RUN_SUBAGENT_PANEL_ROWS
 const MODEL_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
-const NOTICE_DURATION = 3000
-const THEME_REFRESH_DELAYS = [1000, 1000] as const
+const NOTICE_DURATION = Duration.seconds(3)
+const TWO_PRESS_WINDOW = Duration.seconds(5)
+const THEME_REFRESH_DELAYS = [Duration.seconds(1), Duration.seconds(1)] as const
+
+// Waits for the renderer to settle. A failed wait counts as settled.
+function rendererIdle(renderer: CliRenderer) {
+  return Effect.tryPromise({
+    try: () => renderer.idle(),
+    catch: (cause) => new FooterCallbackError({ action: "renderer.idle", cause }),
+  }).pipe(Effect.ignore)
+}
 
 function createEmptySubagentState(): FooterSubagentState {
   return {
@@ -167,14 +178,16 @@ function eventPatch(next: FooterEvent): FooterPatch | undefined {
 export class RunFooter implements FooterApi {
   private closed = false
   private destroyed = false
-  private prompts = new Set<(input: RunPrompt) => void>()
-  private queuedRemoves = new Set<(messageID: string) => boolean | Promise<boolean>>()
-  private closes = new Set<() => void>()
+  private prompts = MutableHashSet.empty<(input: RunPrompt) => void>()
+  private queuedRemoves = MutableHashSet.empty<(messageID: string) => boolean | Promise<boolean>>()
+  private closes = MutableHashSet.empty<() => void>()
   // Microtask-coalesced commit queue. Flushed on next microtask or on close/destroy.
   private queue: StreamCommit[] = []
   private pending = false
-  private flushing: Promise<void> = Promise.resolve()
-  private flushError: unknown
+  // Scrollback work runs in order: each task joins the fiber of the task
+  // before it. The chain never fails; a failed task records flushError.
+  private flushing: Fiber.Fiber<void> = Effect.runFork(Effect.void)
+  private flushError: Option.Option<unknown> = Option.none()
   // Fixed portion of footer height above the textarea.
   private base: number
   private rows = TEXTAREA_MIN_ROWS
@@ -190,8 +203,9 @@ export class RunFooter implements FooterApi {
   private setCurrentModel: Setter<RunInput["model"]>
   private variants: Accessor<string[]>
   private setVariants: Setter<string[]>
-  private currentVariant: Accessor<string | undefined>
-  private setCurrentVariant: Setter<string | undefined>
+  // None means the model's default variant.
+  private currentVariant: Accessor<Option.Option<string>>
+  private setCurrentVariant: Setter<Option.Option<string>>
   private theme: Accessor<RunTheme>
   private setTheme: Setter<RunTheme>
   private state: Accessor<FooterState>
@@ -205,17 +219,19 @@ export class RunFooter implements FooterApi {
   private promptRoute: FooterPromptRoute = { type: "composer" }
   private subagentMenuRows = SUBAGENT_ROWS
   private autocomplete = false
-  private interruptTimeout: NodeJS.Timeout | undefined
-  private exitTimeout: NodeJS.Timeout | undefined
-  private noticeTimeout: NodeJS.Timeout | undefined
-  private noticeRestoreStatus = ""
+  private interruptTimer = makeFiberSlot()
+  private exitTimer = makeFiberSlot()
+  private noticeTimer = makeFiberSlot()
+  // The status to restore when the pending notice expires. Some only while a
+  // notice timer is pending.
+  private noticeRestore: Option.Option<string> = Option.none()
   private statusVersion = 0
-  private requestExitHandler: (() => boolean) | undefined
+  private requestExitHandler: Option.Option<() => boolean> = Option.none()
   private scrollback: RunScrollbackStream
   private themes: RunTheme[]
   private paletteRefreshRunning = false
   private paletteRefreshQueued = false
-  private themeRefreshTimeouts: NodeJS.Timeout[] = []
+  private themeRefreshTimer = makeFiberSlot()
 
   private createScrollback(wrote: boolean): RunScrollbackStream {
     return new RunScrollbackStream(this.renderer, this.theme(), {
@@ -224,10 +240,7 @@ export class RunFooter implements FooterApi {
       sessionID: this.options.sessionID,
       treeSitterClient: this.options.treeSitterClient,
       onThemeRelease: (theme) => {
-        void this.renderer
-          .idle()
-          .catch(() => {})
-          .finally(() => this.destroyTheme(theme))
+        Effect.runFork(rendererIdle(this.renderer).pipe(Effect.andThen(Effect.sync(() => this.destroyTheme(theme)))))
       },
     })
   }
@@ -258,19 +271,22 @@ export class RunFooter implements FooterApi {
     const [resources, setResources] = createSignal(options.resources)
     this.resources = resources
     this.setResources = setResources
-    const [commands, setCommands] = createSignal<RunCommand[] | undefined>(options.commands)
+    const [commands, setCommands] = createSignal(options.commands)
     this.commands = commands
     this.setCommands = setCommands
     const [providers, setProviders] = createSignal<RunProvider[] | undefined>()
     this.providers = providers
     this.setProviders = setProviders
-    const [currentModel, setCurrentModel] = createSignal<RunInput["model"]>(options.model)
+    const [currentModel, setCurrentModel] = createSignal(options.model)
     this.currentModel = currentModel
     this.setCurrentModel = setCurrentModel
     const [variants, setVariants] = createSignal<string[]>([])
     this.variants = variants
     this.setVariants = setVariants
-    const [currentVariant, setCurrentVariant] = createSignal(options.variant)
+    // An equal variant does not notify, as the plain string signal did.
+    const [currentVariant, setCurrentVariant] = createSignal(Option.fromNullishOr(options.variant), {
+      equals: Option.makeEquivalence(Equivalence.String),
+    })
     this.currentVariant = currentVariant
     this.setCurrentVariant = setCurrentVariant
     const [theme, setTheme] = createSignal(options.theme)
@@ -297,60 +313,75 @@ export class RunFooter implements FooterApi {
     this.renderer.prependInputHandler(this.handleThemeNotification)
     process.on("SIGUSR2", this.handleThemeSignal)
 
-    const footer = this
-    void render(
-      () =>
-        createComponent(OpencodeKeymapProvider, {
-          keymap: options.keymap,
-          get children() {
-            return createComponent(RunFooterView, {
-              directory: options.directory,
-              state: footer.state,
-              view: footer.view,
-              subagent: footer.subagent,
-              queuedPrompts: footer.queuedPrompts,
-              findFiles: options.findFiles,
-              agents: footer.agents,
-              resources: footer.resources,
-              commands: footer.commands,
-              providers: footer.providers,
-              currentModel: footer.currentModel,
-              variants: footer.variants,
-              currentVariant: footer.currentVariant,
-              theme: footer.theme,
-              diffStyle: options.diffStyle,
-              tuiConfig: options.tuiConfig,
-              backgroundSubagents: options.backgroundSubagents,
-              history: options.history,
-              agent: options.agentLabel,
-              onSubmit: footer.handlePrompt,
-              onPermissionReply: footer.handlePermissionReply,
-              onQuestionReply: footer.handleQuestionReply,
-              onQuestionReject: footer.handleQuestionReject,
-              onCycle: footer.handleCycle,
-              onInterrupt: footer.handleInterrupt,
-              onBackground: options.onBackground,
-              onEditorOpen: options.onEditorOpen,
-              onInputClear: footer.handleInputClear,
-              onExitRequest: footer.handleExit,
-              onRequestExit: footer.setRequestExitHandler,
-              onExit: () => footer.close(),
-              onModelSelect: footer.handleModelSelect,
-              onVariantSelect: footer.handleVariantSelect,
-              onRows: footer.syncRows,
-              onLayout: footer.syncLayout,
-              onStatus: footer.setStatus,
-              onSubagentSelect: options.onSubagentSelect,
-              onQueuedRemove: footer.handleQueuedRemove,
-            })
-          },
-        }),
-      this.renderer,
-    ).catch(() => {
-      if (!this.isGone) {
-        this.close()
-      }
-    })
+    // An arrow keeps `this` bound to the footer inside the provider's
+    // children getter, which Solid reads with the props object as `this`.
+    const footerView = () =>
+      createComponent(RunFooterView, {
+        directory: options.directory,
+        state: this.state,
+        view: this.view,
+        subagent: this.subagent,
+        queuedPrompts: this.queuedPrompts,
+        findFiles: options.findFiles,
+        agents: this.agents,
+        resources: this.resources,
+        commands: this.commands,
+        providers: this.providers,
+        currentModel: this.currentModel,
+        variants: this.variants,
+        currentVariant: this.currentVariant,
+        theme: this.theme,
+        diffStyle: options.diffStyle,
+        tuiConfig: options.tuiConfig,
+        backgroundSubagents: options.backgroundSubagents,
+        history: options.history,
+        agent: options.agentLabel,
+        onSubmit: this.handlePrompt,
+        onPermissionReply: this.handlePermissionReply,
+        onQuestionReply: this.handleQuestionReply,
+        onQuestionReject: this.handleQuestionReject,
+        onCycle: this.handleCycle,
+        onInterrupt: this.handleInterrupt,
+        onBackground: options.onBackground,
+        onEditorOpen: options.onEditorOpen,
+        onInputClear: this.handleInputClear,
+        onExitRequest: this.handleExit,
+        onRequestExit: this.setRequestExitHandler,
+        onExit: () => this.close(),
+        onModelSelect: this.handleModelSelect,
+        onVariantSelect: this.handleVariantSelect,
+        onRows: this.syncRows,
+        onLayout: this.syncLayout,
+        onStatus: this.setStatus,
+        // The runtime callback takes undefined for "no subagent".
+        onSubagentSelect: (sessionID: Option.Option<string>) =>
+          options.onSubagentSelect?.(Option.getOrUndefined(sessionID)),
+        onQueuedRemove: this.handleQueuedRemove,
+      })
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () =>
+          render(
+            () =>
+              createComponent(OpencodeKeymapProvider, {
+                keymap: options.keymap,
+                get children() {
+                  return footerView()
+                },
+              }),
+            this.renderer,
+          ),
+        catch: (cause) => new FooterCallbackError({ action: "render", cause }),
+      }).pipe(
+        Effect.catch(() =>
+          Effect.sync(() => {
+            if (!this.isGone) {
+              this.close()
+            }
+          }),
+        ),
+      ),
+    )
   }
 
   public get isClosed(): boolean {
@@ -362,16 +393,16 @@ export class RunFooter implements FooterApi {
   }
 
   public onPrompt(fn: (input: RunPrompt) => void): () => void {
-    this.prompts.add(fn)
+    MutableHashSet.add(this.prompts, fn)
     return () => {
-      this.prompts.delete(fn)
+      MutableHashSet.remove(this.prompts, fn)
     }
   }
 
   public onQueuedRemove(fn: (messageID: string) => boolean | Promise<boolean>): () => void {
-    this.queuedRemoves.add(fn)
+    MutableHashSet.add(this.queuedRemoves, fn)
     return () => {
-      this.queuedRemoves.delete(fn)
+      MutableHashSet.remove(this.queuedRemoves, fn)
     }
   }
 
@@ -381,9 +412,9 @@ export class RunFooter implements FooterApi {
       return () => {}
     }
 
-    this.closes.add(fn)
+    MutableHashSet.add(this.closes, fn)
     return () => {
-      this.closes.delete(fn)
+      MutableHashSet.remove(this.closes, fn)
     }
   }
 
@@ -391,17 +422,15 @@ export class RunFooter implements FooterApi {
     if (next.type === "turn.duration") {
       const current = this.currentModel()
       this.flush()
-      this.flushing = this.flushing
-        .then(() =>
+      this.enqueue(
+        fromCallback("scrollback.writeTurnSummary", () =>
           this.scrollback.writeTurnSummary({
             agent: this.options.agentLabel,
             model: current ? modelInfo(this.providers(), current).model : this.state().model,
             duration: next.duration,
           }),
-        )
-        .catch((error) => {
-          this.flushError = error
-        })
+        ),
+      )
       return
     }
 
@@ -433,7 +462,7 @@ export class RunFooter implements FooterApi {
       }
 
       this.setVariants(next.variants)
-      this.setCurrentVariant(next.current)
+      this.setCurrentVariant(Option.fromNullishOr(next.current))
       return
     }
 
@@ -512,11 +541,22 @@ export class RunFooter implements FooterApi {
   }
 
   private completeScrollback(): void {
-    this.flushing = this.flushing
-      .then(() => this.scrollback.complete())
-      .catch((error) => {
-        this.flushError = error
-      })
+    this.enqueue(fromCallback("scrollback.complete", () => this.scrollback.complete()))
+  }
+
+  // Runs a scrollback task after every task queued before it.
+  private enqueue(task: Effect.Effect<void, FooterCallbackError>): void {
+    const previous = this.flushing
+    this.flushing = Effect.runFork(
+      Fiber.join(previous).pipe(
+        Effect.andThen(task),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            this.flushError = Option.some(error.cause)
+          }),
+        ),
+      ),
+    )
   }
 
   private present(view: FooterView): void {
@@ -563,32 +603,45 @@ export class RunFooter implements FooterApi {
     })
   }
 
+  // FooterApi keeps idle() Promise-based for the runtime; the Effect runs here.
   public idle(): Promise<void> {
-    if (this.isGone) {
-      return Promise.resolve()
-    }
+    return Effect.runPromise(this.settle())
+  }
 
-    this.flush()
-    if (this.state().phase === "idle") {
-      this.completeScrollback()
-    }
-
-    return this.flushing.then(async () => {
-      if (this.flushError !== undefined) {
-        const error = this.flushError
-        this.flushError = undefined
-        throw error
-      }
-
+  // Drains queued commits, then waits for the renderer. It fails with the
+  // first scrollback error recorded since the last settle.
+  private settle(): Effect.Effect<void, unknown> {
+    return Effect.suspend(() => {
       if (this.isGone) {
-        return
+        return Effect.void
       }
 
-      if (this.queue.length > 0) {
-        return this.idle()
+      this.flush()
+      if (this.state().phase === "idle") {
+        this.completeScrollback()
       }
 
-      await this.renderer.idle().catch(() => {})
+      return Fiber.join(this.flushing).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const error = this.flushError
+            if (Option.isSome(error)) {
+              this.flushError = Option.none()
+              return Effect.fail(error.value)
+            }
+
+            if (this.isGone) {
+              return Effect.void
+            }
+
+            if (this.queue.length > 0) {
+              return this.settle()
+            }
+
+            return rendererIdle(this.renderer)
+          }),
+        ),
+      )
     })
   }
 
@@ -626,7 +679,7 @@ export class RunFooter implements FooterApi {
   }
 
   public requestExit(): boolean {
-    return this.requestExitHandler?.() ?? this.handleExit()
+    return Option.match(this.requestExitHandler, { onNone: () => this.handleExit(), onSome: (fn) => fn() })
   }
 
   public destroy(): void {
@@ -639,7 +692,8 @@ export class RunFooter implements FooterApi {
     }
 
     this.closed = true
-    for (const fn of [...this.closes]) {
+    // Iterate a snapshot: a listener may unsubscribe while the loop runs.
+    for (const fn of Arr.fromIterable(this.closes)) {
       fn()
     }
   }
@@ -649,36 +703,41 @@ export class RunFooter implements FooterApi {
   }
 
   private setNotice(status: string): void {
-    const restore = this.noticeTimeout ? this.noticeRestoreStatus : this.state().status
-    this.clearNoticeTimer(false)
+    const restore = Option.getOrElse(this.noticeRestore, () => this.state().status)
+    this.clearNoticeTimer()
     this.patch({ status })
     if (!status) {
-      this.noticeRestoreStatus = ""
       return
     }
 
-    this.noticeRestoreStatus = restore
+    this.noticeRestore = Option.some(restore)
     const version = this.statusVersion
-    this.noticeTimeout = setTimeout(() => {
-      this.noticeTimeout = undefined
-      if (this.isGone || version !== this.statusVersion) {
-        this.noticeRestoreStatus = ""
-        return
-      }
+    this.noticeTimer.run(
+      Effect.sleep(NOTICE_DURATION).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const next = this.noticeRestore
+            this.noticeRestore = Option.none()
+            if (this.isGone || version !== this.statusVersion || Option.isNone(next)) {
+              return
+            }
 
-      const next = this.noticeRestoreStatus
-      this.noticeRestoreStatus = ""
-      this.patch({ status: next })
-    }, NOTICE_DURATION)
+            this.patch({ status: next.value })
+          }),
+        ),
+      ),
+    )
   }
 
-  private setRequestExitHandler = (fn?: () => boolean): void => {
+  private setRequestExitHandler = (fn: Option.Option<() => boolean>): void => {
     this.requestExitHandler = fn
   }
 
-  private handleQueuedRemove = async (messageID: string): Promise<boolean> => {
-    const fn = [...this.queuedRemoves][0]
-    return fn ? await fn(messageID) : false
+  private handleQueuedRemove = (messageID: string): Effect.Effect<boolean, FooterCallbackError> => {
+    return Option.match(Arr.head(Arr.fromIterable(this.queuedRemoves)), {
+      onNone: () => Effect.succeed(false),
+      onSome: (fn) => fromCallback("queued.remove", () => fn(messageID)),
+    })
   }
 
   private handleInputClear = (): void => {
@@ -755,41 +814,32 @@ export class RunFooter implements FooterApi {
       this.patch({ first: false })
     }
 
-    if (this.prompts.size === 0) {
+    if (MutableHashSet.size(this.prompts) === 0) {
       this.setNotice("input queue unavailable")
       return false
     }
 
-    for (const fn of [...this.prompts]) {
+    for (const fn of Arr.fromIterable(this.prompts)) {
       fn(input)
     }
 
     return true
   }
 
-  private handlePermissionReply = async (input: PermissionReply): Promise<void> => {
-    if (this.isClosed) {
-      return
-    }
+  private handlePermissionReply = (input: PermissionReply): Effect.Effect<void, FooterCallbackError> =>
+    Effect.suspend(() =>
+      this.isClosed ? Effect.void : fromCallback("permission.reply", () => this.options.onPermissionReply(input)),
+    )
 
-    await this.options.onPermissionReply(input)
-  }
+  private handleQuestionReply = (input: QuestionReply): Effect.Effect<void, FooterCallbackError> =>
+    Effect.suspend(() =>
+      this.isClosed ? Effect.void : fromCallback("question.reply", () => this.options.onQuestionReply(input)),
+    )
 
-  private handleQuestionReply = async (input: QuestionReply): Promise<void> => {
-    if (this.isClosed) {
-      return
-    }
-
-    await this.options.onQuestionReply(input)
-  }
-
-  private handleQuestionReject = async (input: QuestionReject): Promise<void> => {
-    if (this.isClosed) {
-      return
-    }
-
-    await this.options.onQuestionReject(input)
-  }
+  private handleQuestionReject = (input: QuestionReject): Effect.Effect<void, FooterCallbackError> =>
+    Effect.suspend(() =>
+      this.isClosed ? Effect.void : fromCallback("question.reject", () => this.options.onQuestionReject(input)),
+    )
 
   private handleCycle = (): void => {
     const result = this.options.onCycleVariant?.()
@@ -805,7 +855,7 @@ export class RunFooter implements FooterApi {
     }
 
     if ("variant" in result) {
-      this.setCurrentVariant(result.variant)
+      this.setCurrentVariant(Option.fromNullishOr(result.variant))
     }
 
     if (result.modelLabel) {
@@ -824,141 +874,126 @@ export class RunFooter implements FooterApi {
     const previous = this.currentModel()
     this.setCurrentModel(model)
     if (!previous || previous.providerID !== model.providerID || previous.modelID !== model.modelID) {
-      this.setCurrentVariant(undefined)
+      this.setCurrentVariant(Option.none())
     }
-    void Promise.resolve()
-      .then(() => this.options.onModelSelect?.(model))
-      .then((result) => {
-        const current = this.currentModel()
-        if (
-          !result ||
-          this.isClosed ||
-          !current ||
-          current.providerID !== model.providerID ||
-          current.modelID !== model.modelID
-        ) {
-          return
-        }
+    Effect.runFork(
+      fromCallback("model.select", () => this.options.onModelSelect?.(model)).pipe(
+        Effect.andThen((result) =>
+          Effect.sync(() => {
+            const current = this.currentModel()
+            if (
+              !result ||
+              this.isClosed ||
+              !current ||
+              current.providerID !== model.providerID ||
+              current.modelID !== model.modelID
+            ) {
+              return
+            }
 
-        if ("variants" in result) {
-          this.setVariants(result.variants ?? [])
-        }
-
-        if ("variant" in result) {
-          this.setCurrentVariant(result.variant)
-        }
-
-        const patch: FooterPatch = {}
-        if (result.modelLabel) {
-          patch.model = result.modelLabel
-        }
-
-        if (patch.model) {
-          this.patch(patch)
-        }
-        if (result.status) {
-          this.setNotice(result.status)
-        }
-      })
-      .catch(() => {})
+            this.applySelection(result)
+          }),
+        ),
+        Effect.ignore,
+      ),
+    )
   }
 
-  private handleVariantSelect = (variant: string | undefined): void => {
+  private handleVariantSelect = (variant: Option.Option<string>): void => {
     if (this.isClosed) {
       return
     }
 
     const model = this.currentModel()
-    void Promise.resolve()
-      .then(() => this.options.onVariantSelect?.(variant))
-      .then((result) => {
-        const current = this.currentModel()
-        if (
-          !result ||
-          this.isClosed ||
-          (model && (!current || current.providerID !== model.providerID || current.modelID !== model.modelID))
-        ) {
-          return
-        }
+    Effect.runFork(
+      // The runtime callback takes undefined for the default variant.
+      fromCallback("variant.select", () => this.options.onVariantSelect?.(Option.getOrUndefined(variant))).pipe(
+        Effect.andThen((result) =>
+          Effect.sync(() => {
+            const current = this.currentModel()
+            if (
+              !result ||
+              this.isClosed ||
+              (model && (!current || current.providerID !== model.providerID || current.modelID !== model.modelID))
+            ) {
+              return
+            }
 
-        if ("variants" in result) {
-          this.setVariants(result.variants ?? [])
-        }
+            this.applySelection(result)
+          }),
+        ),
+        Effect.ignore,
+      ),
+    )
+  }
 
-        if ("variant" in result) {
-          this.setCurrentVariant(result.variant)
-        }
+  // Applies the variants, model label and status that a model or variant
+  // selection returned.
+  private applySelection(result: CycleResult): void {
+    if ("variants" in result) {
+      this.setVariants(result.variants ?? [])
+    }
 
-        const patch: FooterPatch = {}
-        if (result.modelLabel) {
-          patch.model = result.modelLabel
-        }
+    if ("variant" in result) {
+      this.setCurrentVariant(Option.fromNullishOr(result.variant))
+    }
 
-        if (patch.model) {
-          this.patch(patch)
-        }
-        if (result.status) {
-          this.setNotice(result.status)
-        }
-      })
-      .catch(() => {})
+    const patch: FooterPatch = {}
+    if (result.modelLabel) {
+      patch.model = result.modelLabel
+    }
+
+    if (patch.model) {
+      this.patch(patch)
+    }
+    if (result.status) {
+      this.setNotice(result.status)
+    }
   }
 
   private clearInterruptTimer(): void {
-    if (!this.interruptTimeout) {
-      return
-    }
-
-    clearTimeout(this.interruptTimeout)
-    this.interruptTimeout = undefined
+    this.interruptTimer.interrupt()
   }
 
-  private clearNoticeTimer(reset = true): void {
-    if (!this.noticeTimeout) {
-      if (reset) {
-        this.noticeRestoreStatus = ""
-      }
-      return
-    }
-
-    clearTimeout(this.noticeTimeout)
-    this.noticeTimeout = undefined
-    if (reset) {
-      this.noticeRestoreStatus = ""
-    }
+  private clearNoticeTimer(): void {
+    this.noticeTimer.interrupt()
+    this.noticeRestore = Option.none()
   }
 
   private armInterruptTimer(): void {
-    this.clearInterruptTimer()
-    this.interruptTimeout = setTimeout(() => {
-      this.interruptTimeout = undefined
-      if (this.isGone || this.state().phase !== "running") {
-        return
-      }
+    this.interruptTimer.run(
+      Effect.sleep(TWO_PRESS_WINDOW).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (this.isGone || this.state().phase !== "running") {
+              return
+            }
 
-      this.patch({ interrupt: 0 })
-    }, 5000)
+            this.patch({ interrupt: 0 })
+          }),
+        ),
+      ),
+    )
   }
 
   private clearExitTimer(): void {
-    if (!this.exitTimeout) {
-      return
-    }
-
-    clearTimeout(this.exitTimeout)
-    this.exitTimeout = undefined
+    this.exitTimer.interrupt()
   }
 
   private armExitTimer(): void {
-    this.clearExitTimer()
-    this.exitTimeout = setTimeout(() => {
-      this.exitTimeout = undefined
-      if (this.isGone || this.isClosed) {
-        return
-      }
+    this.exitTimer.run(
+      Effect.sleep(TWO_PRESS_WINDOW).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (this.isGone || this.isClosed) {
+              return
+            }
 
-      this.patch({ exit: 0 })
-    }, 5000)
+            this.patch({ exit: 0 })
+          }),
+        ),
+      ),
+    )
   }
 
   // Two-press interrupt: first press shows a hint ("esc again to interrupt"),
@@ -1006,27 +1041,34 @@ export class RunFooter implements FooterApi {
   }
 
   private handlePalette = (): void => {
-    void resolveRunTheme(this.renderer).then((theme) => {
-      if (this.isGone) {
-        theme.block.syntax?.destroy()
-        theme.block.subtleSyntax?.destroy()
-        return
-      }
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () => resolveRunTheme(this.renderer),
+        catch: (cause) => new FooterCallbackError({ action: "theme.resolve", cause }),
+      }).pipe(
+        Effect.andThen((theme) =>
+          Effect.sync(() => {
+            if (this.isGone) {
+              theme.block.syntax?.destroy()
+              theme.block.subtleSyntax?.destroy()
+              return
+            }
 
-      // Keep the last known good theme when a runtime OSC probe times out.
-      if (theme === RUN_THEME_FALLBACK) {
-        return
-      }
+            // Keep the last known good theme when a runtime OSC probe times out.
+            if (theme === RUN_THEME_FALLBACK) {
+              return
+            }
 
-      this.themes.push(theme)
-      this.setTheme(theme)
-      this.renderer.setBackgroundColor(theme.background)
-      this.flushing = this.flushing
-        .then(() => this.scrollback.setTheme(theme))
-        .catch((error) => {
-          this.flushError = error
-        })
-    })
+            this.themes.push(theme)
+            this.setTheme(theme)
+            this.renderer.setBackgroundColor(theme.background)
+            this.enqueue(fromCallback("scrollback.setTheme", () => this.scrollback.setTheme(theme)))
+          }),
+        ),
+        // A failed palette probe keeps the current theme, like the fallback.
+        Effect.ignore,
+      ),
+    )
   }
 
   private handleThemeNotification = (sequence: string): boolean => {
@@ -1053,18 +1095,25 @@ export class RunFooter implements FooterApi {
     this.paletteRefreshRunning = true
     const retry = this.renderer.paletteDetectionStatus === "detecting"
     this.renderer.clearPaletteCache()
-    void this.renderer
-      .getPalette({ size: 256 })
-      .catch(() => {})
-      .finally(() => {
-        this.paletteRefreshRunning = false
-        if (!retry && !this.paletteRefreshQueued) {
-          return
-        }
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () => this.renderer.getPalette({ size: 256 }),
+        catch: (cause) => new FooterCallbackError({ action: "renderer.getPalette", cause }),
+      }).pipe(
+        Effect.ignore,
+        Effect.andThen(
+          Effect.sync(() => {
+            this.paletteRefreshRunning = false
+            if (!retry && !this.paletteRefreshQueued) {
+              return
+            }
 
-        this.paletteRefreshQueued = false
-        this.handleThemeRefresh()
-      })
+            this.paletteRefreshQueued = false
+            this.handleThemeRefresh()
+          }),
+        ),
+      ),
+    )
   }
 
   public refreshTheme(): void {
@@ -1073,11 +1122,13 @@ export class RunFooter implements FooterApi {
 
   private handleThemeSignal = (): void => {
     // Omarchy signals immediately after requesting a terminal config reload.
-    for (const timeout of this.themeRefreshTimeouts) clearTimeout(timeout)
-    this.themeRefreshTimeouts = THEME_REFRESH_DELAYS.map((delay) =>
-      setTimeout(() => {
-        this.handleThemeRefresh()
-      }, delay),
+    // Each delay counts from the signal, so the refreshes run side by side.
+    this.themeRefreshTimer.run(
+      Effect.forEach(
+        THEME_REFRESH_DELAYS,
+        (delay) => Effect.sleep(delay).pipe(Effect.andThen(Effect.sync(this.handleThemeRefresh))),
+        { concurrency: "unbounded", discard: true },
+      ),
     )
   }
 
@@ -1097,13 +1148,13 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeRefresh)
     this.renderer.removeInputHandler(this.handleThemeNotification)
     process.off("SIGUSR2", this.handleThemeSignal)
-    for (const timeout of this.themeRefreshTimeouts) clearTimeout(timeout)
-    this.themeRefreshTimeouts.length = 0
-    this.prompts.clear()
-    this.queuedRemoves.clear()
-    this.closes.clear()
+    this.themeRefreshTimer.interrupt()
+    MutableHashSet.clear(this.prompts)
+    MutableHashSet.clear(this.queuedRemoves)
+    MutableHashSet.clear(this.closes)
     this.scrollback.destroy()
-    for (const theme of [...this.themes]) this.destroyTheme(theme)
+    // destroyTheme removes each theme from the list, so it walks a copy.
+    for (const theme of Arr.copy(this.themes)) this.destroyTheme(theme)
   }
 
   // Drains the commit queue to scrollback. The surface manager owns grouping,
@@ -1116,14 +1167,10 @@ export class RunFooter implements FooterApi {
     }
 
     const batch = this.queue.splice(0)
-    this.flushing = this.flushing
-      .then(async () => {
-        for (const item of batch) {
-          await this.scrollback.append(item)
-        }
-      })
-      .catch((error) => {
-        this.flushError = error
-      })
+    this.enqueue(
+      Effect.forEach(batch, (item) => fromCallback("scrollback.append", () => this.scrollback.append(item)), {
+        discard: true,
+      }),
+    )
   }
 }

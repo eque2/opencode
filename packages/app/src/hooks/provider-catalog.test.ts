@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import type { Provider } from "@opencode-ai/sdk/v2/client"
+import { HashMap, Option } from "effect"
 import { resolveDefaultModel, selectProviderCatalog } from "./provider-catalog"
 
-const catalog = (id: string): NormalizedProviderListResponse => ({
-  all: new Map([[id, { id, name: id, source: "api", env: [], options: {}, models: {} }]]),
-  connected: [id],
-  default: { [id]: `${id}-model` },
-})
+const catalog = (id: string): NormalizedProviderListResponse => {
+  const provider: Provider = { id, name: id, source: "api", env: [], options: {}, models: {} }
+  return {
+    all: HashMap.make([id, provider]),
+    connected: [id],
+    default: { [id]: `${id}-model` },
+  }
+}
 
 test("selects the ready catalog for an explicit directory", () => {
   const directory = catalog("directory")
@@ -21,14 +26,14 @@ test("selects the ready catalog for an explicit directory", () => {
 })
 
 test("returns an empty catalog while an explicit directory is unresolved", () => {
-  expect(selectProviderCatalog({ explicit: true })).toEqual({ all: new Map(), connected: [], default: {} })
+  expect(selectProviderCatalog({ explicit: true })).toEqual({ all: HashMap.empty(), connected: [], default: {} })
   expect(
     selectProviderCatalog({
       explicit: true,
       directory: "/repo",
       catalog: { ready: false, providers: catalog("directory") },
     }),
-  ).toEqual({ all: new Map(), connected: [], default: {} })
+  ).toEqual({ all: HashMap.empty(), connected: [], default: {} })
 })
 
 test("uses the route catalog when it is ready", () => {
@@ -66,11 +71,12 @@ test("uses the current server default model", () => {
 })
 
 test("does not use legacy config when the current server has no default", () => {
-  expect(resolveDefaultModel(null, "anthropic/claude")).toBeUndefined()
+  const noServerDefault = Option.none<{ providerID: string; modelID: string }>()
+  expect(resolveDefaultModel(Option.getOrNull(noServerDefault), "anthropic/claude")).toBeUndefined()
 })
 
 test("uses config for legacy servers", () => {
-  expect(resolveDefaultModel(undefined, "anthropic/claude")).toEqual({
+  expect(resolveDefaultModel(catalog("legacy").defaultModel, "anthropic/claude")).toEqual({
     providerID: "anthropic",
     modelID: "claude",
   })

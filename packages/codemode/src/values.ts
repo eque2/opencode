@@ -1,11 +1,22 @@
-import type { Effect, Fiber } from "effect"
+import { Effect, type Fiber, Option } from "effect"
 
+// A sandbox promise value: a tool call running on its own fiber, or a promise settled up front
+// (Promise.resolve / Promise.reject) that has no fiber.
 export class SandboxPromise {
   interrupted = false
-  constructor(
-    readonly fiber: Fiber.Fiber<unknown, unknown> | undefined,
-    readonly immediate?: Effect.Effect<unknown, unknown>,
+  private constructor(
+    readonly fiber: Option.Option<Fiber.Fiber<unknown, unknown>>,
+    // The settlement of a promise without a fiber; a fiber-backed promise settles through its fiber.
+    readonly immediate: Effect.Effect<unknown, unknown>,
   ) {}
+
+  static fromFiber(fiber: Fiber.Fiber<unknown, unknown>): SandboxPromise {
+    return new SandboxPromise(Option.some(fiber), Effect.void)
+  }
+
+  static settled(settlement: Effect.Effect<unknown, unknown>): SandboxPromise {
+    return new SandboxPromise(Option.none(), settlement)
+  }
 }
 
 export class SandboxDate {
@@ -19,11 +30,19 @@ export class SandboxRegExp {
   }
 }
 
+// The sandbox Map follows JS Map semantics: SameValueZero keys (object and array keys by identity)
+// and insertion order. Effect HashMap and MutableHashMap compare plain-object and array keys
+// structurally, so two distinct `{}` keys become one entry; HashMap also has no insertion order.
 export class SandboxMap {
+  // eslint-disable-next-line effect/no-map-use-hashmap -- (b) the sandbox Map holds program values under JS SameValueZero identity and insertion order, which Effect HashMap does not keep
   readonly map = new Map<unknown, unknown>()
 }
 
+// The sandbox Set follows JS Set semantics: SameValueZero members (objects and arrays by identity)
+// and insertion order. Effect HashSet and MutableHashSet compare plain objects and arrays
+// structurally, so two distinct `[1]` arrays become one member; HashSet also has no insertion order.
 export class SandboxSet {
+  // eslint-disable-next-line effect/no-set-use-hashset -- (b) the sandbox Set holds program values under JS SameValueZero identity and insertion order, which Effect HashSet does not keep
   readonly set = new Set<unknown>()
 }
 

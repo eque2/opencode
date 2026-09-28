@@ -1,6 +1,6 @@
 // @ts-ignore Bun's static file import is embedded by `bun build --compile`; some consumers also declare *.wasm.
 import photonWasm from "@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" }
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { FileSystem } from "../filesystem"
@@ -28,67 +28,74 @@ export const make = Effect.gen(function* () {
     },
   ) {
     const photon = yield* loadPhoton
-    const decoded = yield* Effect.try({
-      try: () => photon.PhotonImage.new_from_byteslice(Buffer.from(content.content, "base64")),
-      catch: () => new DecodeError({ resource }),
-    })
-    try {
-      const width = decoded.get_width()
-      const height = decoded.get_height()
-      const bytes = Buffer.byteLength(content.content, "utf-8")
-      if (width <= limits.maxWidth && height <= limits.maxHeight && bytes <= limits.maxBase64Bytes) return content
-      if (!limits.autoResize)
-        return yield* new SizeError({
-          resource,
-          width,
-          height,
-          bytes,
-          maxWidth: limits.maxWidth,
-          maxHeight: limits.maxHeight,
-          maxBytes: limits.maxBase64Bytes,
-        })
-      const scale = Math.min(1, limits.maxWidth / width, limits.maxHeight / height)
-      const sizes = Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((acc) => {
-        const previous = acc.at(-1) ?? {
-          width: Math.max(1, Math.round(width * scale)),
-          height: Math.max(1, Math.round(height * scale)),
-        }
-        const next =
-          acc.length === 0
-            ? previous
-            : {
-                width: previous.width === 1 ? 1 : Math.max(1, Math.floor(previous.width * 0.75)),
-                height: previous.height === 1 ? 1 : Math.max(1, Math.floor(previous.height * 0.75)),
-              }
-        return acc.some((item) => item.width === next.width && item.height === next.height) ? acc : [...acc, next]
-      }, [])
-      for (const size of sizes) {
-        const resized = photon.resize(decoded, size.width, size.height, photon.SamplingFilter.Lanczos3)
-        try {
-          const encoders: Array<readonly [mime: string, encode: () => Uint8Array]> = [
-            ["image/png", () => resized.get_bytes()],
-            ...JPEG_QUALITIES.map((quality) => ["image/jpeg", () => resized.get_bytes_jpeg(quality)] as const),
-          ]
-          for (const [mime, encode] of encoders) {
-            const candidate = Buffer.from(encode()).toString("base64")
-            if (Buffer.byteLength(candidate, "utf-8") <= limits.maxBase64Bytes)
-              return { ...content, content: candidate, encoding: "base64" as const, mime }
+    // Photon images live in WASM memory, so each one is freed when its use ends, on success or failure.
+    return yield* Effect.acquireUseRelease(
+      Effect.try({
+        try: () => photon.PhotonImage.new_from_byteslice(Buffer.from(content.content, "base64")),
+        catch: () => new DecodeError({ resource }),
+      }),
+      (decoded) =>
+        Effect.gen(function* () {
+          const width = decoded.get_width()
+          const height = decoded.get_height()
+          const bytes = Buffer.byteLength(content.content, "utf-8")
+          if (width <= limits.maxWidth && height <= limits.maxHeight && bytes <= limits.maxBase64Bytes) return content
+          if (!limits.autoResize)
+            return yield* new SizeError({
+              resource,
+              width,
+              height,
+              bytes,
+              maxWidth: limits.maxWidth,
+              maxHeight: limits.maxHeight,
+              maxBytes: limits.maxBase64Bytes,
+            })
+          const scale = Math.min(1, limits.maxWidth / width, limits.maxHeight / height)
+          const sizes = Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((acc) => {
+            const previous = acc.at(-1) ?? {
+              width: Math.max(1, Math.round(width * scale)),
+              height: Math.max(1, Math.round(height * scale)),
+            }
+            const next =
+              acc.length === 0
+                ? previous
+                : {
+                    width: previous.width === 1 ? 1 : Math.max(1, Math.floor(previous.width * 0.75)),
+                    height: previous.height === 1 ? 1 : Math.max(1, Math.floor(previous.height * 0.75)),
+                  }
+            return acc.some((item) => item.width === next.width && item.height === next.height) ? acc : [...acc, next]
+          }, [])
+          for (const size of sizes) {
+            const encoded = yield* Effect.acquireUseRelease(
+              Effect.sync(() => photon.resize(decoded, size.width, size.height, photon.SamplingFilter.Lanczos3)),
+              (resized) =>
+                Effect.sync(() => {
+                  const encoders: Array<readonly [mime: string, encode: () => Uint8Array]> = [
+                    ["image/png", () => resized.get_bytes()],
+                    ...JPEG_QUALITIES.map((quality) => ["image/jpeg", () => resized.get_bytes_jpeg(quality)] as const),
+                  ]
+                  for (const [mime, encode] of encoders) {
+                    const candidate = Buffer.from(encode()).toString("base64")
+                    if (Buffer.byteLength(candidate, "utf-8") <= limits.maxBase64Bytes)
+                      return Option.some({ ...content, content: candidate, encoding: "base64" as const, mime })
+                  }
+                  return Option.none()
+                }),
+              (resized) => Effect.sync(() => resized.free()),
+            )
+            if (Option.isSome(encoded)) return encoded.value
           }
-        } finally {
-          resized.free()
-        }
-      }
-      return yield* new SizeError({
-        resource,
-        width,
-        height,
-        bytes,
-        maxWidth: limits.maxWidth,
-        maxHeight: limits.maxHeight,
-        maxBytes: limits.maxBase64Bytes,
-      })
-    } finally {
-      decoded.free()
-    }
+          return yield* new SizeError({
+            resource,
+            width,
+            height,
+            bytes,
+            maxWidth: limits.maxWidth,
+            maxHeight: limits.maxHeight,
+            maxBytes: limits.maxBase64Bytes,
+          })
+        }),
+      (decoded) => Effect.sync(() => decoded.free()),
+    )
   })
 })

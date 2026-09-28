@@ -8,6 +8,7 @@ import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
 import { Icon } from "@opencode-ai/ui/icon"
 import { errorDescriptionKey } from "./error-description"
+import { Data, Effect, Fiber, Option, Predicate, Schema } from "effect"
 
 export type InitError = {
   name: string
@@ -28,30 +29,29 @@ function isIssue(value: unknown): value is { message: string; path: string[] } {
 }
 
 function isInitError(error: unknown): error is InitError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    "data" in error &&
-    typeof (error as InitError).data === "object"
-  )
+  return Predicate.isObjectOrArray(error) && "name" in error && "data" in error && typeof error.data === "object"
 }
 
+/**
+ * Encodes a value as indented JSON text. A bigint becomes its digits, and an object seen before becomes
+ * `circular`. A value with no JSON form (undefined, a function or a symbol) falls back to String(value).
+ */
 function safeJson(value: unknown, circular: string): string {
   const seen = new WeakSet<object>()
-  const json = JSON.stringify(
-    value,
-    (_key, val) => {
-      if (typeof val === "bigint") return val.toString()
-      if (typeof val === "object" && val) {
-        if (seen.has(val)) return circular
-        seen.add(val)
-      }
-      return val
-    },
-    2,
+  const encode = Schema.encodeOption(
+    Schema.fromJsonString(Schema.Unknown, {
+      space: 2,
+      replacer: (_key: string, val: unknown) => {
+        if (typeof val === "bigint") return val.toString()
+        if (typeof val === "object" && val) {
+          if (seen.has(val)) return circular
+          seen.add(val)
+        }
+        return val
+      },
+    }),
   )
-  return json ?? String(value)
+  return Option.getOrElse(encode(value), () => String(value))
 }
 
 function formatInitError(error: InitError, t: Translator): string {
@@ -69,36 +69,24 @@ function formatInitError(error: InitError, t: Translator): string {
     }
     case "APIError": {
       const message = typeof data.message === "string" ? data.message : t("error.chain.apiError")
-      const lines: string[] = [message]
-
-      if (typeof data.statusCode === "number") {
-        lines.push(t("error.chain.status", { status: data.statusCode }))
-      }
-
-      if (typeof data.isRetryable === "boolean") {
-        lines.push(t("error.chain.retryable", { retryable: data.isRetryable }))
-      }
-
-      if (typeof data.responseBody === "string" && data.responseBody) {
-        lines.push(t("error.chain.responseBody", { body: data.responseBody }))
-      }
-
-      return lines.join("\n")
+      return [
+        message,
+        ...(typeof data.statusCode === "number" ? [t("error.chain.status", { status: data.statusCode })] : []),
+        ...(typeof data.isRetryable === "boolean" ? [t("error.chain.retryable", { retryable: data.isRetryable })] : []),
+        ...(typeof data.responseBody === "string" && data.responseBody
+          ? [t("error.chain.responseBody", { body: data.responseBody })]
+          : []),
+      ].join("\n")
     }
     case "ProviderModelNotFoundError": {
-      const { providerID, modelID, suggestions } = data as {
-        providerID: string
-        modelID: string
-        suggestions?: string[]
-      }
-
       const suggestionsLine =
-        Array.isArray(suggestions) && suggestions.length
-          ? [t("error.chain.didYouMean", { suggestions: suggestions.join(", ") })]
+        Array.isArray(data.suggestions) && data.suggestions.length
+          ? [t("error.chain.didYouMean", { suggestions: data.suggestions.join(", ") })]
           : []
 
+      // The template shows a field of another type as its String form, as it did before these reads were typed.
       return [
-        t("error.chain.modelNotFound", { provider: providerID, model: modelID }),
+        t("error.chain.modelNotFound", { provider: String(data.providerID), model: String(data.modelID) }),
         ...suggestionsLine,
         t("error.chain.checkConfig"),
       ].join("\n")
@@ -158,47 +146,13 @@ function formatErrorChain(error: unknown, t: Translator, depth = 0, parentMessag
 
   if (error instanceof Error) {
     const isDuplicate = depth > 0 && parentMessage === error.message
-    const parts: string[] = []
     const indent = depth > 0 ? `\n${CHAIN_SEPARATOR}${t("error.chain.causedBy")}\n` : ""
-
     const header = `${error.name}${error.message ? `: ${error.message}` : ""}`
-    const stack = error.stack?.trim()
-
-    if (stack) {
-      const startsWithHeader = stack.startsWith(header)
-
-      if (isDuplicate && startsWithHeader) {
-        const trace = stack.split("\n").slice(1).join("\n").trim()
-        if (trace) {
-          parts.push(indent + trace)
-        }
-      }
-
-      if (isDuplicate && !startsWithHeader) {
-        parts.push(indent + stack)
-      }
-
-      if (!isDuplicate && startsWithHeader) {
-        parts.push(indent + stack)
-      }
-
-      if (!isDuplicate && !startsWithHeader) {
-        parts.push(indent + `${header}\n${stack}`)
-      }
-    }
-
-    if (!stack && !isDuplicate) {
-      parts.push(indent + header)
-    }
-
-    if (error.cause) {
-      const causeResult = formatErrorChain(error.cause, t, depth + 1, error.message)
-      if (causeResult) {
-        parts.push(causeResult)
-      }
-    }
-
-    return parts.join("\n\n")
+    const causeResult = error.cause ? formatErrorChain(error.cause, t, depth + 1, error.message) : ""
+    return [
+      ...errorParts(error.stack?.trim(), header, isDuplicate).map((part) => indent + part),
+      ...(causeResult ? [causeResult] : []),
+    ].join("\n\n")
   }
 
   if (typeof error === "string") {
@@ -211,6 +165,21 @@ function formatErrorChain(error: unknown, t: Translator, depth = 0, parentMessag
   return indent + json(error)
 }
 
+/**
+ * The text of one error in the chain. A duplicate of its parent message shows only the stack trace;
+ * otherwise the header comes first, unless the stack already starts with it.
+ */
+function errorParts(stack: string | undefined, header: string, isDuplicate: boolean): string[] {
+  if (!stack) return isDuplicate ? [] : [header]
+  const startsWithHeader = stack.startsWith(header)
+  if (isDuplicate && startsWithHeader) {
+    const trace = stack.split("\n").slice(1).join("\n").trim()
+    return trace ? [trace] : []
+  }
+  if (!isDuplicate && !startsWithHeader) return [`${header}\n${stack}`]
+  return [stack]
+}
+
 function formatError(error: unknown, t: Translator): string {
   return formatErrorChain(error, t, 0)
 }
@@ -219,60 +188,104 @@ interface ErrorPageProps {
   error: unknown
 }
 
+/** A platform action of the error page that rejected. `cause` is the original rejection. */
+class ErrorPageActionError extends Data.TaggedError("App.ErrorPageActionError")<{ readonly cause: unknown }> {}
+
+/** Runs one platform call as an Effect. A rejection fails with ErrorPageActionError. */
+const platformAction = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new ErrorPageActionError({ cause }) })
+
+/** Runs an optional platform call. When the platform has no such method, it succeeds at once. */
+const optionalPlatformAction = <A,>(call: () => Promise<A> | undefined) =>
+  Effect.suspend(() =>
+    Option.match(Option.fromNullishOr(call()), {
+      onNone: () => Effect.void,
+      onSome: (pending) => Effect.asVoid(platformAction(() => pending)),
+    }),
+  )
+
+/**
+ * Runs an error page action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 export const ErrorPage: Component<ErrorPageProps> = (props) => {
   const platform = usePlatform()
   const language = useLanguage()
   const formattedError = () => formatError(props.error, language.t)
-  let recordedFatalError: Promise<void> | undefined
   const [store, setStore] = createStore({
-    actionError: undefined as string | undefined,
+    // The message of the last failed action; none after a success.
+    actionError: Option.none<string>(),
   })
+  const recordFatalError = optionalPlatformAction(() =>
+    platform.recordFatalRendererError?.({
+      error: formattedError(),
+      url: location.href,
+      version: platform.version,
+      platform: platform.platform,
+      os: platform.os,
+    }),
+  )
+  let fatalErrorRecording = Option.none<Fiber.Fiber<void, ErrorPageActionError>>()
 
-  function ensureFatalErrorRecorded() {
-    recordedFatalError ??=
-      platform.recordFatalRendererError?.({
-        error: formattedError(),
-        url: location.href,
-        version: platform.version,
-        platform: platform.platform,
-        os: platform.os,
-      }) ?? Promise.resolve()
-    return recordedFatalError
+  /** Starts recording the fatal error on the first call. Every call returns that one recording. */
+  function startFatalErrorRecording() {
+    const recording = Option.getOrElse(fatalErrorRecording, () => Effect.runFork(recordFatalError))
+    fatalErrorRecording = Option.some(recording)
+    return recording
   }
 
+  /** Shows the error of a failed action, or clears the shown error after a success. */
+  const showActionResult = <A,>(action: Effect.Effect<A, ErrorPageActionError>) =>
+    Effect.match(action, {
+      onFailure: (error) => setStore("actionError", Option.some(formatError(error.cause, language.t))),
+      onSuccess: () => setStore("actionError", Option.none()),
+    })
+
+  // Nothing waits for this recording here, so a failure is dropped, as before.
   onMount(() => {
-    void ensureFatalErrorRecorded().catch(() => undefined)
+    startFatalErrorRecording()
   })
 
-  async function checkForUpdates() {
-    const state = await platform.updater?.check()
-    setStore("actionError", state?.status === "error" ? state.message : undefined)
+  function checkForUpdates() {
+    const updater = platform.updater
+    runDetached(
+      Effect.gen(function* () {
+        const state = updater ? Option.some(yield* platformAction(() => updater.check())) : Option.none()
+        setStore(
+          "actionError",
+          Option.flatMap(state, (next) => (next.status === "error" ? Option.some(next.message) : Option.none())),
+        )
+      }),
+    )
   }
 
-  async function installUpdate() {
-    await platform.updater
-      ?.install()
-      .then(() => setStore("actionError", undefined))
-      .catch((err) => {
-        setStore("actionError", formatError(err, language.t))
-      })
+  function installUpdate() {
+    const updater = platform.updater
+    if (!updater) return
+    runDetached(showActionResult(platformAction(() => updater.install())))
   }
 
+  // The version of a downloaded update, for <Show>; undefined while no update is ready.
   const updateVersion = () => {
     const state = platform.updater?.state()
-    if (state?.status !== "ready") return
+    if (state?.status !== "ready") return undefined
     return state.version
   }
 
-  async function exportDebugLogs() {
-    const exportLogs = platform.exportDebugLogs
-    if (!exportLogs) return
-    await ensureFatalErrorRecorded()
-      .then(() => exportLogs())
-      .then(() => setStore("actionError", undefined))
-      .catch((err) => {
-        setStore("actionError", formatError(err, language.t))
-      })
+  function exportDebugLogs() {
+    if (!platform.exportDebugLogs) return
+    // The logs must include the fatal error record, so the export waits for it.
+    runDetached(
+      showActionResult(
+        Fiber.join(startFatalErrorRecording()).pipe(
+          Effect.andThen(optionalPlatformAction(() => platform.exportDebugLogs?.())),
+        ),
+      ),
+    )
   }
 
   return (
@@ -296,10 +309,10 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
           hideLabel
         />
         <div class="flex flex-row items-center justify-center gap-3 flex-wrap max-w-64">
-          <Button size="large" onClick={platform.restart}>
+          <Button size="large" onClick={() => platform.restart()}>
             {language.t("error.page.action.restart")}
           </Button>
-          <Show when={platform.platform === "desktop" && platform.exportDebugLogs}>
+          <Show when={platform.platform === "desktop" && !!platform.exportDebugLogs}>
             <Button size="large" variant="ghost" onClick={exportDebugLogs}>
               {language.t("error.page.action.exportLogs")}
             </Button>
@@ -345,7 +358,7 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
             </Show>
           </Show>
         </div>
-        <Show when={store.actionError}>
+        <Show when={Option.getOrUndefined(store.actionError)}>
           {(message) => <p class="text-xs text-text-danger-base text-center max-w-2xl">{message()}</p>}
         </Show>
         <div class="flex flex-col items-center gap-2">

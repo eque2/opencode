@@ -1,6 +1,6 @@
-import type { ThemeRegistrationResolved } from "@pierre/diffs"
+import type { ThemeRegistration } from "@pierre/diffs"
 
-export const OpenCodeTheme = {
+export const OpenCodeTheme: ThemeRegistration = {
   name: "OpenCode",
   bg: "var(--color-background-stronger)",
   fg: "var(--text-base)",
@@ -369,4 +369,4 @@ export const OpenCodeTheme = {
     "variable.constant": "var(--syntax-constant)",
     "variable.defaultLibrary": "var(--syntax-unknown)",
   },
-} as unknown as ThemeRegistrationResolved
+}

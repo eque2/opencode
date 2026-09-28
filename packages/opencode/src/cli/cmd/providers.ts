@@ -6,17 +6,17 @@ import { UI } from "../ui"
 import * as Prompt from "../effect/prompt"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 
-import { map, pipe, sortBy, values } from "remeda"
 import path from "path"
 import os from "os"
 import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin } from "../../plugin"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { errorMessage } from "@/util/error"
-import { text } from "node:stream/consumers"
-import { Effect, Option } from "effect"
+import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Order, Schema } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -25,10 +25,30 @@ const promptValue = <Value>(value: Option.Option<Value>) => {
   return Effect.succeed(value.value)
 }
 
+// @clack/prompts accepts the input when validate returns undefined and shows a returned string as the error.
+function required(value: string | undefined) {
+  if (value && value.length > 0) return undefined
+  return "Required"
+}
+
+function providerID(value: string | undefined) {
+  if (value && value.match(/^[0-9a-z-]+$/)) return undefined
+  return "a-z, 0-9 and hyphens only"
+}
+
 const put = Effect.fn("Cli.providers.put")(function* (key: string, info: Auth.Info) {
   const auth = yield* Auth.Service
   yield* Effect.orDie(auth.set(key, info))
 })
+
+/** The `/.well-known/opencode` document of an opencode auth provider. */
+const WellKnown = Schema.Struct({
+  auth: Schema.Struct({ command: Schema.Array(Schema.String), env: Schema.String }),
+}).annotate({
+  identifier: "ProvidersWellKnown",
+  description: "The auth command and the env variable name that an opencode auth provider publishes",
+})
+const decodeWellKnown = Schema.decodeUnknownEffect(WellKnown)
 
 const cliTry = <Value>(message: string, fn: () => PromiseLike<Value>) =>
   Effect.tryPromise({
@@ -83,10 +103,11 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
         inputs[prompt.key] = yield* promptValue(value)
         continue
       }
+      const validate = prompt.validate
       const value = yield* Prompt.text({
         message: prompt.message,
         placeholder: prompt.placeholder,
-        validate: prompt.validate ? (v) => prompt.validate!(v ?? "") : undefined,
+        ...(validate ? { validate: (v: string | undefined) => validate(v ?? "") } : {}),
       })
       inputs[prompt.key] = yield* promptValue(value)
     }
@@ -135,7 +156,7 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
     if (authorize.method === "code") {
       const code = yield* Prompt.text({
         message: "Paste the authorization code here: ",
-        validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+        validate: required,
       })
       const authorizationCode = yield* promptValue(code)
       const result = yield* cliTry("Failed to authorize: ", () => authorize.callback(authorizationCode))
@@ -172,13 +193,12 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
   if (method.type === "api") {
     const key = yield* Prompt.password({
       message: "Enter your API key",
-      validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+      validate: required,
     })
     const apiKey = yield* promptValue(key)
 
     const metadata = Object.keys(inputs).length ? { metadata: inputs } : {}
-    const authorizeApi = method.authorize
-    if (!authorizeApi) {
+    if (!method.authorize) {
       yield* put(provider, {
         type: "api",
         key: apiKey,
@@ -188,13 +208,14 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
       return true
     }
 
+    const authorizeApi = method.authorize.bind(method)
     const result = yield* cliTry("Failed to authorize: ", () => authorizeApi(inputs))
     if (result.type === "failed") {
       yield* Prompt.log.error("Failed to authorize")
     }
     if (result.type === "success") {
       const saveProvider = result.provider ?? provider
-      const merged = { ...(metadata.metadata ?? {}), ...(result.metadata ?? {}) }
+      const merged = { ...metadata.metadata, ...result.metadata }
       yield* put(saveProvider, {
         type: "api",
         key: result.key ?? apiKey,
@@ -212,28 +233,19 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
 export function resolvePluginProviders(input: {
   hooks: Hooks[]
   existingProviders: Record<string, unknown>
-  disabled: Set<string>
-  enabled?: Set<string>
+  disabled: Iterable<string>
+  enabled?: Iterable<string>
   providerNames: Record<string, string | undefined>
 }): Array<{ id: string; name: string }> {
-  const seen = new Set<string>()
-  const result: Array<{ id: string; name: string }> = []
-
-  for (const hook of input.hooks) {
-    if (!hook.auth) continue
-    const id = hook.auth.provider
-    if (seen.has(id)) continue
-    seen.add(id)
-    if (Object.hasOwn(input.existingProviders, id)) continue
-    if (input.disabled.has(id)) continue
-    if (input.enabled && !input.enabled.has(id)) continue
-    result.push({
-      id,
-      name: input.providerNames[id] ?? id,
-    })
-  }
-
-  return result
+  const disabled = Arr.fromIterable(input.disabled)
+  const enabled = input.enabled && Arr.fromIterable(input.enabled)
+  // The first hook that declares a provider wins; later duplicates are skipped.
+  return Arr.dedupe(input.hooks.flatMap((hook) => (hook.auth ? [hook.auth.provider] : [])))
+    .filter(
+      (id) =>
+        !Object.hasOwn(input.existingProviders, id) && !disabled.includes(id) && (!enabled || enabled.includes(id)),
+    )
+    .map((id) => ({ id, name: input.providerNames[id] ?? id }))
 }
 
 export const ProvidersCommand = cmd({
@@ -242,7 +254,7 @@ export const ProvidersCommand = cmd({
   describe: "manage AI providers and credentials",
   builder: (yargs) =>
     yargs.command(ProvidersListCommand).command(ProvidersLoginCommand).command(ProvidersLogoutCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 export const ProvidersListCommand = effectCmd({
@@ -270,18 +282,18 @@ export const ProvidersListCommand = effectCmd({
 
     yield* Prompt.outro(`${results.length} credentials`)
 
-    const activeEnvVars: Array<{ provider: string; envVar: string }> = []
-
-    for (const [providerID, provider] of Object.entries(database)) {
-      for (const envVar of provider.env) {
-        if (process.env[envVar]) {
-          activeEnvVars.push({
-            provider: provider.name || providerID,
-            envVar,
-          })
-        }
-      }
-    }
+    const candidates = Object.entries(database).flatMap(([providerID, provider]) =>
+      provider.env.map((envVar) => ({ provider: provider.name || providerID, envVar })),
+    )
+    // Read the live process environment. fromEnv treats an empty value as not set.
+    const env = yield* Effect.sync(() => ConfigProvider.fromEnv())
+    const activeEnvVars = Arr.getSomes(
+      yield* Effect.forEach(candidates, (candidate) =>
+        EffectConfig.option(EffectConfig.String(candidate.envVar))
+          .parse(env)
+          .pipe(Effect.orDie, Effect.map(Option.map(() => candidate))),
+      ),
+    )
 
     if (activeEnvVars.length > 0) {
       UI.empty()
@@ -324,23 +336,28 @@ export const ProvidersLoginCommand = effectCmd({
     yield* Prompt.intro("Add credential")
     if (args.url) {
       const url = args.url.replace(/\/+$/, "")
-      const wellknown = (yield* cliTry(`Failed to load auth provider metadata from ${url}: `, () =>
-        fetch(`${url}/.well-known/opencode`).then((x) => x.json()),
-      )) as {
-        auth: { command: string[]; env: string }
-      }
+      const metadataError = `Failed to load auth provider metadata from ${url}: `
+      const response = yield* cliTry(metadataError, () => fetch(`${url}/.well-known/opencode`))
+      const wellknown = yield* cliTry(metadataError, () => response.json()).pipe(
+        Effect.flatMap(decodeWellKnown),
+        Effect.mapError((error) => new CliError({ message: metadataError + errorMessage(error) })),
+      )
       yield* Prompt.log.info(`Running \`${wellknown.auth.command.join(" ")}\``)
-      const abort = new AbortController()
-      const proc = Process.spawn(wellknown.auth.command, { stdout: "pipe", stderr: "inherit", abort: abort.signal })
-      if (!proc.stdout) {
-        yield* Prompt.log.error("Failed")
-        yield* Prompt.outro("Done")
-        return
-      }
-      const [exit, token] = yield* cliTry("Failed to run auth provider command: ", () =>
-        Promise.all([proc.exited, text(proc.stdout!)]),
-      ).pipe(Effect.ensuring(Effect.sync(() => abort.abort())))
-      if (exit !== 0) {
+      const command = wellknown.auth.command
+      const commandError = "Failed to run auth provider command: "
+      // The command shares the terminal through stderr, so it stays in this process group. The login
+      // handler runs under AppRuntime, which does not provide AppProcess, so the call provides its own.
+      // An interrupted login ends the command with the run's scope.
+      const result = yield* AppProcess.Service.use((appProcess) =>
+        appProcess.run(
+          ChildProcess.make(command[0], command.slice(1), { stdin: "ignore", stderr: "inherit", detached: false }),
+        ),
+      ).pipe(
+        Effect.mapError((error) => new CliError({ message: commandError + errorMessage(error) })),
+        Effect.provide(LayerNode.compile(AppProcess.node)),
+      )
+      const token = result.stdout.toString()
+      if (result.exitCode !== 0) {
         yield* Prompt.log.error("Failed")
         yield* Prompt.outro("Done")
         return
@@ -358,13 +375,13 @@ export const ProvidersLoginCommand = effectCmd({
 
     const config = yield* cfgSvc.get()
 
-    const disabled = new Set(config.disabled_providers ?? [])
-    const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+    const disabled = config.disabled_providers ?? []
+    const enabled = config.enabled_providers
 
     const allProviders = yield* modelsDev.get()
     const providers: Record<string, (typeof allProviders)[string]> = {}
     for (const [key, value] of Object.entries(allProviders)) {
-      if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) providers[key] = value
+      if ((enabled ? enabled.includes(key) : true) && !disabled.includes(key)) providers[key] = value
     }
     const hooks = yield* pluginSvc.list()
 
@@ -377,6 +394,10 @@ export const ProvidersLoginCommand = effectCmd({
       openrouter: 5,
       vercel: 6,
     }
+    const hints: Partial<Record<string, string>> = {
+      opencode: "recommended",
+      openai: "ChatGPT Plus/Pro or API key",
+    }
     const pluginProviders = resolvePluginProviders({
       hooks,
       existingProviders: providers,
@@ -385,22 +406,14 @@ export const ProvidersLoginCommand = effectCmd({
       providerNames: Object.fromEntries(Object.entries(config.provider ?? {}).map(([id, p]) => [id, p.name])),
     })
     const options = [
-      ...pipe(
-        providers,
-        values(),
-        sortBy(
-          (x) => priority[x.id] ?? 99,
-          (x) => x.name ?? x.id,
-        ),
-        map((x) => ({
-          label: x.name,
-          value: x.id,
-          hint: {
-            opencode: "recommended",
-            openai: "ChatGPT Plus/Pro or API key",
-          }[x.id],
-        })),
-      ),
+      ...Arr.sortBy(
+        Order.mapInput(Order.Number, (x: (typeof providers)[string]) => priority[x.id] ?? 99),
+        Order.mapInput(Order.String, (x: (typeof providers)[string]) => x.name ?? x.id),
+      )(Object.values(providers)).map((x) => ({
+        label: x.name,
+        value: x.id,
+        hint: hints[x.id],
+      })),
       ...pluginProviders.map((x) => ({
         label: x.name,
         value: x.id,
@@ -408,29 +421,27 @@ export const ProvidersLoginCommand = effectCmd({
       })),
     ]
 
-    let provider: string
-    if (args.provider) {
+    let provider = yield* Effect.gen(function* () {
+      if (!args.provider) {
+        return yield* promptValue(
+          yield* Prompt.autocomplete({
+            message: "Select provider",
+            maxItems: 8,
+            options: [...options, { value: "other", label: "Other" }],
+          }),
+        )
+      }
       const input = args.provider
       const byID = options.find((x) => x.value === input)
       const byName = options.find((x) => x.label.toLowerCase() === input.toLowerCase())
       const match = byID ?? byName
-      if (!match) {
-        return yield* fail(`Unknown provider "${input}"`)
-      }
-      provider = match.value
-    } else {
-      provider = yield* promptValue(
-        yield* Prompt.autocomplete({
-          message: "Select provider",
-          maxItems: 8,
-          options: [...options, { value: "other", label: "Other" }],
-        }),
-      )
-    }
+      if (!match) return yield* fail(`Unknown provider "${input}"`)
+      return match.value
+    })
 
     const plugin = hooks.findLast((x) => x.auth?.provider === provider)
     if (plugin && plugin.auth) {
-      const handled = yield* handlePluginAuth({ auth: plugin.auth! }, provider, args.method)
+      const handled = yield* handlePluginAuth({ auth: plugin.auth }, provider, args.method)
       if (handled) return
     }
 
@@ -438,13 +449,13 @@ export const ProvidersLoginCommand = effectCmd({
       provider = (yield* promptValue(
         yield* Prompt.text({
           message: "Enter provider id",
-          validate: (x) => (x && x.match(/^[0-9a-z-]+$/) ? undefined : "a-z, 0-9 and hyphens only"),
+          validate: providerID,
         }),
       )).replace(/^@ai-sdk\//, "")
 
       const customPlugin = hooks.findLast((x) => x.auth?.provider === provider)
       if (customPlugin && customPlugin.auth) {
-        const handled = yield* handlePluginAuth({ auth: customPlugin.auth! }, provider, args.method)
+        const handled = yield* handlePluginAuth({ auth: customPlugin.auth }, provider, args.method)
         if (handled) return
       }
 
@@ -479,7 +490,7 @@ export const ProvidersLoginCommand = effectCmd({
 
     const key = yield* Prompt.password({
       message: "Enter your API key",
-      validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+      validate: required,
     })
     const apiKey = yield* promptValue(key)
     yield* Effect.orDie(authSvc.set(provider, { type: "api", key: apiKey }))
@@ -505,10 +516,7 @@ export const ProvidersLogoutCommand = effectCmd({
     UI.empty()
     const credentials: Array<[string, Auth.Info]> = Object.entries(yield* Effect.orDie(authSvc.all()))
     yield* Prompt.intro("Remove credential")
-    if (credentials.length === 0) {
-      yield* Prompt.log.error("No credentials found")
-      return
-    }
+    if (credentials.length === 0) return yield* Prompt.log.error("No credentials found")
     const database = yield* modelsDev.get()
     const options = credentials.map(([key, value]) => ({
       label: (database[key]?.name || key) + UI.Style.TEXT_DIM + " (" + value.type + ")",
@@ -529,6 +537,6 @@ export const ProvidersLogoutCommand = effectCmd({
         )
     if (!provider) return yield* fail(`Unknown configured provider "${args.provider}"`)
     yield* Effect.orDie(authSvc.remove(provider))
-    yield* Prompt.outro("Logout successful")
+    return yield* Prompt.outro("Logout successful")
   }),
 })

@@ -14,26 +14,28 @@ export const ReplayEvent = Schema.Struct({
   aggregateID: Schema.String,
   seq: NonNegativeInt,
   type: Schema.String,
-  data: Schema.Record(Schema.String, Schema.Unknown),
-})
+  data: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ description: "Sync event to replay" })
 export const ReplayPayload = Schema.Struct({
   directory: Schema.String,
   events: Schema.NonEmptyArray(ReplayEvent),
-})
+}).annotate({ description: "Sync events to replay" })
 export const ReplayResponse = Schema.Struct({
   sessionID: Schema.String,
-})
+}).annotate({ description: "Result of the sync replay" })
 export const SessionPayload = Schema.Struct({
   sessionID: SessionID,
-})
+}).annotate({ description: "Request for the sync history of a session" })
 export const HistoryPayload = Schema.Record(Schema.String, NonNegativeInt)
+export const AggregateID = Schema.String.pipe(Schema.brand("AggregateID"))
 export const HistoryEvent = Schema.Struct({
   id: EventV2.ID,
-  aggregate_id: Schema.String,
+  aggregate_id: AggregateID,
   seq: NonNegativeInt,
   type: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: stored event payloads from the json `data` column, which is typed Record<string, unknown>
   data: Schema.Record(Schema.String, Schema.Unknown),
-})
+}).annotate({ description: "Sync event in the history" })
 
 export const SyncPaths = {
   start: `${root}/start`,

@@ -1,4 +1,6 @@
-const hop = new Set([
+import { HashSet } from "effect"
+
+const hop = HashSet.make(
   "connection",
   "keep-alive",
   "proxy-authenticate",
@@ -9,7 +11,7 @@ const hop = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
-])
+)
 
 function sanitize(out: Headers) {
   for (const key of hop) out.delete(key)
@@ -20,7 +22,7 @@ function sanitize(out: Headers) {
 
 export function headers(input: Request | HeadersInit | Record<string, string>, extra?: HeadersInit) {
   const raw = input instanceof Request ? input.headers : input
-  const out = new Headers(raw instanceof Headers ? raw : Object.entries(raw as Record<string, string>))
+  const out = new Headers(raw instanceof Headers ? raw : Object.entries(raw))
   sanitize(out)
   if (!extra) return out
   for (const [key, value] of new Headers(extra).entries()) {

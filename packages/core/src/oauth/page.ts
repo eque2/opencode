@@ -11,6 +11,8 @@
 // the wordmark is the same geometry as `packages/ui/src/components/logo.tsx`.
 // Keep this file in sync with those sources when the brand changes.
 
+import { Schema } from "effect"
+
 export interface CallbackPageOptions {
   /** Friendly integration name shown as a subtitle, e.g. "xAI", "Snowflake", "MCP". */
   provider?: string
@@ -28,7 +30,7 @@ export function success(options?: CallbackPageOptions) {
       message: provider ? `OpenCode is now connected to ${escapeHtml(provider)}.` : "OpenCode is now authorized.",
       footnote: "You can close this window.",
     }),
-    script: options?.autoClose === false ? undefined : AUTO_CLOSE_SCRIPT,
+    ...(options?.autoClose === false ? {} : { script: AUTO_CLOSE_SCRIPT }),
   })
 }
 
@@ -133,8 +135,10 @@ var TOKEN_URL=new URL(${scriptString(options.tokenPath)},window.location.origin)
 })()`
 }
 
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
 function scriptString(value: string) {
-  return JSON.stringify(value).replaceAll("<", "\\u003c")
+  return encodeJsonString(value).replaceAll("<", "\\u003c")
 }
 
 function escapeHtml(value: string) {

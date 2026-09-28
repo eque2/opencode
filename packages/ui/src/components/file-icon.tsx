@@ -1,7 +1,8 @@
+import { Array } from "effect"
 import type { Component, JSX } from "solid-js"
 import { createMemo, createUniqueId, splitProps, Show } from "solid-js"
 import sprite from "./file-icons/sprite.svg"
-import type { IconName } from "./file-icons/types"
+import { iconNames, type IconName } from "./file-icons/types"
 
 export type FileIconProps = JSX.GSVGAttributes<SVGSVGElement> & {
   node: { path: string; type: "file" | "directory" }
@@ -540,11 +541,14 @@ const ICON_MAPS: IconMaps = {
   },
 }
 
+const fileIconNames: readonly string[] = iconNames
+const isIconName = (name: string): name is IconName => fileIconNames.includes(name)
+
 const toOpenVariant = (icon: IconName): IconName => {
   if (!icon.startsWith("Folder")) return icon
-  if (icon.endsWith("_light")) return icon.replace("_light", "Open_light") as IconName
-  if (!icon.endsWith("Open")) return (icon + "Open") as IconName
-  return icon
+  if (icon.endsWith("Open")) return icon
+  const open = icon.endsWith("_light") ? icon.replace("_light", "Open_light") : icon + "Open"
+  return isIconName(open) ? open : icon
 }
 
 const basenameOf = (p: string) => p.split("\\").join("/").split("/").filter(Boolean).pop() ?? ""
@@ -556,12 +560,9 @@ const folderNameVariants = (name: string) => {
 
 const dottedSuffixesDesc = (name: string) => {
   const n = name.toLowerCase()
-  const idxs: number[] = []
-  for (let i = 0; i < n.length; i++) if (n[i] === ".") idxs.push(i)
-  const out = new Set<string>()
-  out.add(n) // allow exact whole-name "extensions" like "dockerfile"
-  for (const i of idxs) if (i + 1 < n.length) out.add(n.slice(i + 1))
-  return Array.from(out).sort((a, b) => b.length - a.length) // longest first
+  const suffixes = n.split("").flatMap((char, i) => (char === "." && i + 1 < n.length ? [n.slice(i + 1)] : []))
+  // allow exact whole-name "extensions" like "dockerfile"
+  return Array.dedupe([n, ...suffixes]).sort((a, b) => b.length - a.length) // longest first
 }
 
 export function chooseIconName(path: string, type: "directory" | "file", expanded: boolean): IconName {

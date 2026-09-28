@@ -1,21 +1,27 @@
-import { ErrorBoundary, type ValidComponent } from "solid-js"
+import { ErrorBoundary, type Component, type ValidComponent } from "solid-js"
 import { Dynamic } from "solid-js/web"
 
-function fn(value: unknown): value is (...args: never[]) => unknown {
+// A story module exports its components as functions. JavaScript cannot check
+// the props or the return type of a function at run time, so typeof is the check.
+function isComponent(value: unknown): value is Component<Record<string, unknown>> {
   return typeof value === "function"
 }
 
-function pick(mod: Record<string, unknown>, name?: string) {
-  if (name && fn(mod[name])) return mod[name]
-  if (fn(mod.default)) return mod.default
+function pick(mod: Record<string, unknown>, name?: string): ValidComponent {
+  if (name) {
+    const named = mod[name]
+    if (isComponent(named)) return named
+  }
+  if (isComponent(mod.default)) return mod.default
 
   const preferred = Object.keys(mod)
     .filter((k) => k[0] && k[0] === k[0].toUpperCase())
-    .find((k) => fn(mod[k]))
-  if (preferred) return mod[preferred]
+    .map((k) => mod[k])
+    .find(isComponent)
+  if (preferred) return preferred
 
-  const first = Object.keys(mod).find((k) => fn(mod[k]))
-  if (first) return mod[first]
+  const first = Object.values(mod).find(isComponent)
+  if (first) return first
 
   return () => {
     return (
@@ -33,7 +39,7 @@ export function create(input: {
   name?: string
   args?: Record<string, unknown>
 }) {
-  const component = pick(input.mod, input.name) as unknown as ValidComponent
+  const component = pick(input.mod, input.name)
 
   return {
     meta: {

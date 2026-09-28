@@ -1,8 +1,10 @@
 import type { OpenCodeEvent, SessionMessageInfo, SessionPendingMessage } from "@opencode-ai/client/promise"
+import { MutableHashMap, Option, Struct } from "effect"
 
 type Assistant = Extract<SessionMessageInfo, { type: "assistant" }>
 type Compaction = Extract<SessionMessageInfo, { type: "compaction" }>
 type Shell = Extract<SessionMessageInfo, { type: "shell" }>
+type Content = Assistant["content"][number]
 
 export type V2SessionReduction = {
   sessionID: string
@@ -12,10 +14,10 @@ export type V2SessionReduction = {
 }
 
 export function createV2SessionReducer() {
-  const pending = new Map<string, SessionPendingMessage>()
+  const pending = MutableHashMap.empty<string, SessionPendingMessage>()
 
   const reduce = (source: readonly SessionMessageInfo[], event: OpenCodeEvent): V2SessionReduction | undefined => {
-    if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
+    if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return undefined
     const sessionID = event.data.sessionID
     const result = (messages: SessionMessageInfo[], touched: string[] = []): V2SessionReduction => ({
       sessionID,
@@ -27,12 +29,13 @@ export function createV2SessionReducer() {
 
     switch (event.type) {
       case "session.input.admitted":
-        pending.set(key(sessionID, event.data.inputID), event.data.input)
+        MutableHashMap.set(pending, key(sessionID, event.data.inputID), event.data.input)
         return result([...source])
       case "session.input.promoted": {
-        const input = pending.get(key(sessionID, event.data.inputID))
-        pending.delete(key(sessionID, event.data.inputID))
-        if (!input) return { ...result([...source]), missing: event.data.inputID }
+        const admitted = MutableHashMap.get(pending, key(sessionID, event.data.inputID))
+        MutableHashMap.remove(pending, key(sessionID, event.data.inputID))
+        if (Option.isNone(admitted)) return { ...result([...source]), missing: event.data.inputID }
+        const input = admitted.value
         if (input.type === "user")
           return append({
             id: event.data.inputID,
@@ -121,7 +124,7 @@ export function createV2SessionReducer() {
           current && current.id !== event.data.assistantMessageID
             ? update(source, current.id, (item) =>
                 item.type === "assistant"
-                  ? { ...item, retry: undefined, time: { ...item.time, completed: event.created } }
+                  ? { ...Struct.omit(item, ["retry"]), time: { ...item.time, completed: event.created } }
                   : item,
               )
             : [...source]
@@ -131,14 +134,11 @@ export function createV2SessionReducer() {
             update(completed, existing.id, (item) =>
               item.type === "assistant"
                 ? {
-                    ...item,
+                    ...Struct.omit(item, ["retry", "error", "finish"]),
                     agent: event.data.agent,
                     model: event.data.model,
-                    retry: undefined,
-                    error: undefined,
-                    finish: undefined,
                     snapshot: event.data.snapshot ? { ...item.snapshot, start: event.data.snapshot } : item.snapshot,
-                    time: { ...item.time, completed: undefined },
+                    time: Struct.omit(item.time, ["completed"]),
                   }
                 : item,
             ),
@@ -154,7 +154,7 @@ export function createV2SessionReducer() {
               agent: event.data.agent,
               model: event.data.model,
               content: [],
-              snapshot: event.data.snapshot ? { start: event.data.snapshot } : undefined,
+              ...(event.data.snapshot ? { snapshot: { start: event.data.snapshot } } : {}),
               time: { created: event.created },
             },
           ],
@@ -175,10 +175,9 @@ export function createV2SessionReducer() {
         }))
       case "session.step.failed":
         return updateAssistant(source, event.data.assistantMessageID, sessionID, (item) => ({
-          ...item,
+          ...Struct.omit(item, ["retry"]),
           finish: "error",
           error: event.data.error,
-          retry: undefined,
           cost: event.data.cost ?? item.cost,
           tokens: event.data.tokens ?? item.tokens,
           snapshot:
@@ -330,7 +329,7 @@ export function createV2SessionReducer() {
       case "session.execution.interrupted": {
         const current = source.findLast((item): item is Assistant => item.type === "assistant" && !item.time.completed)
         if (!current?.retry) return result([...source])
-        return updateAssistant(source, current.id, sessionID, (item) => ({ ...item, retry: undefined }))
+        return updateAssistant(source, current.id, sessionID, (item) => Struct.omit(item, ["retry"]))
       }
       case "session.compaction.started":
         return append({
@@ -402,16 +401,15 @@ export function createV2SessionReducer() {
         )
       }
       default:
-        return
+        return undefined
     }
   }
 
   return {
     reduce,
     clear(sessionID: string) {
-      for (const id of pending.keys()) {
-        if (id.startsWith(`${sessionID}:`)) pending.delete(id)
-      }
+      const stale = Array.from(MutableHashMap.keys(pending)).filter((id) => id.startsWith(`${sessionID}:`))
+      for (const id of stale) MutableHashMap.remove(pending, id)
     },
   }
 }
@@ -466,20 +464,22 @@ function updateContent<T extends "text" | "reasoning">(
   sessionID: string,
   type: T,
   ordinal: number,
-  apply: (
-    item: Extract<Assistant["content"][number], { type: T }>,
-  ) => Extract<Assistant["content"][number], { type: T }>,
+  apply: (item: Extract<Content, { type: T }>) => Extract<Content, { type: T }>,
 ) {
   return updateAssistant(source, messageID, sessionID, (assistant) => {
     let index = -1
     return {
       ...assistant,
       content: assistant.content.map((item) => {
-        if (item.type !== type || ++index !== ordinal) return item
-        return apply(item as Extract<Assistant["content"][number], { type: T }>)
+        if (!isContentType(item, type) || ++index !== ordinal) return item
+        return apply(item)
       }),
     }
   })
+}
+
+function isContentType<T extends Content["type"]>(item: Content, type: T): item is Extract<Content, { type: T }> {
+  return item.type === type
 }
 
 function updateTool(

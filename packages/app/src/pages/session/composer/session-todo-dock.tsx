@@ -167,7 +167,7 @@ export function SessionTodoDock(props: {
                   ? "cursor-default text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-faint"
                   : "text-14-regular text-text-base cursor-default"
               }
-              text={props.collapsed ? preview() : undefined}
+              {...(props.collapsed ? { text: preview() } : {})}
               duration={600}
               travel={25}
               edge={17}
@@ -236,7 +236,7 @@ function TodoList(props: { todos: Todo[] }) {
               readOnly
               checked={todo().status === "completed"}
               indeterminate={todo().status === "in_progress"}
-              data-in-progress={todo().status === "in_progress" ? "" : undefined}
+              {...(todo().status === "in_progress" ? { "data-in-progress": "" } : {})}
               data-state={todo().status}
               icon={dot(todo().status)}
               style={{

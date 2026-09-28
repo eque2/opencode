@@ -4,7 +4,7 @@ import { UsageInfo } from "./provider/provider"
 
 export function createModelTpmLimiter(providers: { id: string; model: string; tpmLimit?: number }[]) {
   const ids = providers.filter((p) => p.tpmLimit).map((p) => `${p.id}/${p.model}`)
-  if (ids.length === 0) return
+  if (ids.length === 0) return undefined
 
   const yyyyMMddHHmm = parseInt(
     new Date(Date.now())

@@ -40,7 +40,7 @@ for (const count of [0, 9999, 10000, 10001, 20005]) {
     const rows = await Effect.runPromise(
       queryR2SqlPages("SELECT * FROM aggregates", ["dimension", "model", "country"], (query) =>
         Effect.sync(() => {
-          const rows = db.query(query).all() as R2SqlData[]
+          const rows = db.query<R2SqlData, []>(query).all()
           pages.push(rows.length)
           return rows
         }),

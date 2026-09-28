@@ -4,7 +4,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { asSchema, type ModelMessage, type Tool } from "ai"
-import { Cause, Effect, FiberSet, Queue } from "effect"
+import { Cause, Effect, FiberSet, Option, Predicate, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { FetchHttpClient } from "effect/unstable/http"
 import {
@@ -17,6 +17,7 @@ import {
   type LLMEvent,
 } from "@opencode-ai/llm"
 import type { LLMClientShape } from "@opencode-ai/llm/route"
+import { LLMJson } from "./json"
 import { LLMNative } from "./native-request"
 
 export type RuntimeStatus =
@@ -67,7 +68,7 @@ function statusWithFetch(
   return {
     type: "supported",
     apiKey,
-    baseURL: typeof input.provider.options.baseURL === "string" ? input.provider.options.baseURL : undefined,
+    ...(typeof input.provider.options.baseURL === "string" ? { baseURL: input.provider.options.baseURL } : {}),
   }
 }
 
@@ -87,22 +88,25 @@ export function stream(input: StreamInput): StreamResult {
   // — if a field ever needs to differ between the two surfaces, the
   // translation belongs here, not split across both packages.
   const tools = nativeTools(input.tools, input)
-  const request = LLMNative.request({
-    model: input.model,
-    apiKey: current.apiKey,
-    baseURL: current.baseURL,
-    messages: ProviderTransform.message(input.messages, input.model, input.providerOptions ?? {}),
-    toolChoice: input.toolChoice,
-    temperature: input.temperature,
-    topP: input.topP,
-    topK: input.topK,
-    maxOutputTokens: input.maxOutputTokens,
-    providerOptions: ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
-    headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
-  })
   const stream = Stream.scoped(
     Stream.unwrap(
       Effect.gen(function* () {
+        // A request that cannot be lowered fails the stream with NativeRequestError.
+        const request = yield* LLMNative.request({
+          model: input.model,
+          apiKey: current.apiKey,
+          baseURL: current.baseURL,
+          messages: ProviderTransform.message(input.messages, input.model, input.providerOptions ?? {}),
+          toolChoice: input.toolChoice,
+          temperature: input.temperature,
+          topP: input.topP,
+          topK: input.topK,
+          maxOutputTokens: input.maxOutputTokens,
+          providerOptions: LLMJson.objectEntries(
+            ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
+          ),
+          headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
+        })
         const settlements = yield* FiberSet.make<void>()
         const results = yield* Queue.unbounded<LLMEvent, Cause.Done>()
         const provider = input.llmClient
@@ -148,9 +152,12 @@ export function stream(input: StreamInput): StreamResult {
 function providerFetch(input: Pick<StreamInput, "provider" | "auth">): typeof globalThis.fetch | undefined {
   if (input.provider.id !== "openai" || input.auth?.type !== "oauth") return undefined
   const value: unknown = input.provider.options.fetch
-  if (typeof value !== "function") return undefined
-  return value as typeof globalThis.fetch
+  if (!isFetch(value)) return undefined
+  return value
 }
+
+// Provider options are untyped config; the OAuth plugin stores a fetch-compatible function here.
+const isFetch = (value: unknown): value is typeof globalThis.fetch => typeof value === "function"
 
 function providerHeaders(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined
@@ -159,11 +166,12 @@ function providerHeaders(value: unknown): Record<string, string> | undefined {
   )
 }
 
-function nativeSchema(value: unknown): JsonSchema {
-  if (!value || typeof value !== "object") return { type: "object", properties: {} }
-  if ("jsonSchema" in value && value.jsonSchema && typeof value.jsonSchema === "object")
-    return value.jsonSchema as JsonSchema
-  return asSchema(value as Parameters<typeof asSchema>[0]).jsonSchema as JsonSchema
+const emptyObjectSchema = (): JsonSchema => ({ type: "object", properties: {} })
+
+function nativeSchema(value: Tool["inputSchema"]): JsonSchema {
+  if (!value || typeof value !== "object") return emptyObjectSchema()
+  const jsonSchema = "jsonSchema" in value && isRecord(value.jsonSchema) ? value.jsonSchema : asSchema(value).jsonSchema
+  return Option.getOrElse(LLMJson.toJsonObject(jsonSchema), emptyObjectSchema)
 }
 
 export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput, "messages" | "abort">) {
@@ -175,18 +183,27 @@ export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput
       NativeTool.make({
         description: item.description ?? "",
         jsonSchema: nativeSchema(item.inputSchema),
-        execute: (args: unknown, ctx) =>
-          Effect.tryPromise({
-            try: () => {
-              if (!item.execute) throw new Error(`Tool has no execute handler: ${name}`)
-              return item.execute(args, {
+        execute: (args: unknown, ctx) => {
+          const execute = item.execute
+          if (!execute) return Effect.fail(new ToolFailure({ message: `Tool has no execute handler: ${name}` }))
+          const failure = (error: unknown) => new ToolFailure({ message: errorMessage(error), error })
+          // AI SDK handlers may return a plain value or a PromiseLike.
+          return Effect.try({
+            try: () =>
+              execute(args, {
                 toolCallId: ctx?.id ?? name,
                 messages: input.messages,
                 abortSignal: input.abort,
-              })
-            },
-            catch: (error) => new ToolFailure({ message: errorMessage(error), error }),
-          }),
+              }),
+            catch: failure,
+          }).pipe(
+            Effect.flatMap((output: unknown) =>
+              Predicate.isPromiseLike(output)
+                ? Effect.tryPromise({ try: () => output, catch: failure })
+                : Effect.succeed(output),
+            ),
+          )
+        },
       }),
     ]),
   )

@@ -2,6 +2,7 @@ import style from "./content-bash.module.css"
 import { createResource, createSignal } from "solid-js"
 import { createOverflow, useShareMessages } from "./common"
 import { codeToHtml } from "shiki"
+import { Effect } from "effect"
 
 interface Props {
   command: string
@@ -13,35 +14,41 @@ export function ContentBash(props: Props) {
   const messages = useShareMessages()
   const [commandHtml] = createResource(
     () => props.command,
-    async (command) => {
-      return codeToHtml(command || "", {
-        lang: "bash",
-        themes: {
-          light: "github-light",
-          dark: "github-dark",
-        },
-      })
-    },
+    (command) =>
+      Effect.runPromise(
+        Effect.promise(() =>
+          codeToHtml(command || "", {
+            lang: "bash",
+            themes: {
+              light: "github-light",
+              dark: "github-dark",
+            },
+          }),
+        ),
+      ),
   )
 
   const [outputHtml] = createResource(
     () => props.output,
-    async (output) => {
-      return codeToHtml(output || "", {
-        lang: "console",
-        themes: {
-          light: "github-light",
-          dark: "github-dark",
-        },
-      })
-    },
+    (output) =>
+      Effect.runPromise(
+        Effect.promise(() =>
+          codeToHtml(output || "", {
+            lang: "console",
+            themes: {
+              light: "github-light",
+              dark: "github-dark",
+            },
+          }),
+        ),
+      ),
   )
 
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()
 
   return (
-    <div class={style.root} data-expanded={expanded() || props.expand === true ? true : undefined}>
+    <div class={style.root} {...(expanded() || props.expand === true ? { "data-expanded": true } : {})}>
       <div data-slot="body">
         <div data-slot="header">
           <span>Shell</span>

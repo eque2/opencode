@@ -1,4 +1,5 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
+import { Effect, Predicate } from "effect"
 
 export function prepareTools({
   tools,
@@ -6,55 +7,46 @@ export function prepareTools({
 }: {
   tools: LanguageModelV3CallOptions["tools"]
   toolChoice?: LanguageModelV3CallOptions["toolChoice"]
-}): {
-  tools:
-    | undefined
-    | Array<{
-        type: "function"
-        function: {
-          name: string
-          description: string | undefined
-          parameters: unknown
-        }
-      }>
-  toolChoice: { type: "function"; function: { name: string } } | "auto" | "none" | "required" | undefined
-  toolWarnings: SharedV3Warning[]
-} {
-  // when the tools array is empty, change it to undefined to prevent errors:
-  tools = tools?.length ? tools : undefined
-
-  const toolWarnings: SharedV3Warning[] = []
-
-  if (tools == null) {
-    return { tools: undefined, toolChoice: undefined, toolWarnings }
+}): Effect.Effect<
+  {
+    tools?: Array<{
+      type: "function"
+      function: {
+        name: string
+        description: string | undefined
+        parameters: unknown
+      }
+    }>
+    toolChoice?: { type: "function"; function: { name: string } } | "auto" | "none" | "required"
+    toolWarnings: SharedV3Warning[]
+  },
+  UnsupportedFunctionalityError
+> {
+  // when the tools array is empty, send no tools to prevent errors:
+  if (Predicate.isNullish(tools) || tools.length === 0) {
+    return Effect.succeed({ toolWarnings: [] })
   }
 
-  const openaiCompatTools: Array<{
-    type: "function"
-    function: {
-      name: string
-      description: string | undefined
-      parameters: unknown
-    }
-  }> = []
+  const toolWarnings = tools.flatMap((tool): SharedV3Warning[] =>
+    tool.type === "provider" ? [{ type: "unsupported", feature: `tool type: ${tool.type}` }] : [],
+  )
+  const openaiCompatTools = tools.flatMap((tool) =>
+    tool.type === "provider"
+      ? []
+      : [
+          {
+            type: "function" as const,
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema,
+            },
+          },
+        ],
+  )
 
-  for (const tool of tools) {
-    if (tool.type === "provider") {
-      toolWarnings.push({ type: "unsupported", feature: `tool type: ${tool.type}` })
-    } else {
-      openaiCompatTools.push({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema,
-        },
-      })
-    }
-  }
-
-  if (toolChoice == null) {
-    return { tools: openaiCompatTools, toolChoice: undefined, toolWarnings }
+  if (Predicate.isNullish(toolChoice)) {
+    return Effect.succeed({ tools: openaiCompatTools, toolWarnings })
   }
 
   const type = toolChoice.type
@@ -63,21 +55,23 @@ export function prepareTools({
     case "auto":
     case "none":
     case "required":
-      return { tools: openaiCompatTools, toolChoice: type, toolWarnings }
+      return Effect.succeed({ tools: openaiCompatTools, toolChoice: type, toolWarnings })
     case "tool":
-      return {
+      return Effect.succeed({
         tools: openaiCompatTools,
         toolChoice: {
-          type: "function",
+          type: "function" as const,
           function: { name: toolChoice.toolName },
         },
         toolWarnings,
-      }
+      })
     default: {
       const _exhaustiveCheck: never = type
-      throw new UnsupportedFunctionalityError({
-        functionality: `tool choice type: ${_exhaustiveCheck}`,
-      })
+      return Effect.fail(
+        new UnsupportedFunctionalityError({
+          functionality: `tool choice type: ${String(_exhaustiveCheck)}`,
+        }),
+      )
     }
   }
 }

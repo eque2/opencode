@@ -9,7 +9,7 @@
 import path from "path"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Exit, Layer, Option } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import { Global } from "@opencode-ai/core/global"
 import { isRecord } from "@/util/record"
@@ -22,7 +22,7 @@ type ModelState = Record<string, unknown> & {
   variant?: Record<string, string | undefined>
 }
 type VariantService = {
-  readonly resolveSavedVariant: (model: RunInput["model"]) => Effect.Effect<string | undefined>
+  readonly resolveSavedVariant: (model: RunInput["model"]) => Effect.Effect<Option.Option<string>>
   readonly saveVariant: (model: RunInput["model"], variant: string | undefined) => Effect.Effect<void>
 }
 type VariantRuntime = {
@@ -118,21 +118,24 @@ function state(value: unknown): ModelState {
     return {}
   }
 
-  const variant = isRecord(value.variant)
-    ? Object.fromEntries(
-        Object.entries(value.variant).flatMap(([key, item]) => {
-          if (typeof item !== "string") {
-            return []
-          }
-
-          return [[key, item] as const]
-        }),
-      )
-    : undefined
+  // A variant field that is not a record is dropped: callers only read and
+  // replace the whole variant record.
+  const { variant, ...rest } = value
+  if (!isRecord(variant)) {
+    return rest
+  }
 
   return {
-    ...value,
-    variant,
+    ...rest,
+    variant: Object.fromEntries(
+      Object.entries(variant).flatMap(([key, item]) => {
+        if (typeof item !== "string") {
+          return []
+        }
+
+        return [[key, item] as const]
+      }),
+    ),
   }
 }
 
@@ -146,16 +149,16 @@ function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
         const read = Effect.fn("RunVariant.read")(function* () {
           return yield* file.readJson(MODEL_FILE).pipe(
             Effect.map(state),
-            Effect.catchCause(() => Effect.succeed(state(undefined))),
+            Effect.catchCause(() => Effect.succeed<ModelState>({})),
           )
         })
 
         const resolveSavedVariant = Effect.fn("RunVariant.resolveSavedVariant")(function* (model: RunInput["model"]) {
           if (!model) {
-            return undefined
+            return Option.none<string>()
           }
 
-          return (yield* read()).variant?.[variantKey(model)]
+          return Option.fromNullishOr((yield* read()).variant?.[variantKey(model)])
         })
 
         const saveVariant = Effect.fn("RunVariant.saveVariant")(function* (
@@ -184,7 +187,7 @@ function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
               ...current,
               variant: next,
             })
-            .pipe(Effect.orElseSucceed(() => undefined))
+            .pipe(Effect.ignore)
         })
 
         return Service.of({
@@ -200,14 +203,19 @@ function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
 export function createVariantRuntime(fs = AppNodeBuilder.build(FSUtil.node)): VariantRuntime {
   const runtime = makeRuntime(Service, createLayer(fs))
   return {
-    resolveSavedVariant: (model) => runtime.runPromise((svc) => svc.resolveSavedVariant(model)).catch(() => undefined),
+    // runPromiseExit keeps a failed runtime build as a missing variant, as the
+    // old rejection handler did. The Promise contract keeps undefined for none.
+    resolveSavedVariant: (model) =>
+      runtime
+        .runPromiseExit((svc) => svc.resolveSavedVariant(model))
+        .then((exit) => Option.getOrUndefined(Option.flatten(Exit.getSuccess(exit)))),
     saveVariant: (model, variant) => runtime.runPromise((svc) => svc.saveVariant(model, variant)).catch(() => {}),
   }
 }
 
 const runtime = createVariantRuntime()
 
-export async function resolveSavedVariant(model: RunInput["model"]): Promise<string | undefined> {
+export function resolveSavedVariant(model: RunInput["model"]): Promise<string | undefined> {
   return runtime.resolveSavedVariant(model)
 }
 

@@ -3,8 +3,8 @@ import {
   createEffect,
   createRoot,
   createSignal,
+  createUniqueId,
   getOwner,
-  onCleanup,
   type Owner,
   type ParentProps,
   runWithOwner,
@@ -15,6 +15,9 @@ import {
 } from "solid-js"
 import { Dialog as Kobalte } from "@kobalte/core/dialog"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { Effect } from "effect"
+import { createFiberSlot } from "../hooks/create-fiber-slot"
+import { MissingProviderError } from "./errors"
 
 type DialogElement = () => JSX.Element
 
@@ -31,14 +34,8 @@ const Context = createContext<ReturnType<typeof init>>()
 
 function init() {
   const [stack, setStack] = createSignal<Active[]>([])
-  const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
+  const closeDelay = createFiberSlot()
   const lock = { value: false }
-
-  onCleanup(() => {
-    if (timer.current === undefined) return
-    clearTimeout(timer.current)
-    timer.current = undefined
-  })
 
   const close = (id?: string) => {
     const items = stack()
@@ -49,17 +46,17 @@ function init() {
     current.setClosing(true)
 
     const closed = current.id
-    if (timer.current !== undefined) {
-      clearTimeout(timer.current)
-      timer.current = undefined
-    }
-
-    timer.current = setTimeout(() => {
-      timer.current = undefined
-      current.dispose()
-      setStack((items) => items.filter((item) => item.id !== closed))
-      lock.value = false
-    }, 100)
+    closeDelay.run(
+      Effect.sleep("100 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            current.dispose()
+            setStack((items) => items.filter((item) => item.id !== closed))
+            lock.value = false
+          }),
+        ),
+      ),
+    )
   }
 
   createEffect(() => {
@@ -76,7 +73,7 @@ function init() {
   })
 
   const mount = (element: DialogElement, owner: Owner, onClose: (() => void) | undefined, layer: number) => {
-    const id = Math.random().toString(36).slice(2)
+    const id = createUniqueId()
     const zIndex = 50 + layer * 10
     let dispose: (() => void) | undefined
     let setClosing: ((closing: boolean) => void) | undefined
@@ -128,10 +125,7 @@ function init() {
   }
 
   const push = (element: DialogElement, owner: Owner, onClose?: () => void) => {
-    if (timer.current !== undefined) {
-      clearTimeout(timer.current)
-      timer.current = undefined
-    }
+    closeDelay.interrupt()
     lock.value = false
     mount(element, owner, onClose, stack().length)
   }
@@ -139,10 +133,7 @@ function init() {
   const show = (element: DialogElement, owner: Owner, onClose?: () => void) => {
     for (const item of stack()) item.dispose()
     setStack([])
-    if (timer.current !== undefined) {
-      clearTimeout(timer.current)
-      timer.current = undefined
-    }
+    closeDelay.interrupt()
     lock.value = false
     mount(element, owner, onClose, 0)
   }
@@ -172,10 +163,12 @@ export function useDialog() {
   const owner = getOwner()
 
   if (!owner) {
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider; show and push need the reactive owner from getOwner()
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
   if (!ctx) {
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
 
   return {

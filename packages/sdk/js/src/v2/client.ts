@@ -2,13 +2,14 @@ export * from "./gen/types.gen.js"
 export type { FileSystemEntry as LocationFileSystemEntry } from "./gen/types.gen.js"
 
 import { createClient } from "./gen/client/client.gen.js"
+import { mergeHeaders } from "./gen/client/index.js"
 import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 import { wrapClientError } from "../error-interceptor.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
 function pick(value: string | null, fallback?: string, encode?: (value: string) => string) {
-  if (!value) return
+  if (!value) return undefined
   if (!fallback) return value
   if (value === fallback) return fallback
   if (encode && value === encode(fallback)) return fallback
@@ -61,17 +62,15 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
   }
 
   if (config?.directory) {
-    config.headers = {
-      ...config.headers,
+    config.headers = mergeHeaders(config.headers, {
       "x-opencode-directory": encodeURIComponent(config.directory),
-    }
+    })
   }
 
   if (config?.experimental_workspaceID) {
-    config.headers = {
-      ...config.headers,
+    config.headers = mergeHeaders(config.headers, {
       "x-opencode-workspace": config.experimental_workspaceID,
-    }
+    })
   }
 
   const client = createClient(config)

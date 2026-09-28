@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core"
+import { RGBA, TextAttributes } from "@opentui/core"
 import { createStore } from "solid-js/store"
 import { For } from "solid-js"
 import { useTheme } from "../context/theme"
@@ -14,18 +14,19 @@ export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | 
 
   const options = ["cancel", "restore"] as const
 
-  async function confirm() {
+  function confirm() {
     if (store.active === "cancel") {
       dialog.clear()
       return
     }
-    const result = await props.onRestore?.()
-    if (result === false) return
+    // The restore callback owns what happens next. Its result needs no handling here, and a
+    // rejected Promise stays unhandled, as it was when confirm awaited it and was not awaited.
+    void props.onRestore?.()
   }
 
   useBindings(() => ({
     bindings: [
-      { key: "return", desc: "Confirm workspace option", group: "Dialog", cmd: () => void confirm() },
+      { key: "return", desc: "Confirm workspace option", group: "Dialog", cmd: () => confirm() },
       { key: "left", desc: "Cancel workspace restore", group: "Dialog", cmd: () => setStore("active", "cancel") },
       { key: "right", desc: "Restore workspace", group: "Dialog", cmd: () => setStore("active", "restore") },
     ],
@@ -53,10 +54,10 @@ export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | 
             <box
               paddingLeft={2}
               paddingRight={2}
-              backgroundColor={item === store.active ? theme.primary : undefined}
+              backgroundColor={item === store.active ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               onMouseUp={() => {
                 setStore("active", item)
-                void confirm()
+                confirm()
               }}
             >
               <text fg={item === store.active ? theme.selectedListItemText : theme.textMuted}>{item}</text>

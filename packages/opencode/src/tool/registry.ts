@@ -21,6 +21,7 @@ import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
 import type { JSONSchema7, JSONSchema7Definition } from "@ai-sdk/provider"
 import { Schema } from "effect"
+// eslint-disable-next-line effect/no-zod-use-schema -- (c) the public @opencode-ai/plugin tool() API hands the host Zod arg shapes, so the registry must validate them with z.object and export them with z.toJSONSchema
 import z from "zod"
 import { Plugin } from "../plugin"
 import { Provider } from "@/provider/provider"
@@ -32,8 +33,7 @@ import { ApplyPatchTool } from "./apply_patch"
 import { Glob } from "@opencode-ai/core/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context } from "effect"
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import { Effect, Layer, Context, Option, Predicate, Result } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../format"
 import { InstanceState } from "@/effect/instance-state"
@@ -63,6 +63,8 @@ export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false
     flags.parallel
   )
 }
+
+type PluginArgs = Parameters<ToolDefinition["execute"]>[0]
 
 type TaskDef = Tool.InferDef<typeof TaskTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
@@ -115,14 +117,16 @@ const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const agent = yield* Agent.Service
-    const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
-    const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
+    const codeMode = flags.experimentalCodeMode
+      ? Option.some(yield* Effect.promise(() => import("./code-mode")))
+      : Option.none<typeof import("./code-mode")>()
+    const codeModeTool = Option.isSome(codeMode) ? Option.some(yield* codeMode.value.CodeModeTool) : Option.none()
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
         const custom: Tool.Def[] = []
 
-        function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
+        const fromPlugin = Effect.fnUntraced(function* (id: string, def: ToolDefinition) {
           // Plugin tools still expose Zod args publicly; keep that compatibility
           // boxed at the registry boundary and give the LLM the original JSON Schema.
           // Normalize missing args to `{}` once — pre-1.14.49 the code was
@@ -130,12 +134,17 @@ const layer = Layer.effect(
           const args = def.args ?? {}
           const entries = Object.entries(args)
           const allZod = entries.every((entry) => isZodType(entry[1]))
-          const zodParams = allZod ? z.object(args) : undefined
-          const jsonSchema = zodParams ? zodJsonSchema(zodParams) : legacyJsonSchema(entries)
-          const parameters = zodParams
-            ? Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success)
-            : Schema.Unknown
-          return {
+          const zodParams = allZod ? Option.some(z.object(args)) : Option.none()
+          const jsonSchema = Option.isSome(zodParams)
+            ? yield* Effect.fromResult(zodJsonSchema(zodParams.value)).pipe(Effect.orDie)
+            : legacyJsonSchema(entries)
+          // Legacy JSON Schema args describe an object, so an object is the only shape to accept.
+          const parameters = Schema.declare<PluginArgs>(
+            Option.isSome(zodParams)
+              ? (u): u is PluginArgs => zodParams.value.safeParse(u).success
+              : (u): u is PluginArgs => Predicate.isObject(u),
+          )
+          const tool: Tool.Def<typeof parameters> = {
             id,
             parameters,
             jsonSchema,
@@ -151,16 +160,15 @@ const layer = Layer.effect(
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }
-                const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
+                const result = yield* Effect.promise(() => def.execute(args, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
-                const attachments = typeof result === "string" ? undefined : result.attachments
                 const info = yield* agent.get(toolCtx.agent)
                 const out = yield* truncate.output(output, {}, info)
                 return {
                   title: typeof result === "string" ? "" : (result.title ?? ""),
                   output: out.truncated ? out.content : output,
-                  attachments,
+                  ...(typeof result !== "string" && result.attachments ? { attachments: result.attachments } : {}),
                   metadata: {
                     ...metadata,
                     truncated: out.truncated,
@@ -178,7 +186,8 @@ const layer = Layer.effect(
                 }),
               ),
           }
-        }
+          return tool
+        })
 
         const dirs = yield* config.directories()
         const matches = dirs.flatMap((dir) =>
@@ -192,14 +201,14 @@ const layer = Layer.effect(
           const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
           for (const [id, def] of Object.entries(mod)) {
             if (!isPluginTool(def)) continue
-            custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+            custom.push(yield* fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
           }
         }
 
         const plugins = yield* plugin.list()
         for (const p of plugins) {
           for (const [id, def] of Object.entries(p.tool ?? {})) {
-            custom.push(fromPlugin(id, def))
+            custom.push(yield* fromPlugin(id, def))
           }
         }
 
@@ -223,7 +232,7 @@ const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
-          ...(codeModeTool ? { execute: Tool.init(codeModeTool) } : {}),
+          ...(Option.isSome(codeModeTool) ? { execute: Tool.init(codeModeTool.value) } : {}),
         })
 
         return {
@@ -281,11 +290,13 @@ const layer = Layer.effect(
       agent: Agent.Info
       permission?: PermissionV1.Ruleset
     }) {
-      if (!codeMode) return
+      if (Option.isNone(codeMode)) return Option.none<string>()
       const ruleset = Permission.merge(input.agent.permission, input.permission ?? [])
       const tools = Permission.visibleTools(yield* mcp.tools(), ruleset)
-      if (Object.keys(tools).length === 0) return
-      return codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize))
+      if (Object.keys(tools).length === 0) return Option.none<string>()
+      return Option.some(
+        codeMode.value.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)),
+      )
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
@@ -304,8 +315,10 @@ const layer = Layer.effect(
 
       const codeModeDescription = filtered.some((tool) => tool.id === "execute")
         ? yield* describeCodeMode(input)
-        : undefined
-      const visible = filtered.filter((tool) => tool.id !== "execute" || codeModeDescription)
+        : Option.none<string>()
+      const visible = filtered.filter(
+        (tool) => tool.id !== "execute" || Option.exists(codeModeDescription, (text) => text.length > 0),
+      )
 
       return yield* Effect.forEach(
         visible,
@@ -316,23 +329,22 @@ const layer = Layer.effect(
             jsonSchema: tool.jsonSchema,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
-          const jsonSchema =
-            output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
-              ? output.jsonSchema
-              : undefined
+          // A plugin that replaces the parameters without a new JSON Schema drops the old one.
+          const keepJsonSchema = output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
           return {
             id: tool.id,
             description: [
-              output.description,
-              tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
-              tool.id === "execute" ? codeModeDescription : undefined,
+              Option.some(output.description),
+              tool.id === TaskTool.id ? Option.some(yield* describeTask(input.agent)) : Option.none<string>(),
+              tool.id === "execute" ? codeModeDescription : Option.none<string>(),
             ]
+              .flatMap(Option.toArray)
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,
-            jsonSchema,
-            execute: tool.execute,
-            formatValidationError: tool.formatValidationError,
+            ...(keepJsonSchema ? { jsonSchema: output.jsonSchema } : {}),
+            execute: tool.execute.bind(tool),
+            formatValidationError: tool.formatValidationError?.bind(tool),
           }
         }),
         { concurrency: "unbounded" },
@@ -349,15 +361,15 @@ const layer = Layer.effect(
 )
 
 function isZodType(value: unknown): value is z.ZodType {
-  return typeof value === "object" && value !== null && "_zod" in value
+  return Predicate.isObjectOrArray(value) && "_zod" in value
 }
 
 function isPluginTool(value: unknown): value is ToolDefinition {
-  return typeof value === "object" && value !== null && "args" in value && "description" in value && "execute" in value
+  return Predicate.isObjectOrArray(value) && "args" in value && "description" in value && "execute" in value
 }
 
 function isJsonSchemaDefinition(value: unknown): value is JSONSchema7Definition {
-  return typeof value === "boolean" || (typeof value === "object" && value !== null && !Array.isArray(value))
+  return Predicate.isBoolean(value) || Predicate.isObject(value)
 }
 
 function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
@@ -371,29 +383,32 @@ function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
   }
 }
 
-function zodJsonSchema(schema: z.ZodType): JSONSchema7 {
+class PluginSchemaError extends Schema.TaggedError<PluginSchemaError>()("ToolRegistry.PluginSchemaError", {
+  message: Schema.String,
+}) {}
+
+function zodJsonSchema(schema: z.ZodType): Result.Result<JSONSchema7, PluginSchemaError> {
   const result = normalizeZodJsonSchema(z.toJSONSchema(schema, { io: "input", metadata: zodMetadataRegistry(schema) }))
-  if (!isJsonSchemaObject(result)) throw new Error("plugin tool Zod schema produced a non-object JSON Schema")
+  if (!isJsonSchemaObject(result)) {
+    return Result.fail(new PluginSchemaError({ message: "plugin tool Zod schema produced a non-object JSON Schema" }))
+  }
   const { $defs, ...rest } = result
-  return (
-    $defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs as JSONSchema7["definitions"] } : rest
-  ) as JSONSchema7
+  return Result.succeed($defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs } : rest)
 }
 
 function zodMetadataRegistry(schema: z.ZodType) {
   const registry = z.registry<Record<string, unknown>>()
   const seen = new WeakSet<object>()
   const collect = (value: unknown) => {
-    if (typeof value !== "object" || value === null) return
+    if (!Predicate.isObjectOrArray(value)) return
     if (seen.has(value)) return
     seen.add(value)
 
     if (isZodType(value)) {
-      const metadata = typeof value.meta === "function" ? value.meta() : undefined
-      const description = typeof value.description === "string" ? value.description : undefined
+      const metadata = typeof value.meta === "function" ? value.meta() : {}
       const merged = {
-        ...(metadata && typeof metadata === "object" ? metadata : {}),
-        ...(description ? { description } : {}),
+        ...(Predicate.isObject(metadata) ? metadata : {}),
+        ...(typeof value.description === "string" && value.description ? { description: value.description } : {}),
       }
       if (Object.keys(merged).length) registry.add(value, merged)
       collect(value._zod.def)
@@ -408,20 +423,20 @@ function zodMetadataRegistry(schema: z.ZodType) {
 
 function normalizeZodJsonSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => normalizeZodJsonSchema(item))
-  if (typeof value !== "object" || value === null) return value
+  if (!Predicate.isObjectOrArray(value)) return value
   return Object.fromEntries(
     Object.entries(value)
-      .filter((entry) =>
-        (entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"
-          ? false
-          : true,
+      .filter(
+        (entry) =>
+          !((entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"),
       )
       .map(([key, item]) => [key, normalizeZodJsonSchema(item)]),
   )
 }
 
-function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+// z.toJSONSchema builds the document; only its object root is checked here.
+function isJsonSchemaObject(value: unknown): value is JSONSchema7 {
+  return Predicate.isObject(value)
 }
 
 export const node = LayerNode.make({

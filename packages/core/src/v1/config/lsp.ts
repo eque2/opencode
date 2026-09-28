@@ -1,6 +1,6 @@
 export * as ConfigLSPV1 from "./lsp"
 
-import { Schema } from "effect"
+import { HashSet, Schema } from "effect"
 
 export const Disabled = Schema.Struct({
   disabled: Schema.Literal(true),
@@ -13,7 +13,7 @@ export const Entry = Schema.Union([
     extensions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
     disabled: Schema.optional(Schema.Boolean),
     env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    initialization: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    initialization: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
   }),
 ]).pipe((schema) => schema)
 
@@ -63,14 +63,15 @@ export const builtinServerIds = [
 export const requiresExtensionsForCustomServers = Schema.makeFilter<
   boolean | Record<string, Schema.Schema.Type<typeof Entry>>
 >((data) => {
-  if (typeof data === "boolean") return undefined
-  const ids = new Set(builtinServerIds)
+  if (typeof data === "boolean") return true
+  const ids = HashSet.fromIterable(builtinServerIds)
   const ok = Object.entries(data).every(([id, config]) => {
     if ("disabled" in config && config.disabled) return true
-    if (ids.has(id)) return true
+    if (HashSet.has(ids, id)) return true
     return "extensions" in config && Boolean(config.extensions)
   })
-  return ok ? undefined : "For custom LSP servers, 'extensions' array is required."
+  // A filter reports success with true and failure with a message.
+  return ok ? true : "For custom LSP servers, 'extensions' array is required."
 })
 
 export const Info = Schema.Union([Schema.Boolean, Schema.Record(Schema.String, Entry)])

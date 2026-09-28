@@ -15,7 +15,7 @@ describe("uniqueSummaryDiffs", () => {
     const beta = diff("beta.ts", 1)
     const invalid = { additions: 1, deletions: 0 } satisfies SnapshotFileDiff
 
-    expect(uniqueSummaryDiffs(undefined)).toEqual([])
+    expect(uniqueSummaryDiffs()).toEqual([])
     expect(uniqueSummaryDiffs([])).toEqual([])
     expect(uniqueSummaryDiffs([invalid])).toEqual([])
 

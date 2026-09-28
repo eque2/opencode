@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -117,7 +118,7 @@ const withTool = <A, E, R>(directory: string, body: (registry: ToolRegistry.Inte
 const call = (patchText: string, id = "call-apply-patch") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "apply_patch", input: { patchText } },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "apply_patch", input: { patchText } },
 })
 
 const exists = (target: string) =>
@@ -316,6 +317,32 @@ describe("ApplyPatchTool", () => {
             ).toEqual({ type: "error", value: "Unable to apply patch at missing.txt" })
             expect(yield* exists(path.join(tmp.path, "created.txt"))).toBe(false)
           }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("rejects an update whose expected lines do not match as a tool failure", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "update.txt")
+        return Effect.promise(() => fs.writeFile(target, "present\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call("*** Begin Patch\n*** Update File: update.txt\n@@\n-missing\n+after\n*** End Patch"),
+                  ),
+                ).toEqual({ type: "error", value: "Unable to apply patch at update.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("present\n")
+              }),
+            ),
+          ),
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),

@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 import path from "path"
 import { unlink } from "fs/promises"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
 import { Env } from "../../src/env"
 import { Provider } from "@/provider/provider"
 
@@ -12,6 +11,21 @@ import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+
+type UrlInput = { path: string; modelId: string }
+
+// The AI SDK language model type does not expose its provider config, so the test reads it through a guard.
+function configUrl(language: unknown, input: UrlInput): string {
+  if (
+    !Predicate.hasProperty(language, "config") ||
+    !Predicate.hasProperty(language.config, "url") ||
+    !Predicate.isFunction(language.config.url)
+  )
+    throw new Error("language model has no config.url")
+  const url: unknown = language.config.url(input)
+  if (typeof url !== "string") throw new Error("config.url did not return a string")
+  return url
+}
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node])))
 
@@ -50,17 +64,17 @@ const withAuthJson = (contents: string) =>
       const authPath = path.join(Global.Path.data, "auth.json")
       let original: string | undefined
       try {
-        original = await Filesystem.readText(authPath)
+        original = await Bun.file(authPath).text()
       } catch {
         original = undefined
       }
-      await Filesystem.write(authPath, contents)
+      await Bun.write(authPath, contents)
       return { authPath, original }
     }),
     ({ authPath, original }) =>
       Effect.promise(async () => {
         if (original !== undefined) {
-          await Filesystem.write(authPath, original)
+          await Bun.write(authPath, original)
           return
         }
         await unlink(authPath).catch(() => undefined)
@@ -118,7 +132,7 @@ it.instance(
       expect((language as { provider: string }).provider).toBe("bedrock-mantle.responses")
       expect((language as { modelId: string }).modelId).toBe("openai.gpt-5.5")
       expect(
-        (language as unknown as { config: { url: (input: { path: string; modelId: string }) => string } }).config.url({
+        configUrl(language, {
           path: "/responses",
           modelId: "openai.gpt-5.5",
         }),
@@ -157,7 +171,7 @@ it.instance(
       expect((language as { provider: string }).provider).toBe("bedrock-mantle.chat")
       expect((language as { modelId: string }).modelId).toBe("openai.gpt-oss-safeguard-120b")
       expect(
-        (language as unknown as { config: { url: (input: { path: string; modelId: string }) => string } }).config.url({
+        configUrl(language, {
           path: "/chat/completions",
           modelId: "openai.gpt-oss-safeguard-120b",
         }),

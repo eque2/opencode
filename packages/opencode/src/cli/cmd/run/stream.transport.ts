@@ -16,13 +16,28 @@
 // We also re-check live session status before resolving an idle event so a
 // delayed idle from an older turn cannot complete a newer busy turn.
 import type { Event, GlobalEvent, OpencodeClient } from "@opencode-ai/sdk/v2"
-import { Context, Deferred, Effect, Exit, Layer, Scope, Stream } from "effect"
+import {
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Equal,
+  Exit,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Schema,
+  Scope,
+  Stream,
+} from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import {
   blockerStatus,
   bootstrapSessionData,
   createSessionData,
   flushInterrupted,
+  lookup,
   pickBlockerView,
   reduceSessionData,
   type SessionData,
@@ -64,7 +79,11 @@ type Trace = {
   write(type: string, data?: unknown): void
 }
 
-const StreamClosed = undefined as never
+// Transport-level failure: a lost event stream, a disposed instance, or a rejected turn.
+export class StreamTransportError extends Schema.TaggedError<StreamTransportError>()("StreamTransportError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 type StreamInput = {
   sdk: OpencodeClient
@@ -114,13 +133,13 @@ export type SessionResizeReplayInput = {
 type State = {
   data: SessionData
   subagent: SubagentData
-  wait?: Wait
+  wait: Option.Option<Wait>
   tick: number
   fault?: unknown
   footerView: FooterView
   blockerTick: number
-  selectedSubagent?: string
-  blockers: Map<string, number>
+  selectedSubagent: Option.Option<string>
+  blockers: MutableHashMap.MutableHashMap<string, number>
 }
 
 type TransportService = {
@@ -181,17 +200,17 @@ function isGlobalEvent(value: unknown): value is GlobalEvent {
   return !!payload && typeof payload === "object"
 }
 
-function globalPayloadEvent(value: unknown): Event | undefined {
+function globalPayloadEvent(value: unknown): Option.Option<Event> {
   if (!isGlobalEvent(value)) {
-    return undefined
+    return Option.none()
   }
 
   const payload = value.payload
   if (payload.type === "sync") {
-    return undefined
+    return Option.none()
   }
 
-  return isEvent(payload) ? payload : undefined
+  return isEvent(payload) ? Option.some(payload) : Option.none()
 }
 
 function isMatchingDisposeEvent(value: unknown, directory: string | undefined): boolean {
@@ -286,11 +305,15 @@ function sameView(a: FooterView, b: FooterView) {
   return a.request === b.request
 }
 
-function blockerOrder(order: Map<string, number>, id: string) {
-  return order.get(id) ?? Number.MAX_SAFE_INTEGER
+function blockerOrder(order: MutableHashMap.MutableHashMap<string, number>, id: string) {
+  return lookup(order, id, Number.MAX_SAFE_INTEGER)
 }
 
-function firstByOrder<T extends { id: string }>(left: T[], right: T[], order: Map<string, number>) {
+function firstByOrder<T extends { id: string }>(
+  left: T[],
+  right: T[],
+  order: MutableHashMap.MutableHashMap<string, number>,
+) {
   return [...left, ...right].sort((a, b) => {
     const next = blockerOrder(order, a.id) - blockerOrder(order, b.id)
     if (next !== 0) {
@@ -301,7 +324,11 @@ function firstByOrder<T extends { id: string }>(left: T[], right: T[], order: Ma
   })[0]
 }
 
-function pickView(data: SessionData, subagent: SubagentData, order: Map<string, number>): FooterView {
+function pickView(
+  data: SessionData,
+  subagent: SubagentData,
+  order: MutableHashMap.MutableHashMap<string, number>,
+): FooterView {
   return pickBlockerView({
     permission: firstByOrder(data.permissions, listSubagentPermissions(subagent), order),
     question: firstByOrder(data.questions, listSubagentQuestions(subagent), order),
@@ -362,11 +389,11 @@ function composeFooter(input: {
 }
 
 function traceTabs(trace: Trace | undefined, prev: FooterSubagentTab[], next: FooterSubagentTab[]) {
-  const before = new Map(prev.map((item) => [item.sessionID, item]))
-  const after = new Map(next.map((item) => [item.sessionID, item]))
+  const before = MutableHashMap.fromIterable(prev.map((item) => [item.sessionID, item] as const))
+  const after = MutableHashMap.fromIterable(next.map((item) => [item.sessionID, item] as const))
 
   for (const [sessionID, tab] of after) {
-    if (sameSubagentTab(before.get(sessionID), tab)) {
+    if (Option.exists(MutableHashMap.get(before, sessionID), (current) => sameSubagentTab(current, tab))) {
       continue
     }
 
@@ -376,8 +403,8 @@ function traceTabs(trace: Trace | undefined, prev: FooterSubagentTab[], next: Fo
     })
   }
 
-  for (const sessionID of before.keys()) {
-    if (after.has(sessionID)) {
+  for (const sessionID of MutableHashMap.keys(before)) {
+    if (MutableHashMap.has(after, sessionID)) {
       continue
     }
 
@@ -432,12 +459,12 @@ function createLayer(input: StreamInput) {
             ),
             (events) =>
               Effect.sync(() => {
-                void events.stream.return(StreamClosed).catch(() => {})
+                void events.stream.return().catch(() => {})
               }),
           ),
         )
         closeStream = () => {
-          void events.stream.return(StreamClosed).catch(() => {})
+          void events.stream.return().catch(() => {})
         }
         input.trace?.write("recv.subscribe", {
           sessionID: input.sessionID,
@@ -446,35 +473,37 @@ function createLayer(input: StreamInput) {
         const state: State = {
           data: createSessionData(),
           subagent: createSubagentData(),
+          wait: Option.none(),
           tick: 0,
           footerView: { type: "prompt" },
+          selectedSubagent: Option.none(),
           blockerTick: 0,
-          blockers: new Map(),
+          blockers: MutableHashMap.empty(),
         }
         let booting = true
         let replaying = false
         let replayDisabled = false
-        let replayPending: SessionResizeReplayInput | undefined
+        let replayPending: Option.Option<SessionResizeReplayInput> = Option.none()
         const buffered: Event[] = []
-        const replayedParts = new Set<string>()
-        const recovering = new Set<string>()
+        const replayedParts = MutableHashSet.empty<string>()
+        const recovering = MutableHashSet.empty<string>()
         const tracked = (sessionID: string | undefined) =>
-          sessionID === input.sessionID || (!!sessionID && state.subagent.tabs.has(sessionID))
+          sessionID === input.sessionID || (!!sessionID && MutableHashMap.has(state.subagent.tabs, sessionID))
         const currentSubagentState = () => {
-          if (state.selectedSubagent && !state.subagent.tabs.has(state.selectedSubagent)) {
-            state.selectedSubagent = undefined
-          }
+          state.selectedSubagent = Option.filter(state.selectedSubagent, (sessionID) =>
+            MutableHashMap.has(state.subagent.tabs, sessionID),
+          )
 
           return snapshotSelectedSubagentData(state.subagent, state.selectedSubagent)
         }
 
         const seedBlocker = (id: string) => {
-          if (state.blockers.has(id)) {
+          if (MutableHashMap.has(state.blockers, id)) {
             return
           }
 
           state.blockerTick += 1
-          state.blockers.set(id, state.blockerTick)
+          MutableHashMap.set(state.blockers, id, state.blockerTick)
         }
 
         const trackBlocker = (event: Event) => {
@@ -482,7 +511,10 @@ function createLayer(input: StreamInput) {
             return
           }
 
-          if (event.properties.sessionID !== input.sessionID && !state.subagent.tabs.has(event.properties.sessionID)) {
+          if (
+            event.properties.sessionID !== input.sessionID &&
+            !MutableHashMap.has(state.subagent.tabs, event.properties.sessionID)
+          ) {
             return
           }
 
@@ -498,14 +530,16 @@ function createLayer(input: StreamInput) {
             return
           }
 
-          state.blockers.delete(event.properties.requestID)
+          MutableHashMap.remove(state.blockers, event.properties.requestID)
         }
 
-        const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState) => {
+        const syncFooter = (
+          commits: StreamCommit[],
+          next: { patch?: FooterPatch; subagent?: FooterSubagentState } = {},
+        ) => {
           const current = pickView(state.data, state.subagent, state.blockers)
           const footer = composeFooter({
-            patch,
-            subagent: nextSubagent,
+            ...next,
             current,
             previous: state.footerView,
           })
@@ -540,7 +574,7 @@ function createLayer(input: StreamInput) {
           }
 
           const list = yield* Effect.promise(() =>
-            input.sdk.app.agents(input.directory ? { directory: input.directory } : undefined, { throwOnError: true }),
+            input.sdk.app.agents(input.directory ? { directory: input.directory } : {}, { throwOnError: true }),
           ).pipe(
             Effect.map((item) => item.data ?? []),
             Effect.orElseSucceed(() => []),
@@ -550,59 +584,66 @@ function createLayer(input: StreamInput) {
             return next
           }
 
-          return yield* Effect.fail(new Error("no primary agent available for shell mode"))
+          return yield* new StreamTransportError({ message: "no primary agent available for shell mode" })
+        })
+
+        // One polling step; succeeds with true when the recovery is finished.
+        const recoverQuestionStep = Effect.fn("RunStreamTransport.recoverQuestionStep")(function* (partID: string) {
+          if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
+            return true
+          }
+
+          const questions = yield* Effect.promise(() => input.sdk.question.list()).pipe(
+            Effect.map((item) => (item.data ?? []).filter((request) => request.sessionID === input.sessionID)),
+            Effect.orElseSucceed(() => []),
+          )
+          if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
+            return true
+          }
+
+          if (questions.length > 0) {
+            bootstrapSessionData({
+              data: state.data,
+              messages: [],
+              permissions: [],
+              questions,
+            })
+            for (const request of questions) {
+              seedBlocker(request.id)
+            }
+            input.trace?.write("question.recover", {
+              sessionID: input.sessionID,
+              requests: questions.map((request) => request.id),
+            })
+            syncFooter([])
+            return true
+          }
+
+          yield* Effect.sleep("250 millis")
+          return false
         })
 
         const recoverQuestion = Effect.fn("RunStreamTransport.recoverQuestion")(function* (partID: string) {
-          if (recovering.has(partID)) {
+          if (MutableHashSet.has(recovering, partID)) {
             return
           }
 
-          recovering.add(partID)
-          try {
-            while (!closed && !abort.signal.aborted && !input.footer.isClosed) {
-              if (state.data.questions.length > 0 || !state.data.tools.has(partID)) {
-                return
-              }
-
-              const questions = yield* Effect.promise(() => input.sdk.question.list()).pipe(
-                Effect.map((item) => (item.data ?? []).filter((request) => request.sessionID === input.sessionID)),
-                Effect.orElseSucceed(() => []),
-              )
-              if (state.data.questions.length > 0 || !state.data.tools.has(partID)) {
-                return
-              }
-
-              if (questions.length > 0) {
-                bootstrapSessionData({
-                  data: state.data,
-                  messages: [],
-                  permissions: [],
-                  questions,
-                })
-                for (const request of questions) {
-                  seedBlocker(request.id)
-                }
-                input.trace?.write("question.recover", {
-                  sessionID: input.sessionID,
-                  requests: questions.map((request) => request.id),
-                })
-                syncFooter([])
-                return
-              }
-
-              yield* Effect.sleep("250 millis")
-            }
-          } finally {
-            recovering.delete(partID)
-          }
+          MutableHashSet.add(recovering, partID)
+          let finished = false
+          yield* Effect.whileLoop({
+            while: () => !finished && !closed && !abort.signal.aborted && !input.footer.isClosed,
+            body: () => recoverQuestionStep(partID),
+            step: (done) => {
+              finished = done
+            },
+          }).pipe(Effect.ensuring(Effect.sync(() => MutableHashSet.remove(recovering, partID))))
         })
 
-        const messages = (sessionID: string, limit?: number) =>
+        const messages = (sessionID: string, limit: Option.Option<number>) =>
           Effect.promise(() =>
             input.sdk.session.messages({
               sessionID,
-              ...(typeof limit === "number" ? { limit } : {}),
+              ...(Option.isSome(limit) ? { limit: limit.value } : {}),
             }),
           ).pipe(
             Effect.map((item) => item.data ?? []),
@@ -633,10 +674,10 @@ function createLayer(input: StreamInput) {
           )
 
         const markReplayedParts = (data: SessionData) => {
-          replayedParts.clear()
+          MutableHashSet.clear(replayedParts)
           for (const [partID] of data.text) {
-            if (data.part.has(partID)) {
-              replayedParts.add(partID)
+            if (MutableHashMap.has(data.part, partID)) {
+              MutableHashSet.add(replayedParts, partID)
             }
           }
         }
@@ -647,7 +688,7 @@ function createLayer(input: StreamInput) {
           yield* Effect.forEach(
             sessions,
             (sessionID) =>
-              messages(sessionID, SUBAGENT_CALL_BOOTSTRAP_LIMIT).pipe(
+              messages(sessionID, Option.some(SUBAGENT_CALL_BOOTSTRAP_LIMIT)).pipe(
                 Effect.tap((messagesList) =>
                   Effect.sync(() => {
                     if (
@@ -662,7 +703,7 @@ function createLayer(input: StreamInput) {
                       return
                     }
 
-                    syncFooter([], undefined, currentSubagentState())
+                    syncFooter([], { subagent: currentSubagentState() })
                   }),
                 ),
               ),
@@ -679,10 +720,10 @@ function createLayer(input: StreamInput) {
               messages(
                 input.sessionID,
                 input.replay
-                  ? input.replayLimit === undefined
-                    ? undefined
-                    : Math.max(input.replayLimit, SUBAGENT_BOOTSTRAP_LIMIT)
-                  : SUBAGENT_BOOTSTRAP_LIMIT,
+                  ? Option.map(Option.fromUndefinedOr(input.replayLimit), (limit) =>
+                      Math.max(limit, SUBAGENT_BOOTSTRAP_LIMIT),
+                    )
+                  : Option.some(SUBAGENT_BOOTSTRAP_LIMIT),
               ),
               Effect.promise(() =>
                 input.sdk.session.children({
@@ -709,32 +750,37 @@ function createLayer(input: StreamInput) {
           const sessionPermissions = permissions.filter((item) => item.sessionID === input.sessionID)
           const sessionQuestions = questions.filter((item) => item.sessionID === input.sessionID)
           const history = input.replay
-            ? replaySession({
-                messages: messagesList,
-                permissions: sessionPermissions,
-                questions: sessionQuestions,
-                thinking: input.thinking,
-                limits: input.limits(),
-                providers: input.providers?.(),
-              })
-            : undefined
-          const replay =
-            history && input.replayLimit !== undefined && messagesList.length > input.replayLimit
+            ? Option.some(
+                replaySession({
+                  messages: messagesList,
+                  permissions: sessionPermissions,
+                  questions: sessionQuestions,
+                  thinking: input.thinking,
+                  limits: input.limits(),
+                  providers: input.providers?.(),
+                }),
+              )
+            : Option.none()
+          const replayLimit = input.replayLimit
+          const replay = Option.map(history, (full) =>
+            replayLimit !== undefined && messagesList.length > replayLimit
               ? replaySession({
-                  messages: messagesList.slice(-input.replayLimit),
+                  messages: messagesList.slice(-replayLimit),
                   permissions: sessionPermissions,
                   questions: sessionQuestions,
                   thinking: input.thinking,
                   limits: input.limits(),
                   providers: input.providers?.(),
                 })
-              : history
+              : full,
+          )
 
-          if (history) {
-            state.data = history.data
+          if (Option.isSome(history)) {
+            state.data = history.value.data
+            markReplayedParts(history.value.data)
           }
 
-          if (!history) {
+          if (Option.isNone(history)) {
             bootstrapSessionData({
               data: state.data,
               messages: messagesList,
@@ -743,16 +789,13 @@ function createLayer(input: StreamInput) {
             })
           }
 
-          if (history) {
-            markReplayedParts(history.data)
-          }
-
           bootstrapSubagentData({
             data: state.subagent,
             messages: messagesList,
             children,
             permissions,
             questions,
+            now: yield* Clock.currentTimeMillis,
           })
 
           for (const request of [
@@ -764,31 +807,37 @@ function createLayer(input: StreamInput) {
             seedBlocker(request.id)
           }
 
-          if (replay) {
-            const activeCommitIDs = new Set([...state.data.part.keys(), ...state.data.tools])
-            for (const commit of replay.commits) {
+          if (Option.isSome(replay)) {
+            const activeCommitIDs = MutableHashSet.fromIterable([
+              ...MutableHashMap.keys(state.data.part),
+              ...state.data.tools,
+            ])
+            for (const commit of replay.value.commits) {
               input.trace?.write("ui.commit", commit)
               input.footer.append(commit)
 
-              if (commit.partID && activeCommitIDs.has(commit.partID)) {
+              if (commit.partID && MutableHashSet.has(activeCommitIDs, commit.partID)) {
                 continue
               }
 
-              yield* Effect.promise(() => input.footer.idle()).pipe(Effect.orElseSucceed(() => undefined))
+              yield* Effect.promise(() => input.footer.idle()).pipe(Effect.ignore)
             }
           }
 
           const snapshot = currentSubagentState()
           traceTabs(input.trace, [], snapshot.tabs)
-          syncFooter([], replay?.patch, snapshot)
-          if (replay) {
-            yield* Effect.promise(() => input.footer.idle()).pipe(Effect.orElseSucceed(() => undefined))
+          syncFooter([], {
+            ...(Option.isSome(replay) ? { patch: replay.value.patch } : {}),
+            subagent: snapshot,
+          })
+          if (Option.isSome(replay)) {
+            yield* Effect.promise(() => input.footer.idle()).pipe(Effect.ignore)
           }
 
           booting = false
           yield* drainBuffered()
 
-          const sessions = [...state.subagent.tabs.keys()]
+          const sessions = [...MutableHashMap.keys(state.subagent.tabs)]
           if (sessions.length === 0) {
             return
           }
@@ -816,35 +865,43 @@ function createLayer(input: StreamInput) {
 
           state.fault = error
           const next = state.wait
-          state.wait = undefined
-          if (!next) {
+          state.wait = Option.none()
+          if (Option.isNone(next)) {
             return
           }
 
-          yield* Deferred.fail(next.done, error).pipe(Effect.ignore)
+          yield* Deferred.fail(next.value.done, error).pipe(Effect.ignore)
         })
 
         const touch = (event: Event) => {
           const next = state.wait
-          if (!next || !active(event, input.sessionID)) {
+          if (Option.isNone(next) || !active(event, input.sessionID)) {
             return
           }
 
-          next.live = true
+          next.value.live = true
+        }
+
+        // Wait objects compare by identity: a newer turn arms a new Wait.
+        const waiting = (item: Wait) => Option.exists(state.wait, (current) => current === item)
+        const release = (item: Wait) => {
+          if (waiting(item)) {
+            state.wait = Option.none()
+          }
         }
 
         const complete = Effect.fn("RunStreamTransport.complete")(function* (next: Wait, fallback: boolean) {
-          if (state.wait !== next || !next.armed || !next.live) {
+          if (!waiting(next) || !next.armed || !next.live) {
             return
           }
 
-          if (!(yield* idle(fallback)) || state.wait !== next) {
+          if (!(yield* idle(fallback)) || !waiting(next)) {
             return
           }
 
           state.tick = next.tick + 1
-          state.wait = undefined
-          yield* Deferred.succeed(next.done, undefined).pipe(Effect.ignore)
+          state.wait = Option.none()
+          yield* Deferred.done(next.done, Exit.void).pipe(Effect.ignore)
         })
 
         const mark = Effect.fn("RunStreamTransport.mark")(function* (event: Event) {
@@ -857,24 +914,23 @@ function createLayer(input: StreamInput) {
           }
 
           const next = state.wait
-          if (!next) {
+          if (Option.isNone(next)) {
             return
           }
 
-          yield* complete(next, true)
+          yield* complete(next.value, true)
         })
 
         const poll = Effect.fn("RunStreamTransport.poll")(function* (next: Wait, signal: AbortSignal) {
-          while (state.wait === next && !signal.aborted && !input.footer.isClosed && !closed) {
-            yield* Effect.sleep("250 millis")
-            yield* complete(next, false)
-          }
+          yield* Effect.whileLoop({
+            while: () => waiting(next) && !signal.aborted && !input.footer.isClosed && !closed,
+            body: () => Effect.sleep("250 millis").pipe(Effect.andThen(complete(next, false))),
+            step: () => {},
+          })
         })
 
         const flush = (type: "turn.abort" | "turn.cancel") => {
-          const commits: StreamCommit[] = []
-          flushInterrupted(state.data, commits)
-          syncFooter(commits)
+          syncFooter(flushInterrupted(state.data))
           input.trace?.write(type, {
             sessionID: input.sessionID,
           })
@@ -882,19 +938,20 @@ function createLayer(input: StreamInput) {
 
         const applyEvent = Effect.fn("RunStreamTransport.applyEvent")(function* (event: Event) {
           if (event.type === "message.part.delta" && event.properties.sessionID === input.sessionID) {
-            if (replayedParts.has(event.properties.partID)) {
-              const seen = state.data.text.get(event.properties.partID) ?? ""
+            if (MutableHashSet.has(replayedParts, event.properties.partID)) {
+              const seen = lookup(state.data.text, event.properties.partID, "")
               if (seen.endsWith(event.properties.delta)) {
                 return
               }
 
-              replayedParts.delete(event.properties.partID)
+              MutableHashSet.remove(replayedParts, event.properties.partID)
             }
           }
 
           trackBlocker(event)
 
-          const prev = event.type === "message.part.updated" ? listSubagentTabs(state.subagent) : undefined
+          const prev =
+            event.type === "message.part.updated" ? Option.some(listSubagentTabs(state.subagent)) : Option.none()
           const next = reduceSessionData({
             data: state.data,
             event,
@@ -904,16 +961,19 @@ function createLayer(input: StreamInput) {
           })
           state.data = next.data
           const visible = next.commits.at(-1)
-          if (visible) {
-            state.wait?.onVisibleOutput?.({
+          if (visible && Option.isSome(state.wait)) {
+            state.wait.value.onVisibleOutput?.({
               kind: visible.kind,
               text: visible.text,
               phase: visible.phase,
               messageID: visible.messageID,
               partID: visible.partID,
               toolState: visible.toolState,
-              ...(visible.partID && state.data.visible.has(visible.partID)
-                ? { visible: state.data.visible.get(visible.partID) }
+              ...(visible.partID
+                ? Option.match(MutableHashMap.get(state.data.visible, visible.partID), {
+                    onNone: () => ({}),
+                    onSome: (text) => ({ visible: text }),
+                  })
                 : {}),
             })
           }
@@ -938,13 +998,17 @@ function createLayer(input: StreamInput) {
             sessionID: input.sessionID,
             thinking: input.thinking,
             limits: input.limits(),
+            now: yield* Clock.currentTimeMillis,
           })
-          if (changed && prev) {
-            traceTabs(input.trace, prev, listSubagentTabs(state.subagent))
+          if (changed && Option.isSome(prev)) {
+            traceTabs(input.trace, prev.value, listSubagentTabs(state.subagent))
           }
           releaseBlocker(event)
 
-          syncFooter(next.commits, next.footer?.patch, changed ? currentSubagentState() : undefined)
+          syncFooter(next.commits, {
+            patch: next.footer?.patch,
+            ...(changed ? { subagent: currentSubagentState() } : {}),
+          })
 
           touch(event)
           yield* mark(event)
@@ -983,24 +1047,24 @@ function createLayer(input: StreamInput) {
           }
 
           if (replaying) {
-            replayPending = next
+            replayPending = Option.some(next)
             return false
           }
 
           const finish: () => Effect.Effect<void> = Effect.fnUntraced(function* () {
             yield* drainBuffered()
             const pending = replayPending
-            replayPending = undefined
-            if (!pending || replayDisabled || closed || input.footer.isClosed) {
+            replayPending = Option.none()
+            if (Option.isNone(pending) || replayDisabled || closed || input.footer.isClosed) {
               replaying = false
               return
             }
 
             replaying = false
-            yield* replayOnResize(pending).pipe(Effect.asVoid)
+            yield* replayOnResize(pending.value).pipe(Effect.asVoid)
           })
 
-          replayedParts.clear()
+          MutableHashSet.clear(replayedParts)
           replaying = true
           input.trace?.write("replay.resize.start", {
             sessionID: input.sessionID,
@@ -1035,7 +1099,7 @@ function createLayer(input: StreamInput) {
                 history,
                 activeCommits,
                 patch:
-                  history.data.part.size > 0 || history.data.tools.size > 0
+                  MutableHashMap.size(history.data.part) > 0 || MutableHashSet.size(history.data.tools) > 0
                     ? { ...history.patch, phase: "running" as const }
                     : history.patch,
                 visible:
@@ -1051,7 +1115,7 @@ function createLayer(input: StreamInput) {
                     : history,
               }
             },
-            catch: (error) => error,
+            catch: (cause) => new StreamTransportError({ message: "resize replay snapshot failed", cause }),
           }).pipe(Effect.exit)
           if (Exit.isFailure(snapshot)) {
             input.trace?.write("replay.resize.abort", {
@@ -1099,7 +1163,7 @@ function createLayer(input: StreamInput) {
             input.footer.append(commit)
           }
 
-          syncFooter([], snapshot.value.patch, currentSubagentState())
+          syncFooter([], { patch: snapshot.value.patch, subagent: currentSubagentState() })
           const rebuilt = yield* Effect.promise(() => input.footer.idle()).pipe(Effect.exit)
           if (Exit.isFailure(rebuilt)) {
             replayDisabled = true
@@ -1126,7 +1190,7 @@ function createLayer(input: StreamInput) {
 
         const watch = Effect.fn("RunStreamTransport.watch")(() =>
           Stream.fromAsyncIterable(events.stream, (error) =>
-            error instanceof Error ? error : new Error(String(error)),
+            error instanceof Error ? error : new StreamTransportError({ message: String(error), cause: error }),
           ).pipe(
             Stream.takeUntil(() => input.footer.isClosed || abort.signal.aborted),
             Stream.runForEach(
@@ -1137,16 +1201,17 @@ function createLayer(input: StreamInput) {
                 }
 
                 if (isMatchingDisposeEvent(item, input.directory)) {
-                  yield* fail(new Error("instance disposed"))
+                  yield* fail(new StreamTransportError({ message: "instance disposed" }))
                   yield* closeScope()
                   return
                 }
 
-                const event = globalPayloadEvent(item)
-                if (!event) {
+                const found = globalPayloadEvent(item)
+                if (Option.isNone(found)) {
                   return
                 }
 
+                const event = found.value
                 const sessionID = sid(event)
                 if (booting || replaying) {
                   if (sessionID) {
@@ -1173,7 +1238,7 @@ function createLayer(input: StreamInput) {
             Effect.ensuring(
               Effect.gen(function* () {
                 if (!abort.signal.aborted && !state.fault) {
-                  yield* fail(new Error("global event stream closed"))
+                  yield* fail(new StreamTransportError({ message: "global event stream closed" }))
                 }
                 closeStream()
               }),
@@ -1185,18 +1250,17 @@ function createLayer(input: StreamInput) {
         yield* bootstrap()
 
         const runPromptTurn = Effect.fn("RunStreamTransport.runPromptTurn")(function* (next: SessionTurnInput) {
+          // Every exit returns an Effect result, so the failing guards can use `return yield*`.
           if (closed || next.signal?.aborted || input.footer.isClosed) {
-            return
+            return yield* Effect.void
           }
 
           if (state.fault) {
-            yield* Effect.fail(state.fault)
-            return
+            return yield* Effect.fail(state.fault)
           }
 
-          if (state.wait) {
-            yield* Effect.fail(new Error("prompt already running"))
-            return
+          if (Option.isSome(state.wait)) {
+            return yield* new StreamTransportError({ message: "prompt already running" })
           }
 
           const item: Wait = {
@@ -1206,7 +1270,7 @@ function createLayer(input: StreamInput) {
             onVisibleOutput: next.onVisibleOutput,
             done: yield* Deferred.make<void, unknown>(),
           }
-          state.wait = item
+          state.wait = Option.some(item)
           state.data.announced = false
 
           const turn = new AbortController()
@@ -1265,7 +1329,7 @@ function createLayer(input: StreamInput) {
                             item.live = true
                           }),
                         ),
-                        Effect.flatMap(() => Deferred.succeed(item.done, undefined).pipe(Effect.ignore)),
+                        Effect.flatMap(() => Deferred.done(item.done, Exit.void).pipe(Effect.ignore)),
                         Effect.catch((error) => Deferred.fail(item.done, error).pipe(Effect.ignore)),
                         Effect.forkIn(scope, { startImmediately: true }),
                         Effect.asVoid,
@@ -1283,7 +1347,7 @@ function createLayer(input: StreamInput) {
                             sessionID: input.sessionID,
                             messageID: next.prompt.messageID,
                             agent: next.agent,
-                            model: next.model ? `${next.model.providerID}/${next.model.modelID}` : undefined,
+                            ...(next.model ? { model: `${next.model.providerID}/${next.model.modelID}` } : {}),
                             variant: next.variant,
                             command: command.name,
                             arguments: command.arguments,
@@ -1307,7 +1371,7 @@ function createLayer(input: StreamInput) {
                             item.live = true
                           }),
                         ),
-                        Effect.flatMap(() => Deferred.succeed(item.done, undefined).pipe(Effect.ignore)),
+                        Effect.flatMap(() => Deferred.done(item.done, Exit.void).pipe(Effect.ignore)),
                         Effect.catch((error) => Deferred.fail(item.done, error).pipe(Effect.ignore)),
                         Effect.forkIn(scope, { startImmediately: true }),
                         Effect.asVoid,
@@ -1334,12 +1398,10 @@ function createLayer(input: StreamInput) {
                     ),
                   )
 
-          yield* send.pipe(
+          return yield* send.pipe(
             Effect.flatMap(() => {
               if (turn.signal.aborted || next.signal?.aborted || input.footer.isClosed || closed) {
-                if (state.wait === item) {
-                  state.wait = undefined
-                }
+                release(item)
                 flush("turn.abort")
                 return Effect.void
               }
@@ -1355,18 +1417,14 @@ function createLayer(input: StreamInput) {
               }
 
               if (state.tick > item.tick) {
-                if (state.wait === item) {
-                  state.wait = undefined
-                }
+                release(item)
                 return Effect.void
               }
 
               return waitTurn(item.done, turn.signal).pipe(
                 Effect.flatMap((status) =>
                   Effect.sync(() => {
-                    if (state.wait === item) {
-                      state.wait = undefined
-                    }
+                    release(item)
 
                     if (status === "abort") {
                       flush("turn.abort")
@@ -1376,9 +1434,7 @@ function createLayer(input: StreamInput) {
               )
             }),
             Effect.catch((error) => {
-              if (state.wait === item) {
-                state.wait = undefined
-              }
+              release(item)
 
               const canceled = turn.signal.aborted || next.signal?.aborted === true || input.footer.isClosed || closed
               if (canceled) {
@@ -1406,7 +1462,6 @@ function createLayer(input: StreamInput) {
               }),
             ),
           )
-          return
         })
 
         const selectSubagent = Effect.fn("RunStreamTransport.selectSubagent")((sessionID: string | undefined) =>
@@ -1415,13 +1470,15 @@ function createLayer(input: StreamInput) {
               return
             }
 
-            const next = sessionID && state.subagent.tabs.has(sessionID) ? sessionID : undefined
-            if (state.selectedSubagent === next) {
+            const next = Option.fromUndefinedOr(sessionID).pipe(
+              Option.filter((id) => id !== "" && MutableHashMap.has(state.subagent.tabs, id)),
+            )
+            if (Equal.equals(state.selectedSubagent, next)) {
               return
             }
 
             state.selectedSubagent = next
-            syncFooter([], undefined, currentSubagentState())
+            syncFooter([], { subagent: currentSubagentState() })
           }),
         )
 
@@ -1449,14 +1506,17 @@ function createLayer(input: StreamInput) {
 //
 // The transport is single-turn: only one runPromptTurn() call can be active
 // at a time. The prompt queue enforces this from above.
-export async function createSessionTransport(input: StreamInput): Promise<SessionTransport> {
+//
+// The first runPromise builds the layer (subscription and bootstrap) before the
+// facade resolves. This Promise facade is the run-mode entry boundary.
+export function createSessionTransport(input: StreamInput): Promise<SessionTransport> {
   const runtime = makeRuntime(Service, createLayer(input))
-  await runtime.runPromise(() => Effect.void)
-
-  return {
-    runPromptTurn: (next) => runtime.runPromise((svc) => svc.runPromptTurn(next)),
-    selectSubagent: (sessionID) => runtime.runSync((svc) => svc.selectSubagent(sessionID)),
-    replayOnResize: (next) => runtime.runPromise((svc) => svc.replayOnResize(next)),
-    close: () => runtime.runPromise((svc) => svc.close()),
-  }
+  return runtime.runPromise(() =>
+    Effect.succeed({
+      runPromptTurn: (next) => runtime.runPromise((svc) => svc.runPromptTurn(next)),
+      selectSubagent: (sessionID) => runtime.runSync((svc) => svc.selectSubagent(sessionID)),
+      replayOnResize: (next) => runtime.runPromise((svc) => svc.replayOnResize(next)),
+      close: () => runtime.runPromise((svc) => svc.close()),
+    }),
+  )
 }

@@ -1,3 +1,7 @@
+import { getFilename } from "@opencode-ai/core/util/path"
+import { Deferred, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
+import fuzzysort from "fuzzysort"
+
 export function treeEntries(parent: string, nodes: ReadonlyArray<{ name: string; type: "file" | "directory" }>) {
   const prefix = parent.replace(/^\/+|\/+$/g, "")
   return nodes.map((node) => {
@@ -30,13 +34,13 @@ export function pickerMode(mode: "directory" | "file", base?: string) {
         return treeEntries(parent, nodes)
       },
       navigation(path: string) {
-        return treePathWithin(base, path) ? path : undefined
+        return treePathWithin(base, path) ? pickerPathOption(path) : Option.none<string>()
       },
       result(root: string, selected: string) {
-        return selected || undefined
+        return pickerPathOption(selected)
       },
       selection(root: string, path: string) {
-        if (!treePathWithin(base, root)) return
+        if (!treePathWithin(base, root)) return Option.none<string>()
         return selectedTreePath(root, path, "file", base)
       },
     }
@@ -51,11 +55,11 @@ export function pickerMode(mode: "directory" | "file", base?: string) {
       )
     },
     navigation(path: string) {
-      return path
+      return pickerPathOption(path)
     },
     result(root: string, selected: string, valid = true) {
-      if (!valid) return
-      return selected || (root ? nativePickerPath(root) : undefined)
+      if (!valid) return Option.none<string>()
+      return pickerPathOption(selected || (root ? nativePickerPath(root) : ""))
     },
     selection(root: string, path: string) {
       return selectedTreePath(root, path, "directory")
@@ -80,8 +84,13 @@ export function pickerAbsoluteInput(input: string, home: string, current: string
   return canonicalPickerPath(absolute)
 }
 
+/** Reads a picker path that may be blank. An empty text is no path. */
+export function pickerPathOption(value: string | undefined): Option.Option<string> {
+  return value ? Option.some(value) : Option.none()
+}
+
 export function treePathWithin(base: string | undefined, path: string) {
-  return pickerRelativePath(base, path) !== undefined
+  return Option.isSome(pickerRelativePath(base, path))
 }
 
 export function canonicalPickerPath(path: string) {
@@ -100,17 +109,17 @@ export function canonicalPickerPath(path: string) {
   return joinPickerPath(root, resolved.join("/"))
 }
 
-export function pickerRelativePath(base: string | undefined, path: string) {
-  if (!base) return
+export function pickerRelativePath(base: string | undefined, path: string): Option.Option<string> {
+  if (!base) return Option.none()
   const rootPath = canonicalPickerPath(base)
   const targetPath = canonicalPickerPath(path)
   const insensitive = /^[A-Za-z]:\//.test(rootPath) || rootPath.startsWith("//")
   const root = insensitive ? rootPath.toLowerCase() : rootPath
   const target = insensitive ? targetPath.toLowerCase() : targetPath
-  if (target === root) return ""
+  if (target === root) return Option.some("")
   const prefix = root.endsWith("/") ? root : root + "/"
-  if (!target.startsWith(prefix)) return
-  return targetPath.slice(prefix.length)
+  if (!target.startsWith(prefix)) return Option.none()
+  return Option.some(targetPath.slice(prefix.length))
 }
 
 export function currentPickerSuggestions<T>(result: { query: string; items: readonly T[] } | undefined, query: string) {
@@ -128,9 +137,9 @@ export function preloadTreeDirectories(
   )
 }
 
-export function advanceTreePreload(advanced: Set<string>, path: string) {
-  if (advanced.has(path)) return false
-  advanced.add(path)
+export function advanceTreePreload(advanced: MutableHashSet.MutableHashSet<string>, path: string) {
+  if (MutableHashSet.has(advanced, path)) return false
+  MutableHashSet.add(advanced, path)
   return true
 }
 
@@ -138,69 +147,70 @@ export function activeTreeNavigation(request: number, current: number) {
   return request === current
 }
 
-export function createPriorityTaskQueue<T>(concurrency: number) {
+/**
+ * Runs keyed tasks, at most `concurrency` at a time. A "user" task starts before every
+ * "background" task, and the newest user task starts first.
+ *
+ * `schedule` queues the task and succeeds with an Effect that waits for its result. A second
+ * `schedule` for a key that is still queued or running shares the first task, and a "user"
+ * call promotes it.
+ */
+export function createPriorityTaskQueue<A, E = never>(concurrency: number) {
   type Job = {
-    key: string
     priority: "user" | "background"
-    promise: Promise<T>
-    run: () => void
+    readonly result: Deferred.Deferred<A, E>
+    readonly run: Effect.Effect<void>
   }
 
-  const jobs = new Map<string, Job>()
+  const jobs = MutableHashMap.empty<string, Job>()
   const user: Job[] = []
   const background: Job[] = []
   let active = 0
 
-  const drain = () => {
-    while (active < concurrency) {
-      const job = user.pop() ?? background.shift()
-      if (!job) return
-      active++
-      job.run()
-    }
-  }
+  // A forked job starts on the next scheduler turn, as the Promise queue started each task in a
+  // microtask, so a task never runs inside the call that queued it.
+  const drain: Effect.Effect<void> = Effect.suspend(() => {
+    if (active >= concurrency) return Effect.void
+    const job = user.pop() ?? background.shift()
+    if (!job) return Effect.void
+    active++
+    return Effect.forkDetach(job.run).pipe(Effect.andThen(drain))
+  })
 
-  const schedule = (key: string, priority: Job["priority"], task: () => Promise<T>) => {
-    const existing = jobs.get(key)
-    if (existing) {
-      if (priority === "user") promote(key)
-      return existing.promise
-    }
+  const schedule = (
+    key: string,
+    priority: Job["priority"],
+    task: Effect.Effect<A, E>,
+  ): Effect.Effect<Effect.Effect<A, E>> =>
+    Effect.suspend(() => {
+      const existing = MutableHashMap.get(jobs, key)
+      if (Option.isSome(existing)) {
+        if (priority === "user") promote(key)
+        return Effect.succeed(Deferred.await(existing.value.result))
+      }
 
-    const deferred = Promise.withResolvers<T>()
-    const job: Job = {
-      key,
-      priority,
-      promise: deferred.promise,
-      run: () => {
-        const complete = () => {
-          active--
-          jobs.delete(key)
-          drain()
-        }
-        Promise.resolve()
-          .then(task)
-          .then(
-            (value) => {
-              complete()
-              deferred.resolve(value)
-            },
-            (error) => {
-              complete()
-              deferred.reject(error)
-            },
-          )
-      },
-    }
-    jobs.set(key, job)
-    ;(priority === "user" ? user : background).push(job)
-    drain()
-    return job.promise
-  }
+      const result = Deferred.makeUnsafe<A, E>()
+      const complete = Effect.sync(() => {
+        active--
+        MutableHashMap.remove(jobs, key)
+      }).pipe(Effect.andThen(drain))
+      const job: Job = {
+        priority,
+        result,
+        run: Effect.exit(task).pipe(
+          Effect.flatMap((exit) => complete.pipe(Effect.andThen(Deferred.done(result, exit)))),
+          Effect.asVoid,
+        ),
+      }
+      MutableHashMap.set(jobs, key, job)
+      ;(priority === "user" ? user : background).push(job)
+      return drain.pipe(Effect.as(Deferred.await(result)))
+    })
 
   const promote = (key: string) => {
-    const job = jobs.get(key)
-    if (!job || job.priority === "user") return
+    const found = MutableHashMap.get(jobs, key)
+    if (Option.isNone(found) || found.value.priority === "user") return
+    const job = found.value
     const index = background.indexOf(job)
     if (index === -1) return
     background.splice(index, 1)
@@ -229,15 +239,25 @@ export function absoluteTreePath(root: string, path: string) {
   return `${base}/${relative}`
 }
 
-export function selectedTreePath(root: string, path: string, mode: "directory" | "file", base?: string) {
+export function selectedTreePath(
+  root: string,
+  path: string,
+  mode: "directory" | "file",
+  base?: string,
+): Option.Option<string> {
   const directory = path.endsWith("/")
   if (mode === "file") {
-    if (directory) return
-    if (!base) return path
+    if (directory) return Option.none()
+    if (!base) return Option.some(path)
     const absolute = absoluteTreePath(root, path)
     return pickerRelativePath(base, absolute)
   }
-  return directory ? nativePickerPath(absoluteTreePath(root, path)) : undefined
+  return directory ? Option.some(nativePickerPath(absoluteTreePath(root, path))) : Option.none()
+}
+
+/** Drops repeated paths and keeps the first position of each, as `new Set` did. */
+function uniquePaths(paths: Iterable<string>) {
+  return Array.from(MutableHashSet.fromIterable(paths))
 }
 
 export function nativePickerPath(path: string) {
@@ -245,9 +265,6 @@ export function nativePickerPath(path: string) {
   if (/^[A-Za-z]:\//.test(value) || value.startsWith("//")) return value.replaceAll("/", "\\")
   return value
 }
-import { getFilename } from "@opencode-ai/core/util/path"
-import fuzzysort from "fuzzysort"
-import { ServerSDK } from "@/context/server-sdk"
 
 export function cleanPickerInput(value: string) {
   const first = (value ?? "").split(/\r?\n/)[0] ?? ""
@@ -321,94 +338,137 @@ export function displayPickerPath(path: string, input: string, home: string) {
   return pickerTilde(value, home) || value
 }
 
-export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string | undefined; home: () => string }) {
-  const cache = new Map<string, Promise<Array<{ name: string; absolute: string }>>>()
+/** The file calls the directory search makes. ServerSDK satisfies it, and so does a test stand-in. */
+export type DirectorySearchClient = {
+  readonly api: {
+    readonly file: {
+      readonly list: (input: { location: { directory: string } }) => Promise<{
+        readonly data: ReadonlyArray<{ readonly path: string; readonly type: "file" | "directory" }>
+      }>
+      readonly find: (input: {
+        location: { directory: string }
+        query: string
+        type: "directory"
+        limit: number
+      }) => Promise<{ readonly data: ReadonlyArray<{ readonly path: string }> }>
+    }
+  }
+}
+
+export function createDirectorySearch(args: {
+  sdk: DirectorySearchClient
+  base: () => Option.Option<string>
+  home: () => string
+}) {
+  type DirectoryEntry = { readonly name: string; readonly absolute: string }
+  const cache = MutableHashMap.empty<string, Deferred.Deferred<ReadonlyArray<DirectoryEntry>>>()
   let current = 0
 
-  const scoped = (value: string) => {
+  const scoped = (value: string): Option.Option<{ directory: string; path: string }> => {
     const raw = normalizePickerDrive(value)
     const root = pickerRoot(raw)
-    if (root) return { directory: trimPickerPath(root), path: raw.slice(root.length) }
-    const base = args.base()
-    if (!base) return
-    if (!raw) return { directory: trimPickerPath(base), path: "" }
+    if (root) return Option.some({ directory: trimPickerPath(root), path: raw.slice(root.length) })
+    const found = Option.filter(args.base(), (base) => base !== "")
+    if (Option.isNone(found)) return Option.none()
+    const base = found.value
+    if (!raw) return Option.some({ directory: trimPickerPath(base), path: "" })
     const home = args.home()
-    if (raw === "~") return { directory: trimPickerPath(home || base), path: "" }
-    if (raw.startsWith("~/")) return { directory: trimPickerPath(home || base), path: raw.slice(2) }
-    return { directory: trimPickerPath(base), path: raw }
+    if (raw === "~") return Option.some({ directory: trimPickerPath(home || base), path: "" })
+    if (raw.startsWith("~/")) return Option.some({ directory: trimPickerPath(home || base), path: raw.slice(2) })
+    return Option.some({ directory: trimPickerPath(base), path: raw })
   }
 
-  const directories = async (directory: string) => {
-    const key = trimPickerPath(directory)
-    const existing = cache.get(key)
-    if (existing) return existing
-    const request = args.sdk.api.file
-      .list({ location: { directory: key } })
-      .then((result) => result.data)
-      .catch(() => [])
-      .then((nodes) =>
+  const listDirectory = (key: string) =>
+    Effect.tryPromise(() => args.sdk.api.file.list({ location: { directory: key } })).pipe(
+      Effect.map((result) => result.data),
+      Effect.orElseSucceed(() => []),
+      Effect.map((nodes) =>
         nodes
           .filter((node) => node.type === "directory")
           .map((node) => {
             const relative = trimPickerPath(normalizePickerDrive(node.path))
             return { name: getFilename(relative), absolute: joinPickerPath(key, relative) }
           }),
+      ),
+    )
+
+  // Lists each directory once. The listing runs in its own fiber, as the cached Promise did, so a
+  // later search reuses it even after the search that started it has ended.
+  const directories = (directory: string): Effect.Effect<ReadonlyArray<DirectoryEntry>> =>
+    Effect.suspend(() => {
+      const key = trimPickerPath(directory)
+      const existing = MutableHashMap.get(cache, key)
+      if (Option.isSome(existing)) return Deferred.await(existing.value)
+      const request = Deferred.makeUnsafe<ReadonlyArray<DirectoryEntry>>()
+      MutableHashMap.set(cache, key, request)
+      return Effect.forkDetach(listDirectory(key).pipe(Deferred.into(request)), { startImmediately: true }).pipe(
+        Effect.andThen(Deferred.await(request)),
       )
-    cache.set(key, request)
-    return request
-  }
+    })
 
-  const match = async (directory: string, query: string, limit: number) => {
-    const items = await directories(directory)
-    if (!query) return items.slice(0, limit).map((item) => item.absolute)
-    return fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj.absolute)
-  }
+  const match = (directory: string, query: string, limit: number) =>
+    directories(directory).pipe(
+      Effect.map((items) =>
+        query
+          ? fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj.absolute)
+          : items.slice(0, limit).map((item) => item.absolute),
+      ),
+    )
 
-  return async (filter: string) => {
-    const token = ++current
-    const active = () => token === current
-    const value = cleanPickerInput(filter)
-    const input = scoped(value)
-    if (!input) return [] as string[]
-    const raw = normalizePickerDrive(value)
-    const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
-    const query = normalizePickerDrive(input.path)
-    if (!pathInput) {
-      const results = await args.sdk.api.file
-        .find({ location: { directory: input.directory }, query, type: "directory", limit: 50 })
-        .then((result) => result.data.map((entry) => entry.path))
-        .catch(() => [])
-      if (!active()) return []
-      if (results.length) {
-        return results.map((path) => joinPickerPath(input.directory, path)).slice(0, 50)
+  const matchAll = (paths: ReadonlyArray<string>, query: string, limit: number) =>
+    Effect.forEach(paths, (path) => match(path, query, limit), { concurrency: "unbounded" }).pipe(
+      Effect.map((results) => uniquePaths(results.flat())),
+    )
+
+  return (filter: string): Effect.Effect<ReadonlyArray<string>> =>
+    Effect.gen(function* () {
+      const token = ++current
+      const active = () => token === current
+      const value = cleanPickerInput(filter)
+      const scope = scoped(value)
+      if (Option.isNone(scope)) return []
+      const input = scope.value
+      const raw = normalizePickerDrive(value)
+      const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
+      const query = normalizePickerDrive(input.path)
+      if (!pathInput) {
+        const results = yield* Effect.tryPromise(() =>
+          args.sdk.api.file.find({ location: { directory: input.directory }, query, type: "directory", limit: 50 }),
+        ).pipe(
+          Effect.map((result) => result.data.map((entry) => entry.path)),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        )
+        if (!active()) return []
+        if (results.length) {
+          return results.map((path) => joinPickerPath(input.directory, path)).slice(0, 50)
+        }
+        const fallback = query
+          ? yield* match(input.directory, query, 50)
+          : (yield* directories(input.directory)).map((item) => item.absolute)
+        if (!active()) return []
+        return fallback
       }
-      const fallback = query
-        ? await match(input.directory, query, 50)
-        : (await directories(input.directory)).map((item) => item.absolute)
-      if (!active()) return []
-      return fallback
-    }
-    const segments = query.replace(/^\/+/, "").split("/")
-    const head = segments.slice(0, -1).filter((part) => part && part !== ".")
-    const tail = segments.at(-1) ?? ""
-    let paths = [input.directory]
-    for (const part of head) {
-      if (!active()) return []
-      if (part === "..") {
-        paths = paths.map(pickerParent)
-        continue
+      const segments = query.replace(/^\/+/, "").split("/")
+      const head = segments.slice(0, -1).filter((part) => part && part !== ".")
+      const tail = segments.at(-1) ?? ""
+      let paths: ReadonlyArray<string> = [input.directory]
+      for (const part of head) {
+        if (!active()) return []
+        if (part === "..") {
+          paths = paths.map(pickerParent)
+          continue
+        }
+        paths = (yield* matchAll(paths, part, 4)).slice(0, 12)
+        if (!active() || paths.length === 0) return []
       }
-      paths = Array.from(new Set((await Promise.all(paths.map((path) => match(path, part, 4)))).flat())).slice(0, 12)
-      if (!active() || paths.length === 0) return []
-    }
-    const matches = Array.from(new Set((await Promise.all(paths.map((path) => match(path, tail, 50)))).flat()))
-    if (!active()) return []
-    const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
-    if (raw.endsWith("/") || !tail) return Array.from(new Set([base, ...matches].filter(Boolean))).slice(0, 50)
-    const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
-    if (!target) return matches.slice(0, 50)
-    const children = await match(target, "", 30)
-    if (!active()) return []
-    return Array.from(new Set([base, ...matches, ...children].filter(Boolean))).slice(0, 50)
-  }
+      const matches = yield* matchAll(paths, tail, 50)
+      if (!active()) return []
+      const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
+      if (raw.endsWith("/") || !tail) return uniquePaths([base, ...matches].filter(Boolean)).slice(0, 50)
+      const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
+      if (!target) return matches.slice(0, 50)
+      const children = yield* match(target, "", 30)
+      if (!active()) return []
+      return uniquePaths([base, ...matches, ...children].filter(Boolean)).slice(0, 50)
+    })
 }

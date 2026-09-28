@@ -1,4 +1,5 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { Array as Arr, MutableHashMap, MutableHashSet, Option } from "effect"
 
 export function acceptKey(sessionID: string, directory?: string) {
   if (!directory) return sessionID
@@ -19,19 +20,19 @@ export function isDirectoryAutoAccepting(autoAccept: Record<string, boolean>, di
   return autoAccept[key] ?? false
 }
 
+// The session and its ancestors, nearest first. A parent cycle ends the walk.
 function sessionLineage(session: { id: string; parentID?: string }[], sessionID: string) {
-  const parent = session.reduce((acc, item) => {
-    if (item.parentID) acc.set(item.id, item.parentID)
-    return acc
-  }, new Map<string, string>())
-  const seen = new Set([sessionID])
-  const ids = [sessionID]
+  const parent = MutableHashMap.fromIterable(
+    session.flatMap((item) => (item.parentID ? [[item.id, item.parentID] as const] : [])),
+  )
+  const seen = MutableHashSet.make(sessionID)
+  let ids: ReadonlyArray<string> = [sessionID]
+  let parentID = MutableHashMap.get(parent, sessionID)
 
-  for (const id of ids) {
-    const parentID = parent.get(id)
-    if (!parentID || seen.has(parentID)) continue
-    seen.add(parentID)
-    ids.push(parentID)
+  while (Option.isSome(parentID) && !MutableHashSet.has(seen, parentID.value)) {
+    MutableHashSet.add(seen, parentID.value)
+    ids = Arr.append(ids, parentID.value)
+    parentID = MutableHashMap.get(parent, parentID.value)
   }
 
   return ids

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { ConfigProvider, Effect, Logger } from "effect"
+import { ConfigProvider, Effect, Logger, Option } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Datadog } from "../../src/observability/datadog"
 
@@ -7,9 +7,9 @@ const settings = (env: Record<string, string>) =>
   Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))), Effect.runPromise)
 
 test("stays off without an API key or when disabled", async () => {
-  expect(await settings({})).toBeUndefined()
-  expect(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS: "false" })).toBeUndefined()
-  expect(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: "Loud" })).toBeUndefined()
+  expect(Option.isNone(await settings({}))).toBe(true)
+  expect(Option.isNone(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS: "false" }))).toBe(true)
+  expect(Option.isNone(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: "Loud" }))).toBe(true)
 })
 
 test("category filter honours prefixes and exclusions", () => {
@@ -20,24 +20,25 @@ test("category filter honours prefixes and exclusions", () => {
 
 test("ships filtered, redacted, trace-correlated batches to the intake", async () => {
   const requests: Array<{ key: string | null; body: Array<Record<string, any>> }> = []
-  await using server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(request) {
       requests.push({ key: request.headers.get("DD-API-KEY"), body: JSON.parse(await request.text()) })
       return new Response(null, { status: 202 })
     },
   })
-  const config = await settings({
-    DD_API_KEY: "test-key",
-    DD_ENV: "test",
-    DD_VERSION: "1.2.3",
-    DD_TAGS: "team:platform",
-    OPENCODE_DATADOG_LOGS_URL: server.url.href,
-    OPENCODE_DATADOG_CATEGORIES: "llm,-llm.stream",
-    OPENCODE_DATADOG_CONTENT: "hash",
-    OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
-  })
-  if (!config) throw new Error("expected Datadog settings")
+  const config = Option.getOrThrow(
+    await settings({
+      DD_API_KEY: "test-key",
+      DD_ENV: "test",
+      DD_VERSION: "1.2.3",
+      DD_TAGS: "team:platform",
+      OPENCODE_DATADOG_LOGS_URL: server.url.href,
+      OPENCODE_DATADOG_CATEGORIES: "llm,-llm.stream",
+      OPENCODE_DATADOG_CONTENT: "hash",
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
+  )
 
   await Effect.gen(function* () {
     const logger = yield* Datadog.logger(config)

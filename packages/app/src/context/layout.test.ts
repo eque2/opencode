@@ -1,18 +1,23 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk, MutableHashMap } from "effect"
 import { createRoot, createSignal } from "solid-js"
 import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./layout-helpers"
 
 describe("layout session-key helpers", () => {
   test("couples touch and scroll seed in order", () => {
-    const calls: string[] = []
+    let calls = Chunk.empty<string>()
     const result = ensureSessionKey(
       "dir/a",
-      (key) => calls.push(`touch:${key}`),
-      (key) => calls.push(`seed:${key}`),
+      (key) => {
+        calls = Chunk.append(calls, `touch:${key}`)
+      },
+      (key) => {
+        calls = Chunk.append(calls, `seed:${key}`)
+      },
     )
 
     expect(result).toBe("dir/a")
-    expect(calls).toEqual(["touch:dir/a", "seed:dir/a"])
+    expect(Chunk.toReadonlyArray(calls)).toEqual(["touch:dir/a", "seed:dir/a"])
   })
 
   test("reads dynamic accessor keys lazily", () => {
@@ -38,12 +43,7 @@ describe("pruneSessionKeys", () => {
     const drop = pruneSessionKeys({
       keep: "k4",
       max: 3,
-      used: new Map([
-        ["k1", 1],
-        ["k2", 2],
-        ["k3", 3],
-        ["k4", 4],
-      ]),
+      used: MutableHashMap.make(["k1", 1], ["k2", 2], ["k3", 3], ["k4", 4]),
       view: ["k1", "k2", "k4"],
       tabs: ["k1", "k3", "k4"],
     })
@@ -54,12 +54,8 @@ describe("pruneSessionKeys", () => {
 
   test("does not prune without keep key", () => {
     const drop = pruneSessionKeys({
-      keep: undefined,
       max: 1,
-      used: new Map([
-        ["k1", 1],
-        ["k2", 2],
-      ]),
+      used: MutableHashMap.make(["k1", 1], ["k2", 2]),
       view: ["k1"],
       tabs: ["k2"],
     })

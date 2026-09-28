@@ -1,7 +1,7 @@
 export * as ToolOutputStore from "./tool-output-store"
 
 import path from "path"
-import { Context, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Option, Predicate, Schedule, Schema } from "effect"
 import { Config } from "./config"
 import { FSUtil } from "./fs-util"
 import { Global } from "./global"
@@ -103,6 +103,16 @@ const boundedPreview = (text: string, marker: string, maxLines: number, maxBytes
   return bounded.tail ? `${bounded.head}\n\n${marker}\n\n${bounded.tail}` : `${bounded.head}\n\n${marker}`
 }
 
+// The same text as JSON.stringify(value, null, 2): toJSON applies, undefined-valued keys drop out, and a bigint or a
+// cycle fails.
+const encodeIndented = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
+/** JSON text of a structured-only output. A value that has no JSON text (undefined, a function, a symbol) is stringified. */
+const structuredText = (value: unknown) =>
+  Predicate.isUndefined(value) || Predicate.isFunction(value) || Predicate.isSymbol(value)
+    ? Effect.succeed(String(value))
+    : encodeIndented(value).pipe(Effect.mapError((cause) => new StorageError({ operation: "encode", cause })))
+
 const lineCount = (text: string) => {
   let count = 1
   for (const char of text) if (char === "\n") count++
@@ -141,10 +151,7 @@ const layer = Layer.effect(
       const text = input.output.content.filter((item) => item.type === "text")
       const contextual =
         input.output.content.length === 0
-          ? yield* Effect.try({
-              try: () => JSON.stringify(input.output.structured, null, 2) ?? String(input.output.structured),
-              catch: (cause) => new StorageError({ operation: "encode", cause }),
-            })
+          ? yield* structuredText(input.output.structured)
           : text.map((item) => item.text).join("")
       if (
         lineCount(contextual) <= outputLimits.maxLines &&
@@ -175,7 +182,7 @@ const layer = Layer.effect(
 
     const cleanup = Effect.fn("ToolOutputStore.cleanup")(function* () {
       const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(() => Effect.succeed([])))
-      const cutoff = Date.now() - Duration.toMillis(RETENTION)
+      const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(RETENTION)
       for (const entry of entries) {
         if (!entry.startsWith("tool_")) continue
         const file = path.join(directory, entry)

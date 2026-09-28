@@ -1,7 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Schema } from "effect"
 import type * as Scope from "effect/Scope"
 import { HttpServer } from "effect/unstable/http"
 import { ChildProcessSpawner } from "effect/unstable/process"
@@ -9,7 +9,6 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { validateSession } from "../../src/cli/tui/validate-session"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
@@ -17,7 +16,6 @@ import { InstanceStore } from "../../src/project/instance-store"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 
-import type { Config } from "@/config/config"
 import { Session as SessionNs } from "@/session/session"
 import { errorMessage } from "../../src/util/error"
 import { TestLLMServer } from "../lib/llm-server"
@@ -30,6 +28,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Database } from "@opencode-ai/core/database/database"
 import { httpApiLayer } from "./httpapi-layer"
+import { TestFailure } from "../fixture/test-failure"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const appLayer = AppNodeBuilder.build(
@@ -37,11 +36,6 @@ const appLayer = AppNodeBuilder.build(
   [[InstanceStore.bootstrapNode, noopBootstrapLayer]],
 )
 const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
-
-const original = {
-  OPENCODE_SERVER_PASSWORD: Flag.OPENCODE_SERVER_PASSWORD,
-  OPENCODE_SERVER_USERNAME: Flag.OPENCODE_SERVER_USERNAME,
-}
 
 type ServerPath = "default" | "raw"
 type Sdk = ReturnType<typeof createOpencodeClient>
@@ -88,8 +82,6 @@ function serverFetch(
   return HttpServer.HttpServer.use((server) =>
     Effect.sync(() => {
       void serverPath
-      Flag.OPENCODE_SERVER_PASSWORD = input?.password
-      Flag.OPENCODE_SERVER_USERNAME = input?.username
       const baseUrl = HttpServer.formatAddress(server.address)
       return Object.assign(
         async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -123,13 +115,12 @@ function capture(request: () => Promise<SdkResult>) {
 }
 
 function captureThrown(request: () => Promise<unknown>) {
-  return call(async () => {
-    try {
-      await request()
-    } catch (error) {
-      return error
-    }
-  })
+  return call(() =>
+    request().then(
+      () => undefined,
+      (error: unknown) => error,
+    ),
+  )
 }
 
 function expectStatus(request: () => Promise<{ response: Response }>, status: number) {
@@ -153,7 +144,7 @@ function firstEvent(open: (signal: AbortSignal) => Promise<{ stream: AsyncIterat
           call(() => events.stream.next()).pipe(
             Effect.timeoutOrElse({
               duration: "1 second",
-              orElse: () => Effect.fail(new Error("timed out waiting for SDK event")),
+              orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for SDK event" })),
             }),
           ),
         ),
@@ -184,13 +175,6 @@ function sessionTitles(value: unknown) {
     .map((item) => record(item).title)
     .filter((title): title is string => typeof title === "string")
     .sort()
-}
-
-function resetState() {
-  return Effect.promise(async () => {
-    await disposeAllInstances()
-    await resetDatabase()
-  })
 }
 
 function httpapi<A, E>(name: string, effect: Effect.Effect<A, E, TestScope>) {
@@ -328,8 +312,6 @@ function seedMessage(directory: string, sessionID: string) {
 }
 
 afterEach(async () => {
-  Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-  Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
   await disposeAllInstances()
   await resetDatabase()
 })
@@ -458,8 +440,9 @@ describe("HttpApi SDK", () => {
         // server's message, with the original parsed body preserved under
         // `.cause.body`.
         expect(thrown).toBeInstanceOf(Error)
-        expect((thrown as Error).message).toBe(expected.data.message)
-        expect(((thrown as Error).cause as { body: unknown }).body).toEqual(expected)
+        const error = thrown instanceof Error ? thrown : new Error("the SDK did not throw an Error")
+        expect(error.message).toBe(expected.data.message)
+        expect(Schema.decodeUnknownSync(Schema.Struct({ body: Schema.Unknown }))(error.cause).body).toEqual(expected)
         return {
           status: missing.status,
           error: missing.error,

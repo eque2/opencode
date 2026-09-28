@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { CodeMode, OpenAPI, Tool } from "../src/index.js"
 import { inputTypeScript, outputTypeScript } from "../src/tool-schema.js"
@@ -14,19 +14,21 @@ type Recorded = {
   readonly body: unknown
 }
 
+const decodeDocument = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))
+
 const opencodeSpec = async (): Promise<Document> => {
-  return Bun.file(new URL("./fixtures/opencode-v2-openapi.json", import.meta.url)).json() as Promise<Document>
+  return decodeDocument(await Bun.file(new URL("./fixtures/opencode-v2-openapi.json", import.meta.url)).json())
 }
 
 const happyPathSpec = async (): Promise<Document> => {
-  return Bun.file(new URL("./fixtures/openapi-happy-path.json", import.meta.url)).json() as Promise<Document>
+  return decodeDocument(await Bun.file(new URL("./fixtures/openapi-happy-path.json", import.meta.url)).json())
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const toolAt = (tools: unknown, name: string) =>
-  name.split(".").reduce<unknown>((current, segment) => (isRecord(current) ? current[segment] : undefined), tools)
+  name.split(".").reduce((current, segment) => (isRecord(current) ? current[segment] : undefined), tools)
 
 const recordingClient = (respond: (request: HttpClientRequest.HttpClientRequest) => Response) => {
   const requests: Array<Recorded> = []
@@ -153,24 +155,24 @@ describe("OpenAPI.fromSpec", () => {
     expect(resolutions).toEqual(["BearerAuth", "ApiKey", "BearerAuth"])
     expect(client.requests).toHaveLength(4)
 
-    const getUrl = new URL(client.requests[0]!.url)
+    const getUrl = new URL(client.requests[0].url)
     expect(getUrl.pathname).toBe("/users/user-1")
     expect(getUrl.searchParams.get("include")).toBe("profile,permissions")
     expect(getUrl.searchParams.get("verbose")).toBe("true")
-    expect(client.requests[0]!.headers["x-trace-id"]).toBe("trace-1")
-    expect(client.requests[0]!.headers.authorization).toBe("Bearer bearer-secret")
+    expect(client.requests[0].headers["x-trace-id"]).toBe("trace-1")
+    expect(client.requests[0].headers.authorization).toBe("Bearer bearer-secret")
 
-    const createUrl = new URL(client.requests[1]!.url)
+    const createUrl = new URL(client.requests[1].url)
     expect(createUrl.searchParams.get("api_key")).toBe("api-secret")
-    expect(client.requests[1]!.body).toEqual({ name: "Grace", email: "grace@example.test", role: "admin" })
+    expect(client.requests[1].body).toEqual({ name: "Grace", email: "grace@example.test", role: "admin" })
 
-    const searchUrl = new URL(client.requests[2]!.url)
+    const searchUrl = new URL(client.requests[2].url)
     expect(searchUrl.searchParams.get("filter[query]")).toBe("effect")
     expect(searchUrl.searchParams.get("filter[page]")).toBe("2")
     expect(searchUrl.searchParams.getAll("tags")).toEqual(["typescript", "runtime"])
-    expect(client.requests[2]!.headers.authorization).toBeUndefined()
-    expect(new URL(client.requests[3]!.url).pathname).toBe("/users/user-1")
-    expect(client.requests[3]!.headers.authorization).toBe("Bearer bearer-secret")
+    expect(client.requests[2].headers.authorization).toBeUndefined()
+    expect(new URL(client.requests[3].url).pathname).toBe("/users/user-1")
+    expect(client.requests[3].headers.authorization).toBe("Bearer bearer-secret")
   })
 
   test("converts representative opencode operations into the expected tool shape", async () => {
@@ -421,7 +423,7 @@ describe("OpenAPI.fromSpec", () => {
     expect(result).toMatchObject({ ok: true })
     expect(requests).toHaveLength(2)
     expect(requests[0]).toMatchObject({ method: "GET", body: undefined })
-    expect(new URL(requests[0]!.url).pathname).toBe("/api/session/ses_123")
+    expect(new URL(requests[0].url).pathname).toBe("/api/session/ses_123")
     expect(requests[1]).toMatchObject({
       method: "POST",
       url: "http://localhost:4096/api/session",
@@ -438,7 +440,7 @@ describe("OpenAPI.fromSpec", () => {
       location.run({ location: { directory: "/tmp", workspace: "workspace-1" } }).pipe(Effect.provide(client.layer)),
     )
 
-    const url = new URL(client.requests[0]!.url)
+    const url = new URL(client.requests[0].url)
     expect(url.searchParams.get("location[directory]")).toBe("/tmp")
     expect(url.searchParams.get("location[workspace]")).toBe("workspace-1")
   })
@@ -483,14 +485,14 @@ describe("OpenAPI.fromSpec", () => {
         .pipe(Effect.provide(client.layer)),
     )
 
-    const url = new URL(client.requests[0]!.url)
+    const url = new URL(client.requests[0].url)
     expect(url.pathname).toBe("/items/a%21,b%2A")
     expect(url.searchParams.get("tags")).toBe("x,y")
     expect(url.searchParams.get("state")).toBe("open")
     expect(url.searchParams.get("page")).toBe("2")
     expect(url.searchParams.get("nullable")).toBe("null")
     expect(url.searchParams.get("constructor")).toBe("safe")
-    expect(client.requests[0]!.headers.meta).toBe("a=b,c=d")
+    expect(client.requests[0].headers.meta).toBe("a=b,c=d")
     await expect(Effect.runPromise(tool.run({ keys: [undefined] }).pipe(Effect.provide(client.layer)))).rejects.toThrow(
       "unsupported nested value",
     )
@@ -576,7 +578,7 @@ describe("OpenAPI.fromSpec", () => {
     await Effect.runPromise(tool.run({}).pipe(Effect.provide(client.layer)))
 
     expect(inputTypeScript(tool)).toBe("{}")
-    expect(client.requests[0]!.headers.authorization).toBe("Bearer secret")
+    expect(client.requests[0].headers.authorization).toBe("Bearer secret")
     expect(contexts).toEqual([
       {
         name: "bearer",
@@ -611,7 +613,7 @@ describe("OpenAPI.fromSpec", () => {
     if (!Tool.isDefinition(prototype)) throw new Error("prototype auth tool was not generated")
 
     await Effect.runPromise(prototype.run({}).pipe(Effect.provide(client.layer)))
-    expect(new URL(client.requests[0]!.url).searchParams.get("__proto__")).toBe("secret")
+    expect(new URL(client.requests[0].url).searchParams.get("__proto__")).toBe("secret")
 
     const duplicate = toolAt(
       authenticated([{ first: [], second: [] }], {
@@ -760,7 +762,7 @@ describe("OpenAPI.fromSpec", () => {
     if (!Tool.isDefinition(tool)) throw new Error("test was not generated")
 
     await Effect.runPromise(tool.run({ body: { name: "updated" } }).pipe(Effect.provide(client.layer)))
-    expect(client.requests[0]!.headers["content-type"]).toBe("application/merge-patch+json")
+    expect(client.requests[0].headers["content-type"]).toBe("application/merge-patch+json")
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
     await expect(Effect.runPromise(tool.run({ body: cyclic }).pipe(Effect.provide(client.layer)))).rejects.toThrow(
@@ -889,12 +891,12 @@ describe("OpenAPI.fromSpec", () => {
 
     expect(result).toMatchObject({ ok: true })
     expect(requests).toHaveLength(2)
-    expect(new URL(requests[0]!.url).pathname).toBe("/things/path")
-    expect(new URL(requests[0]!.url).searchParams.get("id")).toBe("query")
-    expect(new URL(requests[0]!.url).searchParams.get("path_id")).toBe("literal")
-    expect(requests[0]!.headers.id).toBe("header")
-    expect(requests[0]!.body).toStrictEqual({ id: "body" })
-    expect(requests[1]!.body).toBe("hello")
+    expect(new URL(requests[0].url).pathname).toBe("/things/path")
+    expect(new URL(requests[0].url).searchParams.get("id")).toBe("query")
+    expect(new URL(requests[0].url).searchParams.get("path_id")).toBe("literal")
+    expect(requests[0].headers.id).toBe("header")
+    expect(requests[0].body).toStrictEqual({ id: "body" })
+    expect(requests[1].body).toBe("hello")
   })
 
   test("keeps bodies nested when flattening would lose schema semantics", () => {
@@ -902,41 +904,42 @@ describe("OpenAPI.fromSpec", () => {
       required,
       content: { "application/json": { schema } },
     })
+    const bodies: ReadonlyArray<readonly [string, ReturnType<typeof body>]> = [
+      [
+        "optional",
+        body(
+          {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: false,
+          },
+          false,
+        ),
+      ],
+      ["dictionary", body({ type: "object", additionalProperties: { type: "string" } })],
+      [
+        "composed",
+        body({
+          type: "object",
+          allOf: [{ type: "object", properties: { name: { type: "string" } }, required: ["name"] }],
+          additionalProperties: false,
+        }),
+      ],
+      [
+        "nullable",
+        body({
+          type: ["object", "null"],
+          properties: { name: { type: "string" } },
+          additionalProperties: false,
+        }),
+      ],
+    ]
     const spec = {
       openapi: "3.1.0",
       info: { title: "bodies", version: "1.0.0" },
       paths: Object.fromEntries(
-        [
-          [
-            "optional",
-            body(
-              {
-                type: "object",
-                properties: { name: { type: "string" } },
-                required: ["name"],
-                additionalProperties: false,
-              },
-              false,
-            ),
-          ],
-          ["dictionary", body({ type: "object", additionalProperties: { type: "string" } })],
-          [
-            "composed",
-            body({
-              type: "object",
-              allOf: [{ type: "object", properties: { name: { type: "string" } }, required: ["name"] }],
-              additionalProperties: false,
-            }),
-          ],
-          [
-            "nullable",
-            body({
-              type: ["object", "null"],
-              properties: { name: { type: "string" } },
-              additionalProperties: false,
-            }),
-          ],
-        ].map(([name, requestBody]) => [
+        bodies.map(([name, requestBody]) => [
           `/body/${name}`,
           {
             post: {

@@ -5,7 +5,7 @@ import { ListResourcesRequestSchema, ListToolsRequestSchema } from "@modelcontex
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect } from "effect"
+import { Effect, Predicate, Schema } from "effect"
 import { Config } from "../../src/config/config"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { McpAuth } from "../../src/mcp/auth"
@@ -87,8 +87,11 @@ function serveOAuthMcp(options: OAuthMcpOptions = {}) {
             })
           }
           if (url.pathname === "/register") {
-            const metadata = (await request.json()) as Record<string, unknown>
-            return Response.json({ ...metadata, client_id: "replacement-client" }, { status: 201 })
+            const metadata: unknown = await request.json()
+            return Response.json(
+              { ...(Predicate.isObject(metadata) ? metadata : {}), client_id: "replacement-client" },
+              { status: 201 },
+            )
           }
           if (url.pathname === "/token") {
             const body = new URLSearchParams(await request.text())
@@ -131,6 +134,9 @@ function serveOAuthMcp(options: OAuthMcpOptions = {}) {
   )
 }
 
+// `add` reports the status of every server, keyed by name.
+const decodeStatuses = Schema.decodeUnknownSync(Schema.Record(Schema.String, MCP.Status))
+
 const remote = (url: string, enabled = true) => ({
   type: "remote" as const,
   url,
@@ -145,7 +151,7 @@ mcpTest.instance("first connect to OAuth server shows needs_auth instead of fail
     const mcp = yield* MCP.Service
     const result = yield* mcp.add("test-oauth", remote(server.url))
 
-    expect((result.status as Record<string, { status: string }>)["test-oauth"]).toEqual({ status: "needs_auth" })
+    expect(decodeStatuses(result.status)["test-oauth"]).toEqual({ status: "needs_auth" })
   }),
 )
 
@@ -275,7 +281,7 @@ mcpTest.instance("authenticate() stores a connected client when auth completes w
     const mcp = yield* MCP.Service
     const name = "test-oauth-connect"
     const added = yield* mcp.add(name, remote(server.url))
-    expect((added.status as Record<string, { status: string }>)[name]?.status).toBe("needs_auth")
+    expect(decodeStatuses(added.status)[name]?.status).toBe("needs_auth")
 
     server.allowAnonymous()
     expect((yield* mcp.authenticate(name)).status).toBe("connected")
@@ -290,7 +296,7 @@ mcpTest.instance("authenticate() connects a resource-only server without listing
     const mcp = yield* MCP.Service
     const name = "test-oauth-resources"
     const added = yield* mcp.add(name, remote(server.url))
-    expect((added.status as Record<string, { status: string }>)[name]?.status).toBe("needs_auth")
+    expect(decodeStatuses(added.status)[name]?.status).toBe("needs_auth")
 
     server.allowAnonymous()
     expect((yield* mcp.authenticate(name)).status).toBe("connected")

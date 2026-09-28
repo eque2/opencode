@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Config, ConfigProvider, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
@@ -27,14 +27,24 @@ export const Parameters = Schema.Struct({
 const WebSearchProviderSchema = Schema.Literals(["exa", "parallel"])
 export type WebSearchProvider = Schema.Schema.Type<typeof WebSearchProviderSchema>
 
-export function selectWebSearchProvider(sessionID: string, flags = { exa: false, parallel: false }): WebSearchProvider {
-  const override = process.env.OPENCODE_WEBSEARCH_PROVIDER
-  if (override === "exa" || override === "parallel") return override
-  if (flags.parallel) return "parallel"
-  if (flags.exa) return "exa"
+const isWebSearchProvider = Schema.is(WebSearchProviderSchema)
 
-  return Number.parseInt(checksum(sessionID) ?? "0", 36) % 2 === 0 ? "exa" : "parallel"
-}
+// The operational override is read from the live process environment on each run.
+const providerOverride = Effect.suspend(() =>
+  Config.option(Config.String("OPENCODE_WEBSEARCH_PROVIDER")).parse(ConfigProvider.fromEnv()),
+).pipe(Effect.orDie, Effect.map(Option.filter(isWebSearchProvider)))
+
+export const selectWebSearchProvider = Effect.fn("WebSearch.selectProvider")(function* (
+  sessionID: string,
+  flags = { exa: false, parallel: false },
+) {
+  const override = yield* providerOverride
+  if (Option.isSome(override)) return override.value
+  if (flags.parallel) return "parallel" as const
+  if (flags.exa) return "exa" as const
+
+  return Number.parseInt(checksum(sessionID) ?? "0", 36) % 2 === 0 ? ("exa" as const) : ("parallel" as const)
+})
 
 export function webSearchProviderLabel(provider: unknown) {
   if (provider === "parallel") return "Parallel Web Search"
@@ -42,29 +52,37 @@ export function webSearchProviderLabel(provider: unknown) {
   return "Web Search"
 }
 
-export function webSearchModelName(extra: Tool.Context["extra"]) {
+/** The model name for Parallel analytics: the provider API model id, else the model id, cut to 100 characters. */
+export function webSearchModelName(extra: Tool.Context["extra"]): Option.Option<string> {
   const model = extra?.model
-  if (!model || typeof model !== "object") return undefined
-  const api = "api" in model && model.api && typeof model.api === "object" ? model.api : undefined
-  const apiID = api && "id" in api && typeof api.id === "string" ? api.id : undefined
-  const id = "id" in model && typeof model.id === "string" ? model.id : undefined
-  return (apiID ?? id)?.slice(0, 100)
+  if (!model || typeof model !== "object") return Option.none()
+  const apiID =
+    "api" in model && Predicate.hasProperty(model.api, "id") && typeof model.api.id === "string"
+      ? Option.some(model.api.id)
+      : Option.none<string>()
+  const id = "id" in model && typeof model.id === "string" ? Option.some(model.id) : Option.none<string>()
+  return Option.orElse(apiID, () => id).pipe(Option.map((name) => name.slice(0, 100)))
 }
 
-function parallelAuthHeaders() {
-  const headers = { "User-Agent": `opencode/${InstallationVersion}` }
-  if (!process.env.PARALLEL_API_KEY) return headers
-  return { ...headers, Authorization: `Bearer ${process.env.PARALLEL_API_KEY}` }
-}
+const parallelAuthHeaders = Config.Redacted("PARALLEL_API_KEY").pipe(
+  Config.option,
+  Config.map((key) => ({
+    "User-Agent": `opencode/${InstallationVersion}`,
+    ...Option.match(key, {
+      onNone: () => ({}),
+      onSome: (value) => ({ Authorization: `Bearer ${Redacted.value(value)}` }),
+    }),
+  })),
+)
 
-function callProvider(
+const callProvider = Effect.fnUntraced(function* (
   http: HttpClient.HttpClient,
   provider: WebSearchProvider,
   params: Schema.Schema.Type<typeof Parameters>,
   ctx: Tool.Context,
 ) {
   if (provider === "parallel") {
-    return McpWebSearch.call(
+    return yield* McpWebSearch.call(
       http,
       McpWebSearch.PARALLEL_URL,
       "web_search",
@@ -73,16 +91,19 @@ function callProvider(
         objective: params.query,
         search_queries: [params.query],
         session_id: ctx.sessionID,
-        model_name: webSearchModelName(ctx.extra),
+        ...Option.match(webSearchModelName(ctx.extra), {
+          onNone: () => ({}),
+          onSome: (model_name) => ({ model_name }),
+        }),
       },
       "25 seconds",
-      parallelAuthHeaders(),
+      yield* parallelAuthHeaders,
     )
   }
 
-  return McpWebSearch.call(
+  return yield* McpWebSearch.call(
     http,
-    McpWebSearch.EXA_URL,
+    yield* McpWebSearch.exaUrl,
     "web_search_exa",
     McpWebSearch.SearchArgs,
     {
@@ -94,7 +115,7 @@ function callProvider(
     },
     "25 seconds",
   )
-}
+})
 
 export const WebSearchTool = Tool.define(
   "websearch",
@@ -104,12 +125,14 @@ export const WebSearchTool = Tool.define(
 
     return {
       get description() {
-        return DESCRIPTION.replace("{{year}}", new Date().getFullYear().toString())
+        // A sync getter has no Effect context, so it reads the wall clock directly, in the local zone as before.
+        const year = DateTime.getPart(DateTime.setZone(DateTime.nowUnsafe(), DateTime.zoneMakeLocal()), "year")
+        return DESCRIPTION.replace("{{year}}", year.toString())
       },
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const provider = selectWebSearchProvider(ctx.sessionID, {
+          const provider = yield* selectWebSearchProvider(ctx.sessionID, {
             exa: flags.enableExa,
             parallel: flags.enableParallel,
           })
@@ -122,10 +145,12 @@ export const WebSearchTool = Tool.define(
             always: ["*"],
             metadata: {
               query: params.query,
-              numResults: params.numResults,
-              livecrawl: params.livecrawl,
-              type: params.type,
-              contextMaxCharacters: params.contextMaxCharacters,
+              ...(params.numResults === undefined ? {} : { numResults: params.numResults }),
+              ...(params.livecrawl === undefined ? {} : { livecrawl: params.livecrawl }),
+              ...(params.type === undefined ? {} : { type: params.type }),
+              ...(params.contextMaxCharacters === undefined
+                ? {}
+                : { contextMaxCharacters: params.contextMaxCharacters }),
               provider,
             },
           })
@@ -133,7 +158,7 @@ export const WebSearchTool = Tool.define(
           const result = yield* callProvider(http, provider, params, ctx)
 
           return {
-            output: result ?? "No search results found. Please try a different query.",
+            output: Option.getOrElse(result, () => "No search results found. Please try a different query."),
             title: `${title}: ${params.query}`,
             metadata: { provider },
           }

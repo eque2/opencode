@@ -1,11 +1,10 @@
 import { test, type TestOptions } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
-import { Cause, Duration, Effect, Exit, Layer } from "effect"
+import { Cause, Duration, Effect, Exit, Layer, Schema } from "effect"
 import * as Scope from "effect/Scope"
 import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
-import type { Config } from "@/config/config"
 import { TestInstance, withTmpdirInstance } from "../fixture/fixture"
 import { InstanceStore } from "@/project/instance-store"
 
@@ -146,6 +145,11 @@ export const testEffect = <R, E>(layer: Layer.Layer<R, E>) =>
 export const testEffectShared = <R, E>(layer: Layer.Layer<R, E>) =>
   make<R, E>(Layer.provideMerge(layer, testEnv), Layer.provideMerge(layer, liveEnv), sharedRun)
 
+/** The failure of {@link awaitWithTimeout} and {@link pollWithTimeout}; `message` is the caller's text. */
+export class TimeoutError extends Schema.TaggedError<TimeoutError>()("TestTimeoutError", {
+  message: Schema.String,
+}) {}
+
 export const awaitWithTimeout = <A, E, R>(
   self: Effect.Effect<A, E, R>,
   message: string,
@@ -154,7 +158,7 @@ export const awaitWithTimeout = <A, E, R>(
   self.pipe(
     Effect.timeoutOrElse({
       duration,
-      orElse: () => Effect.fail(new Error(message)),
+      orElse: () => Effect.fail(new TimeoutError({ message })),
     }),
   )
 
@@ -172,6 +176,6 @@ export const pollWithTimeout = <A, E, R>(
   }).pipe(
     Effect.timeoutOrElse({
       duration,
-      orElse: () => Effect.fail(new Error(message)),
+      orElse: () => Effect.fail(new TimeoutError({ message })),
     }),
   )

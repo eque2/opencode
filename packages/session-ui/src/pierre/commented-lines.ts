@@ -1,14 +1,12 @@
 import { type SelectedLineRange } from "@pierre/diffs"
+import { Option, Predicate } from "effect"
 import { diffLineIndex, diffRowIndex } from "./diff-selection"
+import { parseLineNumber } from "./file-selection"
 
 export type CommentSide = "additions" | "deletions"
 
-function annotationIndex(node: HTMLElement) {
-  const value = node.dataset.lineAnnotation?.split(",")[1]
-  if (!value) return
-  const line = parseInt(value, 10)
-  if (Number.isNaN(line)) return
-  return line
+function annotationIndex(node: HTMLElement): Option.Option<number> {
+  return parseLineNumber(node.dataset.lineAnnotation?.split(",")[1])
 }
 
 function clear(root: ShadowRoot) {
@@ -37,27 +35,26 @@ export function markCommentedDiffLines(root: ShadowRoot, ranges: SelectedLineRan
 
   for (const range of ranges) {
     const start = diffRowIndex(root, split, range.start, range.side as CommentSide | undefined)
-    if (start === undefined) continue
+    if (Option.isNone(start)) continue
 
     const end = (() => {
-      const same = range.end === range.start && (range.endSide == null || range.endSide === range.side)
+      const same = range.end === range.start && (Predicate.isNullish(range.endSide) || range.endSide === range.side)
       if (same) return start
       return diffRowIndex(root, split, range.end, (range.endSide ?? range.side) as CommentSide | undefined)
     })()
-    if (end === undefined) continue
+    if (Option.isNone(end)) continue
 
-    const first = Math.min(start, end)
-    const last = Math.max(start, end)
+    const first = Math.min(start.value, end.value)
+    const last = Math.max(start.value, end.value)
+    const inside = (idx: number) => idx >= first && idx <= last
 
     for (const row of rows) {
-      const idx = diffLineIndex(split, row)
-      if (idx === undefined || idx < first || idx > last) continue
+      if (!Option.exists(diffLineIndex(split, row), inside)) continue
       row.setAttribute("data-comment-selected", "")
     }
 
     for (const annotation of annotations) {
-      const idx = annotationIndex(annotation)
-      if (idx === undefined || idx < first || idx > last) continue
+      if (!Option.exists(annotationIndex(annotation), inside)) continue
       annotation.setAttribute("data-comment-selected", "")
     }
   }
@@ -83,8 +80,7 @@ export function markCommentedFileLines(root: ShadowRoot, ranges: SelectedLineRan
     }
 
     for (const annotation of annotations) {
-      const line = annotationIndex(annotation)
-      if (line === undefined || line < start || line > end) continue
+      if (!Option.exists(annotationIndex(annotation), (line) => line >= start && line <= end)) continue
       annotation.setAttribute("data-comment-selected", "")
     }
   }

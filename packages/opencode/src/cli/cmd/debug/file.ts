@@ -1,5 +1,5 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Location } from "@opencode-ai/core/location"
@@ -7,10 +7,15 @@ import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 const filesystem = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(process.cwd()) }))),
-    Effect.provide(locationServiceMapLayer),
+    Effect.provide(
+      LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(process.cwd()) })).pipe(
+        Layer.provide(locationServiceMapLayer),
+      ),
+    ),
   )
 
 const FileSearchCommand = effectCmd({
@@ -39,13 +44,12 @@ const FileReadCommand = effectCmd({
     }),
   handler: Effect.fn("Cli.debug.file.read")(function* (args) {
     const file = yield* filesystem(FileSystem.Service.use((svc) => svc.read({ path: RelativePath.make(args.path) })))
-    process.stdout.write(
-      JSON.stringify(
-        { content: Buffer.from(file.content).toString("base64"), encoding: "base64", mime: file.mime },
-        null,
-        2,
-      ) + EOL,
-    )
+    const text = yield* encodeJson({
+      content: Buffer.from(file.content).toString("base64"),
+      encoding: "base64",
+      mime: file.mime,
+    }).pipe(Effect.orDie)
+    process.stdout.write(text + EOL)
   }),
 })
 
@@ -60,7 +64,7 @@ const FileListCommand = effectCmd({
     }),
   handler: Effect.fn("Cli.debug.file.list")(function* (args) {
     const files = yield* filesystem(FileSystem.Service.use((svc) => svc.list({ path: RelativePath.make(args.path) })))
-    process.stdout.write(JSON.stringify(files, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(files).pipe(Effect.orDie)) + EOL)
   }),
 })
 
@@ -69,5 +73,5 @@ export const FileCommand = cmd({
   describe: "file system debugging utilities",
   builder: (yargs) =>
     yargs.command(FileReadCommand).command(FileListCommand).command(FileSearchCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })

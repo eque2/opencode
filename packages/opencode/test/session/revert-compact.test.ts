@@ -9,7 +9,6 @@ import { Effect } from "effect"
 import { Session } from "@/session/session"
 
 import { SessionRevert } from "../../src/session/revert"
-import { MessageV2 } from "../../src/session/message-v2"
 import { Snapshot } from "../../src/snapshot"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -456,7 +455,7 @@ describe("revert + compact workflow", () => {
 
             const reverted = yield* revert.revert({
               sessionID: info.id,
-              messageID: MessageID.make(ids[target]!),
+              messageID: MessageID.make(ids[target]),
             })
             yield* revert.cleanup(reverted)
             const remaining = yield* session.messages({ sessionID: info.id })

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
+import { Effect, Fiber, Option } from "effect"
 import { createSignal } from "solid-js"
 
 const OS_NAME = (() => {
@@ -14,14 +15,14 @@ const OS_NAME = (() => {
 const [webviewZoom, setWebviewZoom] = createSignal(1)
 let requestedZoom = 1
 let pinchZoomEnabled = false
-let wheelPinch = undefined as
-  | {
-      active: boolean
-      startZoom: number
-      totalDelta: number
-      timeout: ReturnType<typeof setTimeout> | undefined
-    }
-  | undefined
+/** A Ctrl-wheel pinch gesture in progress. `timeout` is the fiber that ends the gesture after the wheel goes quiet. */
+type WheelPinch = {
+  active: boolean
+  startZoom: number
+  totalDelta: number
+  timeout: Option.Option<Fiber.Fiber<void>>
+}
+let wheelPinch = Option.none<WheelPinch>()
 
 const MAX_ZOOM_LEVEL = 10
 const MIN_ZOOM_LEVEL = 0.2
@@ -33,16 +34,20 @@ const clamp = (value: number) => Math.min(Math.max(value, MIN_ZOOM_LEVEL), MAX_Z
 
 const applyZoom = (next: number) => {
   requestedZoom = next
-  void window.api
-    .setZoomFactor(next)
-    .then(() => {
-      if (requestedZoom !== next) return
-      setWebviewZoom(next)
-    })
-    .catch(() => {
-      if (requestedZoom !== next) return
-      requestedZoom = webviewZoom()
-    })
+  Effect.runFork(
+    Effect.tryPromise(() => window.api.setZoomFactor(next)).pipe(
+      Effect.match({
+        onSuccess: () => {
+          if (requestedZoom !== next) return
+          setWebviewZoom(next)
+        },
+        onFailure: () => {
+          if (requestedZoom !== next) return
+          requestedZoom = webviewZoom()
+        },
+      }),
+    ),
+  )
 }
 
 window.api.onZoomFactorChanged((factor) => {
@@ -50,9 +55,13 @@ window.api.onZoomFactorChanged((factor) => {
   setWebviewZoom(requestedZoom)
 })
 
-void window.api.getPinchZoomEnabled().then((enabled) => {
-  pinchZoomEnabled = enabled
-})
+Effect.runFork(
+  Effect.promise(() => window.api.getPinchZoomEnabled()).pipe(
+    Effect.map((enabled) => {
+      pinchZoomEnabled = enabled
+    }),
+  ),
+)
 
 window.api.onPinchZoomEnabledChanged((enabled) => {
   pinchZoomEnabled = enabled
@@ -69,9 +78,13 @@ const resetZoom = () => applyZoom(1)
 const zoomIn = () => applyZoom(clamp(requestedZoom + 0.2))
 const zoomOut = () => applyZoom(clamp(requestedZoom - 0.2))
 
+const cancelWheelPinchTimeout = (pinch: WheelPinch) => {
+  if (Option.isSome(pinch.timeout)) Effect.runFork(Fiber.interrupt(pinch.timeout.value))
+}
+
 const resetWheelPinch = () => {
-  clearTimeout(wheelPinch?.timeout)
-  wheelPinch = undefined
+  if (Option.isSome(wheelPinch)) cancelWheelPinchTimeout(wheelPinch.value)
+  wheelPinch = Option.none()
 }
 
 const normalizeWheelDelta = (event: WheelEvent) => {
@@ -81,27 +94,41 @@ const normalizeWheelDelta = (event: WheelEvent) => {
 }
 
 const updateWheelPinch = (event: WheelEvent) => {
-  wheelPinch ??= {
-    active: false,
-    startZoom: requestedZoom,
-    totalDelta: 0,
-    timeout: undefined,
-  }
+  const pinch = Option.getOrElse(
+    wheelPinch,
+    (): WheelPinch => ({
+      active: false,
+      startZoom: requestedZoom,
+      totalDelta: 0,
+      timeout: Option.none(),
+    }),
+  )
+  wheelPinch = Option.some(pinch)
 
-  clearTimeout(wheelPinch.timeout)
-  wheelPinch.timeout = setTimeout(resetWheelPinch, WHEEL_PINCH_END_DELAY)
-  wheelPinch.totalDelta += normalizeWheelDelta(event)
+  cancelWheelPinchTimeout(pinch)
+  pinch.timeout = Option.some(
+    Effect.runFork(
+      Effect.sleep(WHEEL_PINCH_END_DELAY).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            wheelPinch = Option.none()
+          }),
+        ),
+      ),
+    ),
+  )
+  pinch.totalDelta += normalizeWheelDelta(event)
 
-  if (!wheelPinch.active && Math.abs(wheelPinch.totalDelta) < WHEEL_PINCH_THRESHOLD) return
-  if (!wheelPinch.active) {
-    wheelPinch.active = true
-    wheelPinch.startZoom = requestedZoom
-    wheelPinch.totalDelta = 0
+  if (!pinch.active && Math.abs(pinch.totalDelta) < WHEEL_PINCH_THRESHOLD) return
+  if (!pinch.active) {
+    pinch.active = true
+    pinch.startZoom = requestedZoom
+    pinch.totalDelta = 0
     return
   }
 
-  wheelPinch.active = true
-  applyZoom(clamp(wheelPinch.startZoom - (wheelPinch.totalDelta / WHEEL_PINCH_THRESHOLD) * WHEEL_PINCH_STEP))
+  pinch.active = true
+  applyZoom(clamp(pinch.startZoom - (pinch.totalDelta / WHEEL_PINCH_THRESHOLD) * WHEEL_PINCH_STEP))
 }
 
 window.addEventListener(

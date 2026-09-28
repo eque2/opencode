@@ -68,7 +68,7 @@ export class OutputFormatText extends Schema.Class<OutputFormatText>("OutputForm
 
 export class OutputFormatJsonSchema extends Schema.Class<OutputFormatJsonSchema>("OutputFormatJsonSchema")({
   type: Schema.Literal("json_schema"),
-  schema: Schema.Record(Schema.String, Schema.Any).annotate({ identifier: "JSONSchema" }),
+  schema: Schema.Record(Schema.String, Schema.MutableJson).annotate({ identifier: "JSONSchema" }),
   retryCount: NonNegativeInt.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(2))),
 }) {}
 
@@ -111,7 +111,7 @@ export const TextPart = Schema.Struct({
       end: Schema.optional(NonNegativeInt),
     }),
   ),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "TextPart" })
 export type TextPart = Types.DeepMutable<Schema.Schema.Type<typeof TextPart>>
 
@@ -119,7 +119,7 @@ export const ReasoningPart = Schema.Struct({
   ...partBase,
   type: Schema.Literal("reasoning"),
   text: Schema.String,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
   time: Schema.Struct({
     start: NonNegativeInt,
     end: Schema.optional(NonNegativeInt),
@@ -256,18 +256,28 @@ export const StepFinishPart = Schema.Struct({
 }).annotate({ identifier: "StepFinishPart" })
 export type StepFinishPart = Types.DeepMutable<Schema.Schema.Type<typeof StepFinishPart>>
 
+// Unsafe compatibility boundary: tool input and metadata come from model tool calls,
+// from the plugin API (tool.execute.before args, tool.execute.after metadata and the
+// tool context metadata are typed `any`) and from in-process writers that leave
+// undefined-valued keys. The durable event commit encodes event data on the type
+// side, so Schema.Json would reject these legacy values.
+// eslint-disable-next-line effect/no-schema-any-unknown -- (c) @opencode-ai/plugin tool.execute.before output.args is typed any; plugins and legacy writers store arbitrary values
+const ToolInput = Schema.Record(Schema.String, Schema.Any)
+// eslint-disable-next-line effect/no-schema-any-unknown -- (c) @opencode-ai/plugin ToolContext.metadata and tool.execute.after metadata are typed any
+const ToolMetadata = Schema.Record(Schema.String, Schema.Any)
+
 export const ToolStatePending = Schema.Struct({
   status: Schema.Literal("pending"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   raw: Schema.String,
 }).annotate({ identifier: "ToolStatePending" })
 export type ToolStatePending = Types.DeepMutable<Schema.Schema.Type<typeof ToolStatePending>>
 
 export const ToolStateRunning = Schema.Struct({
   status: Schema.Literal("running"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   title: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(ToolMetadata),
   time: Schema.Struct({
     start: NonNegativeInt,
   }),
@@ -276,10 +286,10 @@ export type ToolStateRunning = Types.DeepMutable<Schema.Schema.Type<typeof ToolS
 
 export const ToolStateCompleted = Schema.Struct({
   status: Schema.Literal("completed"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   output: Schema.String,
   title: Schema.String,
-  metadata: Schema.Record(Schema.String, Schema.Any),
+  metadata: ToolMetadata,
   time: Schema.Struct({
     start: NonNegativeInt,
     end: NonNegativeInt,
@@ -291,9 +301,9 @@ export type ToolStateCompleted = Types.DeepMutable<Schema.Schema.Type<typeof Too
 
 export const ToolStateError = Schema.Struct({
   status: Schema.Literal("error"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   error: Schema.String,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(ToolMetadata),
   time: Schema.Struct({
     start: NonNegativeInt,
     end: NonNegativeInt,
@@ -318,7 +328,7 @@ export const ToolPart = Schema.Struct({
   callID: Schema.String,
   tool: Schema.String,
   state: ToolState,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "ToolPart" })
 export type ToolPart = Omit<Types.DeepMutable<Schema.Schema.Type<typeof ToolPart>>, "state"> & {
   state: ToolState
@@ -406,7 +416,7 @@ export const TextPartInput = Schema.Struct({
       end: Schema.optional(NonNegativeInt),
     }),
   ),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.MutableJson)),
 }).annotate({ identifier: "TextPartInput" })
 export type TextPartInput = Types.DeepMutable<Schema.Schema.Type<typeof TextPartInput>>
 
@@ -479,7 +489,7 @@ export const Assistant = Schema.Struct({
       write: Schema.Finite,
     }),
   }),
-  structured: Schema.optional(Schema.Any),
+  structured: Schema.optional(Schema.MutableJson),
   variant: Schema.optional(Schema.String),
   finish: Schema.optional(Schema.String),
 }).annotate({ identifier: "AssistantMessage" })
@@ -493,7 +503,7 @@ export type Info = User | Assistant
 export const WithParts = Schema.Struct({
   info: Info,
   parts: Schema.Array(Part),
-})
+}).annotate({ identifier: "SessionV1.WithParts" })
 export type WithParts = {
   info: Info
   parts: Part[]
@@ -511,7 +521,7 @@ const SessionSummary = Schema.Struct({
   deletions: Schema.Finite,
   files: Schema.Finite,
   diffs: optional(Schema.Array(FileDiff.Info)),
-})
+}).annotate({ identifier: "SessionV1.Summary" })
 
 const SessionTokens = Schema.Struct({
   input: Schema.Finite,
@@ -521,24 +531,24 @@ const SessionTokens = Schema.Struct({
     read: Schema.Finite,
     write: Schema.Finite,
   }),
-})
+}).annotate({ identifier: "SessionV1.Tokens" })
 
 const SessionShare = Schema.Struct({
   url: Schema.String,
-})
+}).annotate({ identifier: "SessionV1.Share" })
 
 const SessionRevert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
   snapshot: optional(Schema.String),
   diff: optional(Schema.String),
-})
+}).annotate({ identifier: "SessionV1.Revert" })
 
 const SessionModel = Schema.Struct({
   id: Model.ID,
   providerID: Provider.ID,
   variant: optional(Schema.String),
-})
+}).annotate({ identifier: "SessionV1.Model" })
 
 export const SessionInfo = Schema.Struct({
   id: SessionID,
@@ -556,7 +566,7 @@ export const SessionInfo = Schema.Struct({
   agent: optional(Schema.String),
   model: optional(SessionModel),
   version: Schema.String,
-  metadata: optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: optional(Schema.Record(Schema.String, Schema.MutableJson)),
   time: Schema.Struct({
     created: NonNegativeInt,
     updated: NonNegativeInt,

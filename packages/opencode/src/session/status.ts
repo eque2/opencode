@@ -1,7 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID } from "./schema"
-import { Effect, Layer, Context } from "effect"
+import { Context, Effect, HashMap, Layer, MutableHashMap, Option } from "effect"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
@@ -12,7 +12,7 @@ export const Event = SessionStatusEvent
 
 export interface Interface {
   readonly get: (sessionID: SessionID) => Effect.Effect<Info>
-  readonly list: () => Effect.Effect<Map<SessionID, Info>>
+  readonly list: () => Effect.Effect<HashMap.HashMap<SessionID, Info>>
   readonly set: (sessionID: SessionID, status: Info) => Effect.Effect<void>
 }
 
@@ -24,16 +24,16 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
 
     const state = yield* InstanceState.make(
-      Effect.fn("SessionStatus.state")(() => Effect.succeed(new Map<SessionID, Info>())),
+      Effect.fn("SessionStatus.state")(() => Effect.succeed(MutableHashMap.empty<SessionID, Info>())),
     )
 
     const get = Effect.fn("SessionStatus.get")(function* (sessionID: SessionID) {
       const data = yield* InstanceState.get(state)
-      return data.get(sessionID) ?? { type: "idle" as const }
+      return Option.getOrElse(MutableHashMap.get(data, sessionID), (): Info => ({ type: "idle" }))
     })
 
     const list = Effect.fn("SessionStatus.list")(function* () {
-      return new Map(yield* InstanceState.get(state))
+      return HashMap.fromIterable(yield* InstanceState.get(state))
     })
 
     const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
@@ -41,10 +41,10 @@ const layer = Layer.effect(
       yield* events.publish(Event.Status, { sessionID, status })
       if (status.type === "idle") {
         yield* events.publish(Event.Idle, { sessionID })
-        data.delete(sessionID)
+        MutableHashMap.remove(data, sessionID)
         return
       }
-      data.set(sessionID, status)
+      MutableHashMap.set(data, sessionID, status)
     })
 
     return Service.of({ get, list, set })

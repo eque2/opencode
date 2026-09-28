@@ -1,9 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Data, Effect, Schema } from "effect"
 import { CodeMode, Tool, toolError } from "../src/index.js"
 
-const run = (tool: Tool.Definition<never>) =>
+const run = (tool: Tool.Definition) =>
   Effect.runPromise(CodeMode.make({ tools: { host: { call: tool } } }).execute("return await tools.host.call({})"))
+
+// Decoders for `tools.$codemode.search` results returned by a program.
+const SearchPath = Schema.Struct({ path: Schema.String })
+const decodeSearchPage = Schema.decodeUnknownSync(
+  Schema.Struct({ items: Schema.Array(SearchPath), remaining: Schema.Number }),
+)
+const decodeSearchPageWithNext = Schema.decodeUnknownSync(
+  Schema.Struct({
+    items: Schema.Array(SearchPath),
+    remaining: Schema.Number,
+    next: Schema.NullOr(Schema.Struct({ offset: Schema.Number })),
+  }),
+)
+const decodeSearchPages = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ items: Schema.Array(SearchPath) })))
 
 class UnsafeHostError extends Schema.TaggedError<UnsafeHostError>()("UnsafeHostError", {
   reason: Schema.String,
@@ -50,12 +64,15 @@ describe("CodeMode host failure boundary", () => {
 
   test("sanitizes invalid host output", async () => {
     const secret = "invalid-output-secret"
+    // Built with the Definition constructor, not Tool.make: Tool.make types `run` against the
+    // output schema, and this host deliberately returns a value that violates it.
+    const { CodeModeTool } = Data.taggedEnum<Tool.Definition>()
     const result = await run(
-      Tool.make({
+      CodeModeTool({
         description: "Return invalid output",
         input: Schema.Struct({}),
         output: Schema.Struct({ safe: Schema.String }),
-        run: () => Effect.succeed({ safe: 1, secret } as unknown as { readonly safe: string }),
+        run: () => Effect.succeed({ safe: 1, secret }),
       }),
     )
 
@@ -737,12 +754,9 @@ describe("CodeMode public contract", () => {
     )
     expect(variants.ok).toBe(true)
     if (variants.ok) {
-      expect((variants.value as Array<{ items: Array<{ path: string }> }>)[0]?.items[0]?.path).toBe(
-        "tools.thread.uploadFile",
-      )
-      expect((variants.value as Array<{ items: Array<{ path: string }> }>)[1]?.items[0]?.path).toBe(
-        "tools.thread.generateImage",
-      )
+      const pages = decodeSearchPages(variants.value)
+      expect(pages[0]?.items[0]?.path).toBe("tools.thread.uploadFile")
+      expect(pages[1]?.items[0]?.path).toBe("tools.thread.generateImage")
     }
 
     const removed = await Effect.runPromise(
@@ -769,11 +783,7 @@ describe("CodeMode public contract", () => {
     const browse = await Effect.runPromise(runtime.execute(`return await tools.$codemode.search({})`))
     expect(browse.ok).toBe(true)
     if (browse.ok) {
-      const value = browse.value as {
-        items: Array<{ path: string }>
-        remaining: number
-        next: { offset: number } | null
-      }
+      const value = decodeSearchPageWithNext(browse.value)
       expect(value.items).toHaveLength(10)
       expect(value.remaining).toBe(4)
       expect(value.next).toStrictEqual({ offset: 10 })
@@ -821,7 +831,7 @@ describe("CodeMode public contract", () => {
     )
     expect(browse.ok).toBe(true)
     if (browse.ok) {
-      const value = browse.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(browse.value)
       expect(value.remaining).toBe(0)
       expect(value.items.map((item) => item.path)).toStrictEqual([
         "tools.github.create_issue",
@@ -835,7 +845,7 @@ describe("CodeMode public contract", () => {
     )
     expect(scoped.ok).toBe(true)
     if (scoped.ok) {
-      const value = scoped.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(scoped.value)
       expect(value.remaining).toBe(0)
       expect(value.items[0]?.path).toBe("tools.linear.list_issues")
     }
@@ -872,7 +882,7 @@ describe("CodeMode public contract", () => {
     )
     expect(byParameter.ok).toBe(true)
     if (byParameter.ok) {
-      const value = byParameter.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(byParameter.value)
       expect(value.remaining).toBe(0)
       expect(value.items[0]?.path).toBe("tools.files.upload")
     }
@@ -883,7 +893,7 @@ describe("CodeMode public contract", () => {
     )
     expect(bySubstring.ok).toBe(true)
     if (bySubstring.ok) {
-      const value = bySubstring.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(bySubstring.value)
       expect(value.remaining).toBe(0)
       expect(value.items[0]?.path).toBe("tools.files.upload")
     }
@@ -912,7 +922,7 @@ describe("CodeMode public contract", () => {
     )
     expect(plural.ok).toBe(true)
     if (plural.ok) {
-      const value = plural.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(plural.value)
       expect(value.remaining).toBe(0)
       expect(value.items[0]?.path).toBe("tools.tracker.fetch_all")
     }
@@ -921,7 +931,7 @@ describe("CodeMode public contract", () => {
     const ranked = await Effect.runPromise(runtime.execute(`return await tools.$codemode.search({ query: "issues" })`))
     expect(ranked.ok).toBe(true)
     if (ranked.ok) {
-      const value = ranked.value as { items: Array<{ path: string }>; remaining: number }
+      const value = decodeSearchPage(ranked.value)
       expect(value.remaining).toBe(0)
       expect(value.items.map((item) => item.path)).toStrictEqual([
         "tools.github.list_issues",
@@ -948,7 +958,7 @@ describe("CodeMode public contract", () => {
     const browse = await Effect.runPromise(runtime.execute(`return await tools.$codemode.search({})`))
     expect(browse.ok).toBe(true)
     if (browse.ok) {
-      const value = browse.value as { items: Array<{ path: string }>; remaining: number; next: unknown }
+      const value = decodeSearchPageWithNext(browse.value)
       expect(value.items.map((item) => item.path)).toStrictEqual([
         "tools.alpha.aardvark",
         "tools.alpha.beta",

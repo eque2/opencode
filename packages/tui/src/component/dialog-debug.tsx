@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Data, DateTime, Effect } from "effect"
 import { createMemo, createSignal, For } from "solid-js"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { useTheme } from "../context/theme"
@@ -10,6 +11,9 @@ import { useToast } from "../ui/toast"
 import { useBindings } from "../keymap"
 import { describeOS, describeTerminal } from "../util/system"
 
+/** The clipboard rejected the debug info. */
+class CopyError extends Data.TaggedError("DialogDebug.CopyError")<{ readonly cause: unknown }> {}
+
 export function DialogDebug() {
   const { theme } = useTheme()
   const dialog = useDialog()
@@ -18,6 +22,9 @@ export function DialogDebug() {
   const clipboard = useClipboard()
   const toast = useToast()
   const [copied, setCopied] = createSignal(false)
+  // The environment read finishes synchronously, so the first render already shows the terminal.
+  const [terminal, setTerminal] = createSignal("unknown")
+  Effect.runFork(describeTerminal.pipe(Effect.tap((value) => Effect.sync(() => setTerminal(value)))))
 
   dialog.setSize("large")
 
@@ -25,9 +32,9 @@ export function DialogDebug() {
     const model = local.model.current()
     return [
       { label: "Version", value: `${InstallationVersion} (${InstallationChannel})` },
-      { label: "Date", value: new Date().toISOString() },
+      { label: "Date", value: DateTime.formatIso(DateTime.nowUnsafe()) },
       { label: "OS", value: describeOS() },
-      { label: "Terminal", value: describeTerminal() },
+      { label: "Terminal", value: terminal() },
       { label: "Session ID", value: route.data.type === "session" ? route.data.sessionID : "n/a" },
       { label: "Model", value: model ? `${model.providerID}/${model.modelID}` : "n/a" },
     ]
@@ -37,13 +44,19 @@ export function DialogDebug() {
     const text = entries()
       .map((entry) => `${entry.label}: ${entry.value}`)
       .join("\n")
-    void clipboard
-      .write?.(text)
-      .then(() => {
-        setCopied(true)
-        toast.show({ message: "Debug info copied to clipboard", variant: "info" })
-      })
-      .catch(toast.error)
+    const written = clipboard.write?.(text)
+    if (!written) return
+    Effect.runFork(
+      Effect.tryPromise({ try: () => written, catch: (cause) => new CopyError({ cause }) }).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            setCopied(true)
+            toast.show({ message: "Debug info copied to clipboard", variant: "info" })
+          }),
+        ),
+        Effect.catch((error) => Effect.sync(() => toast.error(error.cause))),
+      ),
+    )
   }
 
   useBindings(() => ({

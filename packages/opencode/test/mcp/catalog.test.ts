@@ -2,19 +2,38 @@ import { describe, expect, test } from "bun:test"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+  type Tool as MCPToolDef,
+} from "@modelcontextprotocol/sdk/types.js"
+import type { ToolExecutionOptions } from "ai"
 import { McpCatalog } from "@/mcp/catalog"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
-const options = { toolCallId: "call_mcp", abortSignal: new AbortController().signal } as any
-
-function clientReturning(result: unknown) {
-  return {
-    callTool: async () => result,
-  } as unknown as Client
+const options: ToolExecutionOptions = {
+  toolCallId: "call_mcp",
+  messages: [],
+  abortSignal: new AbortController().signal,
 }
 
-function mcpTool() {
+/** A real MCP client whose server answers every tool call with `result`. */
+async function clientReturning(result: CallToolResult) {
+  const server = new Server({ name: "fixed-result", version: "1.0.0" }, { capabilities: { tools: {} } })
+  server.setRequestHandler(CallToolRequestSchema, () => result)
+  const client = new Client({ name: "fixed-result-test", version: "1.0.0" })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+  return {
+    client,
+    [Symbol.asyncDispose]: async () => {
+      await Promise.all([client.close(), server.close()])
+    },
+  }
+}
+
+function mcpTool(): MCPToolDef {
   return {
     name: "screenshot",
     description: "Take a screenshot",
@@ -23,14 +42,15 @@ function mcpTool() {
       properties: {},
       additionalProperties: false,
     },
-  } as any
+  }
 }
 
 describe("McpCatalog.convertTool", () => {
   test("preserves content when structuredContent is also present", async () => {
     const content = [{ type: "image" as const, mimeType: "image/png", data: "AAAA" }]
     const structuredContent = { image: { mimeType: "image/png", data: "AAAA" } }
-    const converted = McpCatalog.convertTool(mcpTool(), clientReturning({ content, structuredContent }))
+    await using fixture = await clientReturning({ content, structuredContent })
+    const converted = McpCatalog.convertTool(mcpTool(), fixture.client)
 
     const output = await converted.execute?.({}, options)
 
@@ -39,7 +59,8 @@ describe("McpCatalog.convertTool", () => {
 
   test("falls back to structuredContent only when content is absent", async () => {
     const structuredContent = { results: [{ title: "one" }] }
-    const converted = McpCatalog.convertTool(mcpTool(), clientReturning({ content: [], structuredContent }))
+    await using fixture = await clientReturning({ content: [], structuredContent })
+    const converted = McpCatalog.convertTool(mcpTool(), fixture.client)
 
     const output = await converted.execute?.({}, options)
 
@@ -97,9 +118,15 @@ test("preserves output schema validation across paginated tool discovery", async
 
   try {
     const tools = await Effect.runPromise(McpCatalog.defs(client))
-    expect(tools?.map((tool) => tool.name)).toEqual(["first", "second"])
-    await expect(client.callTool({ name: "first", arguments: {} })).rejects.toThrow(
-      "Structured content does not match the tool's output schema",
+    expect(Option.map(tools, (list) => list.map((tool) => tool.name))).toEqual(Option.some(["first", "second"]))
+    const failure = await client.callTool({ name: "first", arguments: {} }).then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toHaveProperty(
+      "message",
+      expect.stringContaining("Structured content does not match the tool's output schema"),
     )
   } finally {
     await Promise.all([client.close(), server.close()])

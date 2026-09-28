@@ -1,16 +1,31 @@
 #!/usr/bin/env bun
 
 import { V2_PRIMITIVES_DEFAULT } from "../src/theme/v2/default-primitives"
-import type { DesktopTheme } from "../src/theme/types"
+
+// The script copies every theme field through and replaces only the two v2Overrides maps,
+// so it checks only the shape that it reads.
+type ThemeFile = Record<string, unknown> & {
+  light: Record<string, unknown>
+  dark: Record<string, unknown>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isThemeFile(value: unknown): value is ThemeFile {
+  return isRecord(value) && isRecord(value.light) && isRecord(value.dark)
+}
 
 const themePath = import.meta.dir + "/../src/theme/themes/oc-2.json"
-const theme = (await Bun.file(themePath).json()) as DesktopTheme
+const theme: unknown = await Bun.file(themePath).json()
+if (!isThemeFile(theme)) throw new Error(`Missing light or dark variant in ${themePath}`)
 const css = await Bun.file(import.meta.dir + "/../src/v2/styles/theme.css").text()
 
 const light = { ...V2_PRIMITIVES_DEFAULT, ...readTokens("light") }
 const dark = { ...V2_PRIMITIVES_DEFAULT, ...readTokens("dark") }
 
-const next: DesktopTheme = {
+const next: ThemeFile = {
   ...theme,
   light: { ...theme.light, v2Overrides: light },
   dark: { ...theme.dark, v2Overrides: dark },
@@ -27,6 +42,6 @@ function readTokens(mode: "light" | "dark") {
     [...block.matchAll(/--(v2-[\w-]+):\s*([^;]+);/g)]
       // Fonts and the fixed avatar foreground remain global CSS rather than theme overrides.
       .filter(([, key]) => key !== "v2-avatar-fg" && key !== "v2-font-family-sans")
-      .map(([, key, value]) => [key, value!.replace(/\s+/g, " ").trim()]),
+      .map(([, key, value]) => [key, value.replace(/\s+/g, " ").trim()]),
   )
 }

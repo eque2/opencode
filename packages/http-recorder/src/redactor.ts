@@ -1,5 +1,5 @@
-import { Option } from "effect"
-import { decodeJson } from "./matching.js"
+import { HashSet, Option } from "effect"
+import { decodeJson, encodeJson } from "./matching.js"
 import { REDACTED, redactHeaders, redactUrl } from "./redaction.js"
 import type { RedactOptions, RequestSnapshot, ResponseSnapshot } from "./types.js"
 
@@ -57,7 +57,7 @@ export const body = (transform: (parsed: unknown) => unknown): Partial<Redactor>
     ...snapshot,
     body: Option.match(decodeJson(snapshot.body), {
       onNone: () => snapshot.body,
-      onSome: (parsed) => JSON.stringify(transform(parsed)),
+      onSome: (parsed) => encodeJson(transform(parsed)),
     }),
   }),
 })
@@ -82,27 +82,33 @@ const DEFAULT_REDACT_JSON_FIELDS = [
 
 const normalizeField = (field: string) => field.replace(/[^a-z0-9]/gi, "").toLowerCase()
 
-const redactJsonFields = (value: unknown, fields: ReadonlySet<string>): unknown => {
+const redactJsonFields = (value: unknown, fields: HashSet.HashSet<string>): unknown => {
   if (Array.isArray(value)) return value.map((item) => redactJsonFields(item, fields))
   if (!value || typeof value !== "object") return value
   return Object.fromEntries(
     Object.entries(value).map(([key, child]) => [
       key,
-      fields.has(normalizeField(key)) ? REDACTED : redactJsonFields(child, fields),
+      HashSet.has(fields, normalizeField(key)) ? REDACTED : redactJsonFields(child, fields),
     ]),
   )
 }
 
-const redactBody = (value: string, fields: ReadonlySet<string>, transform: ((body: string) => string) | undefined) => {
+const redactBody = (
+  value: string,
+  fields: HashSet.HashSet<string>,
+  transform: ((body: string) => string) | undefined,
+) => {
   const redacted = Option.match(decodeJson(value), {
     onNone: () => value,
-    onSome: (parsed) => JSON.stringify(redactJsonFields(parsed, fields)),
+    onSome: (parsed) => encodeJson(redactJsonFields(parsed, fields)),
   })
   return transform?.(redacted) ?? redacted
 }
 
 export const make = (options: RedactOptions = {}): Redactor => {
-  const fields = new Set([...DEFAULT_REDACT_JSON_FIELDS, ...(options.jsonFields ?? [])].map(normalizeField))
+  const fields = HashSet.fromIterable(
+    [...DEFAULT_REDACT_JSON_FIELDS, ...(options.jsonFields ?? [])].map(normalizeField),
+  )
   return compose(
     requestHeaders({
       allow: [...DEFAULT_REQUEST_HEADERS, ...(options.allowRequestHeaders ?? []), ...(options.headers ?? [])],

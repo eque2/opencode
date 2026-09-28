@@ -1,8 +1,8 @@
 import { Global } from "@opencode-ai/core/global"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import os from "os"
-import { Duration, Effect } from "effect"
+import { Array as Arr, Config, Console, Duration, Effect, Option } from "effect"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 import { ConfigCommand } from "./config"
@@ -35,7 +35,7 @@ export const DebugCommand = cmd({
       .command(PathsCommand)
       .command(WaitCommand)
       .demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const WaitCommand = effectCmd({
@@ -46,42 +46,51 @@ const WaitCommand = effectCmd({
   }),
 })
 
+// An empty variable counts as unset, as the old truthiness checks did.
+const envVar = (name: string) =>
+  Config.option(Config.String(name)).pipe(Effect.map(Option.filter((value) => value.length > 0)), Effect.orDie)
+
 const InfoCommand = effectCmd({
   command: "info",
   describe: "show debug information",
   handler: Effect.fn("Cli.debug.info")(function* () {
-    const { Config } = yield* Effect.promise(() => import("@/config/config"))
+    const configModule = yield* Effect.promise(() => import("@/config/config"))
     const { ConfigPlugin } = yield* Effect.promise(() => import("@/config/plugin"))
-    const config = yield* Config.Service.use((cfg) => cfg.get())
-    const termProgram = process.env.TERM_PROGRAM
-      ? `${process.env.TERM_PROGRAM}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ""}`
-      : undefined
-    const terminal = [termProgram, process.env.TERM].filter((item): item is string => Boolean(item)).join(" / ")
+    const config = yield* configModule.Config.Service.use((cfg) => cfg.get())
+    const flags = yield* RuntimeFlags.Service
+    const program = yield* envVar("TERM_PROGRAM")
+    const programVersion = yield* envVar("TERM_PROGRAM_VERSION")
+    const termProgram = Option.map(program, (name) =>
+      Option.match(programVersion, { onNone: () => name, onSome: (version) => `${name} ${version}` }),
+    )
+    const terminal = Arr.getSomes([termProgram, yield* envVar("TERM")]).join(" / ")
 
-    console.log(`opencode version: ${InstallationVersion}`)
-    console.log(`os: ${os.type()} ${os.release()} ${os.arch()}`)
-    console.log(`terminal: ${terminal || "unknown"}`)
-    console.log("plugins:")
-    if (Flag.OPENCODE_PURE) {
-      console.log("external plugins disabled (--pure)")
+    yield* Console.log(`opencode version: ${InstallationVersion}`)
+    yield* Console.log(`os: ${os.type()} ${os.release()} ${os.arch()}`)
+    yield* Console.log(`terminal: ${terminal || "unknown"}`)
+    yield* Console.log("plugins:")
+    if (flags.pure) {
+      yield* Console.log("external plugins disabled (--pure)")
       return
     }
     if (!config.plugin_origins?.length) {
-      console.log("none")
+      yield* Console.log("none")
       return
     }
     for (const plugin of config.plugin_origins) {
-      console.log(`- ${ConfigPlugin.pluginSpecifier(plugin.spec)}`)
+      yield* Console.log(`- ${ConfigPlugin.pluginSpecifier(plugin.spec)}`)
     }
   }),
 })
 
-const PathsCommand = cmd({
+const PathsCommand = effectCmd({
   command: "paths",
   describe: "show global paths (data, config, cache, state)",
-  handler() {
+  // Prints static global paths; no project InstanceContext is needed.
+  instance: false,
+  handler: Effect.fn("Cli.debug.paths")(function* () {
     for (const [key, value] of Object.entries(Global.Path)) {
-      console.log(key.padEnd(10), value)
+      yield* Console.log(key.padEnd(10), value)
     }
-  },
+  }),
 })

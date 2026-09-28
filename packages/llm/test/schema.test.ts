@@ -2,7 +2,18 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import * as OpenAIResponses from "../src/protocols/openai-responses"
-import { ContentPart, LLMEvent, LLMRequest, Model, ModelID, ProviderID, Usage } from "../src/schema"
+import {
+  ContentPart,
+  LLMEvent,
+  LLMRequest,
+  Model,
+  ModelID,
+  ProviderID,
+  ToolCallPart,
+  ToolOutput,
+  ToolResultValue,
+  Usage,
+} from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
 const model = new Model({
@@ -11,8 +22,8 @@ const model = new Model({
   route: OpenAIChat.route,
 })
 
-const decodeLLMRequest = Schema.decodeUnknownSync(LLMRequest as unknown as Schema.Decoder<LLMRequest>)
-const decodeLLMEvent = Schema.decodeUnknownSync(LLMEvent as unknown as Schema.Decoder<LLMEvent>)
+const decodeLLMRequest = Schema.decodeUnknownSync(LLMRequest)
+const decodeLLMEvent = Schema.decodeUnknownSync(LLMEvent)
 
 describe("llm schema", () => {
   test("decodes a minimal request", () => {
@@ -55,6 +66,25 @@ describe("llm schema", () => {
   test("content part tagged union exposes guards", () => {
     expect(ContentPart.guards.text({ type: "text", text: "hi" })).toBe(true)
     expect(ContentPart.guards.media({ type: "text", text: "hi" })).toBe(false)
+  })
+
+  test("tool results hold the JSON that a provider receives", () => {
+    expect(ToolResultValue.make({ title: "t", attachments: undefined })).toStrictEqual({
+      type: "json",
+      value: { title: "t" },
+    })
+    expect(ToolOutput.toResultValue(ToolOutput.make({ at: new Date(0) }))).toStrictEqual({
+      type: "json",
+      value: { at: "1970-01-01T00:00:00.000Z" },
+    })
+    expect(() => ToolResultValue.make(1n)).toThrow()
+  })
+
+  test("tool-call parts hold the JSON input that a provider receives", () => {
+    expect(
+      ToolCallPart.make({ id: "call_1", name: "lookup", input: { query: "q", limit: undefined } }).input,
+    ).toStrictEqual({ query: "q" })
+    expect(() => ToolCallPart.make({ id: "call_1", name: "lookup", input: 1n })).toThrow()
   })
 })
 

@@ -3,7 +3,7 @@ export * as TuiKeybind from "./keybind"
 import type { KeyEvent, Renderable } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
 import type { BindingCommandMap, BindingConfig, BindingDefaults } from "@opentui/keymap/extras"
-import { Schema } from "effect"
+import { Record, Schema } from "effect"
 
 const KeyStroke = Schema.Struct({
   name: Schema.String,
@@ -12,7 +12,7 @@ const KeyStroke = Schema.Struct({
   meta: Schema.optional(Schema.Boolean),
   super: Schema.optional(Schema.Boolean),
   hyper: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "TuiKeybind.KeyStroke" })
 
 const BindingObject = Schema.StructWithRest(
   Schema.Struct({
@@ -21,7 +21,7 @@ const BindingObject = Schema.StructWithRest(
     preventDefault: Schema.optional(Schema.Boolean),
     fallthrough: Schema.optional(Schema.Boolean),
   }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  [Schema.Record(Schema.String, Schema.Json)],
 )
 
 const BindingItem = Schema.Union([Schema.String, KeyStroke, BindingObject])
@@ -240,7 +240,10 @@ export const Definitions = {
 } satisfies Record<string, Definition>
 
 type KeybindName = keyof typeof Definitions
-const KeybindNames = new Set<string>(Object.keys(Definitions))
+
+function isKeybindName(name: string): name is KeybindName {
+  return Object.hasOwn(Definitions, name)
+}
 
 export const KeybindOverrides = Schema.Struct(
   Object.fromEntries(
@@ -250,9 +253,7 @@ export const KeybindOverrides = Schema.Struct(
     ]),
   ),
 ).annotate({ description: "TUI keybinding overrides" })
-export const Descriptions = Object.fromEntries(
-  Object.entries(Definitions).map(([name, item]) => [name, item.description]),
-) as Record<KeybindName, string>
+export const Descriptions: Record<KeybindName, string> = Record.map(Definitions, (item) => item.description)
 export const CommandMap = {
   app_exit: "app.exit",
   app_debug: "app.debug",
@@ -418,12 +419,17 @@ export const CommandMap = {
   which_key_home: "which-key.home",
   which_key_end: "which-key.end",
 } satisfies BindingCommandMap
-const CommandDescriptions = Object.fromEntries(
+
+function isCommandMapName(name: string): name is keyof typeof CommandMap {
+  return Object.hasOwn(CommandMap, name)
+}
+
+const CommandDescriptions: Record<string, string> = Object.fromEntries(
   Object.entries(Definitions).map(([name, item]) => [
-    CommandMap[name as keyof typeof CommandMap] ?? name,
+    isCommandMapName(name) ? CommandMap[name] : name,
     item.description,
   ]),
-) as Record<string, string>
+)
 
 export type Keybinds = { [K in KeybindName]: BindingValueSchema }
 export type KeybindOverrides = Partial<Keybinds>
@@ -440,32 +446,31 @@ export function toBindingConfig(keybinds: Keybinds): BindingConfig<Renderable, K
   return Object.fromEntries(Object.entries(keybinds)) as BindingConfig<Renderable, KeyEvent>
 }
 
-const decodeBindingValue = Schema.decodeUnknownSync(BindingValueSchema)
+// An unknown keybind name is an excess property, so it fails the decode like an invalid binding value.
+const decodeOverrides = Schema.decodeUnknownSync(KeybindOverrides, { onExcessProperty: "error" })
 
 export function defaultValue(name: KeybindName) {
   return Definitions[name].default
 }
 
+/**
+ * Decodes keybind overrides and fills each keybind without an override with its default. An unknown keybind
+ * name or an invalid binding value throws a SchemaError.
+ */
 export function parse(keybinds: KeybindOverrides): Keybinds {
-  const invalid = unknownKeys(keybinds)
-  if (invalid.length) throw new Error(`Unrecognized keybind${invalid.length === 1 ? "" : "s"}: ${invalid.join(", ")}`)
-  return Object.fromEntries(
-    Object.entries(Definitions).map(([name, item]) => [
-      name,
-      decodeBindingValue(keybinds[name as KeybindName] ?? item.default),
-    ]),
-  ) as Keybinds
+  const overrides = decodeOverrides(keybinds)
+  return Record.map(Definitions, (item, name) => overrides[name] ?? item.default)
 }
 
 export const Keybinds = { parse }
 
 export function unknownKeys(input: object) {
-  return Object.keys(input).filter((key) => !KeybindNames.has(key))
+  return Object.keys(input).filter((key) => !isKeybindName(key))
 }
 
 export function bindingDefaults(): BindingDefaults<Renderable, KeyEvent> {
   return ({ command, binding }) => {
-    if (binding.desc !== undefined) return
+    if (binding.desc !== undefined) return undefined
     return { desc: CommandDescriptions[command] }
   }
 }

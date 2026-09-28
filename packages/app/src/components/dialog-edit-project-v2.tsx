@@ -110,11 +110,10 @@ export function DialogEditProjectV2(props: { project: LocalProject; server: Serv
                           getProjectAvatarVariant(model.store.color) === color,
                       }}
                       onClick={() => {
-                        if (getProjectAvatarVariant(model.store.color) === color && !props.project.icon?.url) return
-                        model.setStore(
-                          "color",
-                          getProjectAvatarVariant(model.store.color) === color ? undefined : color,
-                        )
+                        const selected = getProjectAvatarVariant(model.store.color) === color
+                        if (selected && !props.project.icon?.url) return
+                        if (selected) model.clearColor()
+                        else model.setStore("color", color)
                       }}
                     >
                       <ProjectAvatar

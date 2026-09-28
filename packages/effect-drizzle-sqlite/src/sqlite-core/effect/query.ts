@@ -1,6 +1,6 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import {
   type BuildQueryResult,
@@ -44,6 +44,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm findMany takes KnownKeysOnly<TConfig, DBQueryConfig<"many", TSchema, TFields>>, but the relational query and dialect take the non-generic DBQueryConfig; TS cannot relate the generic where filter (TS2322), and upstream casts the same
       (config as DBQueryConfig<"many"> | undefined) ?? true,
       "many",
       this.rowMode,
@@ -60,6 +61,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm findFirst takes KnownKeysOnly<TConfig, DBQueryConfig<"one", TSchema, TFields>>, but the relational query and dialect take the non-generic DBQueryConfig; TS cannot relate the generic where filter (TS2322), and upstream casts the same
       (config as DBQueryConfig<"one"> | undefined) ?? true,
       "first",
       this.rowMode,
@@ -68,12 +70,8 @@ export class SQLiteEffectRelationalQueryBuilder<
   }
 }
 
-export interface SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
-  extends Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]>,
-    RunnableQuery<TResult, "sqlite">,
-    SQLWrapper {}
-
 export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
+  extends Effectable.Class<TResult, TEffectHKT["error"], TEffectHKT["context"]>
   implements RunnableQuery<TResult, "sqlite">, SQLWrapper
 {
   static readonly [entityKind]: string = "SQLiteEffectRelationalQueryV2"
@@ -95,11 +93,12 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
     private tableConfig: TableRelationalConfig,
     private dialect: SQLiteDialect,
     private session: SQLiteEffectSession<TEffectHKT, any, any>,
-    private config: DBQueryConfig<"many" | "one"> | true,
+    private config: DBQueryConfig | true,
     mode: "many" | "first",
     private rowMode?: boolean,
     private forbidJsonb?: boolean,
   ) {
+    super()
     this.mode = mode
     this.table = table
   }
@@ -126,17 +125,12 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
       selection: query.selection,
     }
 
-    return this.session[isOneTimeQuery ? "prepareOneTimeRelationalQuery" : "prepareRelationalQuery"](
-      builtQuery,
-      undefined,
-      this.mode === "first" ? "get" : "all",
-      makeDefaultRqbMapper(mapperConfig),
-      mapperConfig,
-    ) as SQLiteEffectPreparedQuery<
-      PreparedQueryConfig & { all: TResult; get: TResult; execute: TResult },
-      TEffectHKT,
-      true
-    >
+    return this.session[isOneTimeQuery ? "prepareOneTimeRelationalQuery" : "prepareRelationalQuery"]<
+      PreparedQueryConfig & { all: TResult; get: TResult; execute: TResult }
+    >(builtQuery, this.mode === "first" ? "get" : "all", {
+      customResultMapper: makeDefaultRqbMapper(mapperConfig),
+      config: mapperConfig,
+    })
   }
 
   prepare(): SQLiteEffectPreparedQuery<
@@ -193,6 +187,8 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
   execute(placeholderValues?: Record<string, unknown>) {
     return this.mode === "first" ? this._prepare().get(placeholderValues) : this._prepare().all(placeholderValues)
   }
-}
 
-applyEffectWrapper(SQLiteEffectRelationalQuery)
+  asEffect(): Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}

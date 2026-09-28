@@ -6,6 +6,7 @@ import os from "os"
 import path from "path"
 import { fileLogger } from "../../src/observability/logging"
 import { resource } from "../../src/observability/otlp"
+import { it } from "../lib/effect"
 
 const otelResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES
 const opencodeClient = process.env.OPENCODE_CLIENT
@@ -19,37 +20,43 @@ afterEach(() => {
 })
 
 describe("resource", () => {
-  test("parses and decodes OTEL resource attributes", () => {
-    process.env.OTEL_RESOURCE_ATTRIBUTES =
-      "service.namespace=anomalyco,team=platform%2Cobservability,label=hello%3Dworld,key%2Fname=value%20here"
+  it.effect("parses and decodes OTEL resource attributes", () =>
+    Effect.gen(function* () {
+      process.env.OTEL_RESOURCE_ATTRIBUTES =
+        "service.namespace=anomalyco,team=platform%2Cobservability,label=hello%3Dworld,key%2Fname=value%20here"
 
-    expect(resource().attributes).toMatchObject({
-      "service.namespace": "anomalyco",
-      team: "platform,observability",
-      label: "hello=world",
-      "key/name": "value here",
-    })
-  })
+      expect((yield* resource).attributes).toMatchObject({
+        "service.namespace": "anomalyco",
+        team: "platform,observability",
+        label: "hello=world",
+        "key/name": "value here",
+      })
+    }),
+  )
 
-  test("drops OTEL resource attributes when any entry is invalid", () => {
-    process.env.OTEL_RESOURCE_ATTRIBUTES = "service.namespace=anomalyco,broken"
+  it.effect("drops OTEL resource attributes when any entry is invalid", () =>
+    Effect.gen(function* () {
+      process.env.OTEL_RESOURCE_ATTRIBUTES = "service.namespace=anomalyco,broken"
 
-    expect(resource().attributes["service.namespace"]).toBeUndefined()
-    expect(resource().attributes["opencode.client"]).toBeDefined()
-  })
+      expect((yield* resource).attributes["service.namespace"]).toBeUndefined()
+      expect((yield* resource).attributes["opencode.client"]).toBeDefined()
+    }),
+  )
 
-  test("keeps built-in attributes when env values conflict", () => {
-    process.env.OPENCODE_CLIENT = "cli"
-    process.env.OTEL_RESOURCE_ATTRIBUTES =
-      "opencode.client=web,service.instance.id=override,service.namespace=anomalyco"
+  it.effect("keeps built-in attributes when env values conflict", () =>
+    Effect.gen(function* () {
+      process.env.OPENCODE_CLIENT = "cli"
+      process.env.OTEL_RESOURCE_ATTRIBUTES =
+        "opencode.client=web,service.instance.id=override,service.namespace=anomalyco"
 
-    expect(resource().attributes).toMatchObject({
-      "opencode.client": "cli",
-      "service.namespace": "anomalyco",
-    })
-    expect(resource().attributes["service.instance.id"]).not.toBe("override")
-    expect(resource().attributes["opencode.run"]).toMatch(/^[0-9a-f]{8}$/)
-  })
+      expect((yield* resource).attributes).toMatchObject({
+        "opencode.client": "cli",
+        "service.namespace": "anomalyco",
+      })
+      expect((yield* resource).attributes["service.instance.id"]).not.toBe("override")
+      expect((yield* resource).attributes["opencode.run"]).toMatch(/^[0-9a-f]{8}$/)
+    }),
+  )
 })
 
 test("file logger appends concurrent runs with a run on every line", async () => {

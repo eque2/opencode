@@ -1,7 +1,7 @@
 export * as Tool from "./tool"
 
 import { ToolDefinition, ToolFailure, ToolOutput, type ToolCall } from "@opencode-ai/llm"
-import { Effect, JsonSchema, Schema } from "effect"
+import { Effect, JsonSchema, MutableHashMap, Option, Schema } from "effect"
 import type { AgentV2 } from "../agent"
 import type { SessionMessage } from "../session/message"
 import type { SessionSchema } from "../session/schema"
@@ -13,12 +13,20 @@ export interface Context {
   readonly toolCallID: string
 }
 
-export type SchemaType<A> = Schema.Codec<A, any, never, never>
+export type SchemaType<A> = Schema.Codec<A, any>
 
 declare const TypeId: unique symbol
 
 export interface Definition<Input extends SchemaType<any>, Output extends SchemaType<any>> {
   readonly [TypeId]: {
+    readonly _Input: Input
+    readonly _Output: Output
+  }
+}
+
+/** The opaque value behind a Definition. It carries no data; `runtimes` holds its behaviour. */
+class ToolValue<Input extends SchemaType<any>, Output extends SchemaType<any>> implements Definition<Input, Output> {
+  declare readonly [TypeId]: {
     readonly _Input: Input
     readonly _Output: Output
   }
@@ -30,6 +38,10 @@ export type Failure = ToolFailure
 
 export class RegistrationError extends Schema.TaggedError<RegistrationError>()("Tool.RegistrationError", {
   name: Schema.String,
+  message: Schema.String,
+}) {}
+
+export class InvalidToolError extends Schema.TaggedError<InvalidToolError>()("Tool.InvalidToolError", {
   message: Schema.String,
 }) {}
 
@@ -73,21 +85,20 @@ export function make<
   Output extends SchemaType<any>,
   Structured extends SchemaType<any> = Output,
 >(config: Config<Input, Output, Structured>): Definition<Input, Structured> {
-  const tool = Object.freeze({}) as Definition<Input, Structured>
-  const definitions = new Map<string, ToolDefinition>()
+  const tool = Object.freeze(new ToolValue<Input, Structured>())
+  const definitions = MutableHashMap.empty<string, ToolDefinition>()
   runtimes.set(tool, {
-    definition: (name) => {
-      const cached = definitions.get(name)
-      if (cached) return cached
-      const definition = new ToolDefinition({
-        name,
-        description: config.description,
-        inputSchema: toJsonSchema(config.input),
-        outputSchema: toJsonSchema(config.structured ?? config.output),
-      })
-      definitions.set(name, definition)
-      return definition
-    },
+    definition: (name) =>
+      Option.getOrElse(MutableHashMap.get(definitions, name), () => {
+        const definition = new ToolDefinition({
+          name,
+          description: config.description,
+          inputSchema: toJsonSchema(config.input),
+          outputSchema: toJsonSchema(config.structured ?? config.output),
+        })
+        MutableHashMap.set(definitions, name, definition)
+        return definition
+      }),
     settle: (call, context) =>
       Schema.decodeUnknownEffect(config.input)(call.input).pipe(
         Effect.mapError((error) => new ToolFailure({ message: `Invalid tool input: ${error.message}` })),
@@ -136,24 +147,34 @@ export const validateName = (name: string) =>
     ? Effect.void
     : Effect.fail(new RegistrationError({ name, message: `Invalid tool name: ${name}` }))
 
+/**
+ * Decorates a tool with a catalog permission action. A value that `make` did
+ * not create gets no runtime, so its later definition or settlement dies with
+ * InvalidToolError.
+ */
 export const withPermission = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
   tool: Definition<Input, Output>,
   permission: string,
-) => {
-  const decorated = Object.freeze({}) as Definition<Input, Output>
-  runtimes.set(decorated, { ...runtimeOf(tool), permission })
+): Definition<Input, Output> => {
+  const decorated = Object.freeze(new ToolValue<Input, Output>())
+  const runtime = runtimes.get(tool)
+  if (runtime) runtimes.set(decorated, { ...runtime, permission })
   return decorated
 }
 
-export const permission = (tool: AnyTool, name: string) => runtimeOf(tool).permission ?? name
-export const definition = (name: string, tool: AnyTool) => runtimeOf(tool).definition(name)
-export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)
+export const permission = (tool: AnyTool, name: string) =>
+  Effect.map(runtimeOf(tool), (runtime) => runtime.permission ?? name)
+export const definition = (name: string, tool: AnyTool) =>
+  Effect.map(runtimeOf(tool), (runtime) => runtime.definition(name))
+export const settle = (tool: AnyTool, call: ToolCall, context: Context) =>
+  Effect.flatMap(runtimeOf(tool), (runtime) => runtime.settle(call, context))
 
-function runtimeOf(tool: AnyTool) {
-  const runtime = runtimes.get(tool)
-  if (!runtime) throw new TypeError("Invalid Core Tool value")
-  return runtime
-}
+/** A value that `make` did not create is a caller defect, so it dies instead of failing. */
+const runtimeOf = (tool: AnyTool) =>
+  Option.match(Option.fromUndefinedOr(runtimes.get(tool)), {
+    onNone: () => Effect.die(new InvalidToolError({ message: "Invalid Core Tool value" })),
+    onSome: (runtime) => Effect.succeed(runtime),
+  })
 
 function toJsonSchema(schema: Schema.Top): JsonSchema.JsonSchema {
   const document = Schema.toJsonSchemaDocument(schema)

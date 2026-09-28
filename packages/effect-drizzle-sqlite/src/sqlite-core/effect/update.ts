@@ -1,6 +1,7 @@
-/* oxlint-disable */
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import * as Option from "effect/Option"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
@@ -14,15 +15,16 @@ import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import { SQLiteViewBase } from "drizzle-orm/sqlite-core/view-base"
 import { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, type UpdateSet, type ValueOrArray } from "drizzle-orm/utils"
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
 import {
-  getTableColumnsRuntime,
-  getTableLikeName,
-  getViewSelectedFieldsRuntime,
-  mapUpdateSet,
-  orderSelectedFields,
-} from "../../internal/drizzle-utils"
+  type DrizzleTypeError,
+  getTableColumns,
+  getViewSelectedFields,
+  type UpdateSet,
+  type ValueOrArray,
+} from "drizzle-orm/utils"
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
+import { getTableLikeName, mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectUpdateWithout<
@@ -39,6 +41,7 @@ export type SQLiteEffectUpdateWithout<
         T["_"]["returning"],
         TDynamic,
         T["_"]["excludedMethods"] | K,
+        // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
         T["_"]["effectHKT"]
       >,
       T["_"]["excludedMethods"] | K
@@ -58,6 +61,7 @@ export type SQLiteEffectUpdateWithJoins<
         T["_"]["returning"],
         TDynamic,
         Exclude<T["_"]["excludedMethods"] | "from", "leftJoin" | "rightJoin" | "innerJoin" | "fullJoin">,
+        // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
         T["_"]["effectHKT"]
       >,
       Exclude<T["_"]["excludedMethods"] | "from", "leftJoin" | "rightJoin" | "innerJoin" | "fullJoin">
@@ -74,6 +78,7 @@ export type SQLiteEffectUpdateReturningAll<
     T["_"]["table"]["$inferSelect"],
     TDynamic,
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -92,6 +97,7 @@ export type SQLiteEffectUpdateReturning<
     SelectResultFields<TSelectedFields>,
     TDynamic,
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -102,31 +108,31 @@ export type SQLiteEffectUpdateExecute<T extends AnySQLiteEffectUpdate> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectUpdatePrepareConfig<T extends AnySQLiteEffectUpdate> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"]
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectUpdateExecute<T>
+}
+
 export type SQLiteEffectUpdatePrepare<
   T extends AnySQLiteEffectUpdate,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"]
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectUpdateExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectUpdatePrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectUpdateDynamic<T extends AnySQLiteEffectUpdate> = SQLiteEffectUpdate<
   T["_"]["table"],
   T["_"]["runResult"],
   T["_"]["from"],
   T["_"]["returning"],
+  // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
   T["_"]["effectHKT"]
 >
 
@@ -157,6 +163,15 @@ export type SQLiteEffectUpdateJoinFn<T extends AnySQLiteEffectUpdate> = <
     | undefined,
 ) => T
 
+function joinedTableFields(
+  table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
+): Option.Option<Record<string, unknown>> {
+  if (is(table, SQLiteTable)) return Option.some(getTableColumns(table))
+  if (is(table, Subquery)) return Option.some(table._.selectedFields)
+  if (is(table, SQLiteViewBase)) return Option.some(getViewSelectedFields(table))
+  return Option.none()
+}
+
 export class SQLiteEffectUpdateBuilder<
   TTable extends SQLiteTable,
   TRunResult,
@@ -182,42 +197,13 @@ export class SQLiteEffectUpdateBuilder<
     false,
     "leftJoin" | "rightJoin" | "innerJoin" | "fullJoin"
   > {
-    return new SQLiteEffectUpdateBase(
+    return new SQLiteEffectUpdateBase<TTable, TRunResult, undefined, undefined, false, never, TEffectHKT>(
       this.table,
       mapUpdateSet(this.table, values),
       this.session,
       this.dialect,
       this.withList,
-    ) as any
-  }
-}
-
-export interface SQLiteEffectUpdateBase<
-  TTable extends SQLiteTable = SQLiteTable,
-  TRunResult = unknown,
-  TFrom extends SQLiteTable | Subquery | SQLiteViewBase | SQL | undefined = undefined,
-  TReturning = undefined,
-  TDynamic extends boolean = false,
-  _TExcludedMethods extends string = never,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends SQLWrapper,
-    RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">,
-    Effect.Effect<
-      TReturning extends undefined ? TRunResult : TReturning[],
-      TEffectHKT["error"],
-      TEffectHKT["context"]
-    > {
-  readonly _: {
-    readonly dialect: "sqlite"
-    readonly table: TTable
-    readonly resultType: "async"
-    readonly runResult: TRunResult
-    readonly from: TFrom
-    readonly returning: TReturning
-    readonly dynamic: TDynamic
-    readonly excludedMethods: _TExcludedMethods
-    readonly result: TReturning extends undefined ? TRunResult : TReturning[]
-    readonly effectHKT: TEffectHKT
+    )
   }
 }
 
@@ -230,9 +216,27 @@ export class SQLiteEffectUpdateBase<
     _TExcludedMethods extends string = never,
     TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
   >
+  extends Effectable.Class<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  >
   implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
 {
   static readonly [entityKind]: string = "SQLiteEffectUpdate"
+
+  declare readonly _: {
+    readonly dialect: "sqlite"
+    readonly table: TTable
+    readonly resultType: "async"
+    readonly runResult: TRunResult
+    readonly from: TFrom
+    readonly returning: TReturning
+    readonly dynamic: TDynamic
+    readonly excludedMethods: _TExcludedMethods
+    readonly result: TReturning extends undefined ? TRunResult : TReturning[]
+    readonly effectHKT: TEffectHKT
+  }
 
   /** @internal */
   config: SQLiteUpdateConfig
@@ -244,6 +248,7 @@ export class SQLiteEffectUpdateBase<
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
   ) {
+    super()
     this.config = { set, table, withList, joins: [] }
   }
 
@@ -251,46 +256,42 @@ export class SQLiteEffectUpdateBase<
     source: TFrom,
   ): SQLiteEffectUpdateWithJoins<this, TDynamic, TFrom> {
     this.config.from = source
-    return this as any
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state from() signature, which this adapter mirrors, returns the same builder as SQLiteEffectUpdateWithJoins; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectUpdateWithJoins<this, TDynamic, TFrom>
   }
 
-  private createJoin<TJoinType extends SQLiteSelectJoinConfig["joinType"]>(
-    joinType: TJoinType,
-  ): SQLiteEffectUpdateJoinFn<this> {
-    return ((
-      table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
-      on: ((updateTable: TTable, from: TFrom) => SQL | undefined) | SQL | undefined,
-    ) => {
+  private createJoin(joinType: SQLiteSelectJoinConfig["joinType"]): SQLiteEffectUpdateJoinFn<this> {
+    return (table, on) => {
       const tableName = getTableLikeName(table)
 
       if (typeof tableName === "string" && this.config.joins.some((join) => join.alias === tableName)) {
-        throw new Error(`Alias "${tableName}" is already used in this query`)
+        // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteUpdateBase join methods (leftJoin, rightJoin, innerJoin, fullJoin) declare a synchronous builder return, which this adapter mirrors; the alias-reuse check throws at build time, as upstream does
+        throw new EffectDrizzleBuilderError({ message: `Alias "${tableName}" is already used in this query` })
       }
 
       if (typeof on === "function") {
-        const from = this.config.from
-          ? is(table, SQLiteTable)
-            ? getTableColumnsRuntime(table)
-            : is(table, Subquery)
-              ? table._.selectedFields
-              : is(table, SQLiteViewBase)
-                ? getViewSelectedFieldsRuntime(table).selectedFields
-                : undefined
-          : undefined
+        const from = this.config.from ? joinedTableFields(table) : Option.none()
+        const updateTableProxy = new Proxy(
+          this.config.table._.columns,
+          new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" }),
+        )
+        const fromProxy = from.pipe(
+          Option.map(
+            (fields) => new Proxy(fields, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })),
+          ),
+          Option.getOrUndefined,
+        )
         on = on(
-          new Proxy(
-            this.config.table._.columns,
-            new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" }),
-          ) as any,
-          from &&
-            (new Proxy(from, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })) as any),
+          updateTableProxy,
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm update join callback signature types this argument by a conditional on T["_"]["from"], which TypeScript cannot relate to the runtime selection proxy; the cast is the precise parameter type
+          fromProxy as Parameters<typeof on>[1],
         )
       }
 
       this.config.joins.push({ on, table, joinType, alias: tableName })
 
-      return this as any
-    }) as any
+      return this
+    }
   }
 
   leftJoin = this.createJoin("left")
@@ -303,7 +304,8 @@ export class SQLiteEffectUpdateBase<
 
   where(where: SQL | undefined): SQLiteEffectUpdateWithout<this, TDynamic, "where"> {
     this.config.where = where
-    return this as any
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectUpdateWithout<this, TDynamic, "where">
   }
 
   orderBy(
@@ -317,23 +319,27 @@ export class SQLiteEffectUpdateBase<
   ): SQLiteEffectUpdateWithout<this, TDynamic, "orderBy"> {
     if (typeof columns[0] === "function") {
       const orderBy = columns[0](
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm orderBy callback signature types its argument as the table (TTable), while the runtime passes a selection proxy of the table's columns, as in upstream drizzle; TS2352 rejects `as TTable`, and SelectionProxyHandler rejects a table target, so `as any` stays
         new Proxy(
-          getTableColumnsRuntime(this.config.table),
+          getTableColumns(this.config.table),
           new SelectionProxyHandler({ sqlAliasedBehavior: "alias", sqlBehavior: "sql" }),
         ) as any,
       )
 
       this.config.orderBy = Array.isArray(orderBy) ? orderBy : [orderBy]
-      return this as any
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+      return this as SQLiteEffectUpdateWithout<this, TDynamic, "orderBy">
     }
 
-    this.config.orderBy = columns as (SQLiteColumn | SQL | SQL.Aliased)[]
-    return this as any
+    this.config.orderBy = columns.filter((column) => typeof column !== "function")
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectUpdateWithout<this, TDynamic, "orderBy">
   }
 
   limit(limit: number | Placeholder): SQLiteEffectUpdateWithout<this, TDynamic, "limit"> {
     this.config.limit = limit
-    return this as any
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as SQLiteEffectUpdateWithout<this, TDynamic, "limit">
   }
 
   returning(): SQLiteEffectUpdateReturningAll<this, TDynamic>
@@ -341,10 +347,13 @@ export class SQLiteEffectUpdateBase<
     fields: TSelectedFields,
   ): SQLiteEffectUpdateReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFields = getTableColumnsRuntime(this.config.table),
-  ): SQLiteEffectUpdateWithout<AnySQLiteEffectUpdate, TDynamic, "returning"> {
-    this.config.returning = orderSelectedFields<SQLiteColumn>(fields)
-    return this as any
+    fields: SelectedFields = getTableColumns(this.config.table),
+  ): SQLiteEffectUpdateReturning<this, TDynamic, SelectedFields> | SQLiteEffectUpdateReturningAll<this, TDynamic> {
+    this.config.returning = orderSelectedFields(fields)
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state returning() overloads, which this adapter mirrors, return the same builder as their next states; the union is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
+    return this as
+      | SQLiteEffectUpdateReturning<this, TDynamic, SelectedFields>
+      | SQLiteEffectUpdateReturningAll<this, TDynamic>
   }
 
   /** @internal */
@@ -357,20 +366,19 @@ export class SQLiteEffectUpdateBase<
   }
 
   /** @internal */
-  _prepare(isOneTimeQuery = true): SQLiteEffectUpdatePrepare<this, TEffectHKT> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
-      this.config.returning ? "all" : "run",
-      undefined,
-      {
+  _prepare(isOneTimeQuery = true): SQLiteEffectUpdatePrepare<this> {
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectUpdatePrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
         type: "update",
         tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectUpdatePrepare<this, TEffectHKT>
+    })
   }
 
-  prepare(): SQLiteEffectUpdatePrepare<this, TEffectHKT> {
+  prepare(): SQLiteEffectUpdatePrepare<this> {
     return this._prepare(false)
   }
 
@@ -395,8 +403,15 @@ export class SQLiteEffectUpdateBase<
   }
 
   $dynamic(): SQLiteEffectUpdateDynamic<this> {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm $dynamic() signature, which this adapter mirrors, returns the same builder in its TDynamic = true, excludedMethods = never state; TS2352 rejects the precise cast (_TExcludedMethods is not comparable to never), and a double cast is forbidden, so `as any` stays
     return this as any
   }
-}
 
-applyEffectWrapper(SQLiteEffectUpdateBase)
+  asEffect(): Effect.Effect<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  > {
+    return this.execute()
+  }
+}

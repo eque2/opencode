@@ -10,6 +10,7 @@ import { dict as uiEn } from "@opencode-ai/ui/i18n/en"
 import { dict as uiZh } from "@opencode-ai/ui/i18n/zh"
 import { createEffect, createMemo, Suspense, type ParentProps } from "solid-js"
 import { getRequestEvent } from "solid-js/web"
+import { Option } from "effect"
 import "./app.css"
 import { Favicon } from "@opencode-ai/ui/favicon"
 
@@ -22,21 +23,22 @@ function resolveTemplate(text: string, params?: UiI18nParams) {
   })
 }
 
-function detectLocaleFromHeader(header: string | null | undefined) {
-  if (!header) return
+function detectLocaleFromHeader(header: string | null | undefined): Option.Option<"zh" | "en"> {
+  if (!header) return Option.none()
   for (const item of header.split(",")) {
     const value = item.trim().split(";")[0]?.toLowerCase()
     if (!value) continue
-    if (value.startsWith("zh")) return "zh" as const
-    if (value.startsWith("en")) return "en" as const
+    if (value.startsWith("zh")) return Option.some("zh")
+    if (value.startsWith("en")) return Option.some("en")
   }
+  return Option.none()
 }
 
 function detectLocale() {
   const event = getRequestEvent()
   const header = event?.request.headers.get("accept-language")
   const headerLocale = detectLocaleFromHeader(header)
-  if (headerLocale) return headerLocale
+  if (Option.isSome(headerLocale)) return headerLocale.value
 
   if (typeof document === "object") {
     const value = document.documentElement.lang?.toLowerCase() ?? ""
@@ -60,7 +62,7 @@ function UiI18nBridge(props: ParentProps) {
   const zh = uiZh as Partial<Record<string, string>>
   const t = (key: keyof typeof uiEn, params?: UiI18nParams) => {
     const value = locale() === "zh" ? (zh[key] ?? uiEn[key]) : uiEn[key]
-    const text = value ?? String(key)
+    const text = value ?? key
     return resolveTemplate(text, params)
   }
   const plural = (key: UiI18nPluralKey, count: number, params?: UiI18nParams) =>

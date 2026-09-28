@@ -1,4 +1,5 @@
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
+import { Data, DateTime, Effect, HashSet, MutableHashMap, Option } from "effect"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { Dialog, DialogBody } from "@opencode-ai/ui/v2/dialog-v2"
@@ -15,6 +16,7 @@ import { useTabs } from "@/context/tabs"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { getRelativeTime } from "@/utils/time"
 import {
+  commandPreviewCleanup,
   createCommandPaletteCommandEntry,
   createCommandPaletteFileEntry,
   createCommandPaletteModel,
@@ -24,11 +26,18 @@ import {
 } from "./command-palette"
 import "./dialog-command-palette-v2.css"
 
+/** Groups entries by category, in the order each category first appears. */
 function groups(entries: CommandPaletteEntry[]) {
-  const map = new Map<string, CommandPaletteEntry[]>()
-  for (const entry of entries) map.set(entry.category, [...(map.get(entry.category) ?? []), entry])
-  return Array.from(map.entries()).map(([category, entries]) => ({ category, entries }))
+  const map = MutableHashMap.empty<string, CommandPaletteEntry[]>()
+  for (const entry of entries) {
+    const previous = Option.getOrElse(MutableHashMap.get(map, entry.category), () => [])
+    MutableHashMap.set(map, entry.category, [...previous, entry])
+  }
+  return Array.from(map).map(([category, entries]) => ({ category, entries }))
 }
+
+/** A palette file search that rejected. `cause` is the original rejection. */
+class CommandPaletteLoadError extends Data.TaggedError("App.CommandPaletteLoadError")<{ readonly cause: unknown }> {}
 
 function matchesEntry(entry: CommandPaletteEntry, query: string) {
   const value = query.toLowerCase()
@@ -37,18 +46,31 @@ function matchesEntry(entry: CommandPaletteEntry, query: string) {
 
 export function DialogCommandPaletteV2(props: { onOpenFile?: (path: string) => void }) {
   const palette = createCommandPaletteModel(props)
-  const loadItems = async (text: string) => {
-    const q = text.trim()
-    if (!q) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
+  const loadItems = (text: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const q = text.trim()
+        if (!q) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
 
-    const [files, nextSessions] = await Promise.all([palette.file.searchFiles(q), Promise.resolve(palette.sessions(q))])
-    const category = palette.language.t("palette.group.files")
-    return [
-      ...palette.commandEntries().filter((entry) => matchesEntry(entry, q)),
-      ...nextSessions,
-      ...files.map((path) => createCommandPaletteFileEntry(path, category)),
-    ]
-  }
+        // The file and session searches run at the same time; a failed file search fails the load, as before.
+        const [files, nextSessions] = yield* Effect.all(
+          [
+            Effect.tryPromise({
+              try: () => palette.file.searchFiles(q),
+              catch: (cause) => new CommandPaletteLoadError({ cause }),
+            }),
+            Effect.promise(() => palette.sessions(q)),
+          ],
+          { concurrency: "unbounded" },
+        )
+        const category = palette.language.t("palette.group.files")
+        return [
+          ...palette.commandEntries().filter((entry) => matchesEntry(entry, q)),
+          ...nextSessions,
+          ...files.map((path) => createCommandPaletteFileEntry(path, category)),
+        ]
+      }),
+    )
 
   return (
     <CommandPaletteView
@@ -70,7 +92,8 @@ export function DialogHomeCommandPaletteV2(props: {
   const global = useGlobal()
   const language = useLanguage()
   const serverCtx = global.ensureServerCtx(props.server)
-  const state = { cleanup: undefined as (() => void) | void, committed: false }
+  // The cleanup of the highlighted command preview, and whether a selection committed the preview.
+  const state: { cleanup: Option.Option<() => void>; committed: boolean } = { cleanup: Option.none(), committed: false }
   const commandEntries = createMemo(() => {
     const category = language.t("palette.group.commands")
     return commandPaletteOptions(command.options).map((option) => createCommandPaletteCommandEntry(option, category))
@@ -79,21 +102,29 @@ export function DialogHomeCommandPaletteV2(props: {
     server: ServerConnection.key(props.server),
     opened: serverCtx.projects.list,
     stored: () => serverCtx.sync.data.project,
-    load: (search, signal) => serverCtx.sdk.api.session.list({ parentID: null, search, limit: 50 }, { signal }),
+    load: (search, signal) =>
+      serverCtx.sdk.api.session.list(
+        {
+          // eslint-disable-next-line effect/no-null-use-option -- (b) @opencode-ai/client session.list reads parentID null as the root-session filter; the null is a wire-protocol literal and no other field selects roots
+          parentID: null,
+          search,
+          limit: 50,
+        },
+        { signal },
+      ),
     untitled: () => language.t("command.session.new"),
     category: () => language.t("command.category.session"),
   })
 
   const highlight = (item: CommandPaletteEntry | undefined) => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    if (item?.type !== "command") return
-    state.cleanup = item.option?.onHighlight?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+    state.cleanup = Option.none()
+    state.cleanup = commandPreviewCleanup(item)
   }
   const select = (item: CommandPaletteEntry | undefined) => {
     if (!item) return
     state.committed = true
-    state.cleanup = undefined
+    state.cleanup = Option.none()
     dialog.close()
     if (item.type === "command") {
       item.option?.onSelect?.("palette")
@@ -101,15 +132,19 @@ export function DialogHomeCommandPaletteV2(props: {
     }
     if (item.type === "session") props.onSelectSession(item)
   }
-  const loadItems = async (text: string) => {
-    const query = text.trim()
-    if (!query) return commandEntries().slice(0, 5)
-    return [...commandEntries().filter((entry) => matchesEntry(entry, query)), ...(await sessions(query))]
-  }
+  const loadItems = (text: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const query = text.trim()
+        if (!query) return commandEntries().slice(0, 5)
+        const commands = commandEntries().filter((entry) => matchesEntry(entry, query))
+        return [...commands, ...(yield* Effect.promise(() => sessions(query)))]
+      }),
+    )
 
   onCleanup(() => {
     if (state.committed) return
-    state.cleanup?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
   })
 
   return (
@@ -140,8 +175,10 @@ function CommandPaletteView(props: {
   const visibleEntries = createMemo(() => uniqueCommandPaletteEntries(entries.latest ?? []))
   const groupedEntries = createMemo(() => groups(visibleEntries()))
   const activeEntry = createMemo(() => visibleEntries()[active()])
-  const openSessions = createMemo(
-    () => new Set(tabs.store.flatMap((tab) => (tab.type === "session" ? [`${tab.server}\0${tab.sessionId}`] : []))),
+  const openSessions = createMemo(() =>
+    HashSet.fromIterable(
+      tabs.store.flatMap((tab) => (tab.type === "session" ? [`${tab.server}\0${tab.sessionId}`] : [])),
+    ),
   )
 
   createEffect(() => {
@@ -227,7 +264,7 @@ function CommandPaletteView(props: {
                           language={language}
                           sessionOpen={
                             item.server && item.sessionID
-                              ? openSessions().has(`${item.server}\0${item.sessionID}`)
+                              ? HashSet.has(openSessions(), `${item.server}\0${item.sessionID}`)
                               : false
                           }
                           onActive={() => setActive(visibleEntries().findIndex((entry) => entry.id === item.id))}
@@ -254,10 +291,10 @@ function PaletteRow(props: {
   onActive: () => void
   onSelect: () => void
 }) {
-  const session = () =>
-    props.item.server && props.item.directory && props.item.sessionID
-      ? { server: props.item.server, directory: props.item.directory, sessionID: props.item.sessionID }
-      : undefined
+  const session = () => {
+    if (!props.item.server || !props.item.directory || !props.item.sessionID) return undefined
+    return { server: props.item.server, directory: props.item.directory, sessionID: props.item.sessionID }
+  }
 
   return (
     <button
@@ -265,7 +302,7 @@ function PaletteRow(props: {
       class="command-palette-v2-row group"
       role="option"
       aria-selected={props.active}
-      data-active={props.active ? "" : undefined}
+      bool:data-active={props.active}
       onMouseMove={(event) => {
         // Ignore hover from a static cursor when keyboard scrolling moves rows underneath it.
         if (event.movementX === 0 && event.movementY === 0) return
@@ -332,7 +369,7 @@ function PaletteRow(props: {
           </div>
           <Show when={props.item.updated}>
             <span class="command-palette-v2-meta">
-              {getRelativeTime(new Date(props.item.updated!).toISOString(), props.language.t)}
+              {getRelativeTime(DateTime.formatIso(DateTime.makeUnsafe(props.item.updated!)), props.language.t)}
             </span>
           </Show>
         </Match>

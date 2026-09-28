@@ -2,7 +2,7 @@ export * as FileSystemSearch from "./search"
 
 import { makeLocationNode } from "../effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, MutableHashSet, Option, Schema, Scope } from "effect"
 import { Fff } from "#fff"
 import fuzzysort from "fuzzysort"
 import { Entry, Match } from "@opencode-ai/schema/filesystem"
@@ -11,7 +11,7 @@ import { FSUtil } from "../fs-util"
 import { Location } from "../location"
 import { Ripgrep } from "../ripgrep"
 import { RelativePath } from "../schema"
-import { Flag } from "../flag/flag"
+import { FlagConfig } from "../flag/flag"
 
 export interface Interface {
   readonly find: (input: FileSystem.FindInput) => Effect.Effect<FileSystem.Entry[]>
@@ -20,6 +20,15 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/FileSystem/Search") {}
+
+/** fff could not start for this location, so search answers with empty results. */
+class FffInitError extends Schema.TaggedError<FffInitError>()("FileSystemSearch.FffInitError", {
+  cause: Schema.Defect(),
+}) {}
+
+// A failed fff search is a defect: the Interface has no error channel.
+const searched = <A>(found: Fff.Result<A>): Effect.Effect<A> =>
+  found.ok ? Effect.succeed(found.value) : Effect.die(found.error)
 
 export const ripgrepLayer = Layer.effect(
   Service,
@@ -32,7 +41,7 @@ export const ripgrepLayer = Layer.effect(
       files: [] as string[],
       directories: [] as string[],
     }
-    const directories = new Set<string>()
+    const directories = MutableHashSet.empty<string>()
     yield* ripgrep
       .find({
         cwd: location.directory,
@@ -42,7 +51,9 @@ export const ripgrepLayer = Layer.effect(
           Effect.sync(() => {
             state.files.push(entry.path)
             const parts = entry.path.split("/")
-            parts.slice(0, -1).forEach((_, index) => directories.add(parts.slice(0, index + 1).join("/") + path.sep))
+            parts
+              .slice(0, -1)
+              .forEach((_, index) => MutableHashSet.add(directories, parts.slice(0, index + 1).join("/") + path.sep))
             state.directories = Array.from(directories)
           }),
       })
@@ -63,8 +74,8 @@ export const ripgrepLayer = Layer.effect(
               Effect.map((result) =>
                 result.map((entry) =>
                   Entry.make({
-                    ...entry,
                     path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, entry.path))),
+                    type: entry.type,
                   }),
                 ),
               ),
@@ -80,7 +91,7 @@ export const ripgrepLayer = Layer.effect(
             .grep({
               cwd,
               pattern: input.pattern,
-              file: info.type === "File" ? path.basename(target) : undefined,
+              ...(info.type === "File" ? { file: path.basename(target) } : {}),
               include: input.include,
               limit: input.limit ?? Number.MAX_SAFE_INTEGER,
             })
@@ -88,11 +99,14 @@ export const ripgrepLayer = Layer.effect(
               Effect.map((result) =>
                 result.map((match) =>
                   Match.make({
-                    ...match,
                     entry: Entry.make({
-                      ...match.entry,
                       path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, match.entry.path))),
+                      type: match.entry.type,
                     }),
+                    line: match.line,
+                    offset: match.offset,
+                    text: match.text,
+                    submatches: match.submatches,
                   }),
                 ),
               ),
@@ -124,7 +138,7 @@ export const fffLayer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const location = yield* Location.Service
-    const result = yield* Effect.try({
+    const picker = yield* Effect.try({
       try: () =>
         Fff.create({
           basePath: location.directory,
@@ -132,93 +146,112 @@ export const fffLayer = Layer.effect(
           disableMmapCache: true,
           disableContentIndexing: true,
         }),
-      catch: (cause) => cause,
+      catch: (cause) => new FffInitError({ cause }),
     }).pipe(
-      Effect.catch((error) => Effect.logWarning("failed to initialize fff", { error }).pipe(Effect.as(undefined))),
+      Effect.flatMap((created) =>
+        created.ok ? Effect.succeed(created.value) : Effect.fail(new FffInitError({ cause: created.error })),
+      ),
+      Effect.tapError((error) => Effect.logWarning("failed to initialize fff", { error: error.cause })),
+      Effect.option,
     )
-    if (!result?.ok) {
-      if (result) yield* Effect.logWarning("failed to initialize fff", { error: result.error })
+    if (Option.isNone(picker)) {
       return Service.of({
         find: () => Effect.succeed([]),
         glob: () => Effect.succeed([]),
         grep: () => Effect.succeed([]),
       })
     }
-    yield* Effect.addFinalizer(() => Effect.sync(() => result.value.destroy()).pipe(Effect.ignore))
+    const finder = picker.value
+    yield* Effect.addFinalizer(() => Effect.sync(() => finder.destroy()).pipe(Effect.ignore))
     return Service.of({
       glob: (input) =>
         Effect.sync(() => {
           const prefix = input.path?.replaceAll("\\", "/").replace(/\/$/, "")
-          const found = result.value.glob(prefix ? `${prefix}/${input.pattern}` : input.pattern, {
+          return finder.glob(prefix ? `${prefix}/${input.pattern}` : input.pattern, {
             pageIndex: 0,
             pageSize: input.limit,
           })
-          if (!found.ok) throw found.error
-          return found.value.items.map((item) =>
-            Entry.make({
-              path: RelativePath.make(item.relativePath.replaceAll("\\", "/")),
-              type: "file",
-            }),
-          )
-        }),
+        }).pipe(
+          Effect.flatMap(searched),
+          Effect.map((found) =>
+            found.items.map((item) =>
+              Entry.make({
+                path: RelativePath.make(item.relativePath.replaceAll("\\", "/")),
+                type: "file",
+              }),
+            ),
+          ),
+        ),
       grep: (input) =>
         Effect.sync(() => {
           const prefix = input.path?.replaceAll("\\", "/").replace(/\/$/, "")
-          const found = result.value.grep(
-            [prefix ? `${prefix}/**` : undefined, input.include, input.pattern]
-              .filter((value) => value !== undefined)
-              .join(" "),
+          return finder.grep(
+            [
+              ...(prefix ? [`${prefix}/**`] : []),
+              ...(input.include !== undefined ? [input.include] : []),
+              input.pattern,
+            ].join(" "),
             { mode: "regex", pageSize: input.limit, timeBudgetMs: 1_500 },
           )
-          if (!found.ok) throw found.error
-          return found.value.items.map((match) => {
-            const bytes = Buffer.from(match.lineContent)
-            return Match.make({
-              entry: Entry.make({
-                path: RelativePath.make(match.relativePath.replaceAll("\\", "/")),
-                type: "file",
-              }),
-              line: match.lineNumber,
-              offset: match.byteOffset,
-              text: match.lineContent.length > 2_000 ? match.lineContent.slice(0, 2_000) + "..." : match.lineContent,
-              submatches: match.matchRanges.map(([start, end]) => ({
-                text: bytes.subarray(start, end).toString("utf8"),
-                start,
-                end,
-              })),
-            })
-          })
-        }),
+        }).pipe(
+          Effect.flatMap(searched),
+          Effect.map((found) =>
+            found.items.map((match) => {
+              const bytes = Buffer.from(match.lineContent)
+              return Match.make({
+                entry: Entry.make({
+                  path: RelativePath.make(match.relativePath.replaceAll("\\", "/")),
+                  type: "file",
+                }),
+                line: match.lineNumber,
+                offset: match.byteOffset,
+                text: match.lineContent.length > 2_000 ? match.lineContent.slice(0, 2_000) + "..." : match.lineContent,
+                submatches: match.matchRanges.map(([start, end]) => ({
+                  text: bytes.subarray(start, end).toString("utf8"),
+                  start,
+                  end,
+                })),
+              })
+            }),
+          ),
+        ),
       find: (input) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const options = { pageIndex: 0, pageSize: input.limit ?? 50 }
-          const items = (() => {
-            if (input.type === "file") {
-              const found = result.value.fileSearch(input.query.trim(), options)
-              if (!found.ok) throw found.error
-              return found.value.items.map((item, index) => ({
-                path: item.relativePath,
-                type: "file" as const,
-                score: found.value.scores[index]?.total ?? 0,
-              }))
-            }
-            if (input.type === "directory") {
-              const found = result.value.directorySearch(input.query.trim(), options)
-              if (!found.ok) throw found.error
-              return found.value.items.map((item, index) => ({
-                path: item.relativePath,
-                type: "directory" as const,
-                score: found.value.scores[index]?.total ?? 0,
-              }))
-            }
-            const found = result.value.mixedSearch(input.query.trim(), options)
-            if (!found.ok) throw found.error
-            return found.value.items.map((item, index) => ({
-              path: item.item.relativePath,
-              type: item.type,
-              score: found.value.scores[index]?.total ?? 0,
-            }))
-          })()
+          const query = input.query.trim()
+          const items =
+            input.type === "file"
+              ? yield* Effect.sync(() => finder.fileSearch(query, options)).pipe(
+                  Effect.flatMap(searched),
+                  Effect.map((found) =>
+                    found.items.map((item, index) => ({
+                      path: item.relativePath,
+                      type: "file" as const,
+                      score: found.scores[index]?.total ?? 0,
+                    })),
+                  ),
+                )
+              : input.type === "directory"
+                ? yield* Effect.sync(() => finder.directorySearch(query, options)).pipe(
+                    Effect.flatMap(searched),
+                    Effect.map((found) =>
+                      found.items.map((item, index) => ({
+                        path: item.relativePath,
+                        type: "directory" as const,
+                        score: found.scores[index]?.total ?? 0,
+                      })),
+                    ),
+                  )
+                : yield* Effect.sync(() => finder.mixedSearch(query, options)).pipe(
+                    Effect.flatMap(searched),
+                    Effect.map((found) =>
+                      found.items.map((item, index) => ({
+                        path: item.item.relativePath,
+                        type: item.type,
+                        score: found.scores[index]?.total ?? 0,
+                      })),
+                    ),
+                  )
           return items
             .sort((a, b) => b.score - a.score || a.path.length - b.path.length)
             .map((item) => {
@@ -233,7 +266,13 @@ export const fffLayer = Layer.effect(
   }),
 )
 
-const layer = Layer.unwrap(Effect.sync(() => (Flag.OPENCODE_DISABLE_FFF || !Fff.available() ? ripgrepLayer : fffLayer)))
+// OPENCODE_DISABLE_FFF is an optional variable, so a ConfigError is a defect.
+const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const disabled = yield* FlagConfig.OPENCODE_DISABLE_FFF.pipe(Effect.orDie)
+    return disabled || !Fff.available() ? ripgrepLayer : fffLayer
+  }),
+)
 
 export const locationLayer = layer
 

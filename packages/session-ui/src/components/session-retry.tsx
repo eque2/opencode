@@ -1,28 +1,36 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, on, Show } from "solid-js"
+import { Clock, Effect, Schedule } from "effect"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { Card } from "@opencode-ai/ui/card"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Spinner } from "@opencode-ai/ui/spinner"
+import { createFiberSlot } from "./fiber-slot"
+
+type RetryStatus = Extract<SessionStatus, { type: "retry" }>
 
 export function SessionRetry(props: { status: SessionStatus; show?: boolean }) {
   const i18n = useI18n()
-  const retry = createMemo(() => {
-    if (props.status.type !== "retry") return
+  const retry = createMemo((): RetryStatus | undefined => {
+    if (props.status.type !== "retry") return undefined
     return props.status
   })
   const [seconds, setSeconds] = createSignal(0)
+  const update = Effect.gen(function* () {
+    const next = retry()?.next
+    if (!next) return
+    const now = yield* Clock.currentTimeMillis
+    setSeconds(Math.round((next - now) / 1000))
+  })
+  // The first update runs at once, then once each second, as update() plus setInterval did.
+  const countdown = createFiberSlot()
   createEffect(
     on(retry, (current) => {
-      if (!current) return
-      const update = () => {
-        const next = retry()?.next
-        if (!next) return
-        setSeconds(Math.round((next - Date.now()) / 1000))
+      if (!current) {
+        countdown.interrupt()
+        return
       }
-      update()
-      const timer = setInterval(update, 1000)
-      onCleanup(() => clearInterval(timer))
+      countdown.run(update.pipe(Effect.repeat(Schedule.spaced("1 second"))))
     }),
   )
   const message = createMemo(() => {

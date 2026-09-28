@@ -4,7 +4,7 @@ import { LLM } from "@/session/llm"
 import { MessageID, SessionID } from "@/session/schema"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { LLMEvent } from "@opencode-ai/llm"
-import { Effect, Stream } from "effect"
+import { Clock, Effect, Option, Stream } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 
@@ -24,13 +24,15 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
 
     const generateName = Effect.fn("ProjectCopyHttpApi.generateName")(function* (context: string | undefined) {
       const text = context?.trim()
-      if (!text) return Slug.create()
-      const fallback = yield* provider.defaultModel().pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (!fallback) return Slug.create()
+      if (!text) return yield* Slug.make
+      const defaultModel = yield* Effect.option(provider.defaultModel())
+      if (Option.isNone(defaultModel)) return yield* Slug.make
+      const fallback = defaultModel.value
       const model =
         (yield* provider.getSmallModel(fallback.providerID)) ??
         (yield* provider.getModel(fallback.providerID, fallback.modelID))
       const sessionID = SessionID.descending()
+      const created = yield* Clock.currentTimeMillis
       const result = yield* llm
         .stream({
           agent: COPY_NAME_AGENT,
@@ -38,7 +40,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
             id: MessageID.ascending(),
             sessionID,
             role: "user",
-            time: { created: Date.now() },
+            time: { created },
             agent: COPY_NAME_AGENT.name,
             model: { providerID: model.providerID, modelID: model.id },
           },
@@ -56,7 +58,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
           Stream.mkString,
         )
       const output = result.trim()
-      return output ? slugify(output.split(/\s+/).slice(0, 3).join(" ")) : Slug.create()
+      return output ? slugify(output.split(/\s+/).slice(0, 3).join(" ")) : yield* Slug.make
     })
 
     return handlers.handle("generateName", (ctx) =>
@@ -65,7 +67,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
           Effect.logWarning("project copy name generation failed", {
             projectID: ctx.params.projectID,
             cause,
-          }).pipe(Effect.as(Slug.create())),
+          }).pipe(Effect.andThen(Slug.make)),
         ),
         Effect.map((name) => ({ name })),
       ),

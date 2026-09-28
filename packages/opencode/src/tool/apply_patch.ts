@@ -1,5 +1,5 @@
 import * as path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import * as Tool from "./tool"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -19,6 +19,24 @@ export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
 })
 
+/** A patch the tool rejects: its message tells the model how to correct the patch. */
+export class ApplyPatchError extends Schema.TaggedError<ApplyPatchError>()("ApplyPatchTool.ApplyPatchError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+type FileChange = {
+  filePath: string
+  oldContent: string
+  newContent: string
+  type: "add" | "update" | "delete" | "move"
+  movePath: Option.Option<string>
+  diff: string
+  additions: number
+  deletions: number
+  bom: boolean
+}
+
 export const ApplyPatchTool = Tool.define(
   "apply_patch",
   Effect.gen(function* () {
@@ -32,49 +50,33 @@ export const ApplyPatchTool = Tool.define(
       ctx: Tool.Context,
     ) {
       if (!params.patchText) {
-        return yield* Effect.fail(new Error("patchText is required"))
+        return yield* new ApplyPatchError({ message: "patchText is required" })
       }
 
       // Parse the patch to get hunks
-      let hunks: Patch.Hunk[]
-      try {
-        const parseResult = Patch.parsePatch(params.patchText)
-        hunks = parseResult.hunks
-      } catch (error) {
-        return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
-      }
+      const hunks = yield* Effect.try({
+        try: () => Patch.parsePatch(params.patchText).hunks,
+        catch: (error) =>
+          new ApplyPatchError({ message: `apply_patch verification failed: ${String(error)}`, cause: error }),
+      })
 
       if (hunks.length === 0) {
         const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
         if (normalized === "*** Begin Patch\n*** End Patch") {
-          return yield* Effect.fail(new Error("patch rejected: empty patch"))
+          return yield* new ApplyPatchError({ message: "patch rejected: empty patch" })
         }
-        return yield* Effect.fail(new Error("apply_patch verification failed: no hunks found"))
+        return yield* new ApplyPatchError({ message: "apply_patch verification failed: no hunks found" })
       }
 
       const instance = yield* InstanceState.context
 
       // Validate file paths and check permissions
-      const fileChanges: Array<{
-        filePath: string
-        oldContent: string
-        newContent: string
-        type: "add" | "update" | "delete" | "move"
-        movePath?: string
-        diff: string
-        additions: number
-        deletions: number
-        bom: boolean
-      }> = []
+      const fileChanges = yield* Effect.forEach(hunks, (hunk) =>
+        Effect.gen(function* () {
+          const filePath = path.resolve(instance.directory, hunk.path)
+          yield* assertExternalDirectoryEffect(ctx, filePath)
 
-      let totalDiff = ""
-
-      for (const hunk of hunks) {
-        const filePath = path.resolve(instance.directory, hunk.path)
-        yield* assertExternalDirectoryEffect(ctx, filePath)
-
-        switch (hunk.type) {
-          case "add": {
+          if (hunk.type === "add") {
             const oldContent = ""
             const newContent =
               hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
@@ -88,47 +90,39 @@ export const ApplyPatchTool = Tool.define(
               if (change.removed) deletions += change.count || 0
             }
 
-            fileChanges.push({
+            return {
               filePath,
               oldContent,
               newContent: next.text,
               type: "add",
+              movePath: Option.none(),
               diff,
               additions,
               deletions,
               bom: next.bom,
-            })
-
-            totalDiff += diff + "\n"
-            break
+            } satisfies FileChange
           }
 
-          case "update": {
+          if (hunk.type === "update") {
             // Check if file exists for update
-            const stats = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-            if (!stats || stats.type === "Directory") {
-              return yield* Effect.fail(
-                new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`),
-              )
+            const stats = yield* afs.stat(filePath).pipe(Effect.option)
+            if (Option.isNone(stats) || stats.value.type === "Directory") {
+              return yield* new ApplyPatchError({
+                message: `apply_patch verification failed: Failed to read file to update: ${filePath}`,
+              })
             }
 
             const source = yield* Bom.readFile(afs, filePath)
             const oldContent = source.text
-            let newContent = oldContent
-            let bom = source.bom
 
             // Apply the update chunks to get new content
-            try {
-              const fileUpdate = Patch.deriveNewContentsFromChunks(
-                filePath,
-                hunk.chunks,
-                Bom.join(source.text, source.bom),
-              )
-              newContent = fileUpdate.content
-              bom = fileUpdate.bom
-            } catch (error) {
-              return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
-            }
+            const fileUpdate = yield* Effect.try({
+              try: () => Patch.deriveNewContentsFromChunks(filePath, hunk.chunks, Bom.join(source.text, source.bom)),
+              catch: (error) =>
+                new ApplyPatchError({ message: `apply_patch verification failed: ${String(error)}`, cause: error }),
+            })
+            const newContent = fileUpdate.content
+            const bom = fileUpdate.bom
 
             const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
 
@@ -139,10 +133,12 @@ export const ApplyPatchTool = Tool.define(
               if (change.removed) deletions += change.count || 0
             }
 
-            const movePath = hunk.move_path ? path.resolve(instance.directory, hunk.move_path) : undefined
-            yield* assertExternalDirectoryEffect(ctx, movePath)
+            const movePath = hunk.move_path
+              ? Option.some(path.resolve(instance.directory, hunk.move_path))
+              : Option.none<string>()
+            if (Option.isSome(movePath)) yield* assertExternalDirectoryEffect(ctx, movePath.value)
 
-            fileChanges.push({
+            return {
               filePath,
               oldContent,
               newContent,
@@ -152,53 +148,47 @@ export const ApplyPatchTool = Tool.define(
               additions,
               deletions,
               bom,
-            })
-
-            totalDiff += diff + "\n"
-            break
+            } satisfies FileChange
           }
 
-          case "delete": {
-            const source = yield* Bom.readFile(afs, filePath).pipe(
-              Effect.catch((error) =>
-                Effect.fail(
-                  new Error(
-                    `apply_patch verification failed: ${error instanceof Error ? error.message : String(error)}`,
-                  ),
-                ),
-              ),
-            )
-            const contentToDelete = source.text
-            const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
+          const source = yield* Bom.readFile(afs, filePath).pipe(
+            Effect.mapError(
+              (error) =>
+                new ApplyPatchError({ message: `apply_patch verification failed: ${error.message}`, cause: error }),
+            ),
+          )
+          const contentToDelete = source.text
+          const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
 
-            const deletions = contentToDelete.split("\n").length
+          const deletions = contentToDelete.split("\n").length
 
-            fileChanges.push({
-              filePath,
-              oldContent: contentToDelete,
-              newContent: "",
-              type: "delete",
-              diff: deleteDiff,
-              additions: 0,
-              deletions,
-              bom: source.bom,
-            })
+          return {
+            filePath,
+            oldContent: contentToDelete,
+            newContent: "",
+            type: "delete",
+            movePath: Option.none(),
+            diff: deleteDiff,
+            additions: 0,
+            deletions,
+            bom: source.bom,
+          } satisfies FileChange
+        }),
+      )
 
-            totalDiff += deleteDiff + "\n"
-            break
-          }
-        }
-      }
+      const totalDiff = fileChanges.map((change) => change.diff + "\n").join("")
 
       // Build per-file metadata for UI rendering (used for both permission and result)
       const files = fileChanges.map((change) => ({
         filePath: change.filePath,
-        relativePath: path.relative(instance.worktree, change.movePath ?? change.filePath).replaceAll("\\", "/"),
+        relativePath: path
+          .relative(instance.worktree, Option.getOrElse(change.movePath, () => change.filePath))
+          .replaceAll("\\", "/"),
         type: change.type,
         patch: change.diff,
         additions: change.additions,
         deletions: change.deletions,
-        ...(change.movePath ? { movePath: change.movePath } : {}),
+        ...(Option.isSome(change.movePath) ? { movePath: change.movePath.value } : {}),
       }))
 
       // Check permissions if needed
@@ -215,41 +205,29 @@ export const ApplyPatchTool = Tool.define(
       })
 
       // Apply the changes
-      const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
-
       for (const change of fileChanges) {
-        const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
         switch (change.type) {
           case "add":
-            // Create parent directories (recursive: true is safe on existing/root dirs)
-
-            yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "add" })
-            break
-
           case "update":
+            // Create parent directories (recursive: true is safe on existing/root dirs)
             yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "change" })
             break
 
           case "move":
-            if (change.movePath) {
+            if (Option.isSome(change.movePath)) {
               // Create parent directories (recursive: true is safe on existing/root dirs)
-
-              yield* afs.writeWithDirs(change.movePath!, Bom.join(change.newContent, change.bom))
+              yield* afs.writeWithDirs(change.movePath.value, Bom.join(change.newContent, change.bom))
               yield* afs.remove(change.filePath)
-              updates.push({ file: change.filePath, event: "unlink" })
-              updates.push({ file: change.movePath, event: "add" })
             }
             break
 
           case "delete":
             yield* afs.remove(change.filePath)
-            updates.push({ file: change.filePath, event: "unlink" })
             break
         }
 
-        if (edited) {
+        if (change.type !== "delete") {
+          const edited = Option.getOrElse(change.movePath, () => change.filePath)
           if (yield* format.file(edited)) {
             yield* Bom.syncFile(afs, edited, change.bom)
           }
@@ -257,7 +235,19 @@ export const ApplyPatchTool = Tool.define(
         }
       }
 
-      // Publish file change events
+      // Publish file change events, in change order, after every change is applied
+      const updates = fileChanges.flatMap((change): Array<{ file: string; event: "add" | "change" | "unlink" }> => {
+        if (change.type === "add") return [{ file: change.filePath, event: "add" }]
+        if (change.type === "update") return [{ file: change.filePath, event: "change" }]
+        if (change.type === "delete") return [{ file: change.filePath, event: "unlink" }]
+        return Option.match(change.movePath, {
+          onNone: () => [],
+          onSome: (movePath) => [
+            { file: change.filePath, event: "unlink" },
+            { file: movePath, event: "add" },
+          ],
+        })
+      })
       for (const update of updates) {
         yield* events.publish(Watcher.Event.Updated, update)
       }
@@ -265,7 +255,7 @@ export const ApplyPatchTool = Tool.define(
       // Notify LSP of file changes and collect diagnostics
       for (const change of fileChanges) {
         if (change.type === "delete") continue
-        const target = change.movePath ?? change.filePath
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
         yield* lsp.touchFile(target, "document")
       }
       const diagnostics = yield* lsp.diagnostics()
@@ -278,15 +268,15 @@ export const ApplyPatchTool = Tool.define(
         if (change.type === "delete") {
           return `D ${path.relative(instance.worktree, change.filePath).replaceAll("\\", "/")}`
         }
-        const target = change.movePath ?? change.filePath
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
         return `M ${path.relative(instance.worktree, target).replaceAll("\\", "/")}`
       })
       let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
 
       for (const change of fileChanges) {
         if (change.type === "delete") continue
-        const target = change.movePath ?? change.filePath
-        const block = LSP.Diagnostic.report(target, diagnostics[FSUtil.normalizePath(target)] ?? [])
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
+        const block = LSP.Diagnostic.report(target, diagnostics[yield* afs.normalizePath(target)] ?? [])
         if (!block) continue
         const rel = path.relative(instance.worktree, target).replaceAll("\\", "/")
         output += `\n\nLSP errors detected in ${rel}, please fix:\n${block}`
@@ -307,7 +297,7 @@ export const ApplyPatchTool = Tool.define(
       description: DESCRIPTION,
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
-        run(params, ctx).pipe(Effect.orDie),
+        run(params, ctx).pipe(Effect.provideService(FSUtil.Service, afs), Effect.orDie),
     }
   }),
 )

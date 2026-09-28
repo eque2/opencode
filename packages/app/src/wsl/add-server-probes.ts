@@ -1,14 +1,23 @@
 import { useMutation } from "@tanstack/solid-query"
+import { Effect, Option } from "effect"
 import { createEffect } from "solid-js"
 import type { Accessor } from "solid-js"
 import {
   addServerProbePlan,
   createProbeFailureGate,
   runAddableProbePlan,
+  wslRequest,
   type AddServerProbePlan,
   type WslAddServerView,
 } from "./settings-model"
 import type { WslInstalledDistro, WslServersPlatform, WslServersState } from "./types"
+
+/** Runs one probe command against the desktop WSL bridge. */
+function runProbeCommand(command: AddServerProbePlan, api: WslServersPlatform) {
+  if (command.kind === "addable") return runAddableProbePlan({ plan: command.plan, api })
+  if (command.plan.action === "probeRuntime") return wslRequest(() => api.probeRuntime())
+  return wslRequest(() => api.refreshDistros())
+}
 
 export function useWslAddServerProbes(input: {
   state: Accessor<WslServersState | undefined>
@@ -16,20 +25,13 @@ export function useWslAddServerProbes(input: {
   view: Accessor<WslAddServerView>
   adding: Accessor<boolean>
   busy: Accessor<boolean>
-  selectedDistro: Accessor<string | null>
+  selectedDistro: Accessor<Option.Option<string>>
   addableInstalledDistros: Accessor<WslInstalledDistro[]>
   onError: (error: unknown) => void
 }) {
   const gate = createProbeFailureGate()
   const probe = useMutation(() => ({
-    mutationFn: async (command: AddServerProbePlan) => {
-      if (command.kind === "addable") {
-        await runAddableProbePlan({ plan: command.plan, api: input.api })
-        return
-      }
-      if (command.plan.action === "probeRuntime") await input.api.probeRuntime()
-      if (command.plan.action === "refreshDistros") await input.api.refreshDistros()
-    },
+    mutationFn: (command: AddServerProbePlan) => Effect.runPromise(runProbeCommand(command, input.api)),
     onError: input.onError,
     onSettled: (_result, error, command) => {
       if (command) gate.settle(command.key, error)
@@ -45,9 +47,8 @@ export function useWslAddServerProbes(input: {
       busy: input.busy(),
       selectedDistro: input.selectedDistro(),
       addableInstalledDistros: input.addableInstalledDistros(),
-    })
-    if (!command || !gate.accepts(command.key)) return
-    probe.mutate(command)
+    }).pipe(Option.filter((plan) => gate.accepts(plan.key)))
+    if (Option.isSome(command)) probe.mutate(command.value)
   })
 
   return {

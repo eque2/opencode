@@ -80,5 +80,8 @@ test("shows the V2 thinking level control while relevant", async ({ page }) => {
 
 async function idleComposer(page: Page) {
   await page.mouse.move(0, 0)
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.evaluate(() => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement || active instanceof SVGElement) active.blur()
+  })
 }

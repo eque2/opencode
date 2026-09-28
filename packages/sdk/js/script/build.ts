@@ -9,16 +9,23 @@ import path from "path"
 
 import { createClient } from "@hey-api/openapi-ts"
 
+import { patchRuntime } from "./patch-runtime"
+import { simplifyUnionFiles } from "./simplify-types"
+
 const opencode = path.resolve(dir, "../../opencode")
 
 await $`bun dev generate > ${dir}/openapi.json`.cwd(opencode)
 
-const document = (await Bun.file("./openapi.json").json()) as {
-  components?: { schemas?: Record<string, unknown> }
-  [key: string]: unknown
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const document: unknown = await Bun.file("./openapi.json").json()
+if (!isRecord(document)) {
+  throw new Error("bun dev generate did not write an OpenAPI document object")
 }
-const schemas = document.components?.schemas
-if (schemas) {
+const components = document.components
+const schemas = isRecord(components) ? components.schemas : undefined
+if (isRecord(components) && isRecord(schemas)) {
   const reachable = new Set<string>()
   const visit = (value: unknown) => {
     if (Array.isArray(value)) {
@@ -37,7 +44,7 @@ if (schemas) {
       }
     }
   }
-  visit({ ...document, components: { ...document.components, schemas: undefined } })
+  visit({ ...document, components: { ...components, schemas: undefined } })
   for (const name of Object.keys(schemas)) {
     if (/^SessionNext\w+1$/.test(name) && !reachable.has(name)) delete schemas[name]
   }
@@ -111,6 +118,13 @@ if (sseTypesPatched === sseTypesSource) {
   throw new Error(`SseFn patch did not apply; @hey-api/openapi-ts output may have changed (${sseTypesPath})`)
 }
 await Bun.write(sseTypesPath, sseTypesPatched)
+
+// Format the fresh output, so the exact-text runtime patches match it, then
+// replace the template constructs that oxlint flags (see patch-runtime.ts).
+await $`bun prettier --write src/v2/gen`
+await patchRuntime("./src/v2/gen")
+// Remove the redundant union members that hey-api emits (see simplify-types.ts).
+await simplifyUnionFiles("./src/v2/gen")
 
 await $`bun prettier --write src/gen`
 await $`bun prettier --write src/v2`

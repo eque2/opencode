@@ -1,9 +1,12 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+
+// The verbose model metadata, as JSON.stringify(model, null, 2) wrote it.
+const encodeModel = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const ModelsCommand = effectCmd({
   command: "models [provider]",
@@ -33,24 +36,24 @@ export const ModelsCommand = effectCmd({
     const provider = yield* Provider.Service
     const providers = yield* provider.list()
 
-    const print = (providerID: ProviderV2.ID, verbose?: boolean) => {
-      const p = providers[providerID]
-      const sorted = Object.entries(p.models).sort(([a], [b]) => a.localeCompare(b))
-      for (const [modelID, model] of sorted) {
-        process.stdout.write(`${providerID}/${modelID}`)
-        process.stdout.write(EOL)
-        if (verbose) {
-          process.stdout.write(JSON.stringify(model, null, 2))
-          process.stdout.write(EOL)
-        }
-      }
-    }
+    const print = (providerID: ProviderV2.ID, verbose?: boolean) =>
+      Effect.forEach(
+        Object.entries(providers[providerID].models).sort(([a], [b]) => a.localeCompare(b)),
+        ([modelID, model]) =>
+          Effect.gen(function* () {
+            process.stdout.write(`${providerID}/${modelID}`)
+            process.stdout.write(EOL)
+            if (!verbose) return
+            process.stdout.write(yield* encodeModel(model).pipe(Effect.orDie))
+            process.stdout.write(EOL)
+          }),
+        { discard: true },
+      )
 
     if (args.provider) {
       const providerID = ProviderV2.ID.make(args.provider)
       if (!providers[providerID]) return yield* fail(`Provider not found: ${args.provider}`)
-      print(providerID, args.verbose)
-      return
+      return yield* print(providerID, args.verbose)
     }
 
     const ids = Object.keys(providers).sort((a, b) => {
@@ -61,6 +64,8 @@ export const ModelsCommand = effectCmd({
       return a.localeCompare(b)
     })
 
-    for (const providerID of ids) print(ProviderV2.ID.make(providerID), args.verbose)
+    return yield* Effect.forEach(ids, (providerID) => print(ProviderV2.ID.make(providerID), args.verbose), {
+      discard: true,
+    })
   }),
 })

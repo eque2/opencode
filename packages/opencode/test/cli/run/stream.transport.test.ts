@@ -99,30 +99,31 @@ function assistant(id: string) {
   } satisfies SdkEvent
 }
 
-const StreamClosed = undefined as never
-
-function feed<T, R = never>(returnValue: R = StreamClosed) {
+function feed<T>() {
   const list: T[] = []
   let done = false
   let wake: (() => void) | undefined
 
-  const wrapped = (async function* (): AsyncGenerator<T, R, unknown> {
-    while (!done || list.length > 0) {
-      if (list.length === 0) {
-        await new Promise<void>((resolve) => {
-          wake = resolve
-        })
+  // Drains queued values first, ends once close() has run and the queue is empty,
+  // and otherwise waits for the next push() or close().
+  const wrapped = (async function* (): AsyncGenerator<T, void, unknown> {
+    while (true) {
+      if (list.length > 0) {
+        const next = list.shift()
+        if (next) {
+          yield next
+        }
         continue
       }
 
-      const next = list.shift()
-      if (!next) {
-        continue
+      if (done) {
+        return
       }
 
-      yield next
+      await new Promise<void>((resolve) => {
+        wake = resolve
+      })
     }
-    return returnValue as R
   })()
 
   return {
@@ -174,7 +175,6 @@ function wrapGlobalStream(stream: EventStream): GlobalEventStream {
     for await (const event of stream) {
       yield globalEvent(event)
     }
-    return StreamClosed
   })()
 }
 
@@ -597,7 +597,7 @@ describe("run stream transport", () => {
   test("skips buffered pre-bootstrap deltas already covered by replay history", async () => {
     const src = eventFeed()
     const ui = footer()
-    const gate = defer<void>()
+    const gate = defer()
     let transport: Awaited<ReturnType<typeof createSessionTransport>> | undefined
     const task = createSessionTransport({
       sdk: sdk({
@@ -646,7 +646,7 @@ describe("run stream transport", () => {
   test("applies buffered pre-bootstrap deltas not yet persisted", async () => {
     const src = eventFeed()
     const ui = footer()
-    const gate = defer<void>()
+    const gate = defer()
     let transport: Awaited<ReturnType<typeof createSessionTransport>> | undefined
     const task = createSessionTransport({
       sdk: sdk({
@@ -1152,7 +1152,7 @@ describe("run stream transport", () => {
     const src = eventFeed()
     const ui = footer()
     let cleared = false
-    const idle = ui.api.idle
+    const idle = ui.api.idle.bind(ui.api)
     ui.api.idle = () => (cleared ? Promise.reject(new Error("render failed")) : idle())
     const transport = await createSessionTransport({
       sdk: sdk({ stream: src.stream }),
@@ -1315,11 +1315,13 @@ describe("run stream transport", () => {
     })
 
     try {
+      // The child call input arrives from the forked history bootstrap, after the
+      // transport resolves, so wait for the permission that carries it.
       const boot = await waitFor(() => {
         const item = ui.events.findLast((event) => event.type === "stream.subagent")
         const state = item?.type === "stream.subagent" ? item.state : undefined
         return state?.tabs.some((tab) => tab.sessionID === "child-1") &&
-          state.permissions.some((req) => req.id === "perm-1")
+          state.permissions.some((req) => req.id === "perm-1" && req.metadata.input !== undefined)
           ? state
           : undefined
       })
@@ -1555,7 +1557,7 @@ describe("run stream transport", () => {
   test("replays child events buffered during bootstrap once the tab is known", async () => {
     const global = globalFeed()
     const ui = footer()
-    const gate = defer<void>()
+    const gate = defer()
     let transport: Awaited<ReturnType<typeof createSessionTransport>> | undefined
     const task = createSessionTransport({
       sdk: sdk({
@@ -2253,16 +2255,21 @@ describe("run stream transport", () => {
     })
 
     try {
-      await expect(
-        transport.runPromptTurn({
+      const failure: unknown = await transport
+        .runPromptTurn({
           agent: undefined,
           model: undefined,
           variant: undefined,
           prompt: { text: "hello", parts: [] },
           files: [],
           includeFiles: false,
-        }),
-      ).rejects.toThrow("boom")
+        })
+        .then(
+          () => "resolved",
+          (error: unknown) => error,
+        )
+      expect(failure).toBeInstanceOf(Error)
+      expect(failure instanceof Error ? failure.message : String(failure)).toContain("boom")
     } finally {
       await transport.close()
     }
@@ -2301,16 +2308,21 @@ describe("run stream transport", () => {
     })
 
     try {
-      await expect(
-        transport.runPromptTurn({
+      const failure: unknown = await transport
+        .runPromptTurn({
           agent: undefined,
           model: undefined,
           variant: undefined,
           prompt: { text: "hello", parts: [] },
           files: [],
           includeFiles: false,
-        }),
-      ).rejects.toThrow("instance disposed")
+        })
+        .then(
+          () => "resolved",
+          (error: unknown) => error,
+        )
+      expect(failure).toBeInstanceOf(Error)
+      expect(failure instanceof Error ? failure.message : String(failure)).toContain("instance disposed")
     } finally {
       await transport.close()
     }
@@ -2342,16 +2354,21 @@ describe("run stream transport", () => {
         signal: ctrl.signal,
       })
 
-      await expect(
-        transport.runPromptTurn({
+      const failure: unknown = await transport
+        .runPromptTurn({
           agent: undefined,
           model: undefined,
           variant: undefined,
           prompt: { text: "two", parts: [] },
           files: [],
           includeFiles: false,
-        }),
-      ).rejects.toThrow("prompt already running")
+        })
+        .then(
+          () => "resolved",
+          (error: unknown) => error,
+        )
+      expect(failure).toBeInstanceOf(Error)
+      expect(failure instanceof Error ? failure.message : String(failure)).toContain("prompt already running")
 
       ctrl.abort()
       await task

@@ -1,8 +1,11 @@
 import { Show, type Component, type JSX } from "solid-js"
 import { useLanguage } from "@/context/language"
+import { Option } from "effect"
 
 type InputKey = "text" | "image" | "audio" | "video" | "pdf"
 type InputMap = Record<InputKey, boolean>
+
+const inputOrder: Array<InputKey> = ["text", "image", "audio", "video", "pdf"]
 
 type ModelInfo = {
   id: string
@@ -55,31 +58,23 @@ export const ModelTooltip: Component<{ model: ModelInfo; latest?: boolean; free?
     if (value === "pdf") return language.t("model.input.pdf")
     return value
   }
-  const title = () => {
-    const tags: Array<string> = []
-    if (props.latest) tags.push(language.t("model.tag.latest"))
-    if (props.free) tags.push(language.t("model.tag.free"))
-    const suffix = tags.length ? ` (${tags.join(", ")})` : ""
-    return `${sourceName(props.model)} ${props.model.name}${suffix}`
+  const tagSuffix = () => {
+    const tags = [
+      ...(props.latest ? [language.t("model.tag.latest")] : []),
+      ...(props.free ? [language.t("model.tag.free")] : []),
+    ]
+    return tags.length ? ` (${tags.join(", ")})` : ""
   }
-  const name = () => {
-    const tags: Array<string> = []
-    if (props.latest) tags.push(language.t("model.tag.latest"))
-    if (props.free) tags.push(language.t("model.tag.free"))
-    const suffix = tags.length ? ` (${tags.join(", ")})` : ""
-    return `${props.model.name}${suffix}`
+  const title = () => `${sourceName(props.model)} ${props.model.name}${tagSuffix()}`
+  const name = () => `${props.model.name}${tagSuffix()}`
+  const inputLabels = () => {
+    const capabilities = props.model.capabilities
+    if (capabilities) return inputOrder.filter((key) => capabilities.input[key]).map((key) => inputLabel(key))
+    return (props.model.modalities?.input ?? []).map((value) => inputLabel(value))
   }
   const inputs = () => {
-    if (props.model.capabilities) {
-      const input = props.model.capabilities.input
-      const order: Array<InputKey> = ["text", "image", "audio", "video", "pdf"]
-      const entries = order.filter((key) => input[key]).map((key) => inputLabel(key))
-      return entries.length ? entries.join(", ") : undefined
-    }
-    const raw = props.model.modalities?.input
-    if (!raw) return
-    const entries = raw.map((value) => inputLabel(value))
-    return entries.length ? entries.join(", ") : undefined
+    const entries = inputLabels()
+    return entries.length ? Option.some(entries.join(", ")) : Option.none<string>()
   }
   const reasoning = () => {
     if (props.model.capabilities)
@@ -98,7 +93,7 @@ export const ModelTooltip: Component<{ model: ModelInfo; latest?: boolean; free?
       <div class="flex w-[180px] flex-col gap-2">
         <ModelTooltipRow name={language.t("model.tooltip.model")} value={name()} />
         <ModelTooltipRow name={language.t("model.tooltip.provider")} value={props.model.provider.name} />
-        <Show when={inputs()}>
+        <Show when={Option.getOrUndefined(inputs())}>
           {(value) => <ModelTooltipRow name={language.t("model.tooltip.inputs")} value={value()} />}
         </Show>
         <ModelTooltipRow name={language.t("model.tooltip.reasoning")} value={reasoning()} />
@@ -110,7 +105,7 @@ export const ModelTooltip: Component<{ model: ModelInfo; latest?: boolean; free?
   return (
     <div class="flex flex-col gap-1 py-1">
       <div class="text-13-medium">{title()}</div>
-      <Show when={inputs()}>
+      <Show when={Option.getOrUndefined(inputs())}>
         {(value) => (
           <div class="text-12-regular text-text-invert-base">
             {language.t("model.tooltip.allows", { inputs: value() })}

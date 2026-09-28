@@ -5,12 +5,12 @@ import { ProjectDirectoryTable, ProjectTable } from "@opencode-ai/core/project/s
 import { ProjectDirectories } from "@opencode-ai/core/project/directories"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
 import { Command } from "@/command"
 import { InstanceState } from "@/effect/instance-state"
-import { Effect, Layer, Scope, Context, Stream, Types, Schema } from "effect"
+import { Array as Arr, Clock, Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -20,7 +20,6 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { EventV2 } from "@opencode-ai/core/event"
 import { Project } from "@opencode-ai/schema/project"
 
 export const Info = Project.Info
@@ -32,28 +31,26 @@ export const Event = {
 
 type Row = typeof ProjectTable.$inferSelect
 
+// A NULL column leaves its key out of the Info.
 export function fromRow(row: Row): Info {
-  const icon =
-    row.icon_url || row.icon_url_override || row.icon_color
-      ? {
-          url: row.icon_url ?? undefined,
-          override: row.icon_url_override ?? undefined,
-          color: row.icon_color ?? undefined,
-        }
-      : undefined
+  const icon = {
+    ...(Predicate.isNotNull(row.icon_url) ? { url: row.icon_url } : {}),
+    ...(Predicate.isNotNull(row.icon_url_override) ? { override: row.icon_url_override } : {}),
+    ...(Predicate.isNotNull(row.icon_color) ? { color: row.icon_color } : {}),
+  }
   return {
     id: row.id,
     worktree: row.worktree,
-    vcs: row.vcs ? Schema.decodeUnknownSync(Project.Vcs)(row.vcs) : undefined,
-    name: row.name ?? undefined,
-    icon,
+    ...(row.vcs ? { vcs: Schema.decodeUnknownSync(Project.Vcs)(row.vcs) } : {}),
+    ...(Predicate.isNotNull(row.name) ? { name: row.name } : {}),
+    ...(row.icon_url || row.icon_url_override || row.icon_color ? { icon } : {}),
     time: {
       created: row.time_created,
       updated: row.time_updated,
-      initialized: row.time_initialized ?? undefined,
+      ...(Predicate.isNotNull(row.time_initialized) ? { initialized: row.time_initialized } : {}),
     },
     sandboxes: row.sandboxes,
-    commands: row.commands ?? undefined,
+    ...(Predicate.isNotNull(row.commands) ? { commands: row.commands } : {}),
   }
 }
 
@@ -62,7 +59,7 @@ export const UpdateInput = Schema.Struct({
   name: Schema.optional(Schema.String),
   icon: Schema.optional(Project.Icon),
   commands: Schema.optional(Project.Commands),
-})
+}).annotate({ identifier: "Project.UpdateInput", description: "The project fields that Project.update changes" })
 export type UpdateInput = Types.DeepMutable<Schema.Schema.Type<typeof UpdateInput>>
 
 export const UpdatePayload = Schema.Struct({
@@ -74,6 +71,10 @@ export type UpdatePayload = Types.DeepMutable<Schema.Schema.Type<typeof UpdatePa
 
 export class NotFoundError extends Schema.TaggedError<NotFoundError>()("Project.NotFoundError", {
   projectID: ProjectV2.ID,
+}) {}
+
+export class GitInitError extends Schema.TaggedError<GitInitError>()("Project.GitInitError", {
+  message: Schema.String,
 }) {}
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,9 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pr
 
 type GitResult = { code: number; text: string; stderr: string }
 
+// listen() hands every event as the generic Payload, so the data is checked against the event schema.
+const isCommandExecuted = Schema.is(Command.Event.Executed.data)
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -131,23 +135,27 @@ const layer = Layer.effect(
     )
 
     const emitUpdated = (data: Info) =>
-      Effect.sync(() =>
-        GlobalBus.emit("event", {
-          directory: "global",
-          project: data.id,
-          payload: { type: Event.Updated.type, properties: data },
-        }),
-      )
+      GlobalBus.publish({
+        directory: "global",
+        project: data.id,
+        payload: { type: Event.Updated.type, properties: data },
+      })
 
-    const fakeVcs = Schema.decodeUnknownSync(Schema.optional(Project.Vcs))(Flag.OPENCODE_FAKE_VCS)
+    const fakeVcs = Option.getOrUndefined(
+      yield* FlagConfig.OPENCODE_FAKE_VCS.pipe(
+        Effect.flatMap((value) => Effect.transposeOption(Option.map(value, Schema.decodeUnknownEffect(Project.Vcs)))),
+        Effect.orDie,
+      ),
+    )
 
     const scope = yield* Scope.Scope
 
     const migrateProjectId = Effect.fn("Project.migrateProjectId")(function* (
-      oldID: ProjectV2.ID | undefined,
+      previous: Option.Option<ProjectV2.ID>,
       newID: ProjectV2.ID,
     ) {
-      if (!oldID) return
+      if (Option.isNone(previous)) return
+      const oldID = previous.value
       if (oldID === ProjectV2.ID.global) return
       if (oldID === newID) return
 
@@ -155,6 +163,7 @@ const layer = Layer.effect(
         .transaction(
           (d) =>
             Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis
               const oldProject = yield* d.select().from(ProjectTable).where(eq(ProjectTable.id, oldID)).get()
               const newProject = yield* d.select().from(ProjectTable).where(eq(ProjectTable.id, newID)).get()
               if (oldProject && !newProject) {
@@ -163,7 +172,7 @@ const layer = Layer.effect(
                   .values({
                     ...oldProject,
                     id: newID,
-                    time_updated: Date.now(),
+                    time_updated: now,
                   })
                   .run()
               }
@@ -197,7 +206,7 @@ const layer = Layer.effect(
       directory: string
     }) {
       if (input.projectID === ProjectV2.ID.global) return
-      const opened = AbsolutePath.make(FSUtil.resolve(input.directory))
+      const opened = AbsolutePath.make(yield* fs.resolve(input.directory))
       yield* projectDirectories
         .create({
           directory: opened,
@@ -218,8 +227,9 @@ const layer = Layer.effect(
 
       // Phase 2: upsert
       const projectID = ProjectV2.ID.make(data.id)
-      yield* migrateProjectId(data.previous ? ProjectV2.ID.make(data.previous) : undefined, projectID)
+      yield* migrateProjectId(data.previous ? Option.some(ProjectV2.ID.make(data.previous)) : Option.none(), projectID)
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, projectID)).get().pipe(Effect.orDie)
+      const now = yield* Clock.currentTimeMillis
       const existing = row
         ? fromRow(row)
         : {
@@ -227,7 +237,7 @@ const layer = Layer.effect(
             worktree,
             vcs: data.vcs?.type ?? fakeVcs,
             sandboxes: [] as string[],
-            time: { created: Date.now(), updated: Date.now() },
+            time: { created: now, updated: now },
           }
 
       if (flags.experimentalIconDiscovery) yield* discover(existing).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -236,7 +246,7 @@ const layer = Layer.effect(
         ...existing,
         worktree: projectID === ProjectV2.ID.global ? worktree : existing.worktree,
         vcs: data.vcs?.type ?? fakeVcs,
-        time: { ...existing.time, updated: Date.now() },
+        time: { ...existing.time, updated: now },
       }
       if (
         projectID !== ProjectV2.ID.global &&
@@ -244,22 +254,16 @@ const layer = Layer.effect(
         !result.sandboxes.includes(data.directory)
       )
         result.sandboxes.push(data.directory)
-      result.sandboxes = yield* Effect.forEach(
-        result.sandboxes,
-        (s) =>
-          fs.exists(s).pipe(
-            Effect.orDie,
-            Effect.map((exists) => (exists ? s : undefined)),
-          ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.map((arr) => arr.filter((x): x is string => x !== undefined)))
+      result.sandboxes = yield* Effect.filter(result.sandboxes, (s) => fs.exists(s).pipe(Effect.orDie), {
+        concurrency: "unbounded",
+      })
 
       yield* db
         .insert(ProjectTable)
         .values({
           id: result.id,
           worktree: AbsolutePath.make(result.worktree),
-          vcs: result.vcs ?? null,
+          vcs: result.vcs,
           name: result.name,
           icon_url: result.icon?.url,
           icon_url_override: result.icon?.override,
@@ -274,6 +278,7 @@ const layer = Layer.effect(
           target: ProjectTable.id,
           set: {
             worktree: AbsolutePath.make(result.worktree),
+            // eslint-disable-next-line effect/no-null-use-option -- (a) Drizzle onConflictDoUpdate().set() writes SQL NULL only from a null value; undefined skips the column and would keep a stale vcs
             vcs: result.vcs ?? null,
             name: result.name,
             icon_url: result.icon?.url,
@@ -339,10 +344,11 @@ const layer = Layer.effect(
 
     const get = Effect.fn("Project.get")(function* (id: ProjectV2.ID) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      return row ? fromRow(row) : undefined
+      return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), fromRow))
     })
 
     const update = Effect.fn("Project.update")(function* (input: UpdateInput) {
+      const now = yield* Clock.currentTimeMillis
       const result = yield* db
         .update(ProjectTable)
         .set({
@@ -351,7 +357,7 @@ const layer = Layer.effect(
           icon_url_override: input.icon?.override,
           icon_color: input.icon?.color,
           commands: input.commands,
-          time_updated: Date.now(),
+          time_updated: now,
         })
         .where(eq(ProjectTable.id, input.projectID))
         .returning()
@@ -365,10 +371,16 @@ const layer = Layer.effect(
 
     const initGit = Effect.fn("Project.initGit")(function* (input: { directory: string; project: Info }) {
       if (input.project.vcs === "git") return input.project
-      if (!(yield* Effect.sync(() => which("git")))) throw new Error("Git is not installed")
+      // initGit has no error channel, so a failed init stays a defect.
+      if (Option.isNone(yield* which("git")))
+        return yield* Effect.die(new GitInitError({ message: "Git is not installed" }))
       const result = yield* git(["init", "--quiet"], { cwd: input.directory })
       if (result.code !== 0) {
-        throw new Error(result.stderr.trim() || result.text.trim() || "Failed to initialize git repository")
+        return yield* Effect.die(
+          new GitInitError({
+            message: result.stderr.trim() || result.text.trim() || "Failed to initialize git repository",
+          }),
+        )
       }
       const { project } = yield* fromDirectory(input.directory)
       return project
@@ -377,7 +389,7 @@ const layer = Layer.effect(
     const setInitialized = Effect.fn("Project.setInitialized")(function* (id: ProjectV2.ID) {
       yield* db
         .update(ProjectTable)
-        .set({ time_initialized: Date.now() })
+        .set({ time_initialized: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .run()
         .pipe(Effect.orDie)
@@ -388,8 +400,8 @@ const layer = Layer.effect(
         const unsubscribe = yield* events.listen((event) => {
           if (event.type !== Command.Event.Executed.type || event.location?.directory !== ctx.directory)
             return Effect.void
-          const data = event.data as EventV2.Data<typeof Command.Event.Executed>
-          return data.name === Command.Default.INIT ? setInitialized(ctx.project.id) : Effect.void
+          if (!isCommandExecuted(event.data)) return Effect.void
+          return event.data.name === Command.Default.INIT ? setInitialized(ctx.project.id) : Effect.void
         })
         yield* Effect.addFinalizer(() => unsubscribe)
       }),
@@ -403,48 +415,42 @@ const layer = Layer.effect(
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
       if (!row) return []
       const data = fromRow(row)
-      return yield* Effect.forEach(
-        data.sandboxes,
-        (dir) =>
-          fs.isDir(dir).pipe(
-            Effect.orDie,
-            Effect.map((ok) => (ok ? dir : undefined)),
-          ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.map((arr) => arr.filter((x): x is string => x !== undefined)))
+      return yield* Effect.filter(data.sandboxes, (dir) => fs.isDir(dir).pipe(Effect.orDie), {
+        concurrency: "unbounded",
+      })
     })
 
     const addSandbox = Effect.fn("Project.addSandbox")(function* (id: ProjectV2.ID, directory: string) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) throw new Error(`Project not found: ${id}`)
+      // addSandbox and removeSandbox have no error channel, so a missing project stays a defect.
+      if (!row) return yield* Effect.die(new NotFoundError({ projectID: id }))
       const sandbox = AbsolutePath.make(directory)
-      const sboxes = [...row.sandboxes]
-      if (!sboxes.includes(sandbox)) sboxes.push(sandbox)
+      const sboxes = row.sandboxes.includes(sandbox) ? row.sandboxes : Arr.append(row.sandboxes, sandbox)
       const result = yield* db
         .update(ProjectTable)
-        .set({ sandboxes: sboxes, time_updated: Date.now() })
+        .set({ sandboxes: sboxes, time_updated: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .returning()
         .get()
         .pipe(Effect.orDie)
-      if (!result) throw new Error(`Project not found: ${id}`)
-      yield* emitUpdated(fromRow(result))
+      if (!result) return yield* Effect.die(new NotFoundError({ projectID: id }))
+      return yield* emitUpdated(fromRow(result))
     })
 
     const removeSandbox = Effect.fn("Project.removeSandbox")(function* (id: ProjectV2.ID, directory: string) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) throw new Error(`Project not found: ${id}`)
+      if (!row) return yield* Effect.die(new NotFoundError({ projectID: id }))
       const sandbox = AbsolutePath.make(directory)
       const sboxes = row.sandboxes.filter((s) => s !== sandbox)
       const result = yield* db
         .update(ProjectTable)
-        .set({ sandboxes: sboxes, time_updated: Date.now() })
+        .set({ sandboxes: sboxes, time_updated: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .returning()
         .get()
         .pipe(Effect.orDie)
-      if (!result) throw new Error(`Project not found: ${id}`)
-      yield* emitUpdated(fromRow(result))
+      if (!result) return yield* Effect.die(new NotFoundError({ projectID: id }))
+      return yield* emitUpdated(fromRow(result))
     })
 
     return Service.of({

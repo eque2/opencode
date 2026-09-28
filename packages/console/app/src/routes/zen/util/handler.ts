@@ -153,7 +153,7 @@ export async function handler(
     const allowedRegions = authInfo?.region
       ? authInfo.region
       : await (async () => {
-          if (!authInfo) return
+          if (!authInfo) return undefined
           return Actor.provide("system", { workspaceID: authInfo.workspaceID }, () =>
             Workspace.setDefaultRegion({ country }),
           )
@@ -561,10 +561,10 @@ export async function handler(
 
     if (modelData.trialEnded)
       throw new ModelError(
-        `${t("zen.api.error.trialEnded", {
+        t("zen.api.error.trialEnded", {
           model: modelData.name,
           link: "https://opencode.ai/go",
-        })}`,
+        }),
       )
 
     logger.metric({ model: modelId })
@@ -694,7 +694,7 @@ export async function handler(
 
   async function authenticate(modelInfo: ModelInfo, zenApiKey?: string) {
     if (!zenApiKey) {
-      if (modelInfo.allowAnonymous) return
+      if (modelInfo.allowAnonymous) return undefined
       throw new AuthError(t("zen.api.error.missingApiKey"))
     }
 
@@ -1021,8 +1021,7 @@ export async function handler(
   }
 
   function calculateCost(modelInfo: ModelInfo, usageInfo: UsageInfo) {
-    const { inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens } =
-      usageInfo
+    const { inputTokens, outputTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens } = usageInfo
 
     const modelCost =
       modelInfo.costPeak && isPeakPricing(new Date())
@@ -1100,7 +1099,7 @@ export async function handler(
       "cost.total": Math.round(totalCostInCent),
     })
 
-    if (billingSource === "anonymous") return
+    if (billingSource === "anonymous") return undefined
     authInfo = authInfo!
 
     const cost = centsToMicroCents(totalCostInCent)

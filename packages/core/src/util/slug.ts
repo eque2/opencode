@@ -1,3 +1,5 @@
+import { Effect, Random } from "effect"
+
 export namespace Slug {
   const ADJECTIVES = [
     "brave",
@@ -65,10 +67,10 @@ export namespace Slug {
     "wolf",
   ] as const
 
-  export function create() {
-    return [
-      ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)],
-      NOUNS[Math.floor(Math.random() * NOUNS.length)],
-    ].join("-")
-  }
+  /** An adjective-noun slug such as "brave-otter", drawn with the Effect Random service. */
+  export const make: Effect.Effect<string> = Effect.gen(function* () {
+    const adjective = yield* Random.choice(ADJECTIVES)
+    const noun = yield* Random.choice(NOUNS)
+    return `${adjective}-${noun}`
+  })
 }

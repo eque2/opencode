@@ -1,4 +1,5 @@
 import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
+import { Effect, Option } from "effect"
 import { createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
@@ -13,28 +14,32 @@ export function createTimelineModel(input: {
 }) {
   const serverSync = useServerSync()
   const sync = useSync()
-  let refreshFrame: number | undefined
-  let refreshTimer: number | undefined
+  let refreshFrame = Option.none<number>()
+  let refreshTimer = Option.none<number>()
 
   const [resource] = createResource(
     () => input.sessionID(),
     (id) => {
       clearRefresh()
-      if (!id) return
+      if (!id) return undefined
 
       const cached = untrack(() => sync().data.message[id] !== undefined)
       const stale = cached && !serverSync().session.fresh(id, sessionFreshness)
 
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = undefined
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined
-          if (input.sessionID() !== id) return
-          untrack(() => {
-            if (stale) void sync().session.sync(id, { force: true })
-          })
-        }, 0)
-      })
+      refreshFrame = Option.some(
+        requestAnimationFrame(() => {
+          refreshFrame = Option.none()
+          refreshTimer = Option.some(
+            window.setTimeout(() => {
+              refreshTimer = Option.none()
+              if (input.sessionID() !== id) return
+              untrack(() => {
+                if (stale) void sync().session.sync(id, { force: true })
+              })
+            }, 0),
+          )
+        }),
+      )
 
       return sync().session.sync(id)
     },
@@ -63,16 +68,18 @@ export function createTimelineModel(input: {
     const id = input.sessionID()
     return id ? sync().session.history.loading(id) : false
   })
-  const loadOlder = async (options?: { before?: () => void; after?: (done: boolean) => void }) => {
-    return loadOlderTimeline({
-      sessionID: input.sessionID,
-      more,
-      loading,
-      loadMore: (sessionID) => sync().session.history.loadMore(sessionID),
-      before: options?.before,
-      after: options?.after,
-    })
-  }
+  // session.tsx awaits this Promise; it rejects with the original loadMore rejection.
+  const loadOlder = (options?: { before?: () => void; after?: (done: boolean) => void }) =>
+    Effect.runPromise(
+      loadOlderTimeline({
+        sessionID: input.sessionID,
+        more,
+        loading,
+        loadMore: (sessionID) => sync().session.history.loadMore(sessionID),
+        before: options?.before,
+        after: options?.after,
+      }),
+    )
 
   onCleanup(clearRefresh)
 
@@ -87,10 +94,10 @@ export function createTimelineModel(input: {
   }
 
   function clearRefresh() {
-    if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
-    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
-    refreshFrame = undefined
-    refreshTimer = undefined
+    if (Option.isSome(refreshFrame)) cancelAnimationFrame(refreshFrame.value)
+    if (Option.isSome(refreshTimer)) window.clearTimeout(refreshTimer.value)
+    refreshFrame = Option.none()
+    refreshTimer = Option.none()
   }
 }
 
@@ -108,7 +115,12 @@ export function selectVisibleUserMessages(messages: UserMessage[], revertMessage
   return boundary < 0 ? messages : messages.slice(0, boundary)
 }
 
-export async function loadOlderTimeline(input: {
+/**
+ * Loads one older history page of the current session. A failed load still
+ * releases the anchor, then fails with the loadMore rejection as a defect, so
+ * Effect.runPromise rejects with that same error.
+ */
+export const loadOlderTimeline = Effect.fnUntraced(function* (input: {
   sessionID: Accessor<string | undefined>
   more: Accessor<boolean>
   loading: Accessor<boolean>
@@ -120,10 +132,13 @@ export async function loadOlderTimeline(input: {
   if (!id || !input.more() || input.loading()) return
 
   input.before?.()
-  await input.loadMore(id).catch((error) => {
-    if (input.sessionID() === id) input.after?.(true)
-    throw error
-  })
+  yield* Effect.promise(() => input.loadMore(id)).pipe(
+    Effect.tapCause(() =>
+      Effect.sync(() => {
+        if (input.sessionID() === id) input.after?.(true)
+      }),
+    ),
+  )
   if (input.sessionID() !== id) return
   input.after?.(true)
-}
+})

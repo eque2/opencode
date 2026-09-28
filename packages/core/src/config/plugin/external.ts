@@ -2,7 +2,8 @@ export * as ConfigExternalPlugin from "./external"
 
 import type { Plugin as EffectPlugin } from "@opencode-ai/plugin/v2/effect"
 import type { Plugin as PromisePlugin } from "@opencode-ai/plugin/v2/promise"
-import { Effect, Schema } from "effect"
+import { Plugin as PluginSchema } from "@opencode-ai/schema/plugin"
+import { Effect, Order, Schema } from "effect"
 import path from "path"
 import { fileURLToPath, pathToFileURL } from "url"
 import { Config } from "../../config"
@@ -15,19 +16,19 @@ import { PluginPromise } from "../../plugin/promise"
 const PluginModule = Schema.Struct({
   default: Schema.Union([
     Schema.Struct({
-      id: Schema.String,
+      id: PluginSchema.ID,
       effect: Schema.declare<EffectPlugin["effect"]>(
         (input): input is EffectPlugin["effect"] => typeof input === "function",
       ),
     }),
     Schema.Struct({
-      id: Schema.String,
+      id: PluginSchema.ID,
       setup: Schema.declare<PromisePlugin["setup"]>(
         (input): input is PromisePlugin["setup"] => typeof input === "function",
       ),
     }),
   ]),
-})
+}).annotate({ identifier: "ConfigV2.Plugin.Module" })
 
 export const Plugin = define({
   id: "config-plugin",
@@ -65,8 +66,7 @@ export const Plugin = define({
               symlink: true,
             })
             .pipe(Effect.orElseSucceed(() => []))
-          files.sort()
-          for (const file of files) configured.push({ package: file })
+          for (const file of files.toSorted(Order.String)) configured.push({ package: file })
         }
       }
 
