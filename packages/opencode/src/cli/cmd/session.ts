@@ -7,7 +7,7 @@ import { SessionID } from "../../session/schema"
 import { UI } from "../ui"
 import { Locale } from "@/util/locale"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ChildProcess } from "effect/unstable/process"
@@ -23,22 +23,30 @@ const pagerCmd = Effect.fnUntraced(function* () {
     return ["less", ...lessOptions]
   }
 
+  const fs = yield* FSUtil.Service
+  // A missing file reads as empty. Any other stat failure is a defect, as before.
+  const hasContent = (file: string) =>
+    fs.stat(file).pipe(
+      Effect.map((info) => Number(info.size) > 0),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+    )
+
   // user could have less installed via other options
   const lessOnPath = yield* which("less")
   if (Option.isSome(lessOnPath)) {
-    if (Filesystem.stat(lessOnPath.value)?.size) return [lessOnPath.value, ...lessOptions]
+    if (yield* hasContent(lessOnPath.value)) return [lessOnPath.value, ...lessOptions]
   }
 
   const gitBashPath = yield* FlagConfig.OPENCODE_GIT_BASH_PATH
   if (Option.isSome(gitBashPath)) {
     const less = path.join(gitBashPath.value, "..", "..", "usr", "bin", "less.exe")
-    if (Filesystem.stat(less)?.size) return [less, ...lessOptions]
+    if (yield* hasContent(less)) return [less, ...lessOptions]
   }
 
   const git = yield* which("git")
   if (Option.isSome(git)) {
     const less = path.join(git.value, "..", "..", "usr", "bin", "less.exe")
-    if (Filesystem.stat(less)?.size) return [less, ...lessOptions]
+    if (yield* hasContent(less)) return [less, ...lessOptions]
   }
 
   // Fall back to Windows built-in more (via cmd.exe)
