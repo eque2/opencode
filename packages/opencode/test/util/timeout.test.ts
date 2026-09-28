@@ -16,6 +16,11 @@ describe("util.timeout", () => {
       setTimeout(() => resolve("slow"), 200)
     })
 
-    await expect(withTimeout(slowPromise, 50)).rejects.toThrow("Operation timed out after 50ms")
+    const failure: unknown = await withTimeout(slowPromise, 50).then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toMatchObject({ message: "Operation timed out after 50ms" })
   })
 })

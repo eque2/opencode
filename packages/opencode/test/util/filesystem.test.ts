@@ -4,6 +4,15 @@ import fs from "fs/promises"
 import { Filesystem } from "@/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
+// Settles a Promise to its rejection value. A resolved Promise gives the string "resolved",
+// which fails the toBeInstanceOf(Error) check, so each assertion stays as strict as rejects.toThrow().
+function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => "resolved",
+    (error: unknown) => error,
+  )
+}
+
 describe("filesystem", () => {
   describe("exists()", () => {
     test("returns true for existing file", async () => {
@@ -186,7 +195,7 @@ describe("filesystem", () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "does-not-exist.txt")
 
-      await expect(Filesystem.readText(filepath)).rejects.toThrow()
+      expect(await rejection(Filesystem.readText(filepath))).toBeInstanceOf(Error)
     })
 
     test("reads UTF-8 content correctly", async () => {
@@ -215,14 +224,14 @@ describe("filesystem", () => {
       const filepath = path.join(tmp.path, "invalid.json")
       await fs.writeFile(filepath, "{ invalid json", "utf-8")
 
-      await expect(Filesystem.readJson(filepath)).rejects.toThrow()
+      expect(await rejection(Filesystem.readJson(filepath))).toBeInstanceOf(Error)
     })
 
     test("throws for non-existent file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "does-not-exist.json")
 
-      await expect(Filesystem.readJson(filepath)).rejects.toThrow()
+      expect(await rejection(Filesystem.readJson(filepath))).toBeInstanceOf(Error)
     })
 
     test("returns typed data", async () => {
@@ -257,7 +266,7 @@ describe("filesystem", () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "does-not-exist.bin")
 
-      await expect(Filesystem.readBytes(filepath)).rejects.toThrow()
+      expect(await rejection(Filesystem.readBytes(filepath))).toBeInstanceOf(Error)
     })
   })
 
