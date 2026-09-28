@@ -24,26 +24,26 @@ const RootFile = Schema.Struct({
       root: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "Storage.RootFile", description: "The worktree root in a legacy message file" })
 
 const SessionFile = Schema.Struct({
   id: Schema.String,
-})
+}).annotate({ identifier: "Storage.SessionFile", description: "The id of a legacy session info file" })
 
 const MessageFile = Schema.Struct({
   id: Schema.String,
-})
+}).annotate({ identifier: "Storage.MessageFile", description: "The id of a legacy message file" })
 
 const DiffFile = Schema.Struct({
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
-})
+}).annotate({ identifier: "Storage.DiffFile", description: "The line counts of one legacy session diff" })
 
 const SummaryFile = Schema.Struct({
   id: Schema.String,
   projectID: Schema.String,
   summary: Schema.Struct({ diffs: Schema.Array(DiffFile) }),
-})
+}).annotate({ identifier: "Storage.SummaryFile", description: "A legacy session file that holds inline diffs" })
 
 const decodeRoot = Schema.decodeUnknownOption(RootFile)
 const decodeSession = Schema.decodeUnknownOption(SessionFile)
