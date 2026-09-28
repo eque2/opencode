@@ -1,4 +1,4 @@
-import { Config, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect"
+import { Config, ConfigProvider, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
@@ -27,15 +27,24 @@ export const Parameters = Schema.Struct({
 const WebSearchProviderSchema = Schema.Literals(["exa", "parallel"])
 export type WebSearchProvider = Schema.Schema.Type<typeof WebSearchProviderSchema>
 
-export function selectWebSearchProvider(sessionID: string, flags = { exa: false, parallel: false }): WebSearchProvider {
-  // eslint-disable-next-line effect/no-process-env-use-config -- (c) sync export; test/tool/websearch.test.ts pins that it reads the live process.env override on each call
-  const override = process.env.OPENCODE_WEBSEARCH_PROVIDER
-  if (override === "exa" || override === "parallel") return override
-  if (flags.parallel) return "parallel"
-  if (flags.exa) return "exa"
+const isWebSearchProvider = Schema.is(WebSearchProviderSchema)
 
-  return Number.parseInt(checksum(sessionID) ?? "0", 36) % 2 === 0 ? "exa" : "parallel"
-}
+// The operational override is read from the live process environment on each run.
+const providerOverride = Effect.suspend(() =>
+  Config.option(Config.String("OPENCODE_WEBSEARCH_PROVIDER")).parse(ConfigProvider.fromEnv()),
+).pipe(Effect.orDie, Effect.map(Option.filter(isWebSearchProvider)))
+
+export const selectWebSearchProvider = Effect.fn("WebSearch.selectProvider")(function* (
+  sessionID: string,
+  flags = { exa: false, parallel: false },
+) {
+  const override = yield* providerOverride
+  if (Option.isSome(override)) return override.value
+  if (flags.parallel) return "parallel" as const
+  if (flags.exa) return "exa" as const
+
+  return Number.parseInt(checksum(sessionID) ?? "0", 36) % 2 === 0 ? ("exa" as const) : ("parallel" as const)
+})
 
 export function webSearchProviderLabel(provider: unknown) {
   if (provider === "parallel") return "Parallel Web Search"
@@ -59,7 +68,10 @@ const parallelAuthHeaders = Config.Redacted("PARALLEL_API_KEY").pipe(
   Config.option,
   Config.map((key) => ({
     "User-Agent": `opencode/${InstallationVersion}`,
-    ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ Authorization: `Bearer ${Redacted.value(value)}` }) }),
+    ...Option.match(key, {
+      onNone: () => ({}),
+      onSome: (value) => ({ Authorization: `Bearer ${Redacted.value(value)}` }),
+    }),
   })),
 )
 
@@ -120,7 +132,7 @@ export const WebSearchTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const provider = selectWebSearchProvider(ctx.sessionID, {
+          const provider = yield* selectWebSearchProvider(ctx.sessionID, {
             exa: flags.enableExa,
             parallel: flags.enableParallel,
           })
@@ -136,7 +148,9 @@ export const WebSearchTool = Tool.define(
               ...(params.numResults === undefined ? {} : { numResults: params.numResults }),
               ...(params.livecrawl === undefined ? {} : { livecrawl: params.livecrawl }),
               ...(params.type === undefined ? {} : { type: params.type }),
-              ...(params.contextMaxCharacters === undefined ? {} : { contextMaxCharacters: params.contextMaxCharacters }),
+              ...(params.contextMaxCharacters === undefined
+                ? {}
+                : { contextMaxCharacters: params.contextMaxCharacters }),
               provider,
             },
           })

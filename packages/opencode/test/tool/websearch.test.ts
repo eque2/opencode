@@ -11,7 +11,9 @@ const SESSION_ID = "ses_0196aabbccddeeff001122334455"
 
 describe("websearch provider", () => {
   test("selects a stable provider per session", () => {
-    expect(selectWebSearchProvider(SESSION_ID)).toBe(selectWebSearchProvider(SESSION_ID))
+    expect(Effect.runSync(selectWebSearchProvider(SESSION_ID))).toBe(
+      Effect.runSync(selectWebSearchProvider(SESSION_ID)),
+    )
   })
 
   test("supports an operational override", () => {
@@ -19,10 +21,10 @@ describe("websearch provider", () => {
 
     try {
       process.env.OPENCODE_WEBSEARCH_PROVIDER = "parallel"
-      expect(selectWebSearchProvider(SESSION_ID)).toBe("parallel")
+      expect(Effect.runSync(selectWebSearchProvider(SESSION_ID))).toBe("parallel")
 
       process.env.OPENCODE_WEBSEARCH_PROVIDER = "exa"
-      expect(selectWebSearchProvider(SESSION_ID)).toBe("exa")
+      expect(Effect.runSync(selectWebSearchProvider(SESSION_ID))).toBe("exa")
     } finally {
       if (original === undefined) delete process.env.OPENCODE_WEBSEARCH_PROVIDER
       else process.env.OPENCODE_WEBSEARCH_PROVIDER = original
@@ -30,11 +32,11 @@ describe("websearch provider", () => {
   })
 
   test("routes to Exa when the Exa flag is enabled", () => {
-    expect(selectWebSearchProvider(SESSION_ID, { exa: true, parallel: false })).toBe("exa")
+    expect(Effect.runSync(selectWebSearchProvider(SESSION_ID, { exa: true, parallel: false }))).toBe("exa")
   })
 
   test("routes to Parallel when the Parallel flag is enabled", () => {
-    expect(selectWebSearchProvider(SESSION_ID, { exa: false, parallel: true })).toBe("parallel")
+    expect(Effect.runSync(selectWebSearchProvider(SESSION_ID, { exa: false, parallel: true }))).toBe("parallel")
   })
 
   test("is enabled for OpenCode providers or explicit websearch provider flags", () => {
