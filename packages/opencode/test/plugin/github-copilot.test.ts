@@ -1,34 +1,24 @@
-import { expect, test } from "bun:test"
-import type { Hooks } from "@opencode-ai/plugin"
+import { expect, spyOn, test } from "bun:test"
+import { createOpencodeClient } from "@opencode-ai/sdk"
 import { CopilotAuthPlugin } from "@/plugin/github-copilot/copilot"
+import { chatInput, chatModel } from "./chat-hook.fixture"
 
-type ChatHeaders = NonNullable<Hooks["chat.headers"]>
+// A declared Promise<never> return keeps a stubbed SDK call from inferring the response type.
+function rejected(reason: unknown): Promise<never> {
+  return Promise.reject(reason)
+}
 
 async function hook() {
-  const hooks = await CopilotAuthPlugin({
-    directory: "",
-    project: {} as never,
-    worktree: "",
-    experimental_workspace: { register() {} },
-    serverUrl: new URL("http://localhost"),
-    $: {} as never,
-    client: {
-      session: {
-        message: async () => ({ data: { parts: [] } }),
-        get: async () => ({ data: {} }),
-      },
-    } as never,
-  })
+  const client = createOpencodeClient({ baseUrl: "http://localhost" })
+  // Neither lookup finds a compaction part or a parent session, so the initiator stays unset.
+  spyOn(client.session, "message").mockImplementation(() => rejected(new Error("no message fixture")))
+  spyOn(client.session, "get").mockImplementation(() => rejected(new Error("no session fixture")))
+  const hooks = await CopilotAuthPlugin({ client, directory: "" })
   return hooks["chat.headers"]!
 }
 
 function input(sessionID: string, providerID: string, npm: string) {
-  return {
-    sessionID,
-    agent: "build",
-    model: { providerID, api: { npm } },
-    message: { id: "msg_test", sessionID },
-  } as Parameters<ChatHeaders>[0]
+  return chatInput({ sessionID, model: chatModel({ providerID, npm }) })
 }
 
 test.each([

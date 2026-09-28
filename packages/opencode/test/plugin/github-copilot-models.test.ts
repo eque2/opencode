@@ -1,15 +1,45 @@
-import { afterEach, expect, mock, test } from "bun:test"
+import { afterEach, expect, mock, spyOn, test } from "bun:test"
+import { createOpencodeClient } from "@opencode-ai/sdk"
+import type { Model } from "@opencode-ai/sdk/v2"
+import { Effect } from "effect"
 import { CopilotModels } from "@/plugin/github-copilot/models"
 import { CopilotAuthPlugin } from "@/plugin/github-copilot/copilot"
 
-const originalFetch = globalThis.fetch
-
 afterEach(() => {
-  globalThis.fetch = originalFetch
+  mock.restore()
 })
 
+// `typeof fetch` includes Bun's `preconnect` method; keep the real one on the stub.
+function stubFetch(handle: (...args: Parameters<typeof fetch>) => Promise<Response>) {
+  spyOn(globalThis, "fetch").mockImplementation(Object.assign(handle, { preconnect: globalThis.fetch.preconnect }))
+}
+
+const get = (...args: Parameters<typeof CopilotModels.get>) => Effect.runPromise(CopilotModels.get(...args))
+
+function model(input: Pick<Model, "id" | "providerID" | "api">): Model {
+  return {
+    ...input,
+    name: input.id,
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 0, output: 0 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "",
+  }
+}
+
 test("preserves temperature support from existing provider models", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -55,9 +85,9 @@ test("preserves temperature support from existing provider models", async () => 
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const result = await CopilotModels.get(
+  const result = await get(
     "https://api.githubcopilot.com",
     {},
     {
@@ -119,7 +149,7 @@ test("preserves temperature support from existing provider models", async () => 
 })
 
 test("converts Copilot AIC token prices to USD per million tokens", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -171,9 +201,9 @@ test("converts Copilot AIC token prices to USD per million tokens", async () => 
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const models = (await CopilotModels.get("https://api.githubcopilot.com")).models
+  const models = (await get("https://api.githubcopilot.com")).models
 
   expect(models["gpt-5"].cost).toEqual({
     input: 10,
@@ -188,7 +218,7 @@ test("converts Copilot AIC token prices to USD per million tokens", async () => 
 })
 
 test("detects PDF input support when vision and media type are advertised", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -246,9 +276,9 @@ test("detects PDF input support when vision and media type are advertised", asyn
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const models = (await CopilotModels.get("https://api.githubcopilot.com")).models
+  const models = (await get("https://api.githubcopilot.com")).models
   const model = models["pdf-model"]
 
   expect(model.capabilities.input.pdf).toBe(true)
@@ -256,7 +286,7 @@ test("detects PDF input support when vision and media type are advertised", asyn
 })
 
 test("uses zero cost when Copilot reports a zero billing batch size", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -294,9 +324,9 @@ test("uses zero cost when Copilot reports a zero billing batch size", async () =
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const model = (await CopilotModels.get("https://api.githubcopilot.com")).models["mercury-alpha"]
+  const model = (await get("https://api.githubcopilot.com")).models["mercury-alpha"]
 
   expect(model.cost).toEqual({
     input: 0,
@@ -310,7 +340,7 @@ test("uses zero cost when Copilot reports a zero billing batch size", async () =
 })
 
 test("records Copilot advertised responses endpoint for non-GPT model IDs", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -340,15 +370,15 @@ test("records Copilot advertised responses endpoint for non-GPT model IDs", asyn
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const model = (await CopilotModels.get("https://api.githubcopilot.com")).models["mai-code-1-flash-picker"]
+  const model = (await get("https://api.githubcopilot.com")).models["mai-code-1-flash-picker"]
 
   expect("endpoint" in model.api ? model.api.endpoint : undefined).toBe("responses")
 })
 
 test("clears existing variants so refreshed models calculate provider-specific variants", async () => {
-  globalThis.fetch = mock(() =>
+  stubFetch(() =>
     Promise.resolve(
       new Response(
         JSON.stringify({
@@ -378,9 +408,9 @@ test("clears existing variants so refreshed models calculate provider-specific v
         { status: 200 },
       ),
     ),
-  ) as unknown as typeof fetch
+  )
 
-  const result = await CopilotModels.get(
+  const result = await get(
     "https://api.githubcopilot.com",
     {},
     {
@@ -447,25 +477,22 @@ test("clears existing variants so refreshed models calculate provider-specific v
 })
 
 test("remaps fallback oauth model urls to the enterprise host", async () => {
-  globalThis.fetch = mock(() => Promise.reject(new Error("timeout"))) as unknown as typeof fetch
+  stubFetch(() => Promise.reject(new Error("timeout")))
 
   const hooks = await CopilotAuthPlugin({
-    client: {} as never,
-    project: {} as never,
+    client: createOpencodeClient({ baseUrl: "https://example.com" }),
     directory: "",
-    worktree: "",
-    experimental_workspace: {
-      register() {},
-    },
-    serverUrl: new URL("https://example.com"),
-    $: {} as never,
   })
 
   const models = await hooks.provider!.models!(
     {
       id: "github-copilot",
+      name: "GitHub Copilot",
+      source: "custom",
+      env: [],
+      options: {},
       models: {
-        claude: {
+        claude: model({
           id: "claude",
           providerID: "github-copilot",
           api: {
@@ -473,9 +500,9 @@ test("remaps fallback oauth model urls to the enterprise host", async () => {
             url: "https://api.githubcopilot.com/v1",
             npm: "@ai-sdk/anthropic",
           },
-        },
+        }),
       },
-    } as never,
+    },
     {
       auth: {
         type: "oauth",
@@ -483,7 +510,7 @@ test("remaps fallback oauth model urls to the enterprise host", async () => {
         access: "token",
         expires: Date.now() + 60_000,
         enterpriseUrl: "ghe.example.com",
-      } as never,
+      },
     },
   )
 

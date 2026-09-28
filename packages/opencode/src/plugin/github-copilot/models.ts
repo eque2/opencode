@@ -1,9 +1,18 @@
 import type { Model } from "@opencode-ai/sdk/v2"
-import { Option, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, MutableHashMap, Option, Schema } from "effect"
+import { errorMessage } from "@/util/error"
+
+export class CopilotModelsError extends Schema.TaggedError<CopilotModelsError>()("CopilotModels.Error", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const ModelID = Schema.String.pipe(Schema.brand("CopilotModelID"))
+type ModelID = typeof ModelID.Type
 
 const item = Schema.Struct({
   model_picker_enabled: Schema.Boolean,
-  id: Schema.String,
+  id: ModelID,
   name: Schema.String,
   // every version looks like: `{model.id}-YYYY-MM-DD`
   version: Schema.String,
@@ -54,11 +63,12 @@ const item = Schema.Struct({
       vision: Schema.optional(Schema.Boolean),
     }),
   }),
-})
+}).annotate({ identifier: "CopilotModelItem" })
 
+// Each entry decodes on its own below, so one malformed model does not hide the others.
 export const schema = Schema.Struct({
-  data: Schema.Array(Schema.Unknown),
-})
+  data: Schema.Array(Schema.Json),
+}).annotate({ identifier: "CopilotModelsResponse" })
 
 type Item = Schema.Schema.Type<typeof item>
 type SelectableItem = Item & {
@@ -73,10 +83,16 @@ type SelectableItem = Item & {
   }
 }
 type CopilotEndpoint = "chat" | "responses" | "messages"
+// In priority order: the first endpoint the model supports wins.
+const ENDPOINTS: ReadonlyArray<readonly [string, CopilotEndpoint]> = [
+  ["/v1/messages", "messages"],
+  ["/responses", "responses"],
+  ["/chat/completions", "chat"],
+]
 type CopilotModel = Omit<Model, "api"> & {
   api: Model["api"] & { endpoint?: CopilotEndpoint }
 }
-const decodeModels = Schema.decodeUnknownSync(schema)
+const decodeModels = Schema.decodeUnknownEffect(schema)
 const decodeItem = Schema.decodeUnknownOption(item)
 
 function build(key: string, remote: SelectableItem, url: string, prev?: Model): Model {
@@ -93,13 +109,9 @@ function build(key: string, remote: SelectableItem, url: string, prev?: Model): 
     (remote.capabilities.limits.vision?.supported_media_types?.includes("application/pdf") ?? false)
 
   const isMsgApi = remote.supported_endpoints?.includes("/v1/messages")
-  const endpoint: CopilotEndpoint | undefined = isMsgApi
-    ? "messages"
-    : remote.supported_endpoints?.includes("/responses")
-      ? "responses"
-      : remote.supported_endpoints?.includes("/chat/completions")
-        ? "chat"
-        : undefined
+  const endpoint = Arr.findFirst(ENDPOINTS, ([path]) => remote.supported_endpoints?.includes(path) ?? false).pipe(
+    Option.map(([, endpoint]) => endpoint),
+  )
   const prices = remote.billing?.token_prices
   // Copilot prices are AIC per billing batch; OpenCode stores USD per million tokens.
   const usdPerMillion = prices && prices.batch_size > 0 ? 10_000 / prices.batch_size : 0
@@ -111,7 +123,7 @@ function build(key: string, remote: SelectableItem, url: string, prev?: Model): 
       id: remote.id,
       url: isMsgApi ? `${url}/v1` : url,
       npm: isMsgApi ? "@ai-sdk/anthropic" : "@ai-sdk/github-copilot",
-      ...(endpoint ? { endpoint } : {}),
+      ...(Option.isSome(endpoint) ? { endpoint: endpoint.value } : {}),
     },
     // API response wins
     status: "active",
@@ -213,49 +225,68 @@ function usable(item: Item): item is SelectableItem {
   )
 }
 
-export async function get(
+export const get = Effect.fn("CopilotModels.get")(function* (
   baseURL: string,
   headers: HeadersInit = {},
   existing: Record<string, Model> = {},
-): Promise<{ models: Record<string, Model>; pickerEnabled: Set<string> }> {
-  const data = await fetch(`${baseURL}/models`, {
-    headers,
-    signal: AbortSignal.timeout(5_000),
-  }).then(async (res) => {
-    if (!res.ok) {
-      throw new Error(`Failed to fetch models: ${res.status}`)
-    }
-    return decodeModels(await res.json())
+) {
+  const response = yield* Effect.tryPromise({
+    try: () =>
+      fetch(`${baseURL}/models`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      }),
+    catch: (cause) => new CopilotModelsError({ message: errorMessage(cause), cause }),
   })
+  if (!response.ok) {
+    return yield* new CopilotModelsError({ message: `Failed to fetch models: ${response.status}` })
+  }
+  const body = yield* Effect.tryPromise({
+    try: () => response.json(),
+    catch: (cause) => new CopilotModelsError({ message: errorMessage(cause), cause }),
+  })
+  const data = yield* decodeModels(body).pipe(
+    Effect.mapError((cause) => new CopilotModelsError({ message: cause.message, cause })),
+  )
 
-  const result = { ...existing }
-  const remote = new Map(
-    data.data.flatMap((raw) => {
-      const item = Option.getOrUndefined(decodeItem(raw))
-      return item && usable(item) ? ([[item.id, item]] as const) : []
-    }),
+  const remote = MutableHashMap.fromIterable(
+    Arr.getSomes(
+      Arr.map(data.data, (raw) =>
+        decodeItem(raw).pipe(
+          Option.filter(usable),
+          Option.map((item) => [item.id, item] as const),
+        ),
+      ),
+    ),
   )
 
   // prune existing models whose api.id isn't in the endpoint response
-  for (const [key, model] of Object.entries(result)) {
-    const m = remote.get(model.api.id)
-    if (!m) {
-      delete result[key]
-      continue
-    }
-    result[key] = build(key, m, baseURL, model)
-  }
+  const kept = Arr.getSomes(
+    Arr.map(Object.entries(existing), ([key, model]) =>
+      MutableHashMap.get(remote, ModelID.make(model.api.id)).pipe(
+        Option.map((match) => [key, build(key, match, baseURL, model)] as const),
+      ),
+    ),
+  )
+  const result: Record<string, Model> = Object.fromEntries(kept)
 
   // add new endpoint models not already keyed in result
-  for (const [id, m] of remote) {
-    if (id in result) continue
-    result[id] = build(id, m, baseURL)
-  }
+  const added = Arr.getSomes(
+    Arr.map(Arr.fromIterable(remote), ([id, match]) =>
+      id in result ? Option.none() : Option.some([id, build(id, match, baseURL)] as const),
+    ),
+  )
 
   return {
-    models: result,
-    pickerEnabled: new Set([...remote].filter(([, item]) => item.model_picker_enabled).map(([id]) => id)),
+    models: { ...result, ...Object.fromEntries(added) },
+    pickerEnabled: HashSet.fromIterable(
+      Arr.getSomes(
+        Arr.map(Arr.fromIterable(remote), ([id, item]) =>
+          item.model_picker_enabled ? Option.some(id) : Option.none(),
+        ),
+      ),
+    ),
   }
-}
+})
 
 export * as CopilotModels from "./models"
