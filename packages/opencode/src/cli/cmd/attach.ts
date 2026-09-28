@@ -23,12 +23,12 @@ const reportError = (message: string) =>
     process.exitCode = 1
   })
 
-// test/cli/tui/attach.test.ts pins these lazy imports in their awaited form.
-async function loadTui() {
-  const { run } = await import("../tui/layer")
-  const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
+// test/cli/tui/attach.test.ts pins these lazy imports.
+const loadTui = Effect.gen(function* () {
+  const { run } = yield* Effect.promise(() => import("../tui/layer"))
+  const { createLegacyTuiPluginHost } = yield* Effect.promise(() => import("@/plugin/tui/runtime"))
   return { run, createLegacyTuiPluginHost }
-}
+})
 
 export const AttachCommand = cmd({
   command: "attach <url>",
@@ -156,7 +156,7 @@ export const AttachCommand = cmd({
           return
         }
 
-        const { run, createLegacyTuiPluginHost } = yield* Effect.promise(() => loadTui())
+        const { run, createLegacyTuiPluginHost } = yield* loadTui
         yield* run({
           url: args.url,
           config,

@@ -113,12 +113,12 @@ const reportError = (message: string) =>
     process.exitCode = 1
   })
 
-// test/cli/tui/thread.test.ts pins these lazy imports in their awaited form.
-async function loadTui() {
-  const { run } = await import("../tui/layer")
-  const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
+// test/cli/tui/thread.test.ts pins these lazy imports.
+const loadTui = Effect.gen(function* () {
+  const { run } = yield* Effect.promise(() => import("../tui/layer"))
+  const { createLegacyTuiPluginHost } = yield* Effect.promise(() => import("@/plugin/tui/runtime"))
   return { run, createLegacyTuiPluginHost }
-}
+})
 
 export const TuiThreadCommand = cmd({
   command: "$0 [project]",
@@ -327,7 +327,7 @@ export const TuiThreadCommand = cmd({
                 Effect.forkChild,
               )
 
-              const { run, createLegacyTuiPluginHost } = yield* Effect.promise(() => loadTui())
+              const { run, createLegacyTuiPluginHost } = yield* loadTui
               yield* run({
                 ...transport,
                 onSnapshot: () =>
