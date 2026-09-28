@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { LocalContext } from "@/util/local-context"
 import type { WorkspaceV2 } from "@opencode-ai/core/workspace"
 
@@ -8,7 +9,7 @@ export interface WorkspaceContext {
 const context = LocalContext.create<WorkspaceContext>("instance")
 
 export const WorkspaceContext = {
-  async provide<R>(input: { workspaceID?: WorkspaceV2.ID; fn: () => R }): Promise<R> {
+  provide<R>(input: { workspaceID?: WorkspaceV2.ID; fn: () => R }): R {
     return context.provide({ workspaceID: input.workspaceID }, () => input.fn())
   },
 
@@ -17,10 +18,6 @@ export const WorkspaceContext = {
   },
 
   get workspaceID() {
-    try {
-      return context.use().workspaceID
-    } catch {
-      return undefined
-    }
+    return Option.getOrUndefined(Option.flatMapNullishOr(context.find(), (stored) => stored.workspaceID))
   },
 }
