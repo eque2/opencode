@@ -48,8 +48,9 @@ export const ConsoleSwitchPayload = Schema.Struct({
 }).annotate({ description: "Request to switch the active Console organization" })
 
 const ToolIDs = Schema.Array(Schema.String).annotate({ identifier: "ToolIDs" })
+export const ToolID = Schema.String.pipe(Schema.brand("ToolID"))
 const ToolListItem = Schema.Struct({
-  id: Schema.String,
+  id: ToolID,
   description: Schema.String,
   // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an arbitrary JSON Schema document (JSONSchema7) for the tool parameters
   parameters: Schema.Unknown,

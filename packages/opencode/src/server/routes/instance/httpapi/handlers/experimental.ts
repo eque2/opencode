@@ -15,7 +15,7 @@ import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, ToolID, ToolListQuery, WorktreeApiError } from "../groups/experimental"
 
 function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
   return self.pipe(
@@ -98,7 +98,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
         agent: yield* agents.defaultInfo(),
       })
       return list.map((item) => ({
-        id: item.id,
+        id: ToolID.make(item.id),
         description: item.description,
         parameters: ToolJsonSchema.fromTool(item),
       }))

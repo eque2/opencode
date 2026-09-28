@@ -14,7 +14,7 @@ import { or } from "drizzle-orm"
 import { Effect, Scope } from "effect"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { HistoryPayload, ReplayPayload, SessionPayload } from "../groups/sync"
+import { AggregateID, HistoryPayload, ReplayPayload, SessionPayload } from "../groups/sync"
 
 export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handlers) =>
   Effect.gen(function* () {
@@ -82,7 +82,10 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handl
         .where(excluded && not(excluded))
         .orderBy(asc(EventTable.seq))
         .all()
-        .pipe(Effect.orDie)
+        .pipe(
+          Effect.map((rows) => rows.map((row) => ({ ...row, aggregate_id: AggregateID.make(row.aggregate_id) }))),
+          Effect.orDie,
+        )
     })
 
     return handlers.handle("start", start).handle("replay", replay).handle("steal", steal).handle("history", history)

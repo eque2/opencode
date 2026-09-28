@@ -27,9 +27,10 @@ export const SessionPayload = Schema.Struct({
   sessionID: SessionID,
 }).annotate({ description: "Request for the sync history of a session" })
 export const HistoryPayload = Schema.Record(Schema.String, NonNegativeInt)
+export const AggregateID = Schema.String.pipe(Schema.brand("AggregateID"))
 export const HistoryEvent = Schema.Struct({
   id: EventV2.ID,
-  aggregate_id: Schema.String,
+  aggregate_id: AggregateID,
   seq: NonNegativeInt,
   type: Schema.String,
   // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: stored event payloads from the json `data` column, which is typed Record<string, unknown>
