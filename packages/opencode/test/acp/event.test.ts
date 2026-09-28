@@ -1,7 +1,16 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import type { AgentSideConnection } from "@agentclientprotocol/sdk"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import type { Event, Message, OpencodeClient, Part, SessionMessageResponse, ToolPart } from "@opencode-ai/sdk/v2"
+import {
+  OpencodeClient,
+  type Event,
+  type GlobalEvent,
+  type Message,
+  type Part,
+  type Session,
+  type SessionMessageResponse,
+  type ToolPart,
+} from "@opencode-ai/sdk/v2"
 import { Effect, ManagedRuntime } from "effect"
 import { ACPEvent } from "@/acp/event"
 import * as ACPService from "@/acp/service"
@@ -11,9 +20,6 @@ import { ACPSession } from "@/acp/session"
 type SessionUpdateParams = Parameters<AgentSideConnection["sessionUpdate"]>[0]
 type ToolSessionUpdateParams = SessionUpdateParams & {
   update: Extract<SessionUpdateParams["update"], { sessionUpdate: "tool_call" | "tool_call_update" }>
-}
-type GlobalEventEnvelope = {
-  payload?: Event
 }
 type DeltaPartType = Extract<Part, { type: "text" | "reasoning" }>["type"]
 
@@ -37,11 +43,11 @@ function makeSessionService() {
 }
 
 function createEventStream() {
-  const queue: GlobalEventEnvelope[] = []
-  const waiters: Array<(value: GlobalEventEnvelope | undefined) => void> = []
+  const queue: GlobalEvent[] = []
+  const waiters: Array<(value: GlobalEvent | undefined) => void> = []
   const state = { closed: false }
 
-  const push = (event: GlobalEventEnvelope) => {
+  const push = (event: GlobalEvent) => {
     const waiter = waiters.shift()
     if (waiter) {
       waiter(event)
@@ -57,7 +63,7 @@ function createEventStream() {
     }
   }
 
-  const stream = async function* (signal?: AbortSignal) {
+  const stream = async function* (signal?: AbortSignal | null): AsyncGenerator<GlobalEvent> {
     while (true) {
       if (signal?.aborted) return
       const next = queue.shift()
@@ -66,7 +72,7 @@ function createEventStream() {
         continue
       }
       if (state.closed) return
-      const value = await new Promise<GlobalEventEnvelope | undefined>((resolve) => {
+      const value = await new Promise<GlobalEvent | undefined>((resolve) => {
         waiters.push(resolve)
         signal?.addEventListener("abort", () => resolve(undefined), { once: true })
       })
@@ -78,6 +84,63 @@ function createEventStream() {
   return { push, close, stream }
 }
 
+function ok<T>(data: T) {
+  return Promise.resolve({
+    data,
+    error: undefined,
+    request: new Request("https://opencode.test"),
+    response: new Response(),
+  })
+}
+
+// A declared Promise<never> return keeps a stubbed SDK call from inferring the response type.
+function rejected(reason: unknown): Promise<never> {
+  return Promise.reject(reason)
+}
+
+function sessionInfo(id: string): Session {
+  return {
+    id,
+    slug: id,
+    projectID: "project",
+    directory: "/workspace",
+    title: id,
+    version: "test",
+    time: { created: 1, updated: 1 },
+  }
+}
+
+type SdkOverrides = {
+  readonly event?: OpencodeClient["global"]["event"]
+  readonly message?: OpencodeClient["session"]["message"]
+  readonly messages?: OpencodeClient["session"]["messages"]
+}
+
+// A real client whose every call the event bridge and the ACP service make is stubbed, so no test reaches the network.
+function fakeSdk(overrides: SdkOverrides = {}) {
+  const sdk = new OpencodeClient()
+  const unexpected = (name: string) => () => rejected(new Error(`unexpected SDK call: ${name}`))
+  spyOn(sdk.global, "event").mockImplementation(overrides.event ?? unexpected("global.event"))
+  spyOn(sdk.session, "message").mockImplementation(overrides.message ?? unexpected("session.message"))
+  spyOn(sdk.session, "messages").mockImplementation(overrides.messages ?? (() => ok([])))
+  spyOn(sdk.session, "get").mockImplementation(() => ok(sessionInfo("ses_loaded")))
+  spyOn(sdk.session, "create").mockImplementation(unexpected("session.create"))
+  spyOn(sdk.session, "list").mockImplementation(unexpected("session.list"))
+  spyOn(sdk.session, "prompt").mockImplementation(unexpected("session.prompt"))
+  spyOn(sdk.session, "command").mockImplementation(unexpected("session.command"))
+  spyOn(sdk.session, "summarize").mockImplementation(unexpected("session.summarize"))
+  spyOn(sdk.session, "abort").mockImplementation(unexpected("session.abort"))
+  spyOn(sdk.session, "fork").mockImplementation(unexpected("session.fork"))
+  spyOn(sdk.permission, "reply").mockImplementation(unexpected("permission.reply"))
+  spyOn(sdk.config, "providers").mockImplementation(unexpected("config.providers"))
+  spyOn(sdk.config, "get").mockImplementation(unexpected("config.get"))
+  spyOn(sdk.app, "agents").mockImplementation(unexpected("app.agents"))
+  spyOn(sdk.app, "skills").mockImplementation(unexpected("app.skills"))
+  spyOn(sdk.command, "list").mockImplementation(unexpected("command.list"))
+  spyOn(sdk.mcp, "add").mockImplementation(unexpected("mcp.add"))
+  return sdk
+}
+
 function createHarness(messages: Record<string, SessionMessageResponse> = {}) {
   const updates: SessionUpdateParams[] = []
   const calls = {
@@ -85,22 +148,16 @@ function createHarness(messages: Record<string, SessionMessageResponse> = {}) {
     message: 0,
   }
   const events = createEventStream()
-  const sdk = {
-    global: {
-      event: (options?: { signal?: AbortSignal }) => {
-        calls.eventSubscribe++
-        return Promise.resolve({ stream: events.stream(options?.signal) })
-      },
+  const sdk = fakeSdk({
+    event: (options) => {
+      calls.eventSubscribe++
+      return Promise.resolve({ stream: events.stream(options?.signal) })
     },
-    session: {
-      message: (input: { messageID: string }) => {
-        calls.message++
-        return Promise.resolve({ data: messages[input.messageID] })
-      },
-      get: () => Promise.resolve({ data: { id: "ses_loaded" } }),
-      messages: () => Promise.resolve({ data: [] }),
+    message: (input) => {
+      calls.message++
+      return ok(messages[input.messageID])
     },
-  } as unknown as OpencodeClient
+  })
   const connection = {
     sessionUpdate: (params: SessionUpdateParams) => {
       updates.push(params)
@@ -481,21 +538,14 @@ describe("acp event routing", () => {
     } satisfies Pick<AgentSideConnection, "sessionUpdate">
     let subscription: ACPEvent.Subscription | undefined
     const service = ACPService.make({
-      sdk: {
-        global: {
-          event: (options?: { signal?: AbortSignal }) => Promise.resolve({ stream: events.stream(options?.signal) }),
-        },
-        session: {
-          get: () => Promise.resolve({ data: { id: "ses_loaded" } }),
-          messages: () =>
-            Promise.resolve({
-              data: [
-                assistantToolMessage(completedTool("ses_loaded", "call_slow", "slow")),
-                assistantToolMessage(completedTool("ses_loaded", "call_after", "after")),
-              ],
-            }),
-        },
-      } as unknown as OpencodeClient,
+      sdk: fakeSdk({
+        event: (options) => Promise.resolve({ stream: events.stream(options?.signal) }),
+        messages: () =>
+          ok([
+            assistantToolMessage(completedTool("ses_loaded", "call_slow", "slow")),
+            assistantToolMessage(completedTool("ses_loaded", "call_after", "after")),
+          ]),
+      }),
       connection,
       directory: {
         get: () =>
@@ -634,7 +684,7 @@ describe("acp event routing", () => {
       content: [{ type: "content", content: { type: "text", text: "same" } }],
     })
     expect(updates[2]?.update).toMatchObject({ sessionUpdate: "tool_call_update", status: "in_progress" })
-    expect("content" in updates[2]!.update).toBe(false)
+    expect("content" in updates[2].update).toBe(false)
   })
 
   it("clears shell snapshot marker when a tool returns to pending", async () => {
