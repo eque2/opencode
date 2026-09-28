@@ -1,5 +1,5 @@
 import map from "lang-map"
-import { Array as Arr, DateTime, Duration, Predicate } from "effect"
+import { Array as Arr, DateTime, Duration, Option, Predicate, Schema } from "effect"
 import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
 import {
   IconHashtag,
@@ -751,11 +751,9 @@ export function FallbackTool(props: ToolProps) {
               <div></div>
               <div>{arg[0]}</div>
               <div>
-                {typeof arg[1] === "string" || typeof arg[1] === "number" || typeof arg[1] === "boolean"
+                {Predicate.isString(arg[1]) || Predicate.isNumber(arg[1]) || Predicate.isBoolean(arg[1])
                   ? String(arg[1])
-                  : arg[1] == null
-                    ? ""
-                    : JSON.stringify(arg[1])}
+                  : Option.match(Option.fromNullishOr(arg[1]), { onNone: () => "", onSome: encodeJson })}
               </div>
             </>
           )}
@@ -791,6 +789,8 @@ function flattenToolArgs(obj: unknown, prefix: string = ""): Array<[string, unkn
     return Predicate.isObjectOrArray(value) ? flattenToolArgs(value, path) : [[path, value]]
   })
 }
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
 function getProvider(model: string) {
   const lowerModel = model.toLowerCase()
