@@ -462,7 +462,7 @@ const layer = Layer.effect(
               start: part.state.status === "running" ? part.state.time.start : yield* Clock.currentTimeMillis,
               end: yield* Clock.currentTimeMillis,
             },
-            metadata: part.state.status === "pending" ? undefined : part.state.metadata,
+            ...(part.state.status === "pending" ? {} : { metadata: part.state.metadata }),
             input: part.state.input,
           },
         } satisfies SessionV1.ToolPart)
@@ -688,11 +688,18 @@ const layer = Layer.effect(
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
-          ? yield* provider
-              .getModel(model.providerID, model.modelID)
-              .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
-          : undefined
-      const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
+          ? yield* provider.getModel(model.providerID, model.modelID).pipe(
+              Effect.map(Option.some),
+              Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeedNone),
+            )
+          : Option.none<Provider.Model>()
+      const variant =
+        input.variant ??
+        Option.getOrUndefined(
+          Option.filter(Option.fromNullishOr(ag.variant), (name) =>
+            Option.exists(full, (mdl) => Boolean(mdl.variants?.[name])),
+          ),
+        )
 
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),
@@ -711,11 +718,15 @@ const layer = Layer.effect(
       }
 
       const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+      // A stored "default" variant means the same as no variant on the message.
+      const currentVariant = current.model?.variant
+      const variantChanged =
+        currentVariant === "default" ? info.model.variant !== undefined : currentVariant !== info.model.variant
       if (
         current.agent !== info.agent ||
         current.model?.providerID !== info.model.providerID ||
         current.model?.id !== info.model.modelID ||
-        (current.model?.variant === "default" ? undefined : current.model?.variant) !== info.model.variant
+        variantChanged
       ) {
         yield* sessions.setAgentModel({
           sessionID: input.sessionID,
@@ -863,12 +874,13 @@ const layer = Layer.effect(
               if (mime === "text/plain") {
                 let offset: number | undefined
                 let limit: number | undefined
-                const range = { start: url.searchParams.get("start"), end: url.searchParams.get("end") }
-                if (range.start != null) {
+                const rangeStart = Option.fromNullishOr(url.searchParams.get("start"))
+                const rangeEnd = url.searchParams.get("end")
+                if (Option.isSome(rangeStart)) {
                   const filePathURI = part.url.split("?")[0]
-                  let start = parseInt(range.start)
-                  let end = range.end ? parseInt(range.end) : undefined
-                  if (start === end) {
+                  let start = parseInt(rangeStart.value)
+                  let end = rangeEnd ? Option.some(parseInt(rangeEnd)) : Option.none<number>()
+                  if (Option.isSome(end) && end.value === start) {
                     const symbols = yield* lsp.documentSymbol(filePathURI).pipe(Effect.catch(() => Effect.succeed([])))
                     for (const symbol of symbols) {
                       let r: LSP.Range | undefined
@@ -876,13 +888,13 @@ const layer = Layer.effect(
                       else if ("location" in symbol) r = symbol.location.range
                       if (r?.start?.line && r?.start?.line === start) {
                         start = r.start.line
-                        end = r?.end?.line ?? start
+                        end = Option.some(r?.end?.line ?? start)
                         break
                       }
                     }
                   }
                   offset = Math.max(start, 1)
-                  if (end) limit = end - (offset - 1)
+                  if (Option.isSome(end) && end.value) limit = end.value - (offset - 1)
                 }
                 const args = { filePath: filepath, offset, limit }
                 const readCall: Draft<SessionV1.Part> = {
@@ -1305,7 +1317,7 @@ const layer = Layer.effect(
               ],
               tools,
               model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
+              ...(format.type === "json_schema" ? { toolChoice: "required" as const } : {}),
             })
 
             if (structured !== undefined) {
