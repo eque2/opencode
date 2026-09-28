@@ -55,7 +55,7 @@ const decodeSession = Schema.decodeUnknownOption(SessionFile)
 const decodeMessage = Schema.decodeUnknownOption(MessageFile)
 const decodeSummary = Schema.decodeUnknownOption(SummaryFile)
 // Migration 2 rewrites a whole session file, so it keeps every field it does not know.
-const decodeFields = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
+const decodeFields = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Json))
 
 // Storage files hold arbitrary JSON, pretty-printed with two spaces.
 const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
