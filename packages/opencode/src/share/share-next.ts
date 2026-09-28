@@ -39,7 +39,7 @@ const ShareSchema = Schema.Struct({
   id: Schema.String,
   url: Schema.String,
   secret: Schema.String,
-})
+}).annotate({ identifier: "ShareNext.Share", description: "A share that the share service created for a session" })
 export type Share = typeof ShareSchema.Type
 
 export class TokenError extends Schema.TaggedError<TokenError>()("ShareNext.TokenError", {
