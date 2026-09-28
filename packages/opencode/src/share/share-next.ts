@@ -135,7 +135,7 @@ const layer = Layer.effect(
           MutableHashMap.fromIterable(data.map((item) => [key(item), item] as const)),
         )
         yield* flush(sessionID).pipe(
-          Effect.delay(1000),
+          Effect.delay("1 second"),
           Effect.catchCause((cause) => Effect.logError("share flush failed", { sessionID: sessionID, cause: cause })),
           Effect.forkIn(s.scope),
         )
