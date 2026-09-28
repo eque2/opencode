@@ -69,5 +69,5 @@ export const FileCommand = cmd({
   describe: "file system debugging utilities",
   builder: (yargs) =>
     yargs.command(FileReadCommand).command(FileListCommand).command(FileSearchCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })

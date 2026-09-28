@@ -35,7 +35,7 @@ export const DebugCommand = cmd({
       .command(PathsCommand)
       .command(WaitCommand)
       .demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const WaitCommand = effectCmd({

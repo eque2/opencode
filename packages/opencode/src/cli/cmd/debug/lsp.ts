@@ -9,7 +9,7 @@ export const LSPCommand = cmd({
   describe: "LSP debugging utilities",
   builder: (yargs) =>
     yargs.command(DiagnosticsCommand).command(SymbolsCommand).command(DocumentSymbolsCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const DiagnosticsCommand = effectCmd({

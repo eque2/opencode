@@ -7,7 +7,7 @@ export const SnapshotCommand = cmd({
   command: "snapshot",
   describe: "snapshot debugging utilities",
   builder: (yargs) => yargs.command(TrackCommand).command(PatchCommand).command(DiffCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const TrackCommand = effectCmd({

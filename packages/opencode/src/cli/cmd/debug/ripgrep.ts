@@ -9,7 +9,7 @@ export const RipgrepCommand = cmd({
   command: "rg",
   describe: "ripgrep debugging utilities",
   builder: (yargs) => yargs.command(FilesCommand).command(SearchCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 const FilesCommand = effectCmd({

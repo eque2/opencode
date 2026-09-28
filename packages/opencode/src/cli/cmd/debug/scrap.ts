@@ -1,16 +1,17 @@
 import { EOL } from "os"
-import { cmd } from "../cmd"
+import { Effect } from "effect"
+import { effectCmd } from "../../effect-cmd"
 
-export const ScrapCommand = cmd({
+export const ScrapCommand = effectCmd({
   command: "scrap",
   describe: "list all known projects",
   builder: (yargs) => yargs,
-  async handler() {
-    const { Project } = await import("@/project/project")
-    const { AppNodeBuilder } = await import("@opencode-ai/core/effect/app-node-builder")
-    const { makeRuntime } = await import("@opencode-ai/core/effect/runtime")
-    const runtime = makeRuntime(Project.Service, AppNodeBuilder.build(Project.node))
-    const list = await runtime.runPromise((project) => project.list())
+  // Lists projects from global storage; no project InstanceContext is needed.
+  instance: false,
+  handler: Effect.fn("Cli.debug.scrap")(function* () {
+    const { Project } = yield* Effect.promise(() => import("@/project/project"))
+    const project = yield* Project.Service
+    const list = yield* project.list()
     process.stdout.write(JSON.stringify(list, null, 2) + EOL)
-  },
+  }),
 })

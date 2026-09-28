@@ -46,7 +46,7 @@ export const SessionCommand = cmd({
   command: "session",
   describe: "manage sessions",
   builder: (yargs: Argv) => yargs.command(SessionListCommand).command(SessionDeleteCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 export const SessionDeleteCommand = effectCmd({
@@ -95,22 +95,20 @@ export const SessionListCommand = effectCmd({
 
     if (shouldPaginate) {
       const pager = yield* pagerCmd()
-      yield* Effect.promise(async () => {
-        const proc = Process.spawn(pager, {
-          stdin: "pipe",
-          stdout: "inherit",
-          stderr: "inherit",
-        })
-
-        if (!proc.stdin) {
-          console.log(output)
-          return
-        }
-
-        proc.stdin.write(output)
-        proc.stdin.end()
-        await proc.exited
+      const proc = Process.spawn(pager, {
+        stdin: "pipe",
+        stdout: "inherit",
+        stderr: "inherit",
       })
+
+      if (!proc.stdin) {
+        console.log(output)
+        return
+      }
+
+      proc.stdin.write(output)
+      proc.stdin.end()
+      yield* Effect.promise(() => proc.exited)
     } else {
       console.log(output)
     }
