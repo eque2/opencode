@@ -23,14 +23,16 @@ declare global {
   const OPENCODE_WORKER_PATH: string
 }
 
-// The worker posts each RPC result as the awaited value of its method.
+// The worker posts each RPC result as the success value of its method's Effect.
 type WorkerRpc = {
   [Method in keyof typeof rpc]: (
-    input: Parameters<(typeof rpc)[Method]>[0],
-  ) => Awaited<ReturnType<(typeof rpc)[Method]>>
+    ...input: Parameters<(typeof rpc)[Method]>
+  ) => Effect.Success<ReturnType<(typeof rpc)[Method]>>
 }
 
-type RpcClient = ReturnType<typeof Rpc.client<WorkerRpc>>
+type WorkerEvents = { "global.event": GlobalEvent }
+
+type RpcClient = ReturnType<typeof Rpc.client<WorkerRpc, WorkerEvents>>
 
 type Transport = Pick<TuiInput, "url" | "fetch" | "events" | "headers">
 
@@ -51,14 +53,12 @@ function createWorkerFetch(client: RpcClient): typeof fetch {
         Effect.gen(function* () {
           const request = new Request(input, init)
           const body = request.body ? { body: yield* Effect.promise(() => request.text()) } : {}
-          const result = yield* Effect.promise(() =>
-            client.call("fetch", {
-              url: request.url,
-              method: request.method,
-              headers: Object.fromEntries(request.headers.entries()),
-              ...body,
-            }),
-          )
+          const result = yield* client.call("fetch", {
+            url: request.url,
+            method: request.method,
+            headers: Object.fromEntries(request.headers.entries()),
+            ...body,
+          })
           return new Response(result.body, {
             status: result.status,
             headers: result.headers,
@@ -74,7 +74,7 @@ function createEventSource(client: RpcClient): EventSource {
     subscribe: (handler) =>
       runPromise(() =>
         Effect.sync(() =>
-          client.on<GlobalEvent>("global.event", (e) => {
+          client.on("global.event", (e) => {
             handler(e)
           }),
         ),
@@ -271,16 +271,17 @@ export const TuiThreadCommand = cmd({
                     ),
                   }),
               )
-              const client = Rpc.client<WorkerRpc>(worker)
+              const client = Rpc.client<WorkerRpc, WorkerEvents>(worker)
+              // A signal handler is an external edge; the reload call cannot fail.
               const reload = () => {
-                client.call("reload", undefined).catch(() => {})
+                Effect.runFork(client.call("reload"))
               }
               process.on("SIGUSR2", reload)
 
               // Rpc calls resolve only; a worker that does not answer the shutdown in 5 seconds is terminated.
               const stop = Effect.gen(function* () {
                 yield* Effect.sync(() => process.off("SIGUSR2", reload))
-                yield* Effect.promise(() => client.call("shutdown", undefined)).pipe(
+                yield* client.call("shutdown").pipe(
                   Effect.timeout("5 seconds"),
                   Effect.ignore,
                 )
@@ -297,7 +298,7 @@ export const TuiThreadCommand = cmd({
                 ? {
                     // The headers are read before the worker starts the server, as before.
                     headers: yield* ServerAuth.headers(),
-                    url: (yield* Effect.promise(() => client.call("server", network))).url,
+                    url: (yield* client.call("server", network)).url,
                   }
                 : {
                     url: "http://opencode.internal",
@@ -322,7 +323,7 @@ export const TuiThreadCommand = cmd({
               }
 
               yield* Effect.sleep("1 second").pipe(
-                Effect.andThen(Effect.promise(() => client.call("checkUpgrade", { directory: cwd }))),
+                Effect.andThen(client.call("checkUpgrade", { directory: cwd })),
                 Effect.forkChild,
               )
 
@@ -333,7 +334,7 @@ export const TuiThreadCommand = cmd({
                   runPromise(() =>
                     Effect.gen(function* () {
                       const tui = writeHeapSnapshot("tui.heapsnapshot")
-                      const server = yield* Effect.promise(() => client.call("snapshot", undefined))
+                      const server = yield* client.call("snapshot")
                       return [tui, server]
                     }),
                   ),

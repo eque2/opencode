@@ -1,4 +1,4 @@
-import { MutableHashMap, MutableHashSet, Option, Schema } from "effect"
+import { Effect, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
 
 type Definition = {
   [method: string]: (input: any) => any
@@ -32,12 +32,21 @@ const decodeClientMessage = Schema.decodeUnknownOption(Schema.fromJsonString(Sch
 // A payload that JSON cannot encode (a cycle, a bigint) throws, as JSON.stringify did.
 const encodeMessage = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
 
-export function listen(rpc: Definition) {
-  onmessage = async (evt) => {
+// Each worker method is an Effect; `run` executes the reply on the worker's runtime.
+export function listen<R>(
+  rpc: { [method: string]: (input: any) => Effect.Effect<unknown, never, R> },
+  run: (effect: Effect.Effect<void, never, R>) => unknown,
+) {
+  onmessage = (evt) => {
     const request = decodeRequest(evt.data)
     if (Option.isNone(request)) return
-    const result = await rpc[request.value.method](request.value.input)
-    postMessage(encodeMessage({ type: "rpc.result", result, id: request.value.id }))
+    run(
+      rpc[request.value.method](request.value.input).pipe(
+        Effect.flatMap((result) =>
+          Effect.sync(() => postMessage(encodeMessage({ type: "rpc.result", result, id: request.value.id }))),
+        ),
+      ),
+    )
   }
 }
 
@@ -45,7 +54,8 @@ export function emit(event: string, data: unknown) {
   postMessage(encodeMessage({ type: "rpc.event", event, data }))
 }
 
-export function client<T extends Definition>(target: {
+// Events maps each event name the worker emits to the type of its data.
+export function client<T extends Definition, Events extends Record<string, unknown> = Record<string, unknown>>(target: {
   postMessage: (data: string) => void | null
   onmessage: ((this: Worker, ev: MessageEvent) => any) | null
 }) {
@@ -71,14 +81,18 @@ export function client<T extends Definition>(target: {
     }
   }
   return {
-    call<Method extends keyof T>(method: Method, input: Parameters<T[Method]>[0]): Promise<ReturnType<T[Method]>> {
-      const requestId = id++
-      return new Promise((resolve) => {
-        MutableHashMap.set(pending, requestId, resolve)
-        target.postMessage(encodeMessage({ type: "rpc.request", method, input, id: requestId }))
+    // A method without input takes no argument. An interrupted call (a timeout) drops its pending reply.
+    call<Method extends keyof T>(method: Method, ...input: Parameters<T[Method]>) {
+      return Effect.callback<ReturnType<T[Method]>>((resume) => {
+        const requestId = id++
+        MutableHashMap.set(pending, requestId, (result) => resume(Effect.succeed(result)))
+        target.postMessage(encodeMessage({ type: "rpc.request", method, input: input[0], id: requestId }))
+        return Effect.sync(() => {
+          MutableHashMap.remove(pending, requestId)
+        })
       })
     },
-    on<Data>(event: string, handler: (data: Data) => void) {
+    on<Event extends keyof Events & string>(event: Event, handler: (data: Events[Event]) => void) {
       const handlers = Option.getOrElse(MutableHashMap.get(listeners, event), () => {
         const created = MutableHashSet.empty<(data: any) => void>()
         MutableHashMap.set(listeners, event, created)
