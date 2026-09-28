@@ -21,8 +21,7 @@ afterAll(async () => {
     return fs.rm(dir, { recursive: true, force: true }).catch((error) => {
       if (!busy(error)) throw error
       if (left <= 1 && process.platform !== "win32") throw error
-      if (left <= 1) return
-      return rm(left - 1)
+      return left <= 1 ? Promise.resolve() : rm(left - 1)
     })
   }
 
