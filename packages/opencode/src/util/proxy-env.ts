@@ -49,18 +49,6 @@ export const proxyForUrl = Effect.fn("ProxyEnv.proxyForUrl")(function* (input: s
   return proxyUrl(protocol, proxy)
 })
 
-/**
- * Synchronous form of {@link proxyForUrl} for callers outside Effect. It reads process.env at call time.
- * The result is undefined when no proxy applies.
- */
-export function getProxyForUrl(input: string | URL): string | undefined {
-  return parseTarget(input).pipe(
-    Option.filter(({ hostname, port }) => shouldProxy(hostname, port, envSync("no_proxy"))),
-    Option.flatMap(({ protocol }) => proxyUrl(protocol, envSync(`${protocol}_proxy`) || envSync("all_proxy"))),
-    Option.getOrUndefined,
-  )
-}
-
 function parseTarget(input: string | URL): Option.Option<Target> {
   const url =
     typeof input !== "string"
@@ -109,9 +97,5 @@ const readVariable = (name: string) => readEnvSnapshot(Config.String(name).pipe(
 const env = Effect.fnUntraced(function* (key: string) {
   return (yield* readVariable(key.toLowerCase())) || (yield* readVariable(key.toUpperCase()))
 })
-
-function envSync(key: string) {
-  return process.env[key.toLowerCase()] || process.env[key.toUpperCase()] || ""
-}
 
 export * as ProxyEnv from "./proxy-env"

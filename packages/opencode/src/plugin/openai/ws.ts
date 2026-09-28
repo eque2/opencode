@@ -101,73 +101,80 @@ export function messageText(data: WebSocket.RawData) {
 }
 
 export function connectResponsesWebSocket(options: ConnectResponsesWebSocketOptions) {
-  const connect = Effect.callback<WebSocket, WebSocketConnectError | DOMException>((resume) => {
-    if (options.signal?.aborted) {
-      resume(Effect.fail(abortError(options.signal)))
-      return Effect.void
-    }
-
-    const headers: Record<string, string> = {
-      ...options.headers,
-      "openai-beta": options.headers["openai-beta"] ?? PROTOCOL_HEADER,
-    }
-    delete headers["content-length"]
-
+  const connect = Effect.gen(function* () {
     // Bun does not apply HTTP(S)_PROXY to WebSockets unless the proxy is supplied explicitly.
     const proxy =
       typeof Bun === "undefined"
         ? Option.none<string>()
-        : Option.fromNullishOr(
-            ProxyEnv.getProxyForUrl(options.url.replace(/^wss:/, "https:").replace(/^ws:/, "http:")),
-          ).pipe(Option.filter((value) => value !== ""))
-    const socket = new WebSocket(options.url, {
-      headers,
-      ...Option.match(proxy, { onNone: () => ({}), onSome: (value) => ({ proxy: value }) }),
-    })
-
-    function cleanup() {
-      socket.off("open", onOpen)
-      socket.off("error", onError)
-      socket.off("close", onClose)
-      options.signal?.removeEventListener("abort", onAbort)
-    }
-
-    function terminate() {
-      cleanup()
-      socket.on("error", () => {})
-      socket.terminate()
-    }
-
-    function onOpen() {
-      cleanup()
-      resume(Effect.succeed(socket))
-    }
-
-    function onError(error: unknown) {
-      socket.on("error", () => {})
-      cleanup()
-      resume(Effect.fail(new WebSocketConnectError({ message: errorMessage(error), cause: error })))
-    }
-
-    function onClose(code: number, reason: Buffer) {
-      cleanup()
-      resume(
-        Effect.fail(new WebSocketConnectError({ message: closeMessage("WebSocket closed before open", code, reason) })),
-      )
-    }
-
-    function onAbort() {
-      terminate()
-      resume(Effect.fail(abortError(options.signal)))
-    }
-
-    socket.once("open", onOpen)
-    socket.once("error", onError)
-    socket.once("close", onClose)
-    options.signal?.addEventListener("abort", onAbort, { once: true })
-    // Interruption (the connect timeout) abandons the handshake.
-    return Effect.sync(terminate)
+        : (yield* ProxyEnv.proxyForUrl(options.url.replace(/^wss:/, "https:").replace(/^ws:/, "http:"))).pipe(
+            Option.filter((value) => value !== ""),
+          )
+    return yield* open(proxy)
   })
+
+  const open = (proxy: Option.Option<string>) =>
+    Effect.callback<WebSocket, WebSocketConnectError | DOMException>((resume) => {
+      if (options.signal?.aborted) {
+        resume(Effect.fail(abortError(options.signal)))
+        return Effect.void
+      }
+
+      const headers: Record<string, string> = {
+        ...options.headers,
+        "openai-beta": options.headers["openai-beta"] ?? PROTOCOL_HEADER,
+      }
+      delete headers["content-length"]
+
+      const socket = new WebSocket(options.url, {
+        headers,
+        ...Option.match(proxy, { onNone: () => ({}), onSome: (value) => ({ proxy: value }) }),
+      })
+
+      function cleanup() {
+        socket.off("open", onOpen)
+        socket.off("error", onError)
+        socket.off("close", onClose)
+        options.signal?.removeEventListener("abort", onAbort)
+      }
+
+      function terminate() {
+        cleanup()
+        socket.on("error", () => {})
+        socket.terminate()
+      }
+
+      function onOpen() {
+        cleanup()
+        resume(Effect.succeed(socket))
+      }
+
+      function onError(error: unknown) {
+        socket.on("error", () => {})
+        cleanup()
+        resume(Effect.fail(new WebSocketConnectError({ message: errorMessage(error), cause: error })))
+      }
+
+      function onClose(code: number, reason: Buffer) {
+        cleanup()
+        resume(
+          Effect.fail(
+            new WebSocketConnectError({ message: closeMessage("WebSocket closed before open", code, reason) }),
+          ),
+        )
+      }
+
+      function onAbort() {
+        terminate()
+        resume(Effect.fail(abortError(options.signal)))
+      }
+
+      socket.once("open", onOpen)
+      socket.once("error", onError)
+      socket.once("close", onClose)
+      options.signal?.addEventListener("abort", onAbort, { once: true })
+      // Interruption (the connect timeout) abandons the handshake.
+      return Effect.sync(terminate)
+    })
 
   if (!options.timeout) return connect
   return connect.pipe(
