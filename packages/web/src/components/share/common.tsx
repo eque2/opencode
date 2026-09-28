@@ -1,3 +1,4 @@
+import { Option, Schema } from "effect"
 import { createContext, createSignal, splitProps, useContext } from "solid-js"
 import type { JSX } from "solid-js/jsx-runtime"
 import { makeResizeObserver } from "@solid-primitives/resize-observer"
@@ -11,12 +12,16 @@ export function ShareI18nProvider(props: { messages: ShareMessages; children: JS
   return <shareContext.Provider value={props.messages}>{props.children}</shareContext.Provider>
 }
 
+export class ShareI18nMissingError extends Schema.TaggedError<ShareI18nMissingError>()("ShareI18nMissingError", {
+  message: Schema.String,
+}) {}
+
+// A Solid context hook must stay synchronous, so a missing provider is a defect thrown at the call site.
 export function useShareMessages() {
-  const value = useContext(shareContext)
-  if (value) {
-    return value
-  }
-  throw new Error("ShareI18nProvider is required")
+  return Option.getOrThrowWith(
+    Option.fromNullishOr(useContext(shareContext)),
+    () => new ShareI18nMissingError({ message: "ShareI18nProvider is required" }),
+  )
 }
 
 export function normalizeLocale(locale: string) {
