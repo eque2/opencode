@@ -1,20 +1,20 @@
+import { Option } from "effect"
+
 export function lazy<T>(fn: () => T) {
-  let value: T | undefined
-  let loaded = false
+  let value: Option.Option<T> = Option.none()
 
   const result = (): T => {
-    if (loaded) return value as T
-    value = fn()
-    loaded = true
-    return value as T
+    if (Option.isSome(value)) return value.value
+    const loaded = fn()
+    value = Option.some(loaded)
+    return loaded
   }
 
   result.reset = () => {
-    loaded = false
-    value = undefined
+    value = Option.none()
   }
 
-  result.loaded = () => loaded
+  result.loaded = () => Option.isSome(value)
 
   return result
 }
