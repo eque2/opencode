@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto"
-import { Schema } from "effect"
+import { DateTime, Schema } from "effect"
 
 const prefixes = {
   job: "job",
@@ -60,7 +60,7 @@ function randomBase62(length: number): string {
 }
 
 export function create(prefix: string, direction: "descending" | "ascending", timestamp?: number): string {
-  const currentTimestamp = timestamp ?? Date.now()
+  const currentTimestamp = timestamp ?? DateTime.toEpochMillis(DateTime.nowUnsafe())
 
   if (currentTimestamp !== lastTimestamp) {
     lastTimestamp = currentTimestamp
