@@ -6,7 +6,8 @@ import { Global } from "@opencode-ai/core/global"
 import { installPlugin, patchPluginConfig, readPluginManifest } from "../../plugin/install"
 import { resolvePluginTarget } from "../../plugin/shared"
 import { errorMessage } from "../../util/error"
-import { Filesystem } from "@/util/filesystem"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
 import { UI } from "../ui"
 import { effectCmd } from "../effect-cmd"
@@ -44,6 +45,15 @@ export type PlugCtx = {
   directory: string
 }
 
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+// PlugDeps is a Promise contract, so each default callback runs its Effect here.
+// Each run builds the filesystem layer; a module-level runtime would keep the CLI worker alive.
+function runFileSystem<A, E>(effect: Effect.Effect<A, E, FSUtil.Service>) {
+  return Effect.runPromise(effect.pipe(Effect.provide(fileSystemLayer)))
+}
+
+// A failed read or write rejects with the PlatformError. A failed exists check reads as missing.
 const defaultPlugDeps: PlugDeps = {
   spinner: () => spinner(),
   log: {
@@ -52,9 +62,9 @@ const defaultPlugDeps: PlugDeps = {
     success: (msg) => log.success(msg),
   },
   resolve: (spec) => resolvePluginTarget(spec),
-  readText: (file) => Filesystem.readText(file),
-  write: (file, text) => Filesystem.write(file, text),
-  exists: (file) => Filesystem.exists(file),
+  readText: (file) => runFileSystem(FSUtil.Service.use((fsu) => fsu.readFileString(file))),
+  write: (file, text) => runFileSystem(FSUtil.Service.use((fsu) => fsu.writeWithDirs(file, text))),
+  exists: (file) => runFileSystem(FSUtil.Service.use((fsu) => fsu.existsSafe(file))),
   files: (dir, name) => ConfigPaths.fileInDirectory(dir, name),
   global: Global.Path.config,
 }

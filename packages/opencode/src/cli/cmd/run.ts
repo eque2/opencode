@@ -20,7 +20,6 @@ import { Clock, Config, Console, Effect, Fiber, type FileSystem, MutableHashSet,
 import { UI } from "../ui"
 import { CliError, effectCmd, fail } from "../effect-cmd"
 import { EOL } from "os"
-import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { InteractiveInputError, interactiveStdin } from "./run/runtime.stdin"
@@ -355,7 +354,7 @@ export const RunCommand = effectCmd({
 
     // An unreadable PWD counts as not set, as a missing one does.
     const pwd = yield* Config.option(Config.String("PWD")).pipe(Effect.orElseSucceed(() => Option.none<string>()))
-    const root = Filesystem.resolve(Option.getOrElse(pwd, () => process.cwd()))
+    const root = yield* fsys.resolve(Option.getOrElse(pwd, () => process.cwd()))
     const target = args.dir
     const directory = yield* Effect.suspend(() => {
       if (!target) return Effect.succeed(args.attach ? Option.none<string>() : Option.some(root))

@@ -37,7 +37,6 @@ import os from "os"
 import { pathToFileURL } from "url"
 import { Global } from "@opencode-ai/core/global"
 import { ProjectV2 } from "@opencode-ai/core/project"
-import { Filesystem } from "@/util/filesystem"
 import { ConfigPlugin } from "@/config/plugin"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { AccountTest } from "../fake/account"
@@ -151,8 +150,14 @@ afterEach(async () => {
 const writeManagedSettingsEffect = (settings: object, filename?: string) =>
   FSUtil.use.writeWithDirs(path.join(managedConfigDir, filename ?? "opencode.json"), JSON.stringify(settings))
 
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+// Runs one FSUtil effect for the Promise-based tests below.
+const runFileSystem = <A, E>(effect: Effect.Effect<A, E, FSUtil.Service>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(fileSystemLayer)))
+
 async function writeConfig(dir: string, config: object, name = "opencode.json") {
-  await Filesystem.write(path.join(dir, name), JSON.stringify(config))
+  await runFileSystem(FSUtil.use.writeWithDirs(path.join(dir, name), JSON.stringify(config)))
 }
 
 const writeConfigEffect = (dir: string, config: object, name = "opencode.json") =>
@@ -280,7 +285,7 @@ async function check(map: (dir: string) => string) {
       fn: async (ctx) => {
         const cfg = await load(ctx)
         expect(cfg.snapshot).toBe(true)
-        expect(ctx.directory).toBe(Filesystem.resolve(tmp.path))
+        expect(ctx.directory).toBe(await runFileSystem(FSUtil.use.resolve(tmp.path)))
         expect(ctx.project.id).not.toBe(ProjectV2.ID.global)
       },
     })
@@ -1880,7 +1885,7 @@ describe("resolvePluginSpec", () => {
       init: async (dir) => {
         const plugin = path.join(dir, "plugin")
         await fs.mkdir(plugin, { recursive: true })
-        await Filesystem.write(path.join(plugin, "index.ts"), "export default {}")
+        await runFileSystem(FSUtil.use.writeWithDirs(path.join(plugin, "index.ts"), "export default {}"))
       },
     })
 
@@ -1892,7 +1897,7 @@ describe("resolvePluginSpec", () => {
   test("resolves relative file plugin paths to file urls", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
-        await Filesystem.write(path.join(dir, "plugin.ts"), "export default {}")
+        await runFileSystem(FSUtil.use.writeWithDirs(path.join(dir, "plugin.ts"), "export default {}"))
       },
     })
 
@@ -1906,12 +1911,14 @@ describe("resolvePluginSpec", () => {
       init: async (dir) => {
         const plugin = path.join(dir, "plugin")
         await fs.mkdir(plugin, { recursive: true })
-        await Filesystem.writeJson(path.join(plugin, "package.json"), {
-          name: "demo-plugin",
-          type: "module",
-          main: "./index.ts",
-        })
-        await Filesystem.write(path.join(plugin, "index.ts"), "export default {}")
+        await runFileSystem(
+          FSUtil.use.writeJson(path.join(plugin, "package.json"), {
+            name: "demo-plugin",
+            type: "module",
+            main: "./index.ts",
+          }),
+        )
+        await runFileSystem(FSUtil.use.writeWithDirs(path.join(plugin, "index.ts"), "export default {}"))
       },
     })
 
@@ -1925,7 +1932,7 @@ describe("resolvePluginSpec", () => {
       init: async (dir) => {
         const plugin = path.join(dir, "plugin")
         await fs.mkdir(plugin, { recursive: true })
-        await Filesystem.write(path.join(plugin, "index.ts"), "export default {}")
+        await runFileSystem(FSUtil.use.writeWithDirs(path.join(plugin, "index.ts"), "export default {}"))
       },
     })
 

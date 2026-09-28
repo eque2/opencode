@@ -1,6 +1,6 @@
 import path from "path"
 import { exec } from "child_process"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as prompts from "@clack/prompts"
 import { Octokit } from "@octokit/rest"
 import { graphql } from "@octokit/graphql"
@@ -406,8 +406,9 @@ export const githubInstall = Effect.fn("Cli.github.install")(function* () {
           ? ""
           : `\n        env:${providers[provider].env.map((e) => `\n          ${e}: \${{ secrets.${e} }}`).join("")}`
 
-      yield* tryGithub(() =>
-        Filesystem.write(
+      const fs = yield* FSUtil.Service
+      yield* fs
+        .writeWithDirs(
           path.join(app.root, WORKFLOW_FILE),
           `name: opencode
 
@@ -440,8 +441,8 @@ jobs:
         uses: anomalyco/opencode/github@latest${envStr}
         with:
           model: ${provider}/${model}`,
-        ),
-      ).pipe(Effect.orDie)
+        )
+        .pipe(Effect.orDie)
 
       yield* Prompt.log.success(`Added workflow file: "${WORKFLOW_FILE}"`)
     })

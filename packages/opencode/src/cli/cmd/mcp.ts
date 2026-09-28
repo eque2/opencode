@@ -17,7 +17,7 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
 import { modify, applyEdits } from "jsonc-parser"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Cause, DateTime, Effect, Option, Schema } from "effect"
 import * as Prompt from "../effect/prompt"
 import type { InstanceContext } from "@/project/instance-context"
@@ -398,23 +398,22 @@ const resolveConfigPath = Effect.fnUntraced(function* (baseDir: string, global =
       ? []
       : [path.join(baseDir, ".opencode", "opencode.json"), path.join(baseDir, ".opencode", "opencode.jsonc")]),
   ]
-  const existing = yield* Effect.findFirst(candidates, (candidate) =>
-    Effect.promise(() => Filesystem.exists(candidate)),
-  )
+  const fs = yield* FSUtil.Service
+  const existing = yield* Effect.findFirst(candidates, (candidate) => fs.existsSafe(candidate))
   // Default to opencode.json if none exist
   return Option.getOrElse(existing, () => candidates[0])
 })
 
 const addMcpToConfig = Effect.fnUntraced(function* (name: string, mcpConfig: ConfigMCPV1.Info, configPath: string) {
-  const text = (yield* Effect.promise(() => Filesystem.exists(configPath)))
-    ? yield* Effect.promise(() => Filesystem.readText(configPath))
-    : "{}"
+  const fs = yield* FSUtil.Service
+  // A read or write failure stays a defect, as it was under Effect.promise.
+  const text = (yield* fs.existsSafe(configPath)) ? yield* fs.readFileString(configPath).pipe(Effect.orDie) : "{}"
 
   // Use jsonc-parser to modify while preserving comments
   const edits = modify(text, ["mcp", name], mcpConfig, {
     formattingOptions: { tabSize: 2, insertSpaces: true },
   })
-  yield* Effect.promise(() => Filesystem.write(configPath, applyEdits(text, edits)))
+  yield* fs.writeWithDirs(configPath, applyEdits(text, edits)).pipe(Effect.orDie)
   return configPath
 })
 
