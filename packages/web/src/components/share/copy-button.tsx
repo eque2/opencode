@@ -1,4 +1,5 @@
-import { createSignal } from "solid-js"
+import { Effect, Fiber, Option } from "effect"
+import { createSignal, onCleanup } from "solid-js"
 import { IconClipboard, IconCheckCircle } from "../icons"
 import { useShareMessages } from "./common"
 import styles from "./copy-button.module.css"
@@ -10,13 +11,27 @@ interface CopyButtonProps {
 export function CopyButton(props: CopyButtonProps) {
   const [copied, setCopied] = createSignal(false)
   const messages = useShareMessages()
+  // The pending reset fiber is interrupted on a new click and when the component unmounts.
+  let reset = Option.none<Fiber.Fiber<void>>()
+  const interruptReset = () => {
+    if (Option.isSome(reset)) Effect.runFork(Fiber.interrupt(reset.value))
+  }
+  onCleanup(interruptReset)
 
   function handleCopyClick() {
     if (props.text) {
-      navigator.clipboard.writeText(props.text).catch((err) => console.error("Copy failed", err))
+      const text = props.text
+      Effect.runFork(
+        Effect.tryPromise(() => navigator.clipboard.writeText(text)).pipe(
+          Effect.catch((err) => Effect.logError("Copy failed", err)),
+        ),
+      )
 
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      interruptReset()
+      reset = Option.some(
+        Effect.runFork(Effect.sleep("2 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))))),
+      )
     }
   }
 
