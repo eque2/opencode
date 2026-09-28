@@ -382,7 +382,7 @@ export function withCliFixture<A, E>(
         kill: () => {
           proc.kill()
         },
-        exited: proc.exited as Promise<number>,
+        exited: proc.exited,
       } satisfies ServeHandle
     })
 
@@ -461,7 +461,7 @@ export function withCliFixture<A, E>(
         receive: Queue.take(responses),
         // proc.stdin.end() is idempotent in Bun; no try/catch needed.
         close: () => proc.stdin.end(),
-        exited: proc.exited as Promise<number>,
+        exited: proc.exited,
       } satisfies AcpHandle
     })
 
