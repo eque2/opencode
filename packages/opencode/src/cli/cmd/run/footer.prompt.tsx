@@ -761,7 +761,7 @@ export function createPromptState(input: PromptInput): PromptState {
       return false
     }
 
-    if (typeof history.index !== "number" && dir === -1) {
+    if (Option.isNone(history.index) && dir === -1) {
       stash = clonePrompt(draft)
     }
 
@@ -771,10 +771,10 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     history = next.state
-    const value =
-      typeof next.state.index === "number"
-        ? (next.state.items[next.state.index] ?? { text: next.text, parts: [] })
-        : stash
+    const value = Option.match(next.state.index, {
+      onNone: () => stash,
+      onSome: (index) => next.state.items[index] ?? { text: next.text, parts: [] },
+    })
     restore(value, next.cursor)
     event.preventDefault()
     return true
