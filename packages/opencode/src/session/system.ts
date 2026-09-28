@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Context, DateTime, Effect, Layer } from "effect"
+import { Context, DateTime, Effect, HashSet, Layer } from "effect"
 
 import { InstanceState } from "@/effect/instance-state"
 
@@ -108,7 +108,7 @@ const layer = Layer.effect(
       }),
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
-        if (Permission.disabled(["skill"], agent.permission).has("skill")) return undefined
+        if (HashSet.has(Permission.disabled(["skill"], agent.permission), "skill")) return undefined
 
         const list = yield* skill.available(agent)
 
@@ -124,7 +124,8 @@ const layer = Layer.effect(
       mcp: Effect.fn("SystemPrompt.mcp")(function* (agent: Agent.Info, permission?: PermissionV1.Ruleset) {
         const ruleset = Permission.merge(agent.permission, permission ?? [])
         const instructions = (yield* mcp.instructions()).filter(
-          (item) => item.tools.length === 0 || Permission.disabled(item.tools, ruleset).size < item.tools.length,
+          (item) =>
+            item.tools.length === 0 || HashSet.size(Permission.disabled(item.tools, ruleset)) < item.tools.length,
         )
         if (instructions.length === 0) return undefined
 

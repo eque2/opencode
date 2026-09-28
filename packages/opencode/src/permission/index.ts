@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { InstanceState } from "@/effect/instance-state"
 import { Wildcard } from "@opencode-ai/core/util/wildcard"
-import { Deferred, Effect, Exit, Layer, Context, MutableHashMap } from "effect"
+import { Deferred, Effect, Exit, Layer, Context, HashSet, MutableHashMap } from "effect"
 import os from "os"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -215,10 +215,10 @@ export function merge(...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule[] 
   return rulesets.flat()
 }
 
-export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<string> {
+export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): HashSet.HashSet<string> {
   const edits = ["edit", "write", "apply_patch"]
   const reads = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]
-  return new Set(
+  return HashSet.fromIterable(
     tools.filter((tool) => {
       const permission = edits.includes(tool) ? "edit" : reads.includes(tool) ? "read" : tool
       const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
@@ -229,7 +229,7 @@ export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<st
 
 export function visibleTools<T>(tools: Record<string, T>, ruleset: PermissionV1.Ruleset): Record<string, T> {
   const hidden = disabled(Object.keys(tools), ruleset)
-  return Object.fromEntries(Object.entries(tools).filter(([name]) => !hidden.has(name)))
+  return Object.fromEntries(Object.entries(tools).filter(([name]) => !HashSet.has(hidden, name)))
 }
 
 export const node = LayerNode.make({ service: Service, layer: layer, deps: [EventV2Bridge.node] })
