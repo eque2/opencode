@@ -4,10 +4,10 @@ import type { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
 import { attachWith } from "./run-service"
 
-export interface Shape {
-  readonly promise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>
-  readonly fork: <A, E, R>(effect: Effect.Effect<A, E, R>) => Fiber.Fiber<A, E>
-  readonly run: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>
+export interface Shape<R = never> {
+  readonly promise: <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>
+  readonly fork: <A, E>(effect: Effect.Effect<A, E, R>) => Fiber.Fiber<A, E>
+  readonly run: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>
 }
 
 function restoreWorkspace<R>(workspace: Option.Option<WorkspaceV2.ID>, fn: () => R): R {
@@ -43,25 +43,28 @@ export const fromPromise = <T>(fn: () => Promise<T> | T): Effect.Effect<T> =>
     })
   })
 
-export function make(): Effect.Effect<Shape> {
+/**
+ * Captures the current context. `R` names the services that bridged effects may
+ * require; the captured context must provide them.
+ */
+export function make<R = never>(): Effect.Effect<Shape<R>, never, R> {
   return Effect.gen(function* () {
-    const ctx = yield* Effect.context()
+    const ctx = yield* Effect.context<R>()
     const captured = captureSync()
     const instance = (yield* InstanceRef).pipe(Option.orElse(() => captured.instance))
     const workspace = (yield* WorkspaceRef).pipe(Option.orElse(() => captured.workspace))
-    const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      attachWith(effect.pipe(Effect.provide(ctx)) as Effect.Effect<A, E>, { instance, workspace })
+    const wrap = <A, E>(effect: Effect.Effect<A, E, R>) =>
+      attachWith(effect.pipe(Effect.provide(ctx)), { instance, workspace })
 
     return {
-      promise: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      promise: <A, E>(effect: Effect.Effect<A, E, R>) =>
         restoreWorkspace(workspace, () => Effect.runPromise(wrap(effect))),
-      fork: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        restoreWorkspace(workspace, () => Effect.runFork(wrap(effect))),
-      run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      fork: <A, E>(effect: Effect.Effect<A, E, R>) => restoreWorkspace(workspace, () => Effect.runFork(wrap(effect))),
+      run: <A, E>(effect: Effect.Effect<A, E, R>) =>
         Effect.callback<A, E>((resume) => {
           restoreWorkspace(workspace, () => Effect.runFork(wrap(effect)).addObserver(resume))
         }),
-    } satisfies Shape
+    } satisfies Shape<R>
   })
 }
 
