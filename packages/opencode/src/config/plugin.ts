@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, MutableHashSet } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { pathToFileURL } from "url"
@@ -61,14 +61,14 @@ export const resolvePluginSpec = Effect.fn("ConfigPlugin.resolvePluginSpec")(fun
 // Dedupe on the load identity (package name for npm specs, exact file URL for local specs), but keep the
 // full Origin so downstream code still knows which config file won and where follow-up writes should go.
 export function deduplicatePluginOrigins(plugins: Origin[]): Origin[] {
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   return plugins
     .toReversed()
     .filter((plugin) => {
       const spec = pluginSpecifier(plugin.spec)
       const name = spec.startsWith("file://") ? spec : parsePluginSpecifier(spec).pkg
-      if (seen.has(name)) return false
-      seen.add(name)
+      if (MutableHashSet.has(seen, name)) return false
+      MutableHashSet.add(seen, name)
       return true
     })
     .toReversed()

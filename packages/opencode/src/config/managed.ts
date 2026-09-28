@@ -3,20 +3,20 @@ export * as ConfigManaged from "./managed"
 import { existsSync } from "fs"
 import os from "os"
 import path from "path"
-import { Effect, Option } from "effect"
+import { Effect, HashSet, Option } from "effect"
 import { Process } from "@/util/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
 
 // Keys injected by macOS/MDM into the managed plist that are not OpenCode config
-const PLIST_META = new Set([
+const PLIST_META = HashSet.make(
   "PayloadDisplayName",
   "PayloadIdentifier",
   "PayloadType",
   "PayloadUUID",
   "PayloadVersion",
   "_manualProfile",
-])
+)
 
 function systemManagedConfigDir(): string {
   switch (process.platform) {
@@ -36,7 +36,7 @@ export function managedConfigDir() {
 export function parseManagedPlist(json: string): string {
   const raw = JSON.parse(json)
   for (const key of Object.keys(raw)) {
-    if (PLIST_META.has(key)) delete raw[key]
+    if (HashSet.has(PLIST_META, key)) delete raw[key]
   }
   return JSON.stringify(raw)
 }

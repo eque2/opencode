@@ -1,7 +1,7 @@
 export * as ConfigV2Compat from "./v2-compat"
 
 import { isDeepStrictEqual } from "node:util"
-import { Option, Schema } from "effect"
+import { HashSet, Option, Schema } from "effect"
 import { NonNegativeInt, PositiveInt } from "@opencode-ai/core/schema"
 import { ConfigAttachmentV1 } from "@opencode-ai/core/v1/config/attachment"
 import { ConfigLSPV1 } from "@opencode-ai/core/v1/config/lsp"
@@ -96,7 +96,7 @@ const decodeCommand = Schema.decodeUnknownOption(Command, decodeOptions)
 const decodeServer = Schema.decodeUnknownOption(Server, decodeOptions)
 const decodeSelection = Schema.decodeUnknownOption(Selection, decodeOptions)
 const decodeTimeout = Schema.decodeUnknownOption(Timeout, decodeOptions)
-const builtinServers = new Set<string>(ConfigLSPV1.builtinServerIds)
+const builtinServers = HashSet.fromIterable<string>(ConfigLSPV1.builtinServerIds)
 
 export function lower(input: unknown, source = "configuration"): Lowered {
   const parsed = decodeRecord(input)
@@ -372,7 +372,7 @@ function normalizeLsp(input: Record<string, unknown>, result: Record<string, unk
 }
 
 function keepLsp(name: string, value: unknown) {
-  if (builtinServers.has(name)) return true
+  if (HashSet.has(builtinServers, name)) return true
   const entry = decodeLspEntry(value)
   if (Option.isNone(entry)) return true
   if (entry.value.disabled === true) return true

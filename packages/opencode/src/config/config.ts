@@ -46,7 +46,7 @@ function mergeConfig(target: Info, source: Info): Info {
 function mergeConfigConcatArrays(target: Info, source: Info): Info {
   const merged = mergeConfig(target, source)
   if (target.instructions && source.instructions) {
-    merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
+    merged.instructions = Arr.dedupe([...target.instructions, ...source.instructions])
   }
   return merged
 }
@@ -327,7 +327,7 @@ const layer = Layer.effect(
 
         let result: Info = {}
         const authEnv: Record<string, string> = {}
-        const consoleManagedProviders = new Set<string>()
+        let consoleManagedProviders: string[] = []
         let activeOrgName: string | undefined
 
         const pluginScopeForSource = Effect.fnUntraced(function* (source: string) {
@@ -509,9 +509,7 @@ const layer = Layer.effect(
                 dir: path.dirname(source),
                 source,
               })
-              for (const providerID of Object.keys(next.provider ?? {})) {
-                consoleManagedProviders.add(providerID)
-              }
+              consoleManagedProviders = Arr.dedupe([...consoleManagedProviders, ...Object.keys(next.provider ?? {})])
               yield* merge(source, next, "global")
             }
           }).pipe(
@@ -605,7 +603,7 @@ const layer = Layer.effect(
           directories,
           deps,
           consoleState: {
-            consoleManagedProviders: Array.from(consoleManagedProviders),
+            consoleManagedProviders,
             activeOrgName,
             switchableOrgCount: 0,
           },
