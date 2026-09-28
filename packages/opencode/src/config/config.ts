@@ -12,7 +12,6 @@ import { Auth } from "../auth"
 import { Env } from "../env"
 import { applyEdits, modify } from "jsonc-parser"
 import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
-import { existsSync } from "fs"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
@@ -146,16 +145,6 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 
 export const use = serviceUse(Service)
 
-function globalConfigFile() {
-  const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
-    path.join(Global.Path.config, file),
-  )
-  for (const file of candidates) {
-    if (existsSync(file)) return file
-  }
-  return candidates[0]
-}
-
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
   if (!isRecord(patch)) {
     const edits = modify(input, path, patch, {
@@ -194,6 +183,15 @@ const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
 
     const readConfigFile = (filepath: string) => fs.readFileStringSafe(filepath).pipe(Effect.orDie)
+
+    // The first global config file that exists, else opencode.jsonc.
+    const globalConfigFile = Effect.fnUntraced(function* () {
+      const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
+        path.join(Global.Path.config, file),
+      )
+      const found = yield* Effect.findFirst(candidates, (file) => fs.existsSafe(file))
+      return Option.getOrElse(found, () => candidates[0])
+    })
 
     const decodeConfig = Effect.fnUntraced(function* (input: unknown, source: string) {
       const result = yield* ConfigV2Compat.lower(normalizeLoadedConfig(input), source)
@@ -284,8 +282,8 @@ const layer = Layer.effect(
       // explicitly routes config through env-provided paths or content.
       const routed = [yield* customConfigFile, yield* ConfigPaths.customDirectory, yield* configContent]
       if (routed.every(Option.isNone)) {
-        const file = globalConfigFile()
-        if (!existsSync(file)) {
+        const file = yield* globalConfigFile()
+        if (!(yield* fs.existsSafe(file))) {
           yield* fs
             .writeWithDirs(file, yield* encodeConfigFile({ $schema: "https://opencode.ai/config.json" }))
             .pipe(Effect.catch(() => Effect.void))
@@ -296,7 +294,7 @@ const layer = Layer.effect(
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env))
 
       const legacy = path.join(Global.Path.config, "config")
-      if (existsSync(legacy)) {
+      if (yield* fs.existsSafe(legacy)) {
         yield* Effect.gen(function* () {
           const mod = yield* Effect.tryPromise(() => import(pathToFileURL(legacy).href, { with: { type: "toml" } }))
           const { provider, model, ...rest } = mod.default
@@ -547,7 +545,7 @@ const layer = Layer.effect(
         }
 
         const managedDir = ConfigManaged.managedConfigDir()
-        if (existsSync(managedDir)) {
+        if (yield* fs.existsSafe(managedDir)) {
           for (const file of ["opencode.json", "opencode.jsonc"]) {
             const source = path.join(managedDir, file)
             yield* merge(source, yield* loadFile(source), "global")
@@ -682,7 +680,7 @@ const layer = Layer.effect(
     })
 
     const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Patch) {
-      const file = globalConfigFile()
+      const file = yield* globalConfigFile()
       const before = (yield* readConfigFile(file)) ?? "{}"
       const patch = writableGlobal(config)
 

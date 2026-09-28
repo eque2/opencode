@@ -1,9 +1,9 @@
 export * as ConfigManaged from "./managed"
 
-import { existsSync } from "fs"
 import os from "os"
 import path from "path"
 import { Effect, HashSet, Option, Schema } from "effect"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Process } from "@/util/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
@@ -47,6 +47,7 @@ export const parseManagedPlist = Effect.fn("ConfigManaged.parseManagedPlist")(fu
 /** Reads the macOS managed preferences (.mobileconfig deployed via MDM). Other platforms have none. */
 export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPreferences")(function* () {
   if (process.platform !== "darwin") return Option.none<{ source: string; text: string }>()
+  const fs = yield* FSUtil.Service
 
   const user = yield* Effect.try(() => os.userInfo().username || "user").pipe(Effect.orElseSucceed(() => "user"))
   const paths = [
@@ -55,7 +56,7 @@ export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPrefer
   ]
 
   for (const plist of paths) {
-    if (!existsSync(plist)) continue
+    if (!(yield* fs.existsSafe(plist))) continue
     const result = yield* Effect.promise(() =>
       Process.run(["plutil", "-convert", "json", "-o", "-", plist], { nothrow: true }),
     )
