@@ -16,7 +16,7 @@ import type { Hooks } from "@opencode-ai/plugin"
 import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
-import { Array as Arr, Effect, Option, Schema } from "effect"
+import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Schema } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -282,18 +282,18 @@ export const ProvidersListCommand = effectCmd({
 
     yield* Prompt.outro(`${results.length} credentials`)
 
-    const activeEnvVars: Array<{ provider: string; envVar: string }> = []
-
-    for (const [providerID, provider] of Object.entries(database)) {
-      for (const envVar of provider.env) {
-        if (process.env[envVar]) {
-          activeEnvVars.push({
-            provider: provider.name || providerID,
-            envVar,
-          })
-        }
-      }
-    }
+    const candidates = Object.entries(database).flatMap(([providerID, provider]) =>
+      provider.env.map((envVar) => ({ provider: provider.name || providerID, envVar })),
+    )
+    // Read the live process environment. fromEnv treats an empty value as not set.
+    const env = yield* Effect.sync(() => ConfigProvider.fromEnv())
+    const activeEnvVars = Arr.getSomes(
+      yield* Effect.forEach(candidates, (candidate) =>
+        EffectConfig.option(EffectConfig.String(candidate.envVar))
+          .parse(env)
+          .pipe(Effect.orDie, Effect.map(Option.map(() => candidate))),
+      ),
+    )
 
     if (activeEnvVars.length > 0) {
       UI.empty()
