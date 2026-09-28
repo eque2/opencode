@@ -23,7 +23,10 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
   using server = Bun.serve({
     port: 0,
     async fetch(request) {
-      requests.push({ key: request.headers.get("DD-API-KEY"), body: JSON.parse(new TextDecoder().decode(Bun.gunzipSync(await request.arrayBuffer()))) })
+      requests.push({
+        key: request.headers.get("DD-API-KEY"),
+        body: JSON.parse(new TextDecoder().decode(Bun.gunzipSync(await request.arrayBuffer()))),
+      })
       return new Response(null, { status: 202 })
     },
   })

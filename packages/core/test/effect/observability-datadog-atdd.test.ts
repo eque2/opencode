@@ -2,7 +2,18 @@
 // Each leaf maps to exactly one AC. Remove `test.skip` (and any `@ts-expect-error`) when its AC lands.
 import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Cause, ConfigProvider, Duration, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
+import {
+  Cause,
+  ConfigProvider,
+  Duration,
+  Effect,
+  Layer,
+  Logger,
+  ManagedRuntime,
+  Option,
+  References,
+  Schema,
+} from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
@@ -119,8 +130,7 @@ test("AC-3 withPolicy content full ships content only inside its scope and keeps
   const withPolicy: (patch: {
     content?: "omit" | "hash" | "full"
     categories?: string
-  }) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> =
-    Datadog.withPolicy
+  }) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> = Datadog.withPolicy
   await ship(
     config,
     Effect.gen(function* () {
@@ -179,7 +189,11 @@ test("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seco
   const target = intake([{ status: 429, headers: { "Retry-After": "2" } }])
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
+    }),
   )
   // The periodic flush retries; the final flush at scope close makes one attempt only.
   await ship(
@@ -363,7 +377,11 @@ async function retryGap(retryAfter: (now: number) => string, before: Duration.In
   const target = intake([{ status: 429, headers: { "Retry-After": retryAfter(1_000) } }])
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
+    }),
   )
   return await Effect.gen(function* () {
     const logger = yield* Datadog.logger(config)
@@ -381,7 +399,7 @@ async function retryGap(retryAfter: (now: number) => string, before: Duration.In
     yield* TestClock.adjust(after)
     yield* Effect.promise(() => until(() => target.requests.length >= 2, 3_000))
     return [early, target.requests.length]
-  }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
 }
 
 test("AC-5b an HTTP-date Retry-After is honoured", async () => {
@@ -421,7 +439,11 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
   const target = intake(Array.from({ length: 4 }, () => ({ status: 503 })))
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
+    }),
   )
   const warned = warnings()
   const settle = () => Effect.promise(() => Bun.sleep(100))
@@ -434,7 +456,12 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
       )
     yield* log("first")
     // One attempt at 1 second, then retries after 0.5, 1 and 2 seconds of backoff.
-    for (const [wait, count] of [["1 second", 1], ["500 millis", 2], ["1 second", 3], ["2 seconds", 4]] as const) {
+    for (const [wait, count] of [
+      ["1 second", 1],
+      ["500 millis", 2],
+      ["1 second", 3],
+      ["2 seconds", 4],
+    ] as const) {
       yield* TestClock.adjust(wait)
       yield* Effect.promise(() => until(() => target.requests.length >= count))
       yield* settle()
@@ -448,7 +475,7 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
     yield* log("third")
     yield* TestClock.adjust("1 second")
     yield* Effect.promise(() => until(() => target.requests.length >= 5))
-  }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
   expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
   expect(warned.messages).toHaveLength(1)
   expect(JSON.stringify(target.requests.map((request) => request.body))).not.toContain("Datadog sink disabled")
@@ -458,7 +485,11 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does n
   const target = intake([{ status: 401 }, { status: 413 }, { status: 401 }])
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
+    }),
   )
   const warned = warnings()
   await Effect.gen(function* () {
@@ -490,13 +521,21 @@ test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first",
   const target = intake()
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
   )
   await ship(
     config,
-    Effect.forEach(Array.from({ length: 10_005 }, (_, index) => index), (index) => Effect.logInfo(`record ${index}`), {
-      discard: true,
-    }).pipe(Effect.annotateLogs({ category: "llm.request" })),
+    Effect.forEach(
+      Array.from({ length: 10_005 }, (_, index) => index),
+      (index) => Effect.logInfo(`record ${index}`),
+      {
+        discard: true,
+      },
+    ).pipe(Effect.annotateLogs({ category: "llm.request" })),
   )
   const messages = target.requests.flatMap((request) => request.body.map((entry) => entry.message))
   expect(messages).toHaveLength(10_000)
@@ -525,7 +564,9 @@ test("AC-8b disposing an Observability.layer runtime flushes the Datadog buffer"
     { DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" },
     async () => {
       const runtime = ManagedRuntime.make(Observability.layer)
-      await runtime.runPromise(Effect.logInfo("observability last words").pipe(Effect.annotateLogs({ category: "cli.exit" })))
+      await runtime.runPromise(
+        Effect.logInfo("observability last words").pipe(Effect.annotateLogs({ category: "cli.exit" })),
+      )
       await runtime.dispose()
     },
   )
@@ -539,9 +580,15 @@ test("AC-8b disposal against a 503 or a 429 intake makes one attempt and finishe
     const target = intake([reply, reply, reply, reply])
     using _ = target.server
     const config = required(
-      await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }),
+      await settings({
+        DD_API_KEY: "key",
+        OPENCODE_DATADOG_LOGS_URL: target.url,
+        OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+      }),
     )
-    const runtime = ManagedRuntime.make(Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)))
+    const runtime = ManagedRuntime.make(
+      Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)),
+    )
     await runtime.runPromise(Effect.logInfo("failing intake").pipe(Effect.annotateLogs({ category: "cli.exit" })))
     const start = Date.now()
     await runtime.dispose()
@@ -555,7 +602,11 @@ test("AC-8b disposal while the breaker is open sends nothing", async () => {
   const target = intake([{ status: 401 }])
   using _ = target.server
   const config = required(
-    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
+    }),
   )
   const runtime = ManagedRuntime.make(Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)))
   const log = (message: string) =>
@@ -609,8 +660,7 @@ test("AC-3b a policy cannot re-include question or pty unless the env var does",
 })
 
 test("AC-4b the global minimum is the lowest active sink level", async () => {
-  const datadog = async (level: string) =>
-    settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: level })
+  const datadog = async (level: string) => settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: level })
   // With Datadog off, the global minimum equals the file level exactly.
   for (const level of ["Debug", "Info", "Warn", "Error"] as const) {
     expect(Observability.minimumLevel(level, Option.none())).toBe(level)
@@ -647,7 +697,7 @@ test("AC-4b the stderr and OTLP loggers filter to the file level", async () => {
     },
   })
   const stderr: Array<string> = []
-  const write = process.stderr.write
+  const write = process.stderr.write.bind(process.stderr)
   process.stderr.write = (chunk: string | Uint8Array) => {
     stderr.push(String(chunk))
     return true
@@ -812,13 +862,14 @@ test("AC-1e level is case-insensitive, flushInterval takes a duration string, an
 test("AC-1e a bad value that turns the sink off emits one Warn to the other sinks, not the console", async () => {
   const stderr: Array<string> = []
   const console_: Array<string> = []
-  const write = process.stderr.write
+  const write = process.stderr.write.bind(process.stderr)
   const methods = { log: console.log, warn: console.warn, error: console.error }
   process.stderr.write = (chunk: string | Uint8Array) => {
     stderr.push(String(chunk))
     return true
   }
-  for (const name of ["log", "warn", "error"] as const) console[name] = (...args: Array<unknown>) => console_.push(args.join(" "))
+  for (const name of ["log", "warn", "error"] as const)
+    console[name] = (...args: Array<unknown>) => console_.push(args.join(" "))
   try {
     await withEnv({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: "Loud", OPENCODE_PRINT_LOGS: "1" }, async () => {
       const runtime = ManagedRuntime.make(Observability.layer)
@@ -829,7 +880,10 @@ test("AC-1e a bad value that turns the sink off emits one Warn to the other sink
     process.stderr.write = write
     Object.assign(console, methods)
   }
-  const lines = stderr.join("").split("\n").filter((line) => line.includes("Datadog sink disabled by a bad setting"))
+  const lines = stderr
+    .join("")
+    .split("\n")
+    .filter((line) => line.includes("Datadog sink disabled by a bad setting"))
   expect(lines).toHaveLength(1)
   expect(lines[0]).toContain("level=WARN")
   expect(console_.filter((line) => line.includes("Datadog"))).toEqual([])
