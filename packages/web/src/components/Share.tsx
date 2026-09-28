@@ -278,48 +278,36 @@ export default function Share(props: {
   })
 
   const data = createMemo(() => {
-    const result = {
-      rootDir: undefined as string | undefined,
-      created: undefined as number | undefined,
-      completed: undefined as number | undefined,
-      messages: [] as MessageWithParts[],
-      models: {} as Record<string, string[]>,
-      cost: 0,
+    const info = Option.fromNullishOr(store.info)
+    const msgs = Option.isSome(info) ? messages() : []
+    const assistants = Arr.flatMap(msgs, (msg) => (msg.role === "assistant" ? [msg] : []))
+    const sum = (read: (msg: (typeof assistants)[number]) => number) =>
+      Arr.reduce(assistants, 0, (total, msg) => total + read(msg))
+
+    return {
+      rootDir: Option.map(
+        Arr.findLast(assistants, (msg) => Boolean(msg.path.root)),
+        (msg) => msg.path.root,
+      ),
+      created: Option.map(info, (value) => value.time.created),
+      completed: Option.map(
+        Arr.findLast(assistants, (msg) => Boolean(msg.time.completed)),
+        (msg) => msg.time.completed,
+      ),
+      messages: msgs,
+      models: Object.fromEntries(
+        Arr.map(assistants, (msg): [string, string[]] => [
+          `${msg.providerID} ${msg.modelID}`,
+          [msg.providerID, msg.modelID],
+        ]),
+      ),
+      cost: sum((msg) => msg.cost),
       tokens: {
-        input: 0,
-        output: 0,
-        reasoning: 0,
+        input: sum((msg) => msg.tokens.input),
+        output: sum((msg) => msg.tokens.output),
+        reasoning: sum((msg) => msg.tokens.reasoning),
       },
     }
-
-    if (!store.info) return result
-
-    result.created = store.info.time.created
-
-    const msgs = messages()
-    for (let i = 0; i < msgs.length; i++) {
-      const msg = msgs[i]
-
-      result.messages.push(msg)
-
-      if (msg.role === "assistant") {
-        result.cost += msg.cost
-        result.tokens.input += msg.tokens.input
-        result.tokens.output += msg.tokens.output
-        result.tokens.reasoning += msg.tokens.reasoning
-
-        result.models[`${msg.providerID} ${msg.modelID}`] = [msg.providerID, msg.modelID]
-
-        if (msg.path.root) {
-          result.rootDir = msg.path.root
-        }
-
-        if (msg.time.completed) {
-          result.completed = msg.time.completed
-        }
-      }
-    }
-    return result
   })
 
   return (
@@ -358,9 +346,9 @@ export default function Share(props: {
               </ul>
               <div
                 data-component="header-time"
-                title={formatTimestamp(data().created || 0, props.messages.locale, "full")}
+                title={formatTimestamp(Option.getOrElse(data().created, () => 0), props.messages.locale, "full")}
               >
-                {formatTimestamp(data().created || 0, props.messages.locale, "medium")}
+                {formatTimestamp(Option.getOrElse(data().created, () => 0), props.messages.locale, "medium")}
               </div>
             </div>
           </div>
