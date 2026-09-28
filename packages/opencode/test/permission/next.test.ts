@@ -1,7 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { test, expect } from "bun:test"
 import os from "os"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Layer, Schema } from "effect"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Permission } from "../../src/permission"
@@ -450,7 +450,7 @@ test("evaluate - merges multiple rulesets", () => {
 
 test("disabled - returns empty set when all tools allowed", () => {
   const result = Permission.disabled(["bash", "edit", "read"], [{ permission: "*", pattern: "*", action: "allow" }])
-  expect(result.size).toBe(0)
+  expect(HashSet.size(result)).toBe(0)
 })
 
 test("disabled - disables tool when denied", () => {
@@ -461,9 +461,9 @@ test("disabled - disables tool when denied", () => {
       { permission: "bash", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(false)
-  expect(result.has("read")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(false)
+  expect(HashSet.has(result, "read")).toBe(false)
 })
 
 test("disabled - disables edit/write/apply_patch when edit denied", () => {
@@ -474,10 +474,10 @@ test("disabled - disables edit/write/apply_patch when edit denied", () => {
       { permission: "edit", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("write")).toBe(true)
-  expect(result.has("apply_patch")).toBe(true)
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "write")).toBe(true)
+  expect(HashSet.has(result, "apply_patch")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when partially denied", () => {
@@ -488,12 +488,12 @@ test("disabled - does not disable when partially denied", () => {
       { permission: "bash", pattern: "rm *", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when action is ask", () => {
   const result = Permission.disabled(["bash", "edit"], [{ permission: "*", pattern: "*", action: "ask" }])
-  expect(result.size).toBe(0)
+  expect(HashSet.size(result)).toBe(0)
 })
 
 test("disabled - does not disable when specific allow after wildcard deny", () => {
@@ -504,7 +504,7 @@ test("disabled - does not disable when specific allow after wildcard deny", () =
       { permission: "bash", pattern: "echo *", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - does not disable when wildcard allow after deny", () => {
@@ -515,7 +515,7 @@ test("disabled - does not disable when wildcard allow after deny", () => {
       { permission: "bash", pattern: "*", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
+  expect(HashSet.has(result, "bash")).toBe(false)
 })
 
 test("disabled - disables multiple tools", () => {
@@ -527,16 +527,16 @@ test("disabled - disables multiple tools", () => {
       { permission: "webfetch", pattern: "*", action: "deny" },
     ],
   )
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("webfetch")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "webfetch")).toBe(true)
 })
 
 test("disabled - wildcard permission denies all tools", () => {
   const result = Permission.disabled(["bash", "edit", "read"], [{ permission: "*", pattern: "*", action: "deny" }])
-  expect(result.has("bash")).toBe(true)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("read")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(true)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "read")).toBe(true)
 })
 
 test("disabled - specific allow overrides wildcard deny", () => {
@@ -547,9 +547,9 @@ test("disabled - specific allow overrides wildcard deny", () => {
       { permission: "bash", pattern: "*", action: "allow" },
     ],
   )
-  expect(result.has("bash")).toBe(false)
-  expect(result.has("edit")).toBe(true)
-  expect(result.has("read")).toBe(true)
+  expect(HashSet.has(result, "bash")).toBe(false)
+  expect(HashSet.has(result, "edit")).toBe(true)
+  expect(HashSet.has(result, "read")).toBe(true)
 })
 
 // ask tests
