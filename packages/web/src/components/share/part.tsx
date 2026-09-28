@@ -333,12 +333,14 @@ type ToolProps = {
   isLastPart?: boolean
 }
 
-interface Todo {
-  id: string
-  content: string
-  status: "pending" | "in_progress" | "completed"
-  priority: "low" | "medium" | "high"
-}
+// Mirrors SessionTodo.Info in @opencode-ai/schema: the status and priority
+// fields are plain strings there, so a "cancelled" status still decodes.
+const Todo = Schema.Struct({
+  content: Schema.String,
+  status: Schema.String,
+  priority: Schema.String,
+}).annotate({ identifier: "Todo" })
+const decodeTodos = Schema.decodeUnknownOption(Schema.Array(Todo))
 
 function stripWorkingDirectory(filePath?: string, workingDir?: string) {
   if (filePath === undefined || workingDir === undefined) return filePath
@@ -419,16 +421,20 @@ function formatErrorString(error: string, label: string): JSX.Element {
 
 export function TodoWriteTool(props: ToolProps) {
   const messages = useShareMessages()
-  const priority: Record<Todo["status"], number> = {
+  const priority: Partial<Record<string, number>> = {
     in_progress: 0,
     pending: 1,
     completed: 2,
   }
+  const rank = (status: string) => priority[status] ?? Number.NaN
   const todos = createMemo(() =>
-    ((props.state.input?.todos ?? []) as Todo[]).slice().sort((a, b) => priority[a.status] - priority[b.status]),
+    decodeTodos(props.state.input?.todos ?? []).pipe(
+      Option.map((items) => items.slice().sort((a, b) => rank(a.status) - rank(b.status))),
+      Option.getOrElse(() => []),
+    ),
   )
-  const starting = () => todos().every((t: Todo) => t.status === "pending")
-  const finished = () => todos().every((t: Todo) => t.status === "completed")
+  const starting = () => todos().every((t) => t.status === "pending")
+  const finished = () => todos().every((t) => t.status === "completed")
 
   return (
     <>
