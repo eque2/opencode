@@ -219,10 +219,14 @@ const layer = Layer.effect(
           HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers ?? {})),
         )
         .pipe(
-          Effect.catch((error) => Effect.die(new Error(`failed to fetch remote config from ${url}: ${String(error)}`))),
+          Effect.catch((error) =>
+            Effect.die(new Error(`failed to fetch remote config from ${url}: ${error.message}`, { cause: error })),
+          ),
         )
       const body = yield* response.text.pipe(
-        Effect.catch((error) => Effect.die(new Error(`failed to read remote config from ${url}: ${String(error)}`))),
+        Effect.catch((error) =>
+          Effect.die(new Error(`failed to read remote config from ${url}: ${error.message}`, { cause: error })),
+        ),
       )
       // An auth proxy can answer with an HTML login page at HTTP 200 (passes filterStatusOk); treat it as a re-auth error, not a decode failure.
       const contentType = (response.headers["content-type"] ?? "").toLowerCase()
@@ -230,7 +234,9 @@ const layer = Layer.effect(
         return yield* Effect.die(new RemoteAuthError({ url: loginOrigin, remote: url }))
       }
       return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
-        Effect.catch((error) => Effect.die(new Error(`failed to decode remote config from ${url}: ${String(error)}`))),
+        Effect.catch((error) =>
+          Effect.die(new Error(`failed to decode remote config from ${url}: ${error.message}`, { cause: error })),
+        ),
       )
     })
 
@@ -534,7 +540,7 @@ const layer = Layer.effect(
             Effect.withSpan("Config.loadActiveOrgConfig"),
             Effect.catch((err) =>
               Effect.logDebug("failed to fetch remote account config", {
-                error: err instanceof Error ? err.message : String(err),
+                error: err.message,
               }),
             ),
           )
