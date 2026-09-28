@@ -1,6 +1,19 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Clock, Context, Effect, FiberMap, Iterable, Layer, Option, Predicate, Schema, Stream } from "effect"
+import {
+  Clock,
+  Context,
+  Effect,
+  FiberMap,
+  Iterable,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
@@ -159,14 +172,16 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const fs = yield* FSUtil.Service
     const { db } = yield* Database.Service
-    const connections = new Map<WorkspaceV2.ID, ConnectionStatus>()
+    const connections = MutableHashMap.empty<WorkspaceV2.ID, ConnectionStatus>()
     const syncFibers = yield* FiberMap.make<WorkspaceV2.ID, void, SyncLoopError>()
 
+    const isErrored = (id: WorkspaceV2.ID) =>
+      Option.exists(MutableHashMap.get(connections, id), (connection) => connection.status === "error")
+
     const setStatus = (id: WorkspaceV2.ID, status: ConnectionStatus["status"]) => {
-      const prev = connections.get(id)
-      if (prev?.status === status) return
+      if (Option.exists(MutableHashMap.get(connections, id), (prev) => prev.status === status)) return
       const next = { workspaceID: id, status }
-      connections.set(id, next)
+      MutableHashMap.set(connections, id, next)
 
       GlobalBus.emit("event", {
         directory: "global",
@@ -462,7 +477,7 @@ const layer = Layer.effect(
       }
 
       const exists = yield* FiberMap.has(syncFibers, space.id)
-      if (exists && connections.get(space.id)?.status !== "error") return
+      if (exists && !isErrored(space.id)) return
 
       setStatus(space.id, "disconnected")
 
@@ -487,7 +502,7 @@ const layer = Layer.effect(
 
     const stopSync = Effect.fn("Workspace.stopSync")(function* (id: WorkspaceV2.ID) {
       yield* FiberMap.remove(syncFibers, id)
-      connections.delete(id)
+      MutableHashMap.remove(connections, id)
     })
 
     const create = Effect.fn("Workspace.create")(function* (input: CreateInput) {
@@ -734,7 +749,7 @@ const layer = Layer.effect(
     })
 
     const syncList = Effect.fn("Workspace.syncList")(function* (project: Project.Info) {
-      const names = new Set((yield* list(project)).map((workspace) => workspace.name))
+      const names = MutableHashSet.fromIterable((yield* list(project)).map((workspace) => workspace.name))
       const discovered = yield* Effect.forEach(
         registeredAdapters(project.id),
         ([type, adapter]) =>
@@ -750,8 +765,8 @@ const layer = Layer.effect(
         discovered,
         (item) =>
           Effect.gen(function* () {
-            if (names.has(item.name)) return
-            names.add(item.name)
+            if (MutableHashSet.has(names, item.name)) return
+            MutableHashSet.add(names, item.name)
 
             const info: Info = {
               id: WorkspaceV2.ID.ascending(),
@@ -797,11 +812,12 @@ const layer = Layer.effect(
         .where(eq(SessionTable.workspace_id, id))
         .all()
         .pipe(Effect.orDie)
-      const sessionIDs = new Set(sessions.map((sessionInfo) => sessionInfo.id))
+      const sessionIDs = MutableHashSet.fromIterable(sessions.map((sessionInfo) => sessionInfo.id))
       yield* Effect.forEach(
-        sessions.filter((sessionInfo) => !sessionInfo.parentID || !sessionIDs.has(sessionInfo.parentID)),
-        (sessionInfo) =>
-          session.remove(sessionInfo.id).pipe(Effect.catchTag("NotFoundError", () => Effect.void)),
+        sessions.filter(
+          (sessionInfo) => !sessionInfo.parentID || !MutableHashSet.has(sessionIDs, sessionInfo.parentID),
+        ),
+        (sessionInfo) => session.remove(sessionInfo.id).pipe(Effect.catchTag("NotFoundError", () => Effect.void)),
         { discard: true },
       )
 
@@ -823,12 +839,12 @@ const layer = Layer.effect(
     })
 
     const status = Effect.fn("Workspace.status")(function* () {
-      return [...connections.values()]
+      return Array.from(MutableHashMap.values(connections))
     })
 
     const isSyncing = Effect.fn("Workspace.isSyncing")(function* (workspaceID: WorkspaceV2.ID) {
       const exists = yield* FiberMap.has(syncFibers, workspaceID)
-      return exists && connections.get(workspaceID)?.status !== "error"
+      return exists && !isErrored(workspaceID)
     })
 
     const waitForSync = Effect.fn("Workspace.waitForSync")(function* (
