@@ -14,6 +14,7 @@ import { applyEdits, modify } from "jsonc-parser"
 import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
+import type { DeepMutable } from "@opencode-ai/core/schema"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
@@ -22,6 +23,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { containsPath, type InstanceContext } from "../project/instance-context"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { RemoteAuthError } from "@opencode-ai/core/v1/config/error"
+import { ConfigLSPV1 } from "@opencode-ai/core/v1/config/lsp"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { ConfigAgent } from "./agent"
@@ -120,6 +122,45 @@ type Info = ConfigV1.Info & {
 
 type Patch = typeof ConfigV1.Info.Type & Pick<Info, "plugin_origins">
 
+// The decoded config is read-only, and Info is its mutable form. Only skills and the lsp initialization JSON
+// decode to read-only arrays, so copy those; spread the rest. Keys stay absent when they were absent, because
+// mergeDeep lets an explicit undefined replace the value that an earlier config set.
+function toInfo(config: typeof ConfigV1.Info.Type): Info {
+  const { skills, lsp, ...rest } = config
+  return {
+    ...rest,
+    ...(skills
+      ? {
+          skills: {
+            ...(skills.paths ? { paths: [...skills.paths] } : {}),
+            ...(skills.urls ? { urls: [...skills.urls] } : {}),
+          },
+        }
+      : {}),
+    ...(typeof lsp === "object"
+      ? { lsp: Object.fromEntries(Object.entries(lsp).map(([id, entry]) => [id, lspEntry(entry)])) }
+      : {}),
+    ...(typeof lsp === "boolean" ? { lsp } : {}),
+  }
+}
+
+function lspEntry(entry: typeof ConfigLSPV1.Entry.Type) {
+  if (!("command" in entry)) return entry
+  const { initialization, ...fields } = entry
+  return { ...fields, ...(initialization ? { initialization: mutableJsonObject(initialization) } : {}) }
+}
+
+function mutableJsonObject(value: Schema.JsonObject): DeepMutable<Schema.JsonObject> {
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mutableJson(item)]))
+}
+
+function mutableJson(value: Schema.Json): DeepMutable<Schema.Json> {
+  if (isRecord(value)) return mutableJsonObject(value)
+  // A JSON array is the one object that is not a record; null is JSON data, so it passes through as it is.
+  if (typeof value === "object" && value) return value.map(mutableJson)
+  return value
+}
+
 type State = {
   config: Info
   directories: string[]
@@ -204,7 +245,7 @@ const layer = Layer.effect(
           action: diagnostic.message,
         }),
       )
-      return yield* ConfigParse.decodeSchema(ConfigV1.Info, result.value, source)
+      return toInfo(yield* ConfigParse.decodeSchema(ConfigV1.Info, result.value, source))
     })
 
     const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(

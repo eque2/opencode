@@ -2,7 +2,6 @@ export * as ConfigParse from "./parse"
 
 import { type ParseError as JsoncParseError, parse as parseJsoncImpl, printParseErrorCode } from "jsonc-parser"
 import { Cause, Exit, Schema as EffectSchema, SchemaIssue } from "effect"
-import type { DeepMutable } from "@opencode-ai/core/schema"
 import { InvalidError, JsonError } from "@opencode-ai/core/v1/config/error"
 
 /** Parses JSONC text. The Exit is an Effect, so Effect code can `yield*` it. */
@@ -38,12 +37,12 @@ export function decodeSchema<S extends EffectSchema.Decoder<unknown>>(
   schema: S,
   data: unknown,
   source: string,
-): Exit.Exit<DeepMutable<S["Type"]>, InstanceType<typeof InvalidError>> {
+): Exit.Exit<S["Type"], InstanceType<typeof InvalidError>> {
   const decoded = EffectSchema.decodeUnknownExit(schema)(data, {
     errors: "all",
     onExcessProperty: "ignore",
   })
-  if (Exit.isSuccess(decoded)) return Exit.succeed(decoded.value as DeepMutable<S["Type"]>)
+  if (Exit.isSuccess(decoded)) return Exit.succeed(decoded.value)
   const error = Cause.squash(decoded.cause)
 
   return Exit.fail(
