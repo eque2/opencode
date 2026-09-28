@@ -6,7 +6,6 @@ import { Effect } from "effect"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ChildProcess } from "effect/unstable/process"
-import { Filesystem } from "@/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
 const root = path.join(import.meta.dir, "../..")
@@ -56,8 +55,8 @@ async function plugin(dir: string, kinds: Array<"server" | "tui">) {
   return p
 }
 
-async function read(file: string) {
-  return Filesystem.readJson<{ plugin?: unknown[] }>(file)
+async function read(file: string): Promise<{ plugin?: unknown[] }> {
+  return Bun.file(file).json()
 }
 
 function mods(prefix: string, n: number) {
@@ -144,6 +143,6 @@ describe("plugin.install.concurrent", () => {
 
     const json = await read(cfg)
     expectPlugins(json.plugin, ["seed@1.0.0", ...next])
-    expect(await Filesystem.exists(path.join(tmp.path, ".opencode", "opencode.jsonc"))).toBe(false)
+    expect(await Bun.file(path.join(tmp.path, ".opencode", "opencode.jsonc")).exists()).toBe(false)
   }, 25_000)
 })

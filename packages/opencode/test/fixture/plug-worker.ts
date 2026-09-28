@@ -1,7 +1,7 @@
+import fs from "fs/promises"
 import path from "path"
 
 import { createPlugTask, type PlugCtx, type PlugDeps } from "../../src/cli/cmd/plug"
-import { Filesystem } from "@/util/filesystem"
 import { Option, Schema } from "effect"
 
 const Msg = Schema.Struct({
@@ -53,14 +53,15 @@ function deps(msg: Msg): PlugDeps {
       success() {},
     },
     resolve: async () => msg.target,
-    readText: (file) => Filesystem.readText(file),
+    readText: (file) => fs.readFile(file, "utf-8"),
     write: async (file, text) => {
       if (msg.holdMs && msg.holdMs > 0) {
         await sleep(msg.holdMs)
       }
-      await Filesystem.write(file, text)
+      // Bun.write creates the parent directory when it is missing.
+      await Bun.write(file, text)
     },
-    exists: (file) => Filesystem.exists(file),
+    exists: (file) => Bun.file(file).exists(),
     files: (dir, name) => [path.join(dir, `${name}.jsonc`), path.join(dir, `${name}.json`)],
     global: msg.globalDir ?? path.join(msg.dir, ".global"),
   }

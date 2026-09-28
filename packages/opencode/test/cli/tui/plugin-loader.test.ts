@@ -10,7 +10,6 @@ import { createTuiPluginApi } from "../../fixture/tui-plugin"
 import { createTuiResolvedConfig, mockTuiRuntime } from "../../fixture/tui-runtime"
 import { Global } from "@opencode-ai/core/global"
 import { TuiConfig } from "../../../src/config/tui"
-import { Filesystem } from "@/util/filesystem"
 import { PluginLoader } from "../../../src/plugin/loader"
 import { Schema } from "effect"
 
@@ -145,7 +144,7 @@ type Data = {
 }
 
 async function row(file: string): Promise<Row> {
-  return Filesystem.readJson<Row>(file)
+  return Bun.file(file).json()
 }
 
 async function load(): Promise<Data> {
@@ -1338,9 +1337,9 @@ test("updates installed theme when plugin metadata changes", async () => {
     const text = await fs.readFile(tmp.extra.dest, "utf8")
     expect(text).toContain("#222222")
     expect(text).not.toContain("#111111")
-    const list = await Filesystem.readJson<Record<string, { themes?: Record<string, { dest: string }> }>>(
+    const list: Record<string, { themes?: Record<string, { dest: string }> }> = await Bun.file(
       process.env.OPENCODE_PLUGIN_META_FILE,
-    )
+    ).json()
     expect(list["demo.theme-update"]?.themes?.[tmp.extra.themeName]?.dest).toBe(tmp.extra.dest)
   } finally {
     await TuiPluginRuntime.dispose()
