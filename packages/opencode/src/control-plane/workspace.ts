@@ -545,7 +545,7 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
 
       const env = {
-        OPENCODE_AUTH_CONTENT: JSON.stringify(yield* auth.all()),
+        OPENCODE_AUTH_CONTENT: yield* encodeAuthContent(yield* auth.all()).pipe(Effect.orDie),
         OPENCODE_WORKSPACE_ID: config.id,
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
         OTEL_EXPORTER_OTLP_HEADERS: yield* forwardedEnv("OTEL_EXPORTER_OTLP_HEADERS"),
@@ -869,7 +869,7 @@ const layer = Layer.effect(
               )
             : Effect.fail(
                 new SyncTimeoutError({
-                  message: `Timed out waiting for sync fence: ${JSON.stringify(state)}`,
+                  message: `Timed out waiting for sync fence: ${encodeSyncFence(state)}`,
                   state,
                 }),
               ),
@@ -913,6 +913,10 @@ const layer = Layer.effect(
 )
 
 const TIMEOUT = 5000
+
+// Auth.all() returns decoded Auth.Info values, so encoding them cannot fail.
+const encodeAuthContent = Schema.encodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Auth.Info)))
+const encodeSyncFence = Schema.encodeSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)))
 
 // The adapter hands this env to the workspace server it starts, where an
 // unset variable stays undefined. Each read takes a fresh env snapshot.
