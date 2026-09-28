@@ -159,7 +159,9 @@ export function make(input: {
 
   const authenticate = Effect.fn("ACP.authenticate")(function* (params: AuthenticateRequest) {
     if (params.methodId !== AuthMethodID) {
-      return yield* new ACPError.UnknownAuthMethodError({ methodId: params.methodId })
+      return yield* new ACPError.UnknownAuthMethodError({
+        methodId: ACPError.RequestedAuthMethodId.make(params.methodId),
+      })
     }
     return {}
   })
@@ -434,7 +436,9 @@ export function make(input: {
     const current = yield* session.get(params.sessionId)
     const snapshot = yield* configSnapshot(current)
     if (typeof params.value !== "string") {
-      return yield* new ACPError.InvalidConfigOptionError({ configId: params.configId })
+      return yield* new ACPError.InvalidConfigOptionError({
+        configId: ACPError.RequestedConfigId.make(params.configId),
+      })
     }
 
     if (params.configId === "model") {
@@ -485,7 +489,7 @@ export function make(input: {
       }
     }
 
-    return yield* new ACPError.InvalidConfigOptionError({ configId: params.configId })
+    return yield* new ACPError.InvalidConfigOptionError({ configId: ACPError.RequestedConfigId.make(params.configId) })
   })
 
   const setSessionMode = Effect.fn("ACP.setSessionMode")(function* (params: SetSessionModeRequest) {
@@ -1044,7 +1048,7 @@ function parseSelectedModel(snapshot: Directory.Snapshot, modelId: string) {
     return Effect.fail(
       new ACPError.InvalidModelError({
         providerId: selected.model.providerID,
-        modelId,
+        modelId: ACPError.RequestedModelId.make(modelId),
       }),
     )
   }

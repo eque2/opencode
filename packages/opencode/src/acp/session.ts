@@ -114,7 +114,7 @@ const layer = Layer.effect(
     const get = Effect.fn("ACP.Session.get")(function* (sessionId: string) {
       const session = yield* find(sessionId)
       if (Option.isSome(session)) return session.value
-      return yield* new ACPError.SessionNotFoundError({ sessionId })
+      return yield* new ACPError.SessionNotFoundError({ sessionId: ACPError.RequestedSessionId.make(sessionId) })
     })
 
     const update = Effect.fn("ACP.Session.update")(function* (sessionId: string, fn: (session: Info) => Info) {
@@ -128,7 +128,7 @@ const layer = Layer.effect(
         }),
       )
       if (Option.isSome(result)) return result.value
-      return yield* new ACPError.SessionNotFoundError({ sessionId })
+      return yield* new ACPError.SessionNotFoundError({ sessionId: ACPError.RequestedSessionId.make(sessionId) })
     })
 
     const remove = Effect.fn("ACP.Session.remove")(function* (sessionId: string) {
