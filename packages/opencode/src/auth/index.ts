@@ -1,13 +1,21 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "path"
-import { Effect, Layer, Record, Result, Schema, Context } from "effect"
+import { Config, Effect, Layer, Option, Record, Schema, Context } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 
 export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
 
 const file = path.join(Global.Path.data, "auth.json")
+
+// Stored auth data is a JSON object keyed by provider. Each value decodes as Info on its own,
+// so one malformed entry does not hide the others.
+const StoredAuth = Schema.Record(Schema.String, Schema.Json)
+type StoredAuth = typeof StoredAuth.Type
+const decodeStored = Schema.decodeUnknownOption(StoredAuth)
+const decodeStoredJson = Schema.decodeUnknownOption(Schema.fromJsonString(StoredAuth))
 
 const fail = (message: string) => (cause: unknown) => new AuthError({ message, cause })
 
@@ -56,14 +64,19 @@ const layer = Layer.effect(
     const decode = Schema.decodeUnknownOption(Info)
 
     const all = Effect.fn("Auth.all")(function* () {
-      if (process.env.OPENCODE_AUTH_CONTENT) {
-        try {
-          return JSON.parse(process.env.OPENCODE_AUTH_CONTENT)
-        } catch (err) {}
-      }
-
-      const data = (yield* fsys.readJson(file).pipe(Effect.orElseSucceed(() => ({})))) as Record<string, unknown>
-      return Record.filterMap(data, (value) => Result.fromOption(decode(value), () => undefined))
+      // Hosts and tests set OPENCODE_AUTH_CONTENT between reads, so each read takes a fresh env snapshot.
+      const content = yield* readEnvSnapshot(Config.option(Config.String("OPENCODE_AUTH_CONTENT")))
+      const inline = content.pipe(
+        Option.filter((value) => value !== ""),
+        Option.flatMap(decodeStoredJson),
+      )
+      const data: StoredAuth = Option.isSome(inline)
+        ? inline.value
+        : yield* fsys.readJson(file).pipe(
+            Effect.map((value) => Option.getOrElse(decodeStored(value), () => ({}))),
+            Effect.orElseSucceed(() => ({})),
+          )
+      return Record.getSomes(Record.map(data, (value) => decode(value)))
     })
 
     const get = Effect.fn("Auth.get")(function* (providerID: string) {
