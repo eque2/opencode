@@ -74,6 +74,10 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()("Project.
   projectID: ProjectV2.ID,
 }) {}
 
+export class GitInitError extends Schema.TaggedError<GitInitError>()("Project.GitInitError", {
+  message: Schema.String,
+}) {}
+
 // ---------------------------------------------------------------------------
 // Effect service
 // ---------------------------------------------------------------------------
@@ -366,10 +370,16 @@ const layer = Layer.effect(
 
     const initGit = Effect.fn("Project.initGit")(function* (input: { directory: string; project: Info }) {
       if (input.project.vcs === "git") return input.project
-      if (Option.isNone(yield* which("git"))) throw new Error("Git is not installed")
+      // initGit has no error channel, so a failed init stays a defect.
+      if (Option.isNone(yield* which("git")))
+        return yield* Effect.die(new GitInitError({ message: "Git is not installed" }))
       const result = yield* git(["init", "--quiet"], { cwd: input.directory })
       if (result.code !== 0) {
-        throw new Error(result.stderr.trim() || result.text.trim() || "Failed to initialize git repository")
+        return yield* Effect.die(
+          new GitInitError({
+            message: result.stderr.trim() || result.text.trim() || "Failed to initialize git repository",
+          }),
+        )
       }
       const { project } = yield* fromDirectory(input.directory)
       return project
@@ -411,7 +421,8 @@ const layer = Layer.effect(
 
     const addSandbox = Effect.fn("Project.addSandbox")(function* (id: ProjectV2.ID, directory: string) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) throw new Error(`Project not found: ${id}`)
+      // addSandbox and removeSandbox have no error channel, so a missing project stays a defect.
+      if (!row) return yield* Effect.die(new NotFoundError({ projectID: id }))
       const sandbox = AbsolutePath.make(directory)
       const sboxes = [...row.sandboxes]
       if (!sboxes.includes(sandbox)) sboxes.push(sandbox)
@@ -422,13 +433,13 @@ const layer = Layer.effect(
         .returning()
         .get()
         .pipe(Effect.orDie)
-      if (!result) throw new Error(`Project not found: ${id}`)
-      yield* emitUpdated(fromRow(result))
+      if (!result) return yield* Effect.die(new NotFoundError({ projectID: id }))
+      return yield* emitUpdated(fromRow(result))
     })
 
     const removeSandbox = Effect.fn("Project.removeSandbox")(function* (id: ProjectV2.ID, directory: string) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) throw new Error(`Project not found: ${id}`)
+      if (!row) return yield* Effect.die(new NotFoundError({ projectID: id }))
       const sandbox = AbsolutePath.make(directory)
       const sboxes = row.sandboxes.filter((s) => s !== sandbox)
       const result = yield* db
@@ -438,8 +449,8 @@ const layer = Layer.effect(
         .returning()
         .get()
         .pipe(Effect.orDie)
-      if (!result) throw new Error(`Project not found: ${id}`)
-      yield* emitUpdated(fromRow(result))
+      if (!result) return yield* Effect.die(new NotFoundError({ projectID: id }))
+      return yield* emitUpdated(fromRow(result))
     })
 
     return Service.of({
