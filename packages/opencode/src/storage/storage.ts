@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
+import { Clock, Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Git } from "@/git"
 
@@ -127,6 +127,7 @@ const MIGRATIONS: Migration[] = [
           .toSorted()
         if (!id) continue
         projectID = id
+        const now = yield* Clock.currentTimeMillis
 
         yield* fs.writeWithDirs(
           path.join(dir, "project", projectID + ".json"),
@@ -135,8 +136,8 @@ const MIGRATIONS: Migration[] = [
             vcs: "git",
             worktree,
             time: {
-              created: Date.now(),
-              initialized: Date.now(),
+              created: now,
+              initialized: now,
             },
           }),
         )
