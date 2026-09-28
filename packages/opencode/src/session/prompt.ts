@@ -1392,7 +1392,9 @@ const layer = Layer.effect(
 
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
-      const templateCommand = yield* Effect.promise(async () => cmd.template)
+      // Read the template getter once; an MCP prompt template resolves lazily.
+      const source = cmd.template
+      const templateCommand = typeof source === "string" ? source : yield* Effect.promise(() => source)
 
       const placeholders = templateCommand.match(placeholderRegex) ?? []
       let last = 0
@@ -1419,10 +1421,13 @@ const layer = Layer.effect(
       if (shellMatches.length > 0) {
         const cfg = yield* config.get()
         const sh = yield* Shell.preferred(cfg.shell)
-        const results = yield* Effect.promise(() =>
-          Promise.all(
-            shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
-          ),
+        const results = yield* Effect.forEach(
+          shellMatches,
+          ([, cmd]) =>
+            Effect.promise(() => Process.text([cmd], { shell: sh, nothrow: true })).pipe(
+              Effect.map((result) => result.text),
+            ),
+          { concurrency: "unbounded" },
         )
         let index = 0
         template = template.replace(bashRegex, () => results[index++])
@@ -1590,7 +1595,8 @@ export function createStructuredOutputTool(input: {
   return tool({
     description: STRUCTURED_OUTPUT_DESCRIPTION,
     inputSchema: jsonSchema(toolSchema as JSONSchema7),
-    async execute(args) {
+    // The AI SDK accepts a synchronous result and awaits it like a Promise.
+    execute(args) {
       // AI SDK validates args against inputSchema before calling execute()
       input.onSuccess(args)
       return {
