@@ -4,7 +4,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Context, Effect, Layer } from "effect"
+import { Array as Arr, Context, Effect, Layer, MutableHashSet, Predicate, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool } from "ai"
 import type { LLMEvent } from "@opencode-ai/llm"
@@ -14,15 +14,15 @@ import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import type { Agent } from "@/agent/agent"
-import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { Permission } from "@/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { EventV2 } from "@opencode-ai/core/event"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
 import { Auth } from "@/auth"
 import { EffectBridge } from "@/effect/bridge"
+import { errorMessage } from "@/util/error"
+import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
@@ -78,7 +78,6 @@ const live: Layer.Layer<
     const provider = yield* Provider.Service
     const plugin = yield* Plugin.Service
     const perm = yield* Permission.Service
-    const events = yield* EventV2Bridge.Service
     const llmClient = yield* LLMClient.Service
     const flags = yield* RuntimeFlags.Service
 
@@ -117,33 +116,28 @@ const live: Layer.Layer<
       // and results sent back over the WebSocket.
       const bridge = yield* EffectBridge.make()
       if (language instanceof GitLabWorkflowLanguageModel) {
-        const workflowModel = language as GitLabWorkflowLanguageModel & {
-          sessionID?: string
-          sessionPreapprovedTools?: string[]
-          approvalHandler?: (approvalTools: { name: string; args: string }[]) => Promise<{ approved: boolean }>
-        }
+        const workflowModel = language
         workflowModel.sessionID = input.sessionID
         workflowModel.systemPrompt = prepared.system.join("\n")
-        workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
-          const t = prepared.tools[toolName]
-          if (!t || !t.execute) {
-            return { result: "", error: `Unknown tool: ${toolName}` }
-          }
-          try {
-            const result = await t.execute!(JSON.parse(argsJson), {
-              toolCallId: _requestID,
-              messages: input.messages,
-              abortSignal: input.abort,
-            })
-            const output = typeof result === "string" ? result : (result?.output ?? JSON.stringify(result))
-            return {
-              result: output,
-              ...(typeof result === "object" ? { metadata: result?.metadata, title: result?.title } : {}),
-            }
-          } catch (e: any) {
-            return { result: "", error: e.message ?? String(e) }
-          }
-        }
+        const executeWorkflowTool = Effect.fnUntraced(function* (toolName: string, argsJson: string, requestID: string) {
+          const execute = prepared.tools[toolName]?.execute
+          if (!execute) return { result: "", error: `Unknown tool: ${toolName}` }
+          return yield* decodeJson(argsJson).pipe(
+            Effect.flatMap((args) =>
+              settle(() =>
+                execute(args, {
+                  toolCallId: requestID,
+                  messages: input.messages,
+                  abortSignal: input.abort,
+                }),
+              ),
+            ),
+            Effect.flatMap(workflowToolResult),
+            Effect.catch((error) => Effect.succeed({ result: "", error: error.message })),
+          )
+        })
+        workflowModel.toolExecutor = (toolName, argsJson, requestID) =>
+          bridge.promise(executeWorkflowTool(toolName, argsJson, requestID))
 
         const ruleset = Permission.merge(input.agent.permission ?? [], input.permission ?? [])
         workflowModel.sessionPreapprovedTools = Object.keys(prepared.tools).filter((name) => {
@@ -151,57 +145,46 @@ const live: Layer.Layer<
           return !match || match.action !== "ask"
         })
 
-        const approvedToolsForSession = new Set<string>()
-        workflowModel.approvalHandler = bridge.bind(async (approvalTools) => {
-          const uniqueNames = [...new Set(approvalTools.map((t: { name: string }) => t.name))] as string[]
+        const approvedToolsForSession = MutableHashSet.empty<string>()
+        const approveWorkflowTools = Effect.fnUntraced(function* (
+          approvalTools: ReadonlyArray<{ name: string; args: string }>,
+        ) {
+          const uniqueNames = Arr.dedupe(approvalTools.map((tool) => tool.name))
           // Auto-approve tools that were already approved in this session
           // (prevents infinite approval loops for server-side MCP tools)
-          if (uniqueNames.every((name) => approvedToolsForSession.has(name))) {
+          if (uniqueNames.every((name) => MutableHashSet.has(approvedToolsForSession, name))) {
             return { approved: true }
           }
 
-          const id = PermissionV1.ID.ascending()
-          let unsub: EventV2.Unsubscribe | undefined
-          try {
-            unsub = await bridge.promise(
-              events.listen((event) => {
-                if (event.type !== Permission.Event.Replied.type) return Effect.void
-                const data = event.data as EventV2.Data<typeof Permission.Event.Replied>
-                if (data.requestID !== id) return Effect.void
-                void data.reply
-                return Effect.void
+          const uniquePatterns = Arr.dedupe(
+            approvalTools.map((tool) =>
+              Option.match(workflowToolTitle(tool.args), {
+                onNone: () => tool.name,
+                onSome: (title) => `${tool.name}: ${title}`,
               }),
-            )
-            const toolPatterns = approvalTools.map((t: { name: string; args: string }) => {
-              try {
-                const parsed = JSON.parse(t.args) as Record<string, unknown>
-                const title = (parsed?.title ?? parsed?.name ?? "") as string
-                return title ? `${t.name}: ${title}` : t.name
-              } catch {
-                return t.name
-              }
+            ),
+          )
+          return yield* perm
+            .ask({
+              id: PermissionV1.ID.ascending(),
+              sessionID: SessionID.make(input.sessionID),
+              permission: "workflow_tool_approval",
+              patterns: uniquePatterns,
+              metadata: { tools: approvalTools },
+              always: uniquePatterns,
+              ruleset: [],
             })
-            const uniquePatterns = [...new Set(toolPatterns)] as string[]
-            await bridge.promise(
-              perm.ask({
-                id,
-                sessionID: SessionID.make(input.sessionID),
-                permission: "workflow_tool_approval",
-                patterns: uniquePatterns,
-                metadata: { tools: approvalTools },
-                always: uniquePatterns,
-                ruleset: [],
+            .pipe(
+              Effect.map(() => {
+                uniqueNames.forEach((name) => MutableHashSet.add(approvedToolsForSession, name))
+                workflowModel.sessionPreapprovedTools = [...workflowModel.sessionPreapprovedTools, ...uniqueNames]
+                return { approved: true }
               }),
+              // A rejected, failed, or interrupted approval denies the workflow tool call.
+              Effect.catchCause(() => Effect.succeed({ approved: false })),
             )
-            for (const name of uniqueNames) approvedToolsForSession.add(name)
-            workflowModel.sessionPreapprovedTools = [...(workflowModel.sessionPreapprovedTools ?? []), ...uniqueNames]
-            return { approved: true }
-          } catch {
-            return { approved: false }
-          } finally {
-            if (unsub) await bridge.promise(unsub)
-          }
         })
+        workflowModel.approvalHandler = (approvalTools) => bridge.promise(approveWorkflowTools(approvalTools))
       }
 
       const tracer = cfg.experimental?.openTelemetry
@@ -294,22 +277,16 @@ const live: Layer.Layer<
           },
           // Copilot returns the authoritative billed amount only in provider-specific response fields.
           includeRawChunks: input.model.providerID.includes("github-copilot"),
-          async experimental_repairToolCall(failed) {
+          experimental_repairToolCall: (failed) => {
             const lower = failed.toolCall.toolName.toLowerCase()
             if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
-              return {
-                ...failed.toolCall,
-                toolName: lower,
-              }
+              return bridge.promise(Effect.succeed({ ...failed.toolCall, toolName: lower }))
             }
-            return {
-              ...failed.toolCall,
-              input: JSON.stringify({
-                tool: failed.toolCall.toolName,
-                error: failed.error.message,
-              }),
-              toolName: "invalid",
-            }
+            return bridge.promise(
+              encodeInvalidToolInput({ tool: failed.toolCall.toolName, error: failed.error.message }).pipe(
+                Effect.map((input) => ({ ...failed.toolCall, input, toolName: "invalid" })),
+              ),
+            )
           },
           temperature: prepared.params.temperature,
           topP: prepared.params.topP,
@@ -328,17 +305,20 @@ const live: Layer.Layer<
             middleware: [
               {
                 specificationVersion: "v3" as const,
-                async transformParams(args) {
-                  if (args.type === "stream") {
-                    // @ts-expect-error
-                    args.params.prompt = ProviderTransform.message(
-                      args.params.prompt,
-                      input.model,
-                      prepared.messageTransformOptions,
-                    )
-                  }
-                  return args.params
-                },
+                transformParams: (args) =>
+                  bridge.promise(
+                    Effect.sync(() => {
+                      if (args.type === "stream") {
+                        // @ts-expect-error
+                        args.params.prompt = ProviderTransform.message(
+                          args.params.prompt,
+                          input.model,
+                          prepared.messageTransformOptions,
+                        )
+                      }
+                      return args.params
+                    }),
+                  ),
               },
             ],
           }),
@@ -372,7 +352,7 @@ const live: Layer.Layer<
             // already returns one; AI SDK streams are converted here.
             const state = LLMAISDK.adapterState()
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
-              e instanceof Error ? e : new Error(String(e)),
+              e instanceof Error ? e : new StreamFailure({ message: String(e) }),
             ).pipe(
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
@@ -386,6 +366,61 @@ const live: Layer.Layer<
 )
 
 export const hasToolCalls = LLMRequestPrep.hasToolCalls
+
+/** The AI SDK stream yielded a non-Error value; keep its text as the failure message. */
+export class StreamFailure extends Schema.TaggedError<StreamFailure>()("LLM.StreamFailure", {
+  message: Schema.String,
+}) {}
+
+/** A GitLab workflow tool call failed before it produced a result. */
+class WorkflowToolFailure extends Schema.TaggedError<WorkflowToolFailure>()("LLM.WorkflowToolFailure", {
+  message: Schema.String,
+}) {}
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+const encodeInvalidToolInput = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ tool: Schema.String, error: Schema.String })),
+)
+
+// AI SDK tool handlers may return a value or a PromiseLike; a synchronous throw or a rejection is a tool failure.
+function settle(run: () => unknown) {
+  return Effect.try({ try: run, catch: (cause) => new WorkflowToolFailure({ message: errorMessage(cause) }) }).pipe(
+    Effect.flatMap((output) =>
+      Predicate.isPromiseLike(output)
+        ? Effect.tryPromise({
+            try: () => output,
+            catch: (cause) => new WorkflowToolFailure({ message: errorMessage(cause) }),
+          })
+        : Effect.succeed(output),
+    ),
+  )
+}
+
+// GitLab workflow tools report `output`, `title`, and `metadata`; other results are sent as JSON text.
+function workflowToolResult(result: unknown) {
+  if (typeof result === "string") return Effect.succeed({ result })
+  if (!isRecord(result)) return encodeJson(result).pipe(Effect.map((output) => ({ result: output })))
+  const output = typeof result.output === "string" ? Effect.succeed(result.output) : encodeJson(result)
+  return output.pipe(
+    Effect.map((text) => ({
+      result: text,
+      ...(isRecord(result.metadata) ? { metadata: result.metadata } : {}),
+      ...(typeof result.title === "string" ? { title: result.title } : {}),
+    })),
+  )
+}
+
+// The approval prompt names a workflow tool call by the `title` or `name` in its JSON arguments.
+function workflowToolTitle(args: string) {
+  return decodeJsonOption(args).pipe(
+    Option.filter(isRecord),
+    Option.flatMap((parsed) => Option.fromNullishOr(parsed.title ?? parsed.name)),
+    Option.filter(Predicate.isString),
+    Option.filter((title) => title !== ""),
+  )
+}
 
 export const node = LayerNode.make({
   service: Service,
