@@ -1,15 +1,21 @@
 import type { Model } from "@opencode-ai/sdk/v2"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
+import { errorMessage } from "../../util/error"
+
+export class ModalModelsError extends Schema.TaggedError<ModalModelsError>()("ModalModelsError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 const reasoningOption = Schema.Struct({
   type: Schema.Literal("effort"),
   values: Schema.Array(Schema.NullOr(Schema.String)),
-})
+}).annotate({ identifier: "ModalReasoningOption" })
 
 const response = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      id: Schema.String.pipe(Schema.brand("ModalModelID")),
       base_model_id: Schema.optional(Schema.String),
       hugging_face_id: Schema.optional(Schema.String),
       name: Schema.optional(Schema.String),
@@ -37,9 +43,9 @@ const response = Schema.Struct({
       ),
     }),
   ),
-})
+}).annotate({ identifier: "ModalModelsResponse" })
 
-const decode = Schema.decodeUnknownSync(response)
+const decode = Schema.decodeUnknownEffect(response)
 
 function price(value: string | number | undefined, fallback: number) {
   if (value === undefined) return fallback
@@ -47,16 +53,29 @@ function price(value: string | number | undefined, fallback: number) {
   return Number.isFinite(parsed) ? parsed * 1_000_000 : fallback
 }
 
-export async function get(baseURL: string, apiKey: string, existing: Record<string, Model>) {
-  const data = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    signal: AbortSignal.timeout(3_000),
-  }).then(async (res) => {
-    if (!res.ok) throw new Error(`Failed to fetch Modal models: ${res.status}`)
-    return decode(await res.json())
-  })
+export const get = Effect.fn("ModalModels.get")(function* (
+  baseURL: string,
+  apiKey: string,
+  existing: Record<string, Model>,
+) {
+  const data = yield* Effect.gen(function* () {
+    const res = yield* Effect.tryPromise({
+      try: (signal) =>
+        fetch(`${baseURL.replace(/\/+$/, "")}/models`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          signal,
+        }),
+      catch: (cause) => new ModalModelsError({ message: errorMessage(cause), cause }),
+    })
+    if (!res.ok) return yield* new ModalModelsError({ message: `Failed to fetch Modal models: ${res.status}` })
+    const body = yield* Effect.tryPromise({
+      try: (): Promise<unknown> => res.json(),
+      catch: (cause) => new ModalModelsError({ message: errorMessage(cause), cause }),
+    })
+    return yield* decode(body)
+  }).pipe(Effect.timeout("3 seconds"))
 
   return Object.fromEntries(
     data.data.map((item) => {
@@ -128,6 +147,6 @@ export async function get(baseURL: string, apiKey: string, existing: Record<stri
       return [item.id, model]
     }),
   )
-}
+})
 
 export * as ModalModels from "./models"
