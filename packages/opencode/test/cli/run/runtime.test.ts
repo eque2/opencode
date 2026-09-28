@@ -175,7 +175,9 @@ describe("run interactive runtime", () => {
         } satisfies SessionMessage,
       ]),
     )
-    spyOn(sdk.session, "get").mockRejectedValue(new Error("not needed"))
+    // Reject only when called. mockRejectedValue builds its rejected Promise
+    // at setup, so an unused mock fails the test as an unhandled rejection.
+    spyOn(sdk.session, "get").mockImplementation(() => Promise.reject(new Error("not needed")))
     spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
     spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
     spyOn(sdk.command, "list").mockImplementation(() => ok([]))
