@@ -108,7 +108,7 @@ export default function Share(props: {
     }
 
     let reconnectFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
-    let socket: WebSocket | null = null
+    let socket: Option.Option<WebSocket> = Option.none()
 
     const applyFrame = Effect.fnUntraced(function* (data: unknown) {
       const frame = yield* decodeShareFrame(data)
@@ -137,8 +137,8 @@ export default function Share(props: {
     // Function to create and set up WebSocket with auto-reconnect
     const setupWebSocket = () => {
       // Close any existing connection
-      if (socket) {
-        socket.close()
+      if (Option.isSome(socket)) {
+        socket.value.close()
       }
 
       setConnectionStatus(["connecting"])
@@ -147,15 +147,16 @@ export default function Share(props: {
       const wsBaseUrl = apiUrl.replace(/^https?:\/\//, "wss://")
       const wsUrl = `${wsBaseUrl}/share_poll?id=${props.id}`
       // Create WebSocket connection
-      socket = new WebSocket(wsUrl)
+      const ws = new WebSocket(wsUrl)
+      socket = Option.some(ws)
 
       // Handle connection opening
-      socket.onopen = () => {
+      ws.onopen = () => {
         setConnectionStatus(["connected"])
       }
 
       // Handle incoming messages
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         Effect.runFork(
           applyFrame(event.data).pipe(
             Effect.catchCause((cause) => Effect.logError("Error parsing WebSocket message:", cause)),
@@ -164,13 +165,13 @@ export default function Share(props: {
       }
 
       // Handle errors
-      socket.onerror = (error) => {
+      ws.onerror = (error) => {
         Effect.runFork(Effect.logError("WebSocket error:", error))
         setConnectionStatus(["error", props.messages.error_connection_failed])
       }
 
       // Handle connection close and reconnection
-      socket.onclose = () => {
+      ws.onclose = () => {
         setConnectionStatus(["reconnecting"])
 
         // Try to reconnect after 2 seconds
@@ -186,8 +187,8 @@ export default function Share(props: {
 
     // Clean up on component unmount
     onCleanup(() => {
-      if (socket) {
-        socket.close()
+      if (Option.isSome(socket)) {
+        socket.value.close()
       }
       interruptFiber(reconnectFiber)
     })
