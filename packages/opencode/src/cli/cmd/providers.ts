@@ -16,7 +16,7 @@ import type { Hooks } from "@opencode-ai/plugin"
 import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
-import { Effect, Option } from "effect"
+import { Array as Arr, Effect, Option } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -212,28 +212,19 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
 export function resolvePluginProviders(input: {
   hooks: Hooks[]
   existingProviders: Record<string, unknown>
-  disabled: Set<string>
-  enabled?: Set<string>
+  disabled: Iterable<string>
+  enabled?: Iterable<string>
   providerNames: Record<string, string | undefined>
 }): Array<{ id: string; name: string }> {
-  const seen = new Set<string>()
-  const result: Array<{ id: string; name: string }> = []
-
-  for (const hook of input.hooks) {
-    if (!hook.auth) continue
-    const id = hook.auth.provider
-    if (seen.has(id)) continue
-    seen.add(id)
-    if (Object.hasOwn(input.existingProviders, id)) continue
-    if (input.disabled.has(id)) continue
-    if (input.enabled && !input.enabled.has(id)) continue
-    result.push({
-      id,
-      name: input.providerNames[id] ?? id,
-    })
-  }
-
-  return result
+  const disabled = Arr.fromIterable(input.disabled)
+  const enabled = input.enabled && Arr.fromIterable(input.enabled)
+  // The first hook that declares a provider wins; later duplicates are skipped.
+  return Arr.dedupe(input.hooks.flatMap((hook) => (hook.auth ? [hook.auth.provider] : [])))
+    .filter(
+      (id) =>
+        !Object.hasOwn(input.existingProviders, id) && !disabled.includes(id) && (!enabled || enabled.includes(id)),
+    )
+    .map((id) => ({ id, name: input.providerNames[id] ?? id }))
 }
 
 export const ProvidersCommand = cmd({
@@ -358,13 +349,13 @@ export const ProvidersLoginCommand = effectCmd({
 
     const config = yield* cfgSvc.get()
 
-    const disabled = new Set(config.disabled_providers ?? [])
-    const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+    const disabled = config.disabled_providers ?? []
+    const enabled = config.enabled_providers
 
     const allProviders = yield* modelsDev.get()
     const providers: Record<string, (typeof allProviders)[string]> = {}
     for (const [key, value] of Object.entries(allProviders)) {
-      if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) providers[key] = value
+      if ((enabled ? enabled.includes(key) : true) && !disabled.includes(key)) providers[key] = value
     }
     const hooks = yield* pluginSvc.list()
 
