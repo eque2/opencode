@@ -17,8 +17,10 @@ import type { Revert } from "@opencode-ai/schema/revert"
 
 type SessionMessageData = Omit<(typeof SessionMessage.Message)["Encoded"], "type" | "id">
 // The projector stores the V1 event values as they decode, so the columns use the readonly schema types.
-type V1MessageData = Omit<(typeof SessionV1.Info)["Type"], "id" | "sessionID">
-type V1PartData = Omit<(typeof SessionV1.Part)["Type"], "id" | "sessionID" | "messageID">
+// Info and Part are unions; a plain Omit would merge their members and lose the discriminant.
+type DistributiveOmit<A, K extends PropertyKey> = A extends unknown ? Omit<A, K> : never
+type V1MessageData = DistributiveOmit<(typeof SessionV1.Info)["Type"], "id" | "sessionID">
+type V1PartData = DistributiveOmit<(typeof SessionV1.Part)["Type"], "id" | "sessionID" | "messageID">
 
 export const SessionTable = sqliteTable(
   "session",
