@@ -19,12 +19,18 @@ import { ProviderTransform } from "@/provider/transform"
 import type * as Provider from "@/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { ModelsDev } from "@opencode-ai/core/models-dev"
 
 type Captured = { url: string; outerBody: unknown; headers: Record<string, string> }
 type ProviderOptions = Record<string, Record<string, JSONValue>>
 
 const realFetch = globalThis.fetch
 let captured: Captured | null = null
+
+// Reads a nested wire object; a missing or non-object value reads as an empty record.
+function recordOf(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -228,7 +234,7 @@ describe("cf-ai-gateway end-to-end (regression: #24432)", () => {
     expect(opts.openai.reasoningEffort).toBe("xhigh")
 
     const upstream = await callThroughGateway("openai/gpt-5.4", opts)
-    expect((upstream?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh")
+    expect(recordOf(upstream?.reasoning).effort).toBe("xhigh")
   })
 
   test("variants() output for openai/gpt-5.4 lands xhigh on the wire", async () => {
@@ -244,27 +250,34 @@ describe("cf-ai-gateway end-to-end (regression: #24432)", () => {
 
     const opts = ProviderTransform.providerOptions(cfModel("openai/gpt-5.4"), variants.xhigh)
     const upstream = await callThroughGateway("openai/gpt-5.4", opts)
-    const reasoning = upstream?.reasoning as Record<string, unknown> | undefined
-    expect(reasoning?.effort).toBe("xhigh")
-    expect(reasoning?.summary).toBe("auto")
+    const reasoning = recordOf(upstream?.reasoning)
+    expect(reasoning.effort).toBe("xhigh")
+    expect(reasoning.summary).toBe("auto")
   })
 
   test("reasoning effort variants for anthropic models land as native adaptive thinking", async () => {
     // Mirrors the runtime catalog path: models.dev reasoning_options -> reasoningVariants
     // computed on the native @ai-sdk/anthropic npm -> adaptive thinking + output_config.effort.
     const model = cfModel("anthropic/claude-sonnet-4-6")
-    const variants = ProviderTransform.reasoningVariants(
-      { reasoning_options: [{ type: "effort", values: ["low", "medium", "high"] }] } as never,
-      model,
-    )
+    const catalogModel: ModelsDev.Model = {
+      id: ModelsDev.ModelID.make("claude-sonnet-4-6"),
+      name: "Claude Sonnet 4.6",
+      release_date: "2026-03-05",
+      attachment: true,
+      reasoning: true,
+      tool_call: true,
+      limit: { context: 200_000, output: 64_000 },
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high"] }],
+    }
+    const variants = ProviderTransform.reasoningVariants(catalogModel, model)
     expect(variants?.high).toMatchObject({ effort: "high" })
 
     const opts = ProviderTransform.providerOptions(model, variants!.high)
     expect(Object.keys(opts)).toEqual(["anthropic"])
 
     const upstream = await callThroughGateway("anthropic/claude-sonnet-4-6", opts)
-    expect((upstream?.thinking as Record<string, unknown> | undefined)?.type).toBe("adaptive")
-    expect((upstream?.output_config as Record<string, unknown> | undefined)?.effort).toBe("high")
+    expect(recordOf(upstream?.thinking).type).toBe("adaptive")
+    expect(recordOf(upstream?.output_config).effort).toBe("high")
   })
 
   test("reasoning_effort still reaches the /compat wire for workers-ai models", async () => {

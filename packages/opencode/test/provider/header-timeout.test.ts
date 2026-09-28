@@ -115,6 +115,8 @@ it.live("configured chunkTimeout raises a retryable response stream error when S
             } catch (error) {
               return error
             }
+            // The stream ended without an error part; the assertions below then fail.
+            return undefined
           })
           expect(error).toBeInstanceOf(ProviderError.ResponseStreamError)
           expect(
