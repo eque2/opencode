@@ -1,6 +1,6 @@
 import map from "lang-map"
-import { Array as Arr, DateTime, Duration, Effect, Option, Predicate, Schema } from "effect"
-import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
+import { Array as Arr, DateTime, Duration, Effect, Fiber, Option, Predicate, Schema } from "effect"
+import { For, Show, Match, Switch, type JSX, createMemo, createSignal, onCleanup, type ParentProps } from "solid-js"
 import {
   IconHashtag,
   IconSparkles,
@@ -67,6 +67,11 @@ export function Part(props: PartProps) {
   const [copied, setCopied] = createSignal(false)
   const id = createMemo(() => props.message.id + "-" + props.index)
   const messages = useShareMessages()
+  let resetCopied: Option.Option<Fiber.Fiber<void>> = Option.none()
+
+  onCleanup(() => {
+    if (Option.isSome(resetCopied)) Effect.runFork(Fiber.interrupt(resetCopied.value))
+  })
 
   return (
     <div
@@ -94,7 +99,9 @@ export function Part(props: PartProps) {
               )
 
               setCopied(true)
-              setTimeout(() => setCopied(false), 3000)
+              resetCopied = Option.some(
+                Effect.runFork(Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))))),
+              )
             }}
           >
             <Switch>
