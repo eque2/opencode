@@ -2,6 +2,7 @@ import { type ChildProcess } from "child_process"
 import type { Stream } from "node:stream"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
+import { Schema } from "effect"
 import { errorMessage } from "./error"
 
 export type Stdio = "inherit" | "pipe" | "ignore" | number | Stream
@@ -33,31 +34,33 @@ export interface TextResult extends Result {
   text: string
 }
 
-export class RunFailedError extends Error {
-  readonly cmd: string[]
-  readonly code: number
-  readonly stdout: Buffer
-  readonly stderr: Buffer
+export class RunFailedError extends Schema.TaggedError<RunFailedError>()("ProcessRunFailedError", {
+  cmd: Schema.Array(Schema.String),
+  code: Schema.Number,
+  stdout: Schema.instanceOf(Buffer),
+  stderr: Schema.instanceOf(Buffer),
+  message: Schema.String,
+}) {}
 
-  constructor(cmd: string[], code: number, stdout: Buffer, stderr: Buffer) {
-    const text = stderr.toString().trim()
-    super(
-      text
-        ? `Command failed with code ${code}: ${cmd.join(" ")}\n${text}`
-        : `Command failed with code ${code}: ${cmd.join(" ")}`,
-    )
-    this.name = "ProcessRunFailedError"
-    this.cmd = [...cmd]
-    this.code = code
-    this.stdout = stdout
-    this.stderr = stderr
-  }
+function runFailed(cmd: string[], code: number, stdout: Buffer, stderr: Buffer) {
+  const text = stderr.toString().trim()
+  const summary = `Command failed with code ${code}: ${cmd.join(" ")}`
+  return new RunFailedError({ cmd: [...cmd], code, stdout, stderr, message: text ? `${summary}\n${text}` : summary })
 }
+
+export class EmptyCommandError extends Schema.TaggedError<EmptyCommandError>()("ProcessEmptyCommandError", {
+  message: Schema.String,
+}) {}
+
+export class OutputUnavailableError extends Schema.TaggedError<OutputUnavailableError>()(
+  "ProcessOutputUnavailableError",
+  { message: Schema.String },
+) {}
 
 export type Child = ChildProcess & { exited: Promise<number> }
 
 export function spawn(cmd: string[], opts: Options = {}): Child {
-  if (cmd.length === 0) throw new Error("Command is required")
+  if (cmd.length === 0) throw new EmptyCommandError({ message: "Command is required" })
   opts.abort?.throwIfAborted()
 
   const proc = launch(cmd[0], cmd.slice(1), {
@@ -124,7 +127,7 @@ export async function run(cmd: string[], opts: RunOptions = {}): Promise<Result>
     stderr: "pipe",
   })
 
-  if (!proc.stdout || !proc.stderr) throw new Error("Process output not available")
+  if (!proc.stdout || !proc.stderr) throw new OutputUnavailableError({ message: "Process output not available" })
 
   const out = await Promise.all([proc.exited, buffer(proc.stdout), buffer(proc.stderr)])
     .then(([code, stdout, stderr]) => ({
@@ -141,7 +144,7 @@ export async function run(cmd: string[], opts: RunOptions = {}): Promise<Result>
       }
     })
   if (out.code === 0 || opts.nothrow) return out
-  throw new RunFailedError(cmd, out.code, out.stdout, out.stderr)
+  throw runFailed(cmd, out.code, out.stdout, out.stderr)
 }
 
 // Duplicated in `packages/sdk/js/src/process.ts` because the SDK cannot import
