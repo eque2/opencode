@@ -197,8 +197,7 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
     const apiKey = yield* promptValue(key)
 
     const metadata = Object.keys(inputs).length ? { metadata: inputs } : {}
-    const authorizeApi = method.authorize
-    if (!authorizeApi) {
+    if (!method.authorize) {
       yield* put(provider, {
         type: "api",
         key: apiKey,
@@ -208,6 +207,7 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
       return true
     }
 
+    const authorizeApi = method.authorize.bind(method)
     const result = yield* cliTry("Failed to authorize: ", () => authorizeApi(inputs))
     if (result.type === "failed") {
       yield* Prompt.log.error("Failed to authorize")
