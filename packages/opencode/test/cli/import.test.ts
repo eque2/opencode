@@ -7,7 +7,8 @@ import {
   type ShareData,
 } from "../../src/cli/cmd/import"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { PlatformError } from "effect"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { Option, PlatformError } from "effect"
 
 test("formats import file errors", () => {
   expect(
@@ -44,16 +45,16 @@ test("formats import file errors", () => {
 
 // parseShareUrl tests
 test("parses valid share URLs", () => {
-  expect(parseShareUrl("https://opncd.ai/share/Jsj3hNIW")).toBe("Jsj3hNIW")
-  expect(parseShareUrl("https://custom.example.com/share/abc123")).toBe("abc123")
-  expect(parseShareUrl("http://localhost:3000/share/test_id-123")).toBe("test_id-123")
+  expect(parseShareUrl("https://opncd.ai/share/Jsj3hNIW")).toEqual(Option.some("Jsj3hNIW"))
+  expect(parseShareUrl("https://custom.example.com/share/abc123")).toEqual(Option.some("abc123"))
+  expect(parseShareUrl("http://localhost:3000/share/test_id-123")).toEqual(Option.some("test_id-123"))
 })
 
 test("rejects invalid URLs", () => {
-  expect(parseShareUrl("https://opncd.ai/s/Jsj3hNIW")).toBeNull() // legacy format
-  expect(parseShareUrl("https://opncd.ai/share/")).toBeNull()
-  expect(parseShareUrl("https://opncd.ai/share/id/extra")).toBeNull()
-  expect(parseShareUrl("not-a-url")).toBeNull()
+  expect(parseShareUrl("https://opncd.ai/s/Jsj3hNIW")).toEqual(Option.none()) // legacy format
+  expect(parseShareUrl("https://opncd.ai/share/")).toEqual(Option.none())
+  expect(parseShareUrl("https://opncd.ai/share/id/extra")).toEqual(Option.none())
+  expect(parseShareUrl("not-a-url")).toEqual(Option.none())
 })
 
 test("only attaches share auth headers for same-origin URLs", () => {
@@ -70,21 +71,23 @@ test("only attaches share auth headers for same-origin URLs", () => {
 // transformShareData tests
 test("transforms share data to storage format", () => {
   const data: ShareData[] = [
-    { type: "session", data: { id: "sess-1", title: "Test" } as any },
-    { type: "message", data: { id: "msg-1", sessionID: "sess-1" } as any },
-    { type: "part", data: { id: "part-1", messageID: "msg-1" } as any },
-    { type: "part", data: { id: "part-2", messageID: "msg-1" } as any },
+    { type: "session", data: { id: "sess-1", title: "Test" } },
+    { type: "message", data: { id: SessionV1.MessageID.make("msg-1"), sessionID: "sess-1" } },
+    { type: "part", data: { id: "part-1", messageID: SessionV1.MessageID.make("msg-1") } },
+    { type: "part", data: { id: "part-2", messageID: SessionV1.MessageID.make("msg-1") } },
   ]
 
-  const result = transformShareData(data)!
+  const result = Option.getOrThrow(transformShareData(data))
 
   expect(result.info.id).toBe("sess-1")
   expect(result.messages).toHaveLength(1)
   expect(result.messages[0].parts).toHaveLength(2)
 })
 
-test("returns null for invalid share data", () => {
-  expect(transformShareData([])).toBeNull()
-  expect(transformShareData([{ type: "message", data: {} as any }])).toBeNull()
-  expect(transformShareData([{ type: "session", data: { id: "s" } as any }])).toBeNull() // no messages
+test("returns none for invalid share data", () => {
+  expect(transformShareData([])).toEqual(Option.none())
+  expect(transformShareData([{ type: "message", data: { id: SessionV1.MessageID.make("msg-1") } }])).toEqual(
+    Option.none(),
+  ) // no session
+  expect(transformShareData([{ type: "session", data: { id: "s" } }])).toEqual(Option.none()) // no messages
 })
