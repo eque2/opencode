@@ -293,7 +293,25 @@ const layer = Layer.effect(
         }
       }
 
-      const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
+      // A provider error, or a tool call while a summary is generated, ends the provider turn.
+      // The handler fails with it before it applies the event.
+      const endingEvent = (value: StreamEvent): Option.Option<StreamEventError> => {
+        if (value.type === "provider-error") return Option.some(new StreamEventError({ message: value.message }))
+        if ((value.type === "tool-input-start" || value.type === "tool-call") && ctx.assistantMessage.summary) {
+          return Option.some(
+            new StreamEventError({ message: `Tool call not allowed while generating summary: ${value.name}` }),
+          )
+        }
+        return Option.none()
+      }
+
+      const handleEvent = (value: StreamEvent) =>
+        Effect.suspend((): Effect.Effect<void, PermissionV1.Error | StreamEventError> => {
+          const ending = endingEvent(value)
+          return Option.isSome(ending) ? Effect.fail(ending.value) : applyEvent(value)
+        })
+
+      const applyEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
           case "reasoning-start":
             if (value.id in ctx.reasoningMap) return
@@ -331,11 +349,6 @@ const layer = Layer.effect(
             return
 
           case "tool-input-start":
-            if (ctx.assistantMessage.summary) {
-              return yield* new StreamEventError({
-                message: `Tool call not allowed while generating summary: ${value.name}`,
-              })
-            }
             yield* ensureToolCall(value)
             return
 
@@ -349,11 +362,6 @@ const layer = Layer.effect(
           }
 
           case "tool-call": {
-            if (ctx.assistantMessage.summary) {
-              return yield* new StreamEventError({
-                message: `Tool call not allowed while generating summary: ${value.name}`,
-              })
-            }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
             const now = yield* Clock.currentTimeMillis
@@ -442,9 +450,6 @@ const layer = Layer.effect(
             yield* failToolCall(value.id, value.error ?? new StreamEventError({ message: value.message }))
             return
           }
-
-          case "provider-error":
-            return yield* new StreamEventError({ message: value.message })
 
           case "step-start":
             if (Option.isNone(ctx.snapshot)) ctx.snapshot = snapshotHash(yield* snapshot.track())
