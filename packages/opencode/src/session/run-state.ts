@@ -3,7 +3,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Runner } from "@/effect/runner"
 import { BackgroundJob } from "@/background/job"
-import { Effect, Latch, Layer, Scope, Context } from "effect"
+import { Context, Effect, Latch, Layer, MutableHashMap, MutableHashSet, Option, Scope } from "effect"
 import { Session } from "./session"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
@@ -35,14 +35,14 @@ const layer = Layer.effect(
     const state = yield* InstanceState.make(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
-        const runners = new Map<SessionID, Runner.Runner<SessionV1.WithParts>>()
+        const runners = MutableHashMap.empty<SessionID, Runner.Runner<SessionV1.WithParts>>()
         yield* Effect.addFinalizer(
           Effect.fnUntraced(function* () {
-            yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
+            yield* Effect.forEach(MutableHashMap.values(runners), (runner) => runner.cancel, {
               concurrency: "unbounded",
               discard: true,
             })
-            runners.clear()
+            MutableHashMap.clear(runners)
           }),
         )
         return { runners, scope }
@@ -54,35 +54,35 @@ const layer = Layer.effect(
       onInterrupt: Effect.Effect<SessionV1.WithParts>,
     ) {
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(sessionID)
-      if (existing) return existing
+      const existing = MutableHashMap.get(data.runners, sessionID)
+      if (Option.isSome(existing)) return existing.value
       const next = Runner.make<SessionV1.WithParts>(data.scope, {
         onIdle: Effect.gen(function* () {
-          data.runners.delete(sessionID)
+          MutableHashMap.remove(data.runners, sessionID)
           yield* status.set(sessionID, { type: "idle" })
         }),
         onBusy: status.set(sessionID, { type: "busy" }),
         onInterrupt,
       })
-      data.runners.set(sessionID, next)
+      MutableHashMap.set(data.runners, sessionID, next)
       return next
     })
 
     const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID) {
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(sessionID)
-      if (existing?.busy) yield* busyError(sessionID)
+      const existing = MutableHashMap.get(data.runners, sessionID)
+      return yield* Option.isSome(existing) && existing.value.busy ? Effect.fail(busyError(sessionID)) : Effect.void
     })
 
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
       yield* cancelBackgroundJobs(background, sessionID)
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(sessionID)
-      if (!existing) {
+      const existing = MutableHashMap.get(data.runners, sessionID)
+      if (Option.isNone(existing)) {
         yield* status.set(sessionID, { type: "idle" })
         return
       }
-      yield* existing.cancel
+      yield* existing.value.cancel
     })
 
     const ensureRunning = Effect.fn("SessionRunState.ensureRunning")(function* (
@@ -113,14 +113,16 @@ const cancelBackgroundJobs = Effect.fn("SessionRunState.cancelBackgroundJobs")(f
   sessionID: SessionID,
 ) {
   const jobs = yield* background.list()
-  const pending = new Set<string>([sessionID])
-  const cancelled = new Set<string>()
+  const pending = MutableHashSet.make<Array<string>>(sessionID)
+  const cancelled = MutableHashSet.empty<string>()
   const matches = (job: BackgroundJob.Info) => {
     if (job.status !== "running") return false
-    if (cancelled.has(job.id)) return false
-    if (pending.has(job.id)) return true
-    if (typeof job.metadata?.sessionId === "string" && pending.has(job.metadata.sessionId)) return true
-    return typeof job.metadata?.parentSessionId === "string" && pending.has(job.metadata.parentSessionId)
+    if (MutableHashSet.has(cancelled, job.id)) return false
+    if (MutableHashSet.has(pending, job.id)) return true
+    if (typeof job.metadata?.sessionId === "string" && MutableHashSet.has(pending, job.metadata.sessionId)) return true
+    return (
+      typeof job.metadata?.parentSessionId === "string" && MutableHashSet.has(pending, job.metadata.parentSessionId)
+    )
   }
   let batch = jobs.filter(matches)
   while (batch.length > 0) {
@@ -130,9 +132,9 @@ const cancelBackgroundJobs = Effect.fn("SessionRunState.cancelBackgroundJobs")(f
         background.cancel(job.id).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
-              cancelled.add(job.id)
-              pending.add(job.id)
-              if (typeof job.metadata?.sessionId === "string") pending.add(job.metadata.sessionId)
+              MutableHashSet.add(cancelled, job.id)
+              MutableHashSet.add(pending, job.id)
+              if (typeof job.metadata?.sessionId === "string") MutableHashSet.add(pending, job.metadata.sessionId)
             }),
           ),
         ),
