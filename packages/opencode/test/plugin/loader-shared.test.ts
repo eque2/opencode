@@ -13,7 +13,7 @@ import { testEffect } from "../lib/effect"
 
 const { Plugin } = await import("../../src/plugin/index")
 const { PluginLoader } = await import("../../src/plugin/loader")
-const { readPackageThemes } = await import("../../src/plugin/shared")
+const { packageThemes, PluginEntryError } = await import("../../src/plugin/shared")
 const { Npm } = await import("@opencode-ai/core/npm")
 const { TestConfig } = await import("../fixture/config")
 const { RuntimeFlags } = await import("../../src/effect/runtime-flags")
@@ -970,7 +970,7 @@ export default {
           const file = path.join(tmp.extra.mod, "package.json")
           const fsys = yield* FSUtil.Service
           const json = decodePackageJson(yield* fsys.readJson(file))
-          const list = readPackageThemes("acme-plugin", {
+          const list = yield* packageThemes("acme-plugin", {
             dir: tmp.extra.mod,
             pkg: file,
             json,
@@ -1023,7 +1023,9 @@ export default {
                 kind: "tui",
                 missing: async (item) => {
                   if (!item.pkg) return undefined
-                  const themes = readPackageThemes(item.spec, item.pkg)
+                  const themes = await Effect.runPromise(
+                    packageThemes(item.spec, item.pkg).pipe(Effect.provideService(FSUtil.Service, fsys)),
+                  )
                   if (!themes.length) return undefined
                   return {
                     spec: item.spec,
@@ -1098,7 +1100,9 @@ export default {
                   if (!item.pkg) return undefined
                   return {
                     spec: item.spec,
-                    themes: readPackageThemes(item.spec, item.pkg),
+                    themes: await Effect.runPromise(
+                      packageThemes(item.spec, item.pkg).pipe(Effect.provideService(FSUtil.Service, fsys)),
+                    ),
                   }
                 },
               }),
@@ -1130,13 +1134,15 @@ export default {
         Effect.gen(function* () {
           const fsys = yield* FSUtil.Service
           const json = decodePackageJson(yield* fsys.readJson(tmp.extra.file))
-          expect(() =>
-            readPackageThemes("acme", {
+          const error = yield* Effect.flip(
+            packageThemes("acme", {
               dir: tmp.extra.mod,
               pkg: tmp.extra.file,
               json,
             }),
-          ).toThrow("outside plugin directory")
+          )
+          expect(error).toBeInstanceOf(PluginEntryError)
+          expect(error.message).toContain("outside plugin directory")
         }),
     ),
   )

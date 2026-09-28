@@ -6,7 +6,6 @@ import { Array as Arr, Effect, Option, Predicate, Result, Schema } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Npm } from "@opencode-ai/core/npm"
-import { Filesystem } from "@/util/filesystem"
 import { isRecord } from "@/util/record"
 
 // Old npm package names for plugins that are now built-in
@@ -374,23 +373,6 @@ export const packageThemes = Effect.fn("PluginShared.packageThemes")(function* (
   )
   return Arr.dedupe(files)
 })
-
-// Sync form for callers outside Effect. It throws the PluginEntryError, as it threw a TypeError before.
-// It stays on the sync realpath of util/filesystem: its callers read the result without awaiting it.
-export function readPackageThemes(spec: string, pkg: PluginPackage) {
-  const packageFile = (raw: string) => {
-    const root = Filesystem.resolve(pkg.dir)
-    const next = Filesystem.resolve(resolveExportPath(raw, pkg.dir))
-    return FSUtil.contains(root, next) ? Result.succeed(next) : Result.fail(outsidePluginDirectory(spec, "oc-themes"))
-  }
-  return themeField(spec, pkg).pipe(
-    Result.flatMap((field) =>
-      Result.all(field.map((item) => themeEntry(spec, item).pipe(Result.flatMap(packageFile)))),
-    ),
-    Result.map(Arr.dedupe),
-    Result.getOrThrow,
-  )
-}
 
 // Result form of readPluginId for callers inside Effect.
 export function pluginId(id: unknown, spec: string): Result.Result<Option.Option<string>, PluginExportError> {
