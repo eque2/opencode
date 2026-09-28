@@ -33,7 +33,8 @@ function createEventStream() {
     queue.push(event)
   }
   const stream = async function* (signal?: AbortSignal) {
-    while (!signal?.aborted) {
+    for (;;) {
+      if (signal?.aborted) return
       const event = queue.shift()
       if (event) {
         yield { payload: event }
@@ -216,7 +217,7 @@ describe("ACP service sessions", () => {
     const mcpAdds: string[] = []
     const aborts: string[] = []
     const forks: string[] = []
-    const prompts: unknown[] = []
+    const prompts: { sessionID: string; parts?: unknown; [key: string]: unknown }[] = []
     const commands: unknown[] = []
     const summarizes: unknown[] = []
     const usageUpdates: string[] = []
@@ -263,7 +264,7 @@ describe("ACP service sessions", () => {
             data: input.directory ? sessions.filter((session) => session.directory === input.directory) : sessions,
           }),
         messages: () => Promise.resolve({ data: messages }),
-        prompt: async (input: { sessionID: string }) => {
+        prompt: async (input: { sessionID: string; parts?: unknown }) => {
           const response = await (options?.prompt?.(input) ??
             Promise.resolve({
               data: {
@@ -1513,7 +1514,7 @@ describe("ACP service sessions", () => {
       }),
     )
 
-    expect((prompts[0] as { parts?: unknown }).parts).toEqual([
+    expect(prompts[0]?.parts).toEqual([
       {
         type: "file",
         url: "data:image/png;base64,AAAA",
