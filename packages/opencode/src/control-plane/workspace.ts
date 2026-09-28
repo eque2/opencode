@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Context, Effect, FiberMap, Iterable, Layer, Option, Schema, Stream } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
 import { asc } from "drizzle-orm"
 import { eq } from "drizzle-orm"
@@ -659,11 +659,10 @@ const layer = Layer.effect(
           })
 
         const batches = Iterable.chunksOf(rows, 10)
-        const total = Iterable.size(batches)
 
         yield* Effect.forEach(
           batches,
-          (events, i) =>
+          (events) =>
             http
               .execute(
                 HttpClientRequest.post(route(target.url, "/sync/replay"), {
@@ -865,7 +864,7 @@ const layer = Layer.effect(
 
       for (const { workspace } of rows) {
         yield* startSync(fromRow(workspace)).pipe(
-          Effect.catch((error) =>
+          Effect.catch(() =>
             Effect.sync(() => {
               setStatus(workspace.id, "error")
             }),
