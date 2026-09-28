@@ -10,6 +10,7 @@ export const WorkspaceInfo = Schema.Struct({
   name: Schema.String,
   branch: Schema.optional(Schema.NullOr(Schema.String)),
   directory: Schema.optional(Schema.NullOr(Schema.String)),
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (a) external boundary: @opencode-ai/plugin types WorkspaceInfo.extra as unknown, an opaque bag each adapter owns, and the HTTP API exposes it as is
   extra: Schema.optional(Schema.NullOr(Schema.Unknown)),
   projectID: ProjectV2.ID,
 }).annotate({ identifier: "Workspace" })
@@ -20,11 +21,12 @@ export const WorkspaceListedInfo = Schema.Struct(Struct.omit(WorkspaceInfo.field
 })
 export type WorkspaceListedInfo = DeepMutable<Schema.Schema.Type<typeof WorkspaceListedInfo>>
 
+// `expected` names the schema in decode errors without adding an OpenAPI component.
 export const WorkspaceAdapterEntry = Schema.Struct({
   type: Schema.String,
   name: Schema.String,
   description: Schema.String,
-})
+}).annotate({ expected: "WorkspaceAdapterEntry" })
 export type WorkspaceAdapterEntry = Schema.Schema.Type<typeof WorkspaceAdapterEntry>
 
 export type Target =

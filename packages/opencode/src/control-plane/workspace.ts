@@ -65,14 +65,14 @@ export const CreateInput = Schema.Struct({
   branch: Info.fields.branch,
   projectID: ProjectV2.ID,
   extra: Schema.optional(Info.fields.extra),
-})
+}).annotate({ identifier: "WorkspaceCreateInput" })
 export type CreateInput = Schema.Schema.Type<typeof CreateInput>
 
 export const SessionWarpInput = Schema.Struct({
   workspaceID: Schema.NullOr(WorkspaceV2.ID),
   sessionID: SessionID,
   copyChanges: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "WorkspaceSessionWarpInput" })
 export type SessionWarpInput = Schema.Schema.Type<typeof SessionWarpInput>
 
 export class SyncHttpError extends Schema.TaggedError<SyncHttpError>()("WorkspaceSyncHttpError", {
