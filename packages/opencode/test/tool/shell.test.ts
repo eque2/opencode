@@ -1020,8 +1020,8 @@ describe("tool.shell abort", () => {
               abort: controller.signal,
               metadata: (input) =>
                 Effect.sync(() => {
-                  const output = (input.metadata as { output?: string })?.output
-                  if (output && output.includes("before") && !controller.signal.aborted) {
+                  const output = input.metadata?.output
+                  if (typeof output === "string" && output.includes("before") && !controller.signal.aborted) {
                     collected.push(output)
                     controller.abort()
                   }
@@ -1114,8 +1114,8 @@ describe("tool.shell abort", () => {
             ...ctx,
             metadata: (input) =>
               Effect.sync(() => {
-                const output = (input.metadata as { output?: string })?.output
-                if (output) updates.push(output)
+                const output = input.metadata?.output
+                if (typeof output === "string" && output) updates.push(output)
               }),
           },
         )
