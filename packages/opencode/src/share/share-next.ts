@@ -94,19 +94,11 @@ function api(resource: string): Api {
 const legacyApi = api("share")
 const consoleApi = api("shares")
 
+// The session, session_diff and model items have one slot each, keyed by their type.
 function key(item: Data) {
-  switch (item.type) {
-    case "session":
-      return "session"
-    case "message":
-      return `message/${item.data.id}`
-    case "part":
-      return `part/${item.data.messageID}/${item.data.id}`
-    case "session_diff":
-      return "session_diff"
-    case "model":
-      return "model"
-  }
+  if (item.type === "message") return `message/${item.data.id}`
+  if (item.type === "part") return `part/${item.data.messageID}/${item.data.id}`
+  return item.type
 }
 
 const layer = Layer.effect(
