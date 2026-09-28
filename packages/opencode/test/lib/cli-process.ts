@@ -234,7 +234,8 @@ export function withCliFixture<A, E>(
             command: err.command,
             exitCode: err.exitCode ?? -1,
             stdout: Buffer.alloc(0),
-            stderr: Buffer.from((err.stderr ?? String(err.cause ?? err.message)) + "\n"),
+            // AppProcessError.message already describes the cause when the child wrote no stderr.
+            stderr: Buffer.from((err.stderr ?? err.message) + "\n"),
             stdoutTruncated: false,
             stderrTruncated: false,
           } satisfies AppProcess.RunResult),
