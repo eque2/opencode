@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
 import { IdeEvent } from "@opencode-ai/schema/ide-event"
 
 const SUPPORTED_IDES = [
@@ -50,16 +51,15 @@ export const install = Effect.fn("Ide.install")(function* (ide: (typeof SUPPORTE
   const entry = SUPPORTED_IDES.find((i) => i.name === ide)
   if (!entry) return yield* new UnknownIdeError({ ide })
 
-  // nothrow turns every spawn or exit failure into a result, so this Promise does not reject.
-  const p = yield* Effect.promise(() =>
-    Process.run([entry.cmd, "--install-extension", "sst-dev.opencode"], {
-      nothrow: true,
-    }),
-  )
+  const appProcess = yield* AppProcess.Service
+  // An IDE command that cannot start fails the install with the failure text as its stderr.
+  const p = yield* appProcess
+    .run(ChildProcess.make(entry.cmd, ["--install-extension", "sst-dev.opencode"], { stdin: "ignore" }))
+    .pipe(Effect.mapError((error) => new InstallFailedError({ stderr: error.message })))
   const stdout = p.stdout.toString()
   const stderr = p.stderr.toString()
 
-  if (p.code !== 0) return yield* Effect.fail(new InstallFailedError({ stderr }))
+  if (p.exitCode !== 0) return yield* Effect.fail(new InstallFailedError({ stderr }))
   return yield* stdout.includes("already installed") ? Effect.fail(new AlreadyInstalledError({})) : Effect.void
 })
 
