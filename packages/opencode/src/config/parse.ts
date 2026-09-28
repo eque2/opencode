@@ -62,20 +62,3 @@ export function decodeSchema<S extends EffectSchema.Decoder<unknown>>(
     ),
   )
 }
-
-/**
- * Synchronous form of {@link decodeSchema} for callers outside Effect. It throws the InvalidError.
- * @deprecated Use {@link decodeSchema}.
- */
-export function schema<S extends EffectSchema.Decoder<unknown>>(
-  schema: S,
-  data: unknown,
-  source: string,
-): DeepMutable<S["Type"]> {
-  return valueOrThrow(decodeSchema(schema, data, source))
-}
-
-function valueOrThrow<A, E>(exit: Exit.Exit<A, E>): A {
-  if (Exit.isSuccess(exit)) return exit.value
-  throw Cause.squash(exit.cause)
-}

@@ -1522,17 +1522,19 @@ it.instance("permission config preserves user key order", () =>
 )
 
 test("config parser preserves permission order while ignoring unknown top-level keys", () => {
-  const config = ConfigParse.schema(
-    ConfigV1.Info,
-    {
-      permission: {
-        bash: "allow",
-        "*": "deny",
-        edit: "ask",
+  const config = Effect.runSync(
+    ConfigParse.decodeSchema(
+      ConfigV1.Info,
+      {
+        permission: {
+          bash: "allow",
+          "*": "deny",
+          edit: "ask",
+        },
+        plugins: ["example"],
       },
-      plugins: ["example"],
-    },
-    "test",
+      "test",
+    ),
   )
 
   expect(Object.keys(config.permission!)).toEqual(["bash", "*", "edit"])
