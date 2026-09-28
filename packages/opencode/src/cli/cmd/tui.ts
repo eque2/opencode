@@ -7,7 +7,6 @@ import { fileURLToPath } from "url"
 import { UI } from "@/cli/ui"
 import { errorMessage } from "@opencode-ai/tui/util/error"
 import { withNetworkOptions, resolveNetworkOptionsNoConfig, hasArg } from "@/cli/network"
-import { Filesystem } from "@/util/filesystem"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { makeRuntime } from "@/effect/run-service"
@@ -98,12 +97,17 @@ const input = Effect.fnUntraced(function* (value?: string) {
   return Option.some(piped.value + "\n" + value)
 })
 
-// PWD is read by the caller, so this stays a synchronous path helper.
-export function resolveThreadDirectory(project?: string, envPWD?: string, cwd = process.cwd()) {
-  const root = Filesystem.resolve(envPWD ?? cwd)
-  if (project) return Filesystem.resolve(path.isAbsolute(project) ? project : path.join(root, project))
-  return Filesystem.resolve(cwd)
-}
+// PWD is read by the caller. A relative project resolves from PWD; without a project the real cwd wins.
+export const resolveThreadDirectory = Effect.fnUntraced(function* (
+  project?: string,
+  envPWD?: string,
+  cwd = process.cwd(),
+) {
+  const fs = yield* FSUtil.Service
+  const root = yield* fs.resolve(envPWD ?? cwd)
+  if (project) return yield* fs.resolve(path.isAbsolute(project) ? project : path.join(root, project))
+  return yield* fs.resolve(cwd)
+})
 
 const readPWD = Config.String("PWD").pipe(Config.option, Effect.orDie, Effect.map(Option.getOrUndefined))
 
@@ -211,7 +215,7 @@ export const TuiThreadCommand = cmd({
           }
 
           const { runMini } = yield* Effect.promise(() => import("./run"))
-          const directory = resolveThreadDirectory(args.project, yield* readPWD)
+          const directory = yield* resolveThreadDirectory(args.project, yield* readPWD)
           yield* Effect.promise(() =>
             runMini({
               directory,
@@ -251,7 +255,7 @@ export const TuiThreadCommand = cmd({
 
               // Resolve relative --project paths from PWD, then use the real cwd after
               // chdir so the thread and worker share the same directory key.
-              const next = resolveThreadDirectory(args.project, yield* readPWD)
+              const next = yield* resolveThreadDirectory(args.project, yield* readPWD)
               const file = yield* target()
               const changed = yield* Effect.try(() => process.chdir(next)).pipe(
                 Effect.as(true),
