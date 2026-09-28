@@ -4,7 +4,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { expect } from "bun:test"
 import { tool } from "ai"
-import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect"
 import path from "path"
 import z from "zod"
 import type { Agent } from "../../src/agent/agent"
@@ -26,6 +26,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { LLMEvent } from "@opencode-ai/llm"
+import { EventV2 } from "@opencode-ai/core/event"
 
 const summary = Layer.succeed(
   SessionSummary.Service,
@@ -103,6 +104,16 @@ function defer<T>() {
   return { promise, resolve }
 }
 
+class WaitTimeoutError extends Schema.TaggedError<WaitTimeoutError>()("ProcessorTestWaitTimeoutError", {
+  message: Schema.String,
+}) {}
+
+// Narrows a published payload to one event definition by its type tag, as EventV2 routing does.
+const isPayloadOf =
+  <D extends EventV2.Definition>(definition: D) =>
+  (event: EventV2.Payload): event is EventV2.Payload<D> =>
+    event.type === definition.type
+
 const waitFor = <A>(check: Effect.Effect<A | undefined>, message: string) =>
   Effect.gen(function* () {
     const stop = Date.now() + 500
@@ -111,7 +122,7 @@ const waitFor = <A>(check: Effect.Effect<A | undefined>, message: string) =>
       if (value !== undefined) return value
       yield* Effect.sleep("10 millis")
     }
-    return yield* Effect.fail(new Error(message))
+    return yield* Effect.fail(new WaitTimeoutError({ message }))
   })
 
 const user = Effect.fn("TestSession.user")(function* (sessionID: SessionID, text: string) {
@@ -241,7 +252,6 @@ it.live("session.processor effect tests capture llm input cleanly", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
-        const database = yield* Database.Service
         const { processors, session, provider } = yield* boot()
 
         yield* llm.text("hello")
@@ -375,7 +385,6 @@ it.live("session.processor effect tests stop after token overflow requests compa
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
-        const database = yield* Database.Service
         const { processors, session, provider } = yield* boot()
 
         yield* llm.text("after", { usage: { input: 100, output: 0 } })
@@ -422,7 +431,6 @@ it.live("session.processor effect tests capture reasoning from http mock", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
-        const database = yield* Database.Service
         const { processors, session, provider } = yield* boot()
 
         yield* llm.push(reply().reason("think").text("done").stop())
@@ -724,8 +732,8 @@ it.live("session.processor effect tests publish retry status updates", () =>
         const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
         const states: number[] = []
         const off = yield* events.listen((evt) => {
-          if (evt.type !== SessionStatus.Event.Status.type) return Effect.void
-          const data = evt.data as typeof SessionStatus.Event.Status.data.Type
+          if (!isPayloadOf(SessionStatus.Event.Status)(evt)) return Effect.void
+          const data = evt.data
           if (data.sessionID === chat.id && data.status.type === "retry") states.push(data.status.attempt)
           return Effect.void
         })
@@ -955,8 +963,8 @@ it.live("session.processor effect tests record aborted errors and idle state", (
         const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
         const errs: string[] = []
         const off = yield* events.listen((evt) => {
-          if (evt.type !== Session.Event.Error.type) return Effect.void
-          const data = evt.data as typeof Session.Event.Error.data.Type
+          if (!isPayloadOf(Session.Event.Error)(evt)) return Effect.void
+          const data = evt.data
           if (data.sessionID !== chat.id || !data.error) return Effect.void
           errs.push(data.error.name)
           seen.resolve()
