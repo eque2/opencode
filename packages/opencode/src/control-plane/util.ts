@@ -11,13 +11,10 @@ export class WaitEventTimeoutError extends Schema.TaggedError<WaitEventTimeoutEr
   timeout: Schema.Number,
 }) {}
 
-export class WaitEventPredicateError extends Schema.TaggedError<WaitEventPredicateError>()(
-  "WaitEventPredicateError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class WaitEventPredicateError extends Schema.TaggedError<WaitEventPredicateError>()("WaitEventPredicateError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 export type WaitEventError = WaitEventAbortedError | WaitEventTimeoutError | WaitEventPredicateError
 
