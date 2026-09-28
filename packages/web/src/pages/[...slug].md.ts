@@ -1,11 +1,12 @@
 import type { APIRoute } from "astro"
 import { getCollection } from "astro:content"
+import { Predicate } from "effect"
 
 function notFoundText(locals: unknown) {
-  if (typeof locals !== "object" || locals === null || !("t" in locals)) {
+  if (!Predicate.hasProperty(locals, "t")) {
     return "share.not_found"
   }
-  const t = (locals as { t?: unknown }).t
+  const t = locals.t
   if (typeof t !== "function") {
     return "share.not_found"
   }
