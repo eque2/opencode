@@ -35,3 +35,4 @@ tsconfig.tsbuildinfo
 .effect-v4-migrate-progress.json
 
 .claude/worktrees/
+.goal-gate/
