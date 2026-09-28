@@ -6,7 +6,6 @@ import { UI } from "../ui"
 import * as Prompt from "../effect/prompt"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 
-import { map, pipe, sortBy, values } from "remeda"
 import path from "path"
 import os from "os"
 import { Config } from "@/config/config"
@@ -16,7 +15,7 @@ import type { Hooks } from "@opencode-ai/plugin"
 import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
-import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Schema } from "effect"
+import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Order, Schema } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -409,19 +408,14 @@ export const ProvidersLoginCommand = effectCmd({
       providerNames: Object.fromEntries(Object.entries(config.provider ?? {}).map(([id, p]) => [id, p.name])),
     })
     const options = [
-      ...pipe(
-        providers,
-        values(),
-        sortBy(
-          (x) => priority[x.id] ?? 99,
-          (x) => x.name ?? x.id,
-        ),
-        map((x) => ({
-          label: x.name,
-          value: x.id,
-          hint: hints[x.id],
-        })),
-      ),
+      ...Arr.sortBy(
+        Order.mapInput(Order.Number, (x: (typeof providers)[string]) => priority[x.id] ?? 99),
+        Order.mapInput(Order.String, (x: (typeof providers)[string]) => x.name ?? x.id),
+      )(Object.values(providers)).map((x) => ({
+        label: x.name,
+        value: x.id,
+        hint: hints[x.id],
+      })),
       ...pluginProviders.map((x) => ({
         label: x.name,
         value: x.id,
