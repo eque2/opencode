@@ -1,11 +1,10 @@
 import type { ChildProcessWithoutNullStreams } from "child_process"
 import path from "path"
 import os from "os"
-import { Array, Config, Effect, Option, Schema, Semaphore } from "effect"
+import { Array, Config, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
-import { Filesystem } from "@/util/filesystem"
 import type { InstanceContext } from "../project/instance-context"
 import { Archive } from "@/util/archive"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -157,7 +156,18 @@ const download = Effect.fnUntraced(function* (url: string, target: string) {
   const response = yield* fetchOk(url)
   if (Option.isNone(response)) return false
   const body = response.value.body
-  if (body) yield* attempt(`Could not write ${target}`, () => Filesystem.writeStream(target, body))
+  if (!body) return true
+  const fsu = yield* FSUtil.Service
+  const message = `Could not write ${target}`
+  yield* fsu.ensureDir(path.dirname(target)).pipe(
+    Effect.andThen(
+      Stream.fromReadableStream({
+        evaluate: () => body,
+        onError: (cause) => new InstallError({ message, cause }),
+      }).pipe(Stream.run(fsu.sink(target))),
+    ),
+    Effect.catchTag(["PlatformError", "FileSystemError"], (cause) => Effect.fail(new InstallError({ message, cause }))),
+  )
   return true
 })
 

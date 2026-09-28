@@ -27,7 +27,8 @@ import {
 } from "effect"
 import { constVoid } from "effect/Function"
 import type * as LSPServer from "./server"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import type { InstanceContext } from "@/project/instance-context"
 
 const DIAGNOSTICS_DEBOUNCE_MS = 150
@@ -112,10 +113,6 @@ const UnregisterCapability = new RequestType<{ unregisterations?: { id: string; 
 
 const unhandled: DiagnosticRequestOutcome = { handled: false, matched: false }
 
-function getFilePath(uri: string) {
-  return uri.startsWith("file://") ? Option.some(Filesystem.normalizePath(fileURLToPath(uri))) : Option.none<string>()
-}
-
 function getSyncKind(capabilities?: ServerCapabilities) {
   const sync = capabilities?.textDocumentSync
   return typeof sync === "number" ? sync : sync?.change
@@ -184,12 +181,20 @@ type CreateInput = {
   instance: InstanceContext
 }
 
+// The client normalizes paths with FSUtil, which the Promise boundary provides.
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
 // The Promise-returning client is the contract that src/lsp/lsp.ts and the tests call.
 export function create(input: CreateInput) {
-  return Effect.runPromise(make(input))
+  return Effect.runPromise(make(input).pipe(Effect.provide(fileSystemLayer)))
 }
 
 const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
+  const fs = yield* FSUtil.Service
+  const getFilePath = (uri: string) =>
+    uri.startsWith("file://")
+      ? fs.normalizePath(fileURLToPath(uri)).pipe(Effect.map(Option.some))
+      : Effect.succeed(Option.none<string>())
   const connection = createMessageConnection(
     new StreamMessageReader(input.server.process.stdout),
     new StreamMessageWriter(input.server.process.stdin),
@@ -215,7 +220,7 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     version?: unknown
     diagnostics: Diagnostic[]
   }) {
-    const filePath = getFilePath(params.uri)
+    const filePath = yield* getFilePath(params.uri)
     if (Option.isNone(filePath)) return
     MutableHashMap.set(published, filePath.value, {
       at: yield* Clock.currentTimeMillis,
@@ -371,13 +376,17 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     if (Option.isNone(report)) return emptyResult()
 
     const direct: DiagnosticEntry[] = Array.isArray(report.value.items) ? [[filePath, report.value.items]] : []
-    const related = Object.entries(report.value.relatedDocuments ?? {}).flatMap(([uri, document]) =>
-      Option.match(getFilePath(uri), {
-        onNone: (): DiagnosticEntry[] => [],
-        onSome: (relatedPath): DiagnosticEntry[] =>
-          Array.isArray(document.items) ? [[relatedPath, document.items]] : [],
-      }),
-    )
+    const related = yield* Effect.forEach(Object.entries(report.value.relatedDocuments ?? {}), ([uri, document]) =>
+      getFilePath(uri).pipe(
+        Effect.map(
+          Option.match({
+            onNone: (): DiagnosticEntry[] => [],
+            onSome: (relatedPath): DiagnosticEntry[] =>
+              Array.isArray(document.items) ? [[relatedPath, document.items]] : [],
+          }),
+        ),
+      ),
+    ).pipe(Effect.map(Arr.flatten))
     const entries = [...direct, ...related]
 
     return {
@@ -394,12 +403,16 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     })
     if (Option.isNone(report)) return emptyResult()
 
-    const entries = (report.value.items ?? []).flatMap((item) =>
-      Option.match(Option.flatMap(Option.fromNullishOr(item.uri), getFilePath), {
-        onNone: (): DiagnosticEntry[] => [],
-        onSome: (relatedPath): DiagnosticEntry[] => (Array.isArray(item.items) ? [[relatedPath, item.items]] : []),
-      }),
-    )
+    const entries = yield* Effect.forEach(report.value.items ?? [], (item) =>
+      (item.uri ? getFilePath(item.uri) : Effect.succeed(Option.none<string>())).pipe(
+        Effect.map(
+          Option.match({
+            onNone: (): DiagnosticEntry[] => [],
+            onSome: (relatedPath): DiagnosticEntry[] => (Array.isArray(item.items) ? [[relatedPath, item.items]] : []),
+          }),
+        ),
+      ),
+    ).pipe(Effect.map(Arr.flatten))
 
     return {
       handled: true,
@@ -588,11 +601,11 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
   // --- Public API ---
 
   const open = Effect.fn("LSPClient.open")(function* (request: { path: string }) {
-    request.path = Filesystem.normalizePath(
+    request.path = yield* fs.normalizePath(
       path.isAbsolute(request.path) ? request.path : path.resolve(input.directory, request.path),
     )
     const filePath = request.path
-    const text = yield* Effect.tryPromise(() => Filesystem.readText(filePath))
+    const text = yield* fs.readFileString(filePath)
     const extension = path.extname(filePath)
     const languageId = LANGUAGE_EXTENSIONS[extension] ?? "plaintext"
 
@@ -664,7 +677,7 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     after?: number
   }) {
     const normalized = {
-      path: Filesystem.normalizePath(
+      path: yield* fs.normalizePath(
         path.isAbsolute(request.path) ? request.path : path.resolve(input.directory, request.path),
       ),
       version: request.version,
