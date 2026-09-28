@@ -142,6 +142,25 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
+    // The loop body runs once per provider turn, so build these contexts once here
+    // and provide them per call instead of rebuilding them on every iteration.
+    const reminderContext = Context.make(RuntimeFlags.Service, flags).pipe(
+      Context.add(FSUtil.Service, fsys),
+      Context.add(Session.Service, sessions),
+    )
+    const toolContext = Context.make(Plugin.Service, plugin).pipe(
+      Context.add(Permission.Service, permission),
+      Context.add(ToolRegistry.Service, registry),
+      Context.add(MCP.Service, mcp),
+      Context.add(Truncate.Service, truncate),
+      Context.add(RuntimeFlags.Service, flags),
+    )
+    const filterCompacted = (sessionID: SessionID) =>
+      MessageV2.filterCompactedEffect(sessionID).pipe(Effect.provideService(Database.Service, database))
+    const applyReminders = (input: Parameters<typeof SessionReminders.apply>[0]) =>
+      SessionReminders.apply(input).pipe(Effect.provideContext(reminderContext))
+    const resolveTools = (input: Parameters<typeof SessionTools.resolve>[0]) =>
+      SessionTools.resolve(input).pipe(Effect.provideContext(toolContext))
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
@@ -1090,9 +1109,7 @@ const layer = Layer.effect(
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 
-          let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
-            Effect.provideService(Database.Service, database),
-          )
+          let msgs = yield* filterCompacted(sessionID)
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
@@ -1178,11 +1195,7 @@ const layer = Layer.effect(
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
-          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
-            Effect.provideService(RuntimeFlags.Service, flags),
-            Effect.provideService(FSUtil.Service, fsys),
-            Effect.provideService(Session.Service, sessions),
-          )
+          msgs = yield* applyReminders({ messages: msgs, agent, session })
 
           const msg: SessionV1.Assistant = {
             id: MessageID.ascending(),
@@ -1224,7 +1237,7 @@ const layer = Layer.effect(
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
 
-            const tools = yield* SessionTools.resolve({
+            const tools = yield* resolveTools({
               agent,
               session,
               model,
@@ -1232,14 +1245,7 @@ const layer = Layer.effect(
               bypassAgentCheck,
               messages: msgs,
               promptOps,
-            }).pipe(
-              Effect.provideService(Plugin.Service, plugin),
-              Effect.provideService(Permission.Service, permission),
-              Effect.provideService(ToolRegistry.Service, registry),
-              Effect.provideService(MCP.Service, mcp),
-              Effect.provideService(Truncate.Service, truncate),
-              Effect.provideService(RuntimeFlags.Service, flags),
-            )
+            })
 
             if (lastUser.format?.type === "json_schema") {
               tools["StructuredOutput"] = createStructuredOutputTool({
