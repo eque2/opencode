@@ -20,6 +20,7 @@ const ShareFrame = Schema.Struct({
   content: Schema.Any,
 }).annotate({ identifier: "ShareFrame" })
 const decodeShareFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(ShareFrame))
+const encodeDebugJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 type Status = "disconnected" | "connecting" | "connected" | "error" | "reconnecting"
 
@@ -466,7 +467,7 @@ export default function Share(props: {
                           <div>
                             <strong>{props.messages.debug_key}:</strong> {msg.id}
                           </div>
-                          <pre>{JSON.stringify(msg, null, 2)}</pre>
+                          <pre>{encodeDebugJson(msg)}</pre>
                         </li>
                       )}
                     </For>
