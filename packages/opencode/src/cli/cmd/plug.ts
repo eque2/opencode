@@ -1,5 +1,5 @@
 import { intro, log, outro, spinner } from "@clack/prompts"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
 import { ConfigPaths } from "@/config/paths"
 import { Global } from "@opencode-ai/core/global"
@@ -53,33 +53,36 @@ const defaultPlugDeps: PlugDeps = {
   },
   resolve: (spec) => resolvePluginTarget(spec),
   readText: (file) => Filesystem.readText(file),
-  write: async (file, text) => {
-    await Filesystem.write(file, text)
-  },
+  write: (file, text) => Filesystem.write(file, text),
   exists: (file) => Filesystem.exists(file),
   files: (dir, name) => ConfigPaths.fileInDirectory(dir, name),
   global: Global.Path.config,
 }
 
-function cause(err: unknown) {
-  if (!err || typeof err !== "object") return
-  if (!("cause" in err)) return
-  return (err as { cause?: unknown }).cause
+function cause(err: unknown): Option.Option<unknown> {
+  if (!err || typeof err !== "object" || !("cause" in err)) return Option.none()
+  return Option.fromNullishOr(err.cause)
 }
 
+// The Promise form of plugTask, for callers outside Effect: the plug worker fixture and the install tests.
 export function createPlugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps) {
+  const task = plugTask(input, dep)
+  return (ctx: PlugCtx) => Effect.runPromise(task(ctx))
+}
+
+export function plugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps) {
   const mod = input.mod
   const force = Boolean(input.force)
   const global = Boolean(input.global)
 
-  return async (ctx: PlugCtx) => {
+  return Effect.fn("Cli.plug.task")(function* (ctx: PlugCtx) {
     const install = dep.spinner()
     install.start("Installing plugin package...")
-    const target = await installPlugin(mod, dep)
+    const target = yield* Effect.promise(() => installPlugin(mod, dep))
     if (!target.ok) {
       install.stop("Install failed", 1)
       dep.log.error(`Could not install "${mod}"`)
-      const hit = cause(target.error) ?? target.error
+      const hit = Option.getOrElse(cause(target.error), () => target.error)
       if (hit instanceof Process.RunFailedError) {
         const lines = hit.stderr
           .toString()
@@ -103,12 +106,12 @@ export function createPlugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps
 
     const inspect = dep.spinner()
     inspect.start("Reading plugin manifest...")
-    const manifest = await readPluginManifest(target.target)
+    const manifest = yield* Effect.promise(() => readPluginManifest(target.target))
     if (!manifest.ok) {
       if (manifest.code === "manifest_read_failed") {
         inspect.stop("Manifest read failed", 1)
         dep.log.error(`Installed "${mod}" but failed to read ${manifest.file}`)
-        dep.log.error(errorMessage(cause(manifest.error) ?? manifest.error))
+        dep.log.error(errorMessage(Option.getOrElse(cause(manifest.error), () => manifest.error)))
         return false
       }
 
@@ -131,18 +134,20 @@ export function createPlugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps
 
     const patch = dep.spinner()
     patch.start("Updating plugin config...")
-    const out = await patchPluginConfig(
-      {
-        spec: mod,
-        targets: manifest.targets,
-        force,
-        global,
-        vcs: ctx.vcs,
-        worktree: ctx.worktree,
-        directory: ctx.directory,
-        config: dep.global,
-      },
-      dep,
+    const out = yield* Effect.promise(() =>
+      patchPluginConfig(
+        {
+          spec: mod,
+          targets: manifest.targets,
+          force,
+          global,
+          vcs: ctx.vcs,
+          worktree: ctx.worktree,
+          directory: ctx.directory,
+          config: dep.global,
+        },
+        dep,
+      ),
     )
     if (!out.ok) {
       if (out.code === "invalid_json") {
@@ -172,7 +177,7 @@ export function createPlugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps
     dep.log.success(`Installed ${mod}`)
     dep.log.info(global ? `Scope: global (${out.dir})` : `Scope: local (${out.dir})`)
     return true
-  }
+  })
 }
 
 export const PluginCommand = effectCmd({
@@ -208,7 +213,7 @@ export const PluginCommand = effectCmd({
     UI.empty()
     intro(`Install plugin ${mod}`)
 
-    const run = createPlugTask({
+    const run = plugTask({
       mod,
       global: Boolean(args.global),
       force: Boolean(args.force),
@@ -216,13 +221,11 @@ export const PluginCommand = effectCmd({
 
     const ctx = yield* InstanceRef
     if (!ctx) return
-    const ok = yield* Effect.promise(() =>
-      run({
-        vcs: ctx.project.vcs,
-        worktree: ctx.worktree,
-        directory: ctx.directory,
-      }),
-    )
+    const ok = yield* run({
+      vcs: ctx.project.vcs,
+      worktree: ctx.worktree,
+      directory: ctx.directory,
+    })
 
     outro("Done")
     if (!ok) process.exitCode = 1
