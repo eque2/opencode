@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Exit, Layer } from "effect"
+import { Effect, Exit, Layer, Schema } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Git } from "../../src/git"
@@ -11,6 +11,8 @@ import { tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const dir = path.join(Global.Path.data, "storage")
+
+const Counter = Schema.Struct({ value: Schema.Number })
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Storage.node, FSUtil.node, CrossSpawnSpawner.node])))
 
@@ -68,14 +70,14 @@ describe("Storage", () => {
       const value = [{ file: "a.ts", additions: 2, deletions: 1 }]
 
       yield* svc.write(key, value)
-      expect(yield* svc.read<typeof value>(key)).toEqual(value)
+      expect(yield* svc.read(key, Schema.Json)).toEqual(value)
     }),
   )
 
   it.live("maps missing reads to NotFoundError", () =>
     Effect.gen(function* () {
       const { root, svc } = yield* scope()
-      const error = yield* Effect.flip(svc.read([...root, "missing", "value"]))
+      const error = yield* Effect.flip(svc.read([...root, "missing", "value"], Schema.Json))
       expect(error).toBeInstanceOf(Storage.NotFoundError)
       expect(error._tag).toBe("NotFoundError")
       expect(error.message).toContain(path.join(...root, "missing", "value") + ".json")
@@ -86,9 +88,7 @@ describe("Storage", () => {
     Effect.gen(function* () {
       const { root, svc } = yield* scope()
       const error = yield* Effect.flip(
-        svc.update<{ value: number }>([...root, "missing", "key"], (draft) => {
-          draft.value += 1
-        }),
+        svc.update([...root, "missing", "key"], Counter, (current) => ({ value: current.value + 1 })),
       )
       expect(error).toBeInstanceOf(Storage.NotFoundError)
       expect(error._tag).toBe("NotFoundError")
@@ -100,10 +100,10 @@ describe("Storage", () => {
       const { root, svc } = yield* scope()
       const key = [...root, "overwrite", "test"]
 
-      yield* svc.write<{ v: number }>(key, { v: 1 })
-      yield* svc.write<{ v: number }>(key, { v: 2 })
+      yield* svc.write(key, { v: 1 })
+      yield* svc.write(key, { v: 2 })
 
-      expect(yield* svc.read<{ v: number }>(key)).toEqual({ v: 2 })
+      expect(yield* svc.read(key, Schema.Json)).toEqual({ v: 2 })
     }),
   )
 
@@ -129,15 +129,11 @@ describe("Storage", () => {
       yield* svc.write(key, { value: 0 })
 
       yield* Effect.all(
-        Array.from({ length: 25 }, () =>
-          svc.update<{ value: number }>(key, (draft) => {
-            draft.value += 1
-          }),
-        ),
+        Array.from({ length: 25 }, () => svc.update(key, Counter, (current) => ({ value: current.value + 1 }))),
         { concurrency: "unbounded" },
       )
 
-      expect(yield* svc.read<{ value: number }>(key)).toEqual({ value: 25 })
+      expect(yield* svc.read(key, Schema.Json)).toEqual({ value: 25 })
     }),
   )
 
@@ -149,7 +145,7 @@ describe("Storage", () => {
       yield* svc.write(key, { ok: true })
 
       const results = yield* Effect.all(
-        Array.from({ length: 10 }, () => svc.read(key)),
+        Array.from({ length: 10 }, () => svc.read(key, Schema.Json)),
         { concurrency: "unbounded" },
       )
 
@@ -163,9 +159,9 @@ describe("Storage", () => {
       const { root, svc } = yield* scope()
       const key = [...root, "a", "b", "c", "deep"]
 
-      yield* svc.write<{ nested: boolean }>(key, { nested: true })
+      yield* svc.write(key, { nested: true })
 
-      expect(yield* svc.read<{ nested: boolean }>(key)).toEqual({ nested: true })
+      expect(yield* svc.read(key, Schema.Json)).toEqual({ nested: true })
       expect(yield* svc.list([...root, "a"])).toEqual([key])
     }),
   )
@@ -185,7 +181,7 @@ describe("Storage", () => {
       yield* svc.remove(a)
 
       expect(yield* svc.list(prefix)).toEqual([b])
-      const exit = yield* svc.read(a).pipe(Effect.exit)
+      const exit = yield* svc.read(a, Schema.Json).pipe(Effect.exit)
       expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
@@ -214,15 +210,8 @@ describe("Storage", () => {
       yield* Effect.gen(function* () {
         const svc = yield* Storage.Service
         expect(yield* svc.list(["session_diff"])).toEqual([["session_diff", "ses_test"]])
-        expect(yield* svc.read<typeof diffs>(["session_diff", "ses_test"])).toEqual(diffs)
-        expect(
-          yield* svc.read<{
-            id: string
-            projectID: string
-            title: string
-            summary: { additions: number; deletions: number }
-          }>(["session", "proj_test", "ses_test"]),
-        ).toEqual({
+        expect(yield* svc.read(["session_diff", "ses_test"], Schema.Json)).toEqual(diffs)
+        expect(yield* svc.read(["session", "proj_test", "ses_test"], Schema.Json)).toEqual({
           id: "ses_test",
           projectID: "proj_test",
           title: "legacy",
@@ -262,11 +251,11 @@ describe("Storage", () => {
         const project = projects[0][1]
 
         expect(yield* svc.list(["session", project])).toEqual([["session", project, "ses_legacy"]])
-        expect(yield* svc.read<{ id: string; title: string }>(["session", project, "ses_legacy"])).toEqual({
+        expect(yield* svc.read(["session", project, "ses_legacy"], Schema.Json)).toEqual({
           id: "ses_legacy",
           title: "legacy",
         })
-        expect(yield* svc.read<{ role: string; text: string }>(["message", "ses_legacy", "msg_legacy"])).toEqual({
+        expect(yield* svc.read(["message", "ses_legacy", "msg_legacy"], Schema.Json)).toEqual({
           role: "user",
           text: "hello",
         })

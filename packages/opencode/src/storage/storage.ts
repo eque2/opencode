@@ -64,9 +64,21 @@ const jsonText = (value: unknown) => encodeJsonText(value).pipe(Effect.orDie)
 
 export interface Interface {
   readonly remove: (key: string[]) => Effect.Effect<void, FSUtil.Error>
-  readonly read: <T>(key: string[]) => Effect.Effect<T, Error>
-  readonly update: <T>(key: string[], fn: (draft: T) => void) => Effect.Effect<T, Error>
-  readonly write: <T>(key: string[], content: T) => Effect.Effect<void, FSUtil.Error>
+  /** Reads the JSON at `key` and decodes it with `schema`. */
+  readonly read: <S extends Schema.Codec<unknown, unknown>>(
+    key: string[],
+    schema: S,
+  ) => Effect.Effect<S["Type"], Error | Schema.SchemaError>
+  /**
+   * Decodes the JSON at `key` with `schema`, writes the encoded result of `fn`,
+   * and returns that result. Fields that `schema` does not declare are dropped.
+   */
+  readonly update: <S extends Schema.Codec<unknown, unknown>>(
+    key: string[],
+    schema: S,
+    fn: (current: S["Type"]) => S["Type"],
+  ) => Effect.Effect<S["Type"], Error | Schema.SchemaError>
+  readonly write: (key: string[], content: unknown) => Effect.Effect<void, FSUtil.Error>
   readonly list: (prefix: string[]) => Effect.Effect<string[][], FSUtil.Error>
 }
 
@@ -274,29 +286,30 @@ const layer = Layer.effect(
       )
     })
 
-    const read: Interface["read"] = <T>(key: string[]) =>
+    const read: Interface["read"] = <S extends Schema.Codec<unknown, unknown>>(key: string[], schema: S) =>
       Effect.gen(function* () {
         const value = yield* withResolved(key, (target, rw) =>
           TxReentrantLock.withReadLock(rw, wrap(target, fs.readJson(target))),
         )
-        return value as T
+        return yield* Schema.decodeUnknownEffect(schema)(value)
       })
 
-    const update: Interface["update"] = <T>(key: string[], fn: (draft: T) => void) =>
-      Effect.gen(function* () {
-        const value = yield* withResolved(key, (target, rw) =>
-          TxReentrantLock.withWriteLock(
-            rw,
-            Effect.gen(function* () {
-              const content = yield* wrap(target, fs.readJson(target))
-              fn(content as T)
-              yield* writeJson(target, content)
-              return content
-            }),
-          ),
-        )
-        return value as T
-      })
+    const update: Interface["update"] = <S extends Schema.Codec<unknown, unknown>>(
+      key: string[],
+      schema: S,
+      fn: (current: S["Type"]) => S["Type"],
+    ) =>
+      withResolved(key, (target, rw) =>
+        TxReentrantLock.withWriteLock(
+          rw,
+          Effect.gen(function* () {
+            const current = yield* Schema.decodeUnknownEffect(schema)(yield* wrap(target, fs.readJson(target)))
+            const next = fn(current)
+            yield* writeJson(target, yield* Schema.encodeEffect(schema)(next))
+            return next
+          }),
+        ),
+      )
 
     const write: Interface["write"] = (key: string[], content: unknown) =>
       Effect.gen(function* () {
