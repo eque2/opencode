@@ -1,6 +1,6 @@
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Effect, Schema } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Question } from "../question"
 import { Session } from "@/session/session"
@@ -53,7 +53,7 @@ export const PlanExitTool = Tool.define(
             id: MessageID.ascending(),
             sessionID: ctx.sessionID,
             role: "user",
-            time: { created: Date.now() },
+            time: { created: yield* Clock.currentTimeMillis },
             agent: "build",
             model,
           }

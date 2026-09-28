@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Schema } from "effect"
+import { DateTime, Effect, Option, Predicate, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
@@ -110,7 +110,9 @@ export const WebSearchTool = Tool.define(
 
     return {
       get description() {
-        return DESCRIPTION.replace("{{year}}", new Date().getFullYear().toString())
+        // A sync getter has no Effect context, so it reads the wall clock directly, in the local zone as before.
+        const year = DateTime.getPart(DateTime.setZone(DateTime.nowUnsafe(), DateTime.zoneMakeLocal()), "year")
+        return DESCRIPTION.replace("{{year}}", year.toString())
       },
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
