@@ -1,11 +1,9 @@
-import type { MessageV2 } from "opencode/session/message-v2"
+import type { SessionV1 } from "@opencode-ai/schema/v1/session"
 
-// message-v2.ts takes its message types from @opencode-ai/core/v1/session and
-// does not re-export them, and this package does not declare that dependency.
-// These aliases read the types off a signature that MessageV2 does export.
-export type WithParts = Parameters<typeof MessageV2.latest>[0][number]
-export type MessageInfo = WithParts["info"]
-export type MessagePart = WithParts["parts"][number]
+// The share viewer decodes its websocket frames with the SessionV1 schemas, so
+// these are the decoded (readonly) schema types, not the mutable domain aliases.
+export type MessageInfo = typeof SessionV1.Info.Type
+export type MessagePart = typeof SessionV1.Part.Type
 export type AssistantMessage = Extract<MessageInfo, { role: "assistant" }>
 export type ToolPart = Extract<MessagePart, { type: "tool" }>
 export type ToolStateCompleted = Extract<ToolPart["state"], { status: "completed" }>

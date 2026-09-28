@@ -1,26 +1,103 @@
 import { For, Show, onMount, Suspense, onCleanup, createMemo, createSignal, SuspenseList } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { Array as Arr, Duration, Effect, Fiber, Option, Schema } from "effect"
+import { Array as Arr, Duration, Effect, Fiber, Option, Predicate, Schema } from "effect"
+import { SessionV1 } from "@opencode-ai/schema/v1/session"
 import { IconArrowDown } from "./icons"
 import { IconOpencode } from "./icons/custom"
 import { ShareI18nProvider, formatCurrency, formatNumber } from "./share/common"
 import styles from "./share.module.css"
 import type { MessageInfo, MessagePart, ToolPart } from "./share/message"
-import type { Message } from "opencode/session/message"
 import type { Session } from "opencode/session/session"
 import { Part, ProviderIcon, formatTimestamp } from "./share/part"
 
-type MessageWithParts = MessageInfo & { parts: MessagePart[] }
+type MessageWithParts = MessageInfo & { parts: readonly MessagePart[] }
 
-// A share_poll frame. The content is a Session, Message or Part record. Its
-// schemas live in @opencode-ai/core, which this package does not depend on yet,
-// so the content stays unvalidated here as it was with JSON.parse.
+// A share_poll frame. The key names the record and the content is the record:
+// "session/info" carries a Session, "session/message/<id>" a Message and
+// "session/part/..." a Part. Each branch of applyFrame decodes the content.
 const ShareFrame = Schema.Struct({
   key: Schema.String,
-  content: Schema.Any,
+  content: Schema.Json,
 }).annotate({ identifier: "ShareFrame" })
 const decodeShareFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(ShareFrame))
+const decodeSessionInfo = Schema.decodeUnknownEffect(SessionV1.SessionInfo)
+const decodeMessageInfo = Schema.decodeUnknownEffect(SessionV1.Info)
+// A current message frame can carry its parts next to the Info fields.
+const decodeMessageParts = Schema.decodeUnknownEffect(
+  Schema.Struct({ parts: Schema.optional(Schema.Array(SessionV1.Part)) }),
+)
+const decodePart = Schema.decodeUnknownEffect(SessionV1.Part)
 const encodeDebugJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
+// A legacy v1 message, recognised by its `metadata` field. Only the fields that
+// fromV1 reads are declared; the field schemas come from SessionV1 so the
+// decoded IDs carry the SessionV1 brands.
+const LegacyToolCall = Schema.Struct({
+  toolCallId: Schema.String.pipe(Schema.brand("LegacyToolCallID")),
+  toolName: Schema.String,
+  args: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "LegacyToolCall" })
+const LegacyToolInvocation = Schema.Union([
+  Schema.Struct({ ...LegacyToolCall.fields, state: Schema.Literal("partial-call") }),
+  Schema.Struct({ ...LegacyToolCall.fields, state: Schema.Literal("call") }),
+  Schema.Struct({ ...LegacyToolCall.fields, state: Schema.Literal("result"), result: Schema.String }),
+]).annotate({ discriminator: "state" })
+const LegacyPart = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("step-start") }),
+  Schema.Struct({ type: Schema.Literal("tool-invocation"), toolInvocation: LegacyToolInvocation }),
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    mediaType: Schema.String,
+    filename: Schema.optional(Schema.String),
+    url: Schema.String,
+  }),
+  // fromV1 drops these parts, so their other fields stay unread.
+  Schema.Struct({ type: Schema.Literals(["reasoning", "source-url"]) }),
+])
+const legacyMessageFields = {
+  id: SessionV1.Assistant.fields.id,
+  parts: Schema.Array(LegacyPart),
+}
+const legacyMetadataFields = {
+  sessionID: SessionV1.Assistant.fields.sessionID,
+  time: SessionV1.Assistant.fields.time,
+}
+const LegacyMessage = Schema.Union([
+  Schema.Struct({
+    ...legacyMessageFields,
+    role: Schema.Literal("user"),
+    metadata: Schema.Struct(legacyMetadataFields),
+  }),
+  Schema.Struct({
+    ...legacyMessageFields,
+    role: Schema.Literal("assistant"),
+    metadata: Schema.Struct({
+      ...legacyMetadataFields,
+      error: SessionV1.Assistant.fields.error,
+      tool: Schema.Record(
+        Schema.String,
+        Schema.StructWithRest(
+          Schema.Struct({
+            title: Schema.String,
+            time: Schema.Struct({ start: Schema.Finite, end: Schema.Finite }),
+          }),
+          [Schema.Record(Schema.String, Schema.Json)],
+        ),
+      ),
+      assistant: Schema.Struct({
+        modelID: SessionV1.Assistant.fields.modelID,
+        providerID: SessionV1.Assistant.fields.providerID,
+        path: SessionV1.Assistant.fields.path,
+        cost: SessionV1.Assistant.fields.cost,
+        summary: SessionV1.Assistant.fields.summary,
+        tokens: Schema.optional(SessionV1.Assistant.fields.tokens),
+      }),
+    }),
+  }),
+]).annotate({ identifier: "LegacyMessage", discriminator: "role" })
+type LegacyMessage = typeof LegacyMessage.Type
+const decodeLegacyMessage = Schema.decodeUnknownEffect(LegacyMessage)
 
 type Status = "disconnected" | "connecting" | "connected" | "error" | "reconnecting"
 
@@ -72,7 +149,7 @@ export default function Share(props: {
   const [isNearBottom, setIsNearBottom] = createSignal(false)
 
   const [store, setStore] = createStore<{
-    info?: Session.Info
+    info?: SessionV1.SessionInfo
     messages: Record<string, MessageWithParts>
   }>({
     info: {
@@ -116,21 +193,25 @@ export default function Share(props: {
       const [root, type, ...splits] = frame.key.split("/")
       if (root !== "session") return
       if (type === "info") {
-        setStore("info", reconcile(frame.content))
+        setStore("info", reconcile(yield* decodeSessionInfo(frame.content)))
         return
       }
       if (type === "message") {
         const [, messageID] = splits
-        const content = "metadata" in frame.content ? yield* fromV1(frame.content) : frame.content
-        content.parts = content.parts ?? store.messages[messageID]?.parts ?? []
-        setStore("messages", messageID, reconcile(content))
+        const content = frame.content
+        const message: MessageWithParts = Predicate.hasProperty(content, "metadata")
+          ? yield* fromV1(yield* decodeLegacyMessage(content))
+          : {
+              ...(yield* decodeMessageInfo(content)),
+              parts: (yield* decodeMessageParts(content)).parts ?? store.messages[messageID]?.parts ?? [],
+            }
+        setStore("messages", messageID, reconcile(message))
       }
       if (type === "part") {
-        setStore("messages", frame.content.messageID, "parts", (arr) => {
-          const index = arr.findIndex((x) => x.id === frame.content.id)
-          if (index === -1) arr.push(frame.content)
-          if (index > -1) arr[index] = frame.content
-          return [...arr]
+        const part = yield* decodePart(frame.content)
+        setStore("messages", part.messageID, "parts", (arr) => {
+          const index = arr.findIndex((x) => x.id === part.id)
+          return index === -1 ? [...arr, part] : arr.map((x, i) => (i === index ? part : x))
         })
       }
     })
@@ -347,9 +428,17 @@ export default function Share(props: {
               </ul>
               <div
                 data-component="header-time"
-                title={formatTimestamp(Option.getOrElse(data().created, () => 0), props.messages.locale, "full")}
+                title={formatTimestamp(
+                  Option.getOrElse(data().created, () => 0),
+                  props.messages.locale,
+                  "full",
+                )}
               >
-                {formatTimestamp(Option.getOrElse(data().created, () => 0), props.messages.locale, "medium")}
+                {formatTimestamp(
+                  Option.getOrElse(data().created, () => 0),
+                  props.messages.locale,
+                  "medium",
+                )}
               </div>
             </div>
           </div>
@@ -508,14 +597,15 @@ export class ShareV1MessageError extends Schema.TaggedError<ShareV1MessageError>
   message: Schema.String,
 }) {}
 
-export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
+export const fromV1 = Effect.fnUntraced(function* (v1: LegacyMessage) {
   if (v1.role === "assistant") {
+    const metadata = v1.metadata
     const parts = yield* Effect.forEach(v1.parts, (part, index) =>
       Effect.gen(function* (): Effect.gen.Return<MessagePart[], ShareV1MessageError> {
         const base = {
           id: index.toString(),
           messageID: v1.id,
-          sessionID: v1.metadata.sessionID,
+          sessionID: metadata.sessionID,
         }
         if (part.type === "text") {
           return [
@@ -535,17 +625,15 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
           ]
         }
         if (part.type === "tool-invocation") {
+          const invocation = part.toolInvocation
           return [
             {
               ...base,
               type: "tool",
-              callID: part.toolInvocation.toolCallId,
-              tool: part.toolInvocation.toolName,
-              state: yield* Effect.gen(function* (): Effect.gen.Return<
-                ToolPart["state"],
-                ShareV1MessageError
-              > {
-                if (part.toolInvocation.state === "partial-call") {
+              callID: invocation.toolCallId,
+              tool: invocation.toolName,
+              state: yield* Effect.gen(function* (): Effect.gen.Return<ToolPart["state"], ShareV1MessageError> {
+                if (invocation.state === "partial-call") {
                   return {
                     status: "pending",
                     input: {},
@@ -553,28 +641,29 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
                   }
                 }
 
-                const { title, time, ...metadata } = v1.metadata.tool[part.toolInvocation.toolCallId]
-                if (part.toolInvocation.state === "call") {
+                const tool = Option.fromNullishOr(metadata.tool[invocation.toolCallId])
+                if (Option.isNone(tool)) {
+                  return yield* new ShareV1MessageError({ message: "missing tool invocation metadata" })
+                }
+                const { title, time, ...toolMetadata } = tool.value
+                if (invocation.state === "call") {
                   return {
                     status: "running",
-                    input: part.toolInvocation.args,
+                    input: invocation.args,
                     time: {
                       start: time.start,
                     },
                   }
                 }
 
-                if (part.toolInvocation.state === "result") {
-                  return {
-                    status: "completed",
-                    input: part.toolInvocation.args,
-                    output: part.toolInvocation.result,
-                    title,
-                    time,
-                    metadata,
-                  }
+                return {
+                  status: "completed",
+                  input: invocation.args,
+                  output: invocation.result,
+                  title,
+                  time,
+                  metadata: toolMetadata,
                 }
-                return yield* new ShareV1MessageError({ message: "unknown tool invocation state" })
               }),
             },
           ]
@@ -582,20 +671,21 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
         return []
       }),
     )
+    const assistant = metadata.assistant
     const message: MessageWithParts = {
       id: v1.id,
-      sessionID: v1.metadata.sessionID,
+      sessionID: metadata.sessionID,
       role: "assistant",
       parentID: "",
       agent: "build",
       time: {
-        created: v1.metadata.time.created,
-        completed: v1.metadata.time.completed,
+        created: metadata.time.created,
+        completed: metadata.time.completed,
       },
-      cost: v1.metadata.assistant!.cost,
-      path: v1.metadata.assistant!.path,
-      summary: v1.metadata.assistant!.summary,
-      tokens: v1.metadata.assistant!.tokens ?? {
+      cost: assistant.cost,
+      path: assistant.path,
+      summary: assistant.summary,
+      tokens: assistant.tokens ?? {
         input: 0,
         output: 0,
         cache: {
@@ -604,59 +694,55 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
         },
         reasoning: 0,
       },
-      modelID: v1.metadata.assistant!.modelID,
-      providerID: v1.metadata.assistant!.providerID,
+      modelID: assistant.modelID,
+      providerID: assistant.providerID,
       mode: "build",
-      error: v1.metadata.error,
+      error: metadata.error,
       parts: Arr.flatten(parts),
     }
     return message
   }
 
-  if (v1.role === "user") {
-    const message: MessageWithParts = {
-      id: v1.id,
-      sessionID: v1.metadata.sessionID,
-      role: "user",
-      agent: "user",
-      model: {
-        providerID: "",
-        modelID: "",
-      },
-      time: {
-        created: v1.metadata.time.created,
-      },
-      parts: v1.parts.flatMap((part, index): MessagePart[] => {
-        const base = {
-          id: index.toString(),
-          messageID: v1.id,
-          sessionID: v1.metadata.sessionID,
-        }
-        if (part.type === "text") {
-          return [
-            {
-              ...base,
-              type: "text",
-              text: part.text,
-            },
-          ]
-        }
-        if (part.type === "file") {
-          return [
-            {
-              ...base,
-              type: "file",
-              mime: part.mediaType,
-              filename: part.filename,
-              url: part.url,
-            },
-          ]
-        }
-        return []
-      }),
-    }
-    return message
+  const message: MessageWithParts = {
+    id: v1.id,
+    sessionID: v1.metadata.sessionID,
+    role: "user",
+    agent: "user",
+    model: {
+      providerID: "",
+      modelID: "",
+    },
+    time: {
+      created: v1.metadata.time.created,
+    },
+    parts: v1.parts.flatMap((part, index): MessagePart[] => {
+      const base = {
+        id: index.toString(),
+        messageID: v1.id,
+        sessionID: v1.metadata.sessionID,
+      }
+      if (part.type === "text") {
+        return [
+          {
+            ...base,
+            type: "text",
+            text: part.text,
+          },
+        ]
+      }
+      if (part.type === "file") {
+        return [
+          {
+            ...base,
+            type: "file",
+            mime: part.mediaType,
+            filename: part.filename,
+            url: part.url,
+          },
+        ]
+      }
+      return []
+    }),
   }
-
-  return yield* new ShareV1MessageError({ message: "unknown message type" })
+  return message
 })
