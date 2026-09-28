@@ -1,7 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
-import { Effect, Layer, Scope, Context } from "effect"
+import { Effect, Layer, Schema, Scope, Context } from "effect"
 import { Config } from "@/config/config"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ShareNext } from "./share-next"
@@ -11,6 +11,10 @@ export interface Interface {
   readonly share: (sessionID: SessionID) => Effect.Effect<{ url: string }, unknown>
   readonly unshare: (sessionID: SessionID) => Effect.Effect<void, unknown>
 }
+
+export class DisabledError extends Schema.TaggedError<DisabledError>()("SessionShare.DisabledError", {
+  message: Schema.String,
+}) {}
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionShare") {}
 
@@ -25,7 +29,8 @@ const layer = Layer.effect(
 
     const share = Effect.fn("SessionShare.share")(function* (sessionID: SessionID) {
       const conf = yield* cfg.get()
-      if (conf.share === "disabled") throw new Error("Sharing is disabled in configuration")
+      if (conf.share === "disabled")
+        return yield* new DisabledError({ message: "Sharing is disabled in configuration" })
       const result = yield* shareNext.create(sessionID)
       yield* session.setShare({ sessionID, share: { url: result.url } })
       return result

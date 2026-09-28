@@ -42,6 +42,10 @@ const ShareSchema = Schema.Struct({
 })
 export type Share = typeof ShareSchema.Type
 
+export class TokenError extends Schema.TaggedError<TokenError>()("ShareNext.TokenError", {
+  message: Schema.String,
+}) {}
+
 type State = {
   queue: MutableHashMap.MutableHashMap<SessionID, MutableHashMap.MutableHashMap<string, Data>>
   scope: Scope.Closeable
@@ -213,7 +217,7 @@ const layer = Layer.effect(
 
       const token = yield* account.token(active.value.id)
       if (Option.isNone(token)) {
-        throw new Error("No active account token available for sharing")
+        return yield* new TokenError({ message: "No active account token available for sharing" })
       }
 
       headers.authorization = `Bearer ${token.value}`
