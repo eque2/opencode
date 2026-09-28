@@ -5,7 +5,8 @@ import { Clock, Effect, Option, Schema } from "effect"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin } from "@opencode-ai/schema/plugin"
-import { Filesystem } from "@/util/filesystem"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Flock } from "@opencode-ai/core/util/flock"
 
 import { parsePluginSpecifier, pluginSource } from "./shared"
@@ -79,16 +80,22 @@ function fileTarget(spec: string, target: string): Option.Option<string> {
   return Option.none()
 }
 
-// Node reports sub-millisecond mtimes; the stored value keeps the floor of mtimeMs.
-// A missing file has no time. Any other stat failure is a defect, as the rejection was before.
-const modifiedAt = (file: string) =>
-  Effect.promise(() => Filesystem.statAsync(file)).pipe(
-    Effect.map((stat) =>
-      Option.fromNullishOr(stat).pipe(
-        Option.map((value) => Math.floor(typeof value.mtimeMs === "bigint" ? Number(value.mtimeMs) : value.mtimeMs)),
-      ),
-    ),
+// The stat of a path, or None when it is missing. Any other stat failure is a defect, as the rejection was before.
+const statOf = Effect.fnUntraced(function* (file: string) {
+  const fsu = yield* FSUtil.Service
+  return yield* fsu.stat(file).pipe(
+    Effect.map(Option.some),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    Effect.orDie,
   )
+})
+
+// Node reports sub-millisecond mtimes; the stored value keeps the floor of mtimeMs, which is the Date time.
+// A missing file has no time.
+const modifiedAt = Effect.fnUntraced(function* (file: string) {
+  const stat = yield* statOf(file)
+  return Option.flatMap(stat, (info) => Option.map(info.mtime, (date) => date.getTime()))
+})
 
 function resolvedTarget(target: string) {
   if (target.startsWith("file://")) return fileURLToPath(target)
@@ -96,10 +103,11 @@ function resolvedTarget(target: string) {
 }
 
 const npmVersion = Effect.fnUntraced(function* (target: string) {
+  const fsu = yield* FSUtil.Service
   const resolved = resolvedTarget(target)
-  const stat = yield* Effect.promise(() => Filesystem.statAsync(resolved))
-  const dir = stat?.isDirectory() ? resolved : path.dirname(resolved)
-  const text = yield* Effect.option(Effect.tryPromise(() => Filesystem.readText(path.join(dir, "package.json"))))
+  const stat = yield* statOf(resolved)
+  const dir = Option.exists(stat, (info) => info.type === "Directory") ? resolved : path.dirname(resolved)
+  const text = yield* Effect.option(fsu.readFileString(path.join(dir, "package.json")))
   return text.pipe(
     Option.flatMap(decodePackageVersion),
     Option.flatMap((pkg) => Option.fromNullishOr(pkg.version)),
@@ -143,17 +151,23 @@ function fingerprint(value: Core) {
 }
 
 // A missing or unreadable store starts empty, as before.
-const read = (file: string) =>
-  Effect.tryPromise(() => Filesystem.readText(file)).pipe(
+const read = Effect.fnUntraced(function* (file: string) {
+  const fsu = yield* FSUtil.Service
+  return yield* fsu.readFileString(file).pipe(
     Effect.flatMap((text) => decodeStore(text)),
     Effect.orElseSucceed((): Store => ({})),
   )
-
-// Filesystem.write creates the parent directory when it is missing.
-const write = Effect.fnUntraced(function* (file: string, store: Store) {
-  const text = yield* encodeStore(store)
-  yield* Effect.promise(() => Filesystem.write(file, text))
 })
+
+// writeWithDirs creates the parent directory when it is missing. A failed write is a defect, as before.
+const write = Effect.fnUntraced(function* (file: string, store: Store) {
+  const fsu = yield* FSUtil.Service
+  const text = yield* encodeStore(store)
+  yield* fsu.writeWithDirs(file, text).pipe(Effect.orDie)
+})
+
+// The exports keep no service requirement: worker processes and tests run them with Effect.runPromise alone.
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
 
 const row = Effect.fnUntraced(function* (item: Touch) {
   const core = yield* entryCore(item)
@@ -198,7 +212,7 @@ export const touchMany = Effect.fn("PluginMeta.touchMany")(function* (items: Rea
       return result.hits
     }),
   )
-})
+}, Effect.provide(fileSystemLayer))
 
 export const touch = Effect.fn("PluginMeta.touch")(function* (spec: string, target: string, id: string) {
   const hits = yield* touchMany([{ spec, target, id }])
@@ -218,11 +232,11 @@ export const setTheme = Effect.fn("PluginMeta.setTheme")(function* (id: string, 
       yield* write(file, { ...store, [id]: { ...entry, themes: { ...entry.themes, [name]: theme } } })
     }),
   )
-})
+}, Effect.provide(fileSystemLayer))
 
 export const list = Effect.fn("PluginMeta.list")(function* () {
   const file = yield* storePath
   return yield* Effect.scoped(Flock.effect(lock(file)).pipe(Effect.andThen(read(file))))
-})
+}, Effect.provide(fileSystemLayer))
 
 export * as PluginMeta from "./meta"

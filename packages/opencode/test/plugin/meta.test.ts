@@ -9,7 +9,6 @@ import { tmpdir } from "../fixture/fixture"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ChildProcess } from "effect/unstable/process"
-import { Filesystem } from "@/util/filesystem"
 
 const { PluginMeta } = await import("../../src/plugin/meta")
 const root = path.join(import.meta.dir, "../..")
@@ -29,7 +28,7 @@ function run(input: { file: string; spec: string; target: string; id: string }) 
 }
 
 async function map<Value>(file: string): Promise<Record<string, Value>> {
-  return Filesystem.readJson<Record<string, Value>>(file)
+  return Bun.file(file).json()
 }
 
 afterEach(() => {
