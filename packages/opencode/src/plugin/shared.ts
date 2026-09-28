@@ -375,7 +375,8 @@ export function readPackageThemes(spec: string, pkg: PluginPackage) {
   return Result.getOrThrow(packageThemes(spec, pkg))
 }
 
-function pluginId(id: unknown, spec: string): Result.Result<Option.Option<string>, PluginExportError> {
+// Result form of readPluginId for callers inside Effect.
+export function pluginId(id: unknown, spec: string): Result.Result<Option.Option<string>, PluginExportError> {
   if (id === undefined) return Result.succeedNone
   if (typeof id !== "string") {
     return Result.fail(new PluginExportError({ message: `Plugin ${spec} has invalid id type ${typeof id}` }))
@@ -390,7 +391,8 @@ export function readPluginId(id: unknown, spec: string) {
   return Option.getOrUndefined(Result.getOrThrow(pluginId(id, spec)))
 }
 
-function v1Plugin(
+// Result form of readV1Plugin for callers inside Effect.
+export function v1Plugin(
   mod: Record<string, unknown>,
   spec: string,
   kind: PluginKind,
@@ -454,6 +456,17 @@ const pluginIdFor = Effect.fn("PluginShared.pluginIdFor")(function* (
   }
   return name.trim()
 })
+
+// Effect form of resolvePluginId for callers inside Effect. It provides its own filesystem layer.
+export function pluginIdOf(
+  source: PluginSource,
+  spec: string,
+  target: string,
+  id: Option.Option<string>,
+  pkg: Option.Option<PluginPackage>,
+) {
+  return pluginIdFor(source, spec, target, id, pkg).pipe(Effect.provide(fileSystemLayer))
+}
 
 // Promise form of pluginIdFor for callers outside Effect.
 export function resolvePluginId(
