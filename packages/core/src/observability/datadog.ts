@@ -1,10 +1,13 @@
 import {
+  Array as Arr,
   Clock,
   Config,
+  ConfigProvider,
   Context,
   DateTime,
   Duration,
   Effect,
+  FileSystem,
   Formatter,
   HashSet,
   Logger,
@@ -14,14 +17,46 @@ import {
   Redacted,
   Schema,
 } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { type ParseError, parse } from "jsonc-parser"
 import os from "os"
+import path from "path"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
 import { runID } from "./shared"
 
 // User answers and terminal sessions never leave the machine unless the env var re-includes them.
 const GUARDED = ["question", "pty"]
 const DEFAULT_CATEGORIES = "*,-question,-pty"
+
+// Layer 2 reads these global config files, in this order.
+const CONFIG_FILES = ["config.json", "opencode.json", "opencode.jsonc"]
+const API_KEYS = ["apiKey", "api_key", "DD_API_KEY"]
+const SITES = [
+  "datadoghq.com",
+  "us3.datadoghq.com",
+  "us5.datadoghq.com",
+  "datadoghq.eu",
+  "ap1.datadoghq.com",
+  "ddog-gov.com",
+]
+// The file keys that narrow, and the env var that each one sets. `enabled` is handled apart.
+const FILE_KEYS: Readonly<Record<string, string>> = {
+  service: "DD_SERVICE",
+  env: "DD_ENV",
+  version: "DD_VERSION",
+  tags: "DD_TAGS",
+  hostname: "DD_HOSTNAME",
+  level: "OPENCODE_DATADOG_LOG_LEVEL",
+  categories: "OPENCODE_DATADOG_CATEGORIES",
+  content: "OPENCODE_DATADOG_CONTENT",
+  flushInterval: "OPENCODE_DATADOG_FLUSH_INTERVAL",
+  site: "DD_SITE",
+}
+const decodeDuration = Schema.decodeUnknownOption(Schema.DurationFromString)
+
+// Levels are case-insensitive, for example `DEBUG`, `debug` or `Debug`.
+const LEVEL_NAMES = LogLevel.values.flatMap((level) => [level, level.toLowerCase(), level.toUpperCase()])
 
 // Every switch is an Effect Config, so any ConfigProvider (env, JSON file, test override) can supply it.
 export const config = Config.all({
@@ -34,7 +69,10 @@ export const config = Config.all({
   version: Config.String("DD_VERSION").pipe(Config.withDefault(InstallationVersion)),
   tags: Config.String("DD_TAGS").pipe(Config.withDefault("")),
   hostname: Config.String("DD_HOSTNAME").pipe(Config.withDefault(os.hostname())),
-  level: Config.LogLevel("OPENCODE_DATADOG_LOG_LEVEL").pipe(Config.withDefault<LogLevel.LogLevel>("Info")),
+  level: Config.Literals(LEVEL_NAMES, "OPENCODE_DATADOG_LOG_LEVEL").pipe(
+    Config.map((name) => levelOf(name).pipe(Option.getOrElse((): LogLevel.LogLevel => "Info"))),
+    Config.withDefault<LogLevel.LogLevel>("Info"),
+  ),
   categories: Config.String("OPENCODE_DATADOG_CATEGORIES").pipe(Config.withDefault(DEFAULT_CATEGORIES)),
   content: Config.Literals(["omit", "hash", "full"], "OPENCODE_DATADOG_CONTENT").pipe(Config.withDefault("omit")),
   flushInterval: Config.Duration("OPENCODE_DATADOG_FLUSH_INTERVAL").pipe(Config.withDefault(Duration.seconds(5))),
@@ -117,9 +155,112 @@ export const settings = Effect.gen(function* () {
   const value = yield* config
   return value.enabled && Option.isSome(value.apiKey) ? Option.some(value) : Option.none<Settings>()
 }).pipe(
-  // A bad value must not stop startup; the sink stays off instead.
-  Effect.orElseSucceed(() => Option.none<Settings>()),
+  // A bad value must not stop startup; the sink stays off instead, and says why.
+  Effect.catch((error) =>
+    Effect.logWarning(`Datadog sink disabled by a bad setting: ${error.message}`).pipe(
+      Effect.as(Option.none<Settings>()),
+    ),
+  ),
 )
+
+export interface ProviderOptions {
+  /** The process env. It overrides every file value, and an empty value counts as unset. */
+  readonly env: typeof process.env
+  /** The global config dir. Project config files have no effect, because the sink is built once per process. */
+  readonly configDir: string
+}
+
+/**
+ * The ConfigProvider for `settings`: the env, then the `observability.datadog` object of the global config files,
+ * then the code defaults. A file may only narrow what the process sends, and it never supplies the API key. Every
+ * ignored file value logs one warning that names the file.
+ */
+export const provider = (options: ProviderOptions) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const files = yield* Effect.forEach(CONFIG_FILES, (name) => {
+      const file = path.join(options.configDir, name)
+      return Effect.map(Effect.option(fs.readFileString(file)), (text) => ({ file, text }))
+    })
+    // An empty file counts as no file.
+    const parsed = files.flatMap(({ file, text }) =>
+      Option.isSome(text) && text.value.trim() ? [fileSettings(file, text.value)] : [],
+    )
+    yield* Effect.forEach(
+      parsed.flatMap((result) => result.warnings),
+      (message) => Effect.logWarning(message),
+      { discard: true },
+    )
+    // Files merge key by key, and the later file wins.
+    const fromFiles: Record<string, string> = Object.assign({}, ...parsed.map((result) => result.values))
+    const fromEnv = Object.entries(options.env).filter((entry): entry is [string, string] => Boolean(entry[1]))
+    return ConfigProvider.fromEnv({ env: { ...fromFiles, ...Object.fromEntries(fromEnv) } })
+  }).pipe(Effect.provide(NodeFileSystem.layer))
+
+/** Maps one file's `observability.datadog` object to env var values that narrow, and the warnings for the rest. */
+function fileSettings(file: string, text: string) {
+  const ignored = (reason: string) => ({ values: {}, warnings: [`Datadog settings in ${file} ignored: ${reason}`] })
+  const errors: Array<ParseError> = []
+  const input: unknown = parse(text, errors, { allowTrailingComma: true })
+  if (errors.length > 0) return ignored("the file is not valid JSONC")
+  if (!Predicate.isObject(input) || !("observability" in input)) return { values: {}, warnings: [] }
+  const observability = input.observability
+  if (!plain(observability)) return ignored('"observability" is not an object')
+  if (!("datadog" in observability)) return { values: {}, warnings: [] }
+  const datadog = observability.datadog
+  if (!plain(datadog)) return ignored('"observability.datadog" is not an object')
+  const results = Object.entries(datadog).map(([key, value]) => [key, fileValue(key, value)] as const)
+  return {
+    values: Object.fromEntries(
+      results.flatMap(([, result]) => (typeof result === "string" ? [] : Option.toArray(result))),
+    ),
+    // The API key names share one warning, which never quotes the value.
+    warnings: Arr.dedupe(
+      results.flatMap(([key, result]) =>
+        typeof result !== "string"
+          ? []
+          : [`Datadog ${API_KEYS.includes(key) ? "API key" : `setting "${key}"`} in ${file} ignored: ${result}`],
+      ),
+    ),
+  }
+}
+
+/** The env var and value for one file key, none for a value with no effect, or the reason the value is ignored. */
+function fileValue(key: string, value: unknown): Option.Option<readonly [string, string]> | string {
+  const set = (name: string, text: string) => Option.some([name, text] as const)
+  if (API_KEYS.includes(key)) return "the API key is read only from the DD_API_KEY env var"
+  if (key === "url") return "the intake URL is set only by the OPENCODE_DATADOG_LOGS_URL env var"
+  if (key === "enabled") {
+    if (value === false) return set("OPENCODE_DATADOG_LOGS", "false")
+    return value === true ? Option.none() : "expected a boolean"
+  }
+  const name = FILE_KEYS[key]
+  if (name === undefined) return "unknown key"
+  if (typeof value !== "string") return "expected a string"
+  if (key === "level")
+    return Option.match(levelOf(value), { onNone: () => "unknown log level", onSome: (level) => set(name, level) })
+  if (key === "content")
+    return value === "omit" || value === "hash" ? set(name, value) : 'a file allows only "omit" or "hash"'
+  if (key === "site") return SITES.includes(value) ? set(name, value) : "unknown Datadog site"
+  if (key === "flushInterval") return Option.isSome(decodeDuration(value)) ? set(name, value) : 'expected a duration such as "10 seconds"'
+  if (key === "categories") {
+    const rules = value
+      .split(",")
+      .map((rule) => rule.trim())
+      .filter(Boolean)
+    if (rules.some((rule) => !rule.startsWith("-") && guarded(rule)))
+      return "a file cannot re-include the question or pty categories"
+    // A file cannot remove the default exclusions, so a wildcard keeps them.
+    const include = categoryFilter(rules.join(","))
+    const kept = GUARDED.filter((prefix) => include(prefix)).map((prefix) => `-${prefix}`)
+    return set(name, [...rules, ...kept].join(","))
+  }
+  return set(name, value)
+}
+
+function levelOf(name: string) {
+  return Option.fromNullishOr(LogLevel.values.find((level) => level.toLowerCase() === name.toLowerCase()))
+}
 
 export interface LoggerOptions {
   /** How long the sink stays off after a batch exhausts its retries. */

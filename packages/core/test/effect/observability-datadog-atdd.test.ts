@@ -60,7 +60,7 @@ async function tempDir() {
   return { dir, [Symbol.asyncDispose]: () => fs.rm(dir, { recursive: true, force: true }) }
 }
 
-test.skip("AC-1 a global config file configures the sink and env overrides it", async () => {
+test("AC-1 a global config file configures the sink and env overrides it", async () => {
   await using temp = await tempDir()
   await Bun.write(
     path.join(temp.dir, "opencode.jsonc"),
@@ -68,7 +68,6 @@ test.skip("AC-1 a global config file configures the sink and env overrides it", 
   )
   const resolve = async (env: Record<string, string>): Promise<Option.Option<Datadog.Settings>> =>
     Effect.runPromise(
-      // @ts-expect-error AC-1 red phase: Datadog.provider lands in stage 3.
       Datadog.provider({ env, configDir: temp.dir }).pipe(
         Effect.flatMap((provider: ConfigProvider.ConfigProvider) =>
           Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider))),
@@ -82,7 +81,7 @@ test.skip("AC-1 a global config file configures the sink and env overrides it", 
   expect(overridden.content).toBe("hash")
 })
 
-test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async () => {
+test("AC-2 a config-file apiKey is ignored and the env key is sent", async () => {
   await using temp = await tempDir()
   const target = intake()
   using _ = target.server
@@ -94,7 +93,6 @@ test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async 
   )
   const resolve = async (env: Record<string, string>): Promise<Option.Option<Datadog.Settings>> =>
     Effect.runPromise(
-      // @ts-expect-error AC-2 red phase: Datadog.provider lands in stage 3.
       Datadog.provider({ env, configDir: temp.dir }).pipe(
         Effect.flatMap((provider: ConfigProvider.ConfigProvider) =>
           Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider))),
@@ -689,3 +687,158 @@ test("AC-4b the stderr and OTLP loggers filter to the file level", async () => {
     "per-sink info",
   ])
 }, 20_000)
+
+// Resolves the settings through the file layer and returns the warnings that it logged.
+async function fromFiles(files: Record<string, string>, env: Record<string, string> = { DD_API_KEY: "key" }) {
+  await using temp = await tempDir()
+  await Promise.all(Object.entries(files).map(([name, text]) => Bun.write(path.join(temp.dir, name), text)))
+  const warned = warnings()
+  const resolved = await Datadog.provider({ env, configDir: temp.dir }).pipe(
+    Effect.flatMap((provider) => Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider)))),
+    Effect.provide(Logger.layer([warned.logger])),
+    Effect.runPromise,
+  )
+  return { settings: resolved, warnings: warned.messages }
+}
+
+const datadogFile = (datadog: unknown) => JSON.stringify({ observability: { datadog } })
+
+test("AC-1b Observability.layer reads the global config dir from OPENCODE_CONFIG_DIR", async () => {
+  await using temp = await tempDir()
+  await Bun.write(path.join(temp.dir, "opencode.json"), datadogFile({ service: "from-global-file" }))
+  const target = intake()
+  using _ = target.server
+  await withEnv(
+    {
+      OPENCODE_CONFIG_DIR: temp.dir,
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    },
+    async () => {
+      const runtime = ManagedRuntime.make(Observability.layer)
+      await runtime.runPromise(Effect.logInfo("configured").pipe(Effect.annotateLogs({ category: "cli.exit" })))
+      await runtime.dispose()
+    },
+  )
+  expect(target.requests[0].body[0].service).toBe("from-global-file")
+})
+
+test("AC-1c files merge key by key and the later file wins", async () => {
+  const result = await fromFiles({
+    "config.json": datadogFile({ service: "a", env: "x" }),
+    "opencode.json": datadogFile({ service: "b" }),
+    "opencode.jsonc": `{ "observability": { "datadog": { "version": "3", }, }, }`,
+  })
+  expect(result.warnings).toEqual([])
+  expect(required(result.settings)).toMatchObject({ service: "b", env: "x", version: "3" })
+})
+
+test("AC-1c an empty file counts as no file", async () => {
+  const result = await fromFiles({ "config.json": datadogFile({ service: "kept" }), "opencode.json": "  \n " })
+  expect(result.warnings).toEqual([])
+  expect(required(result.settings).service).toBe("kept")
+})
+
+test("AC-1c a malformed JSONC file is ignored with one warning and env settings still apply", async () => {
+  const result = await fromFiles(
+    { "config.json": datadogFile({ env: "from-file" }), "opencode.json": `{ "observability": ` },
+    { DD_API_KEY: "key", DD_SERVICE: "from-env" },
+  )
+  expect(result.warnings).toHaveLength(1)
+  expect(result.warnings[0]).toContain("opencode.json")
+  expect(required(result.settings)).toMatchObject({ service: "from-env", env: "from-file" })
+})
+
+test("AC-1c a non-object observability or datadog is ignored with one warning", async () => {
+  for (const text of [JSON.stringify({ observability: "on" }), JSON.stringify({ observability: { datadog: 3 } })]) {
+    const result = await fromFiles({ "opencode.json": text })
+    expect(result.warnings).toHaveLength(1)
+    expect(required(result.settings).service).toBe("opencode")
+  }
+})
+
+test("AC-1c an unknown key is ignored with one warning", async () => {
+  const result = await fromFiles({ "opencode.json": datadogFile({ servce: "typo", service: "kept" }) })
+  expect(result.warnings).toHaveLength(1)
+  expect(result.warnings[0]).toContain('"servce"')
+  expect(required(result.settings).service).toBe("kept")
+})
+
+test("AC-1d a file cannot widen content, set url, set an unknown site, or re-include question or pty", async () => {
+  const cases: Array<[Record<string, unknown>, (settings: Datadog.Settings) => void]> = [
+    [{ content: "full" }, (settings) => expect(settings.content).toBe("omit")],
+    [{ url: "https://collector.example/logs" }, (settings) => expect(Option.isNone(settings.url)).toBe(true)],
+    [{ site: "datadog.attacker.example" }, (settings) => expect(settings.site).toBe("datadoghq.com")],
+    [{ categories: "llm,question" }, (settings) => expect(settings.categories).toBe("*,-question,-pty")],
+    [{ categories: "pty.create" }, (settings) => expect(settings.categories).toBe("*,-question,-pty")],
+  ]
+  for (const [datadog, check] of cases) {
+    const result = await fromFiles({ "opencode.json": datadogFile(datadog) })
+    expect(result.warnings).toHaveLength(1)
+    check(required(result.settings))
+  }
+})
+
+test("AC-1d the narrowing file values apply and a wildcard keeps the default exclusions", async () => {
+  const result = await fromFiles({
+    "opencode.json": datadogFile({ content: "hash", site: "datadoghq.eu", categories: "*,-llm.stream" }),
+  })
+  expect(result.warnings).toEqual([])
+  const settings = required(result.settings)
+  expect(settings).toMatchObject({ content: "hash", site: "datadoghq.eu" })
+  const include = Datadog.categoryFilter(settings.categories)
+  expect(["question.asked", "pty.create", "llm.stream"].filter(include)).toEqual([])
+  expect(include("llm.request")).toBe(true)
+  // A file can turn the sink off but never on.
+  expect(Option.isNone((await fromFiles({ "opencode.json": datadogFile({ enabled: false }) })).settings)).toBe(true)
+})
+
+test("AC-1e level is case-insensitive, flushInterval takes a duration string, and an empty env value is unset", async () => {
+  for (const level of ["DEBUG", "debug", "Debug"]) {
+    expect(required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: level })).level).toBe("Debug")
+  }
+  const result = await fromFiles(
+    { "opencode.json": datadogFile({ level: "WARN", flushInterval: "10 seconds", service: "from-file" }) },
+    { DD_API_KEY: "key", DD_SERVICE: "" },
+  )
+  expect(result.warnings).toEqual([])
+  const resolved = required(result.settings)
+  expect(resolved.level).toBe("Warn")
+  expect(Duration.toMillis(resolved.flushInterval)).toBe(10_000)
+  expect(resolved.service).toBe("from-file")
+})
+
+test("AC-1e a bad value that turns the sink off emits one Warn to the other sinks, not the console", async () => {
+  const stderr: Array<string> = []
+  const console_: Array<string> = []
+  const write = process.stderr.write
+  const methods = { log: console.log, warn: console.warn, error: console.error }
+  process.stderr.write = (chunk: string | Uint8Array) => {
+    stderr.push(String(chunk))
+    return true
+  }
+  for (const name of ["log", "warn", "error"] as const) console[name] = (...args: Array<unknown>) => console_.push(args.join(" "))
+  try {
+    await withEnv({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: "Loud", OPENCODE_PRINT_LOGS: "1" }, async () => {
+      const runtime = ManagedRuntime.make(Observability.layer)
+      await runtime.runPromise(Effect.void)
+      await runtime.dispose()
+    })
+  } finally {
+    process.stderr.write = write
+    Object.assign(console, methods)
+  }
+  const lines = stderr.join("").split("\n").filter((line) => line.includes("Datadog sink disabled by a bad setting"))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain("level=WARN")
+  expect(console_.filter((line) => line.includes("Datadog"))).toEqual([])
+})
+
+test("AC-2b a config file API key logs one warning that names the file", async () => {
+  const result = await fromFiles({ "opencode.jsonc": datadogFile({ apiKey: "from-file", service: "kept" }) }, {})
+  expect(result.warnings).toHaveLength(1)
+  expect(result.warnings[0]).toContain("opencode.jsonc")
+  expect(result.warnings[0]).not.toContain("from-file")
+  expect(Option.isNone(result.settings)).toBe(true)
+})
