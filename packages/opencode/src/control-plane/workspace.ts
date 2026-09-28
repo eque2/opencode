@@ -27,7 +27,7 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionID } from "@/session/schema"
 import { NotFoundError } from "@/storage/storage"
 import { errorData } from "@/util/error"
-import { waitEvent } from "./util"
+import { waitEvent, type WaitEventError } from "./util"
 import { WorkspaceRef } from "@/effect/instance-ref"
 import { Vcs } from "@/project/vcs"
 import { InstanceStore } from "@/project/instance-store"
@@ -112,7 +112,7 @@ export class SyncAbortedError extends Schema.TaggedError<SyncAbortedError>()("Wo
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
-type CreateError = Auth.AuthError
+type CreateError = Auth.AuthError | WaitEventError
 type SessionWarpError =
   | WorkspaceNotFoundError
   | SessionEventsNotFoundError
@@ -906,7 +906,7 @@ function waitUntilSynced(input: {
   state: Record<string, number>
   signal?: AbortSignal
   timeout: number
-}): Effect.Effect<void, unknown> {
+}): Effect.Effect<void, WaitEventError> {
   return Effect.suspend(() =>
     waitEvent({
       timeout: input.timeout,
@@ -916,7 +916,7 @@ function waitUntilSynced(input: {
       },
     }).pipe(
       Effect.andThen(synced(input.db, input.state)),
-      Effect.flatMap((done): Effect.Effect<void, unknown> => (done ? Effect.void : waitUntilSynced(input))),
+      Effect.flatMap((done): Effect.Effect<void, WaitEventError> => (done ? Effect.void : waitUntilSynced(input))),
     ),
   )
 }
