@@ -5,7 +5,9 @@ import path from "path"
 import { Config, Effect, HashSet, Option, Schema } from "effect"
 import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
 
@@ -55,6 +57,13 @@ export const parseManagedPlist = Effect.fn("ConfigManaged.parseManagedPlist")(fu
   )
 })
 
+// Converts a plist to JSON with plutil. None when plutil cannot start, which counts as a failed
+// conversion. The Config layer calls this without AppProcess, so it provides its own.
+const convertPlist = (plist: string) =>
+  AppProcess.Service.use((appProcess) =>
+    appProcess.run(ChildProcess.make("plutil", ["-convert", "json", "-o", "-", plist], { stdin: "ignore" })),
+  ).pipe(Effect.option, Effect.provide(LayerNode.compile(AppProcess.node)))
+
 /** Reads the macOS managed preferences (.mobileconfig deployed via MDM). Other platforms have none. */
 export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPreferences")(function* () {
   if (process.platform !== "darwin") return Option.none<{ source: string; text: string }>()
@@ -68,14 +77,12 @@ export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPrefer
 
   for (const plist of paths) {
     if (!(yield* fs.existsSafe(plist))) continue
-    const result = yield* Effect.promise(() =>
-      Process.run(["plutil", "-convert", "json", "-o", "-", plist], { nothrow: true }),
-    )
-    if (result.code !== 0) continue
+    const result = yield* convertPlist(plist)
+    if (Option.isNone(result) || result.value.exitCode !== 0) continue
     return Option.some({
       source: `mobileconfig:${plist}`,
       // Output that does not parse was a defect before (a sync throw); keep it one.
-      text: yield* parseManagedPlist(result.stdout.toString()).pipe(Effect.orDie),
+      text: yield* parseManagedPlist(result.value.stdout.toString()).pipe(Effect.orDie),
     })
   }
 
