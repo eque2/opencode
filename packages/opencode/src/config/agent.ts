@@ -25,7 +25,7 @@ export const load = Effect.fn("ConfigAgent.load")(function* (dir: string) {
       ...md.value.data,
       prompt: md.value.content.trim(),
     }
-    result[config.name] = ConfigParse.schema(ConfigAgentV1.Info, config, item)
+    result[config.name] = yield* ConfigParse.decodeSchema(ConfigAgentV1.Info, config, item)
   }
   return result
 })

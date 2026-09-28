@@ -64,14 +64,6 @@ export function decodeSchema<S extends EffectSchema.Decoder<unknown>>(
 }
 
 /**
- * Synchronous form of {@link parseJsonc} for callers outside Effect. It throws the JsonError.
- * @deprecated Use {@link parseJsonc}.
- */
-export function jsonc(text: string, filepath: string): unknown {
-  return valueOrThrow(parseJsonc(text, filepath))
-}
-
-/**
  * Synchronous form of {@link decodeSchema} for callers outside Effect. It throws the InvalidError.
  * @deprecated Use {@link decodeSchema}.
  */
