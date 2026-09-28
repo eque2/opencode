@@ -34,7 +34,7 @@ const withFetch = <A, E, R>(
   Effect.acquireUseRelease(
     Effect.sync(() => Bun.serve({ port: 0, fetch })),
     (server) => fn(server.url),
-    (server) => Effect.sync(() => server.stop(true)),
+    (server) => Effect.promise(() => server.stop(true)),
   )
 
 const exec = Effect.fn("WebFetchToolTest.exec")(function* (args: Tool.InferParameters<typeof WebFetchTool>) {
