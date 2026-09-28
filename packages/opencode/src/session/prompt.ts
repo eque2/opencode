@@ -41,7 +41,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
 import { Array as Arr, Cause, Clock, Effect, Exit, HashSet, Latch, Layer, Option, Scope, Context, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
@@ -151,6 +151,7 @@ const layer = Layer.effect(
     const truncate = yield* Truncate.Service
     const image = yield* Image.Service
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const appProcess = yield* AppProcess.Service
     const scope = yield* Scope.Scope
     const instruction = yield* Instruction.Service
     const state = yield* SessionRunState.Service
@@ -1424,8 +1425,10 @@ const layer = Layer.effect(
         const results = yield* Effect.forEach(
           shellMatches,
           ([, cmd]) =>
-            Effect.promise(() => Process.text([cmd], { shell: sh, nothrow: true })).pipe(
-              Effect.map((result) => result.text),
+            // A failed command contributes its stdout; one that cannot start contributes nothing.
+            appProcess.run(ChildProcess.make(cmd, [], { shell: sh, stdin: "ignore" })).pipe(
+              Effect.map((result) => result.stdout.toString()),
+              Effect.orElseSucceed(() => ""),
             ),
           { concurrency: "unbounded" },
         )
@@ -1640,6 +1643,7 @@ export const node = LayerNode.make({
     Truncate.node,
     Image.node,
     CrossSpawnSpawner.node,
+    AppProcess.node,
     Instruction.node,
     SessionRunState.node,
     SessionRevert.node,
