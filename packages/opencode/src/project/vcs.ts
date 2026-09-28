@@ -289,12 +289,12 @@ export type FileStatus = Schema.Schema.Type<typeof FileStatus>
 
 export const ApplyInput = Schema.Struct({
   patch: Schema.String,
-})
+}).annotate({ description: "A raw patch to apply to the working tree" })
 export type ApplyInput = Schema.Schema.Type<typeof ApplyInput>
 
 export const ApplyResult = Schema.Struct({
   applied: Schema.Boolean,
-})
+}).annotate({ description: "VCS patch applied" })
 export type ApplyResult = Schema.Schema.Type<typeof ApplyResult>
 
 export class PatchApplyError extends Schema.TaggedError<PatchApplyError>()("VcsPatchApplyError", {
