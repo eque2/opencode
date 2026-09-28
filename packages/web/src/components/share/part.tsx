@@ -1,5 +1,5 @@
 import map from "lang-map"
-import { Array as Arr, DateTime, Duration, Option, Predicate, Schema } from "effect"
+import { Array as Arr, DateTime, Duration, Effect, Option, Predicate, Schema } from "effect"
 import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
 import {
   IconHashtag,
@@ -86,9 +86,12 @@ export function Part(props: PartProps) {
               const anchor = e.currentTarget
               const hash = anchor.getAttribute("href") || ""
               const { origin, pathname, search } = window.location
-              navigator.clipboard
-                .writeText(`${origin}${pathname}${search}${hash}`)
-                .catch((err) => console.error("Copy failed", err))
+              Effect.runFork(
+                Effect.tryPromise({
+                  try: () => navigator.clipboard.writeText(`${origin}${pathname}${search}${hash}`),
+                  catch: (error) => error,
+                }).pipe(Effect.catch((error) => Effect.logError("Copy failed", error))),
+              )
 
               setCopied(true)
               setTimeout(() => setCopied(false), 3000)
