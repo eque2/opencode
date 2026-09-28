@@ -17,6 +17,7 @@ import {
   Duration,
   Effect,
   Fiber,
+  HashMap,
   MutableHashMap,
   MutableHashSet,
   Option,
@@ -247,9 +248,7 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
   })
   connection.onRequest("window/workDoneProgress/create", constVoid)
   connection.onRequest(WorkspaceConfiguration, (params) =>
-    (params.items ?? []).map((item) =>
-      Option.getOrNull(configurationValue(input.server.initialization, item.section)),
-    ),
+    (params.items ?? []).map((item) => Option.getOrNull(configurationValue(input.server.initialization, item.section))),
   )
   connection.onRequest(RegisterCapability, (params) => {
     const added = (params.registrations ?? []).filter(
@@ -512,9 +511,9 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
   const waitForRegistrationChange = (timeout: number) =>
     timeout <= 0
       ? Effect.succeed(false)
-      : Effect.scoped(
-          PubSub.subscribe(registrationChanges).pipe(Effect.flatMap(PubSub.take), Effect.as(true)),
-        ).pipe(Effect.timeoutOrElse({ duration: Duration.millis(timeout), orElse: () => Effect.succeed(false) }))
+      : Effect.scoped(PubSub.subscribe(registrationChanges).pipe(Effect.flatMap(PubSub.take), Effect.as(true))).pipe(
+          Effect.timeoutOrElse({ duration: Duration.millis(timeout), orElse: () => Effect.succeed(false) }),
+        )
 
   // A push counts when it carries the requested version, or carries no version
   // and arrived after the wait started.
@@ -719,8 +718,7 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     },
     get diagnostics() {
       const keys = Arr.dedupe([...MutableHashMap.keys(pushDiagnostics), ...MutableHashMap.keys(pullDiagnostics)])
-      // eslint-disable-next-line effect/no-map-use-hashmap -- (c) public contract: src/lsp/lsp.ts reads this getter as a Map through .entries(), and the tests read it through .get()
-      return new Map(keys.map((key): [string, Diagnostic[]] => [key, mergedDiagnostics(key)]))
+      return HashMap.fromIterable(keys.map((key): [string, Diagnostic[]] => [key, mergedDiagnostics(key)]))
     },
     waitForDiagnostics: (request: { path: string; version: number; mode?: "document" | "full"; after?: number }) =>
       Effect.runPromise(waitForDiagnostics(request)),

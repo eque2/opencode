@@ -248,13 +248,11 @@ const layer = Layer.effect(
       root: string,
       key: string,
     ) {
-      const handle = yield* server
-        .spawn(root, ctx, flags)
-        .pipe(
-          Effect.provideService(FSUtil.Service, fsu),
-          Effect.provideService(AppProcess.Service, appProcess),
-          Effect.catchCause(() => Effect.succeedNone),
-        )
+      const handle = yield* server.spawn(root, ctx, flags).pipe(
+        Effect.provideService(FSUtil.Service, fsu),
+        Effect.provideService(AppProcess.Service, appProcess),
+        Effect.catchCause(() => Effect.succeedNone),
+      )
       if (Option.isNone(handle)) {
         MutableHashSet.add(s.broken, key)
         return Option.none<LSPClient.Info>()
@@ -407,7 +405,7 @@ const layer = Layer.effect(
       const results: Record<string, LSPClient.Diagnostic[]> = {}
       const all = yield* runAll((client) => Effect.sync(() => client.diagnostics))
       for (const result of all) {
-        for (const [p, diags] of result.entries()) {
+        for (const [p, diags] of result) {
           results[p] = [...(results[p] ?? []), ...diags]
         }
       }
@@ -483,9 +481,11 @@ const layer = Layer.effect(
     ) {
       const results = yield* run(input.file, (client) =>
         Effect.gen(function* () {
-          const items = yield* request<unknown[] | null>(client, "textDocument/prepareCallHierarchy", position(input)).pipe(
-            Effect.orElseSucceed((): unknown[] => []),
-          )
+          const items = yield* request<unknown[] | null>(
+            client,
+            "textDocument/prepareCallHierarchy",
+            position(input),
+          ).pipe(Effect.orElseSucceed((): unknown[] => []))
           if (!items?.length) return []
           return yield* request<unknown>(client, direction, { item: items[0] }).pipe(Effect.orElseSucceed(() => []))
         }),

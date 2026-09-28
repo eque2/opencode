@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test"
+import { HashMap, Option } from "effect"
 import { spawn } from "child_process"
 import path from "path"
 import { pathToFileURL } from "url"
 import { tmpdir, withTestInstance } from "../fixture/fixture"
 import { LSPClient } from "@/lsp/client"
 import * as LSPServer from "@/lsp/server"
+
+const diagnosticsAt = (client: LSPClient.Info, file: string) =>
+  Option.getOrElse(HashMap.get(client.diagnostics, file), () => [])
 
 function spawnFakeServer(): LSPServer.Handle {
   const serverPath = path.join(__dirname, "../fixture/lsp/fake-lsp-server.js")
@@ -227,7 +231,7 @@ describe("LSPClient interop", () => {
         })
         await wait
 
-        const diagnostics = client.diagnostics.get(file) ?? []
+        const diagnostics = diagnosticsAt(client, file)
         expect(diagnostics).toHaveLength(1)
         expect(diagnostics[0]?.message).toBe("push diagnostic")
 
@@ -272,11 +276,11 @@ describe("LSPClient interop", () => {
           ],
         })
 
-        for (let i = 0; i < 20 && (client.diagnostics.get(file)?.length ?? 0) === 0; i++) {
+        for (let i = 0; i < 20 && diagnosticsAt(client, file).length === 0; i++) {
           await new Promise((resolve) => setTimeout(resolve, 25))
         }
 
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("push diagnostic")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("push diagnostic")
 
         const started = Date.now()
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
@@ -324,7 +328,7 @@ describe("LSPClient interop", () => {
         const version = await client.notify.open({ path: file })
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
 
-        const diagnostics = client.diagnostics.get(file) ?? []
+        const diagnostics = diagnosticsAt(client, file)
         expect(diagnostics).toHaveLength(1)
         expect(diagnostics[0]?.message).toBe("pull diagnostic")
 
@@ -380,7 +384,7 @@ describe("LSPClient interop", () => {
         await client.waitForDiagnostics({ path: file, version, mode: "document" })
 
         expect(Date.now() - started).toBeLessThan(1_000)
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("fast diagnostic")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("fast diagnostic")
         expect(await client.connection.sendRequest("test/get-diagnostic-request-count", {})).toBeGreaterThan(1)
 
         await client.shutdown()
@@ -447,8 +451,8 @@ describe("LSPClient interop", () => {
         const version = await client.notify.open({ path: file })
         await client.waitForDiagnostics({ path: file, version, mode: "full" })
 
-        expect(client.diagnostics.get(file)?.[0]?.message).toBe("current file")
-        expect(client.diagnostics.get(related)?.[0]?.message).toBe("workspace file")
+        expect(diagnosticsAt(client, file)[0]?.message).toBe("current file")
+        expect(diagnosticsAt(client, related)[0]?.message).toBe("workspace file")
 
         await client.shutdown()
       },
