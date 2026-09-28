@@ -158,12 +158,14 @@ async function writeConfig(dir: string, config: object, name = "opencode.json") 
 const writeConfigEffect = (dir: string, config: object, name = "opencode.json") =>
   FSUtil.use.writeWithDirs(path.join(dir, name), JSON.stringify(config))
 
+// One layer gives the tests the instance store and the process spawner, and feeds the spawner to the store.
+const instanceStoreLayer = testInstanceStoreLayer.pipe(Layer.provideMerge(LayerNode.compile(CrossSpawnSpawner.node)))
+
 const withInstanceDir = <A, E, R>(dir: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.provideService(TestInstance, { directory: dir }),
     provideInstanceEffect(dir),
-    Effect.provide(testInstanceStoreLayer),
-    Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)),
+    Effect.provide(instanceStoreLayer),
   )
 
 const withGlobalConfigDir = <A, E, R>(dir: string, effect: Effect.Effect<A, E, R>) =>
@@ -317,7 +319,7 @@ it.effect("creates global jsonc config with schema when no global configs exist"
 
       const content = yield* FSUtil.use.readFileString(path.join(dir, "opencode.jsonc"))
       expect(content).toContain('"$schema": "https://opencode.ai/config.json"')
-    }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+    }).pipe(Effect.provide(instanceStoreLayer)),
   ),
 )
 
@@ -332,7 +334,7 @@ it.effect("does not create global config when OPENCODE_CONFIG_DIR is set", () =>
           yield* Config.use.get().pipe(provideInstanceEffect(dir))
 
           expect(yield* FSUtil.use.existsSafe(path.join(dir, "opencode.jsonc"))).toBe(false)
-        }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+        }).pipe(Effect.provide(instanceStoreLayer)),
       ),
     )
   }),
@@ -1108,7 +1110,7 @@ it.effect("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR
     yield* Effect.addFinalizer(() => FSUtil.use.chmod(readonly, 0o755).pipe(Effect.ignore))
 
     yield* withProcessEnv("OPENCODE_CONFIG_DIR", readonly, Config.use.get().pipe(provideInstanceEffect(dir)))
-  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  }).pipe(Effect.provide(instanceStoreLayer)),
 )
 
 it.effect("ignores an inaccessible OPENCODE_CONFIG_DIR", () =>
@@ -1122,7 +1124,7 @@ it.effect("ignores an inaccessible OPENCODE_CONFIG_DIR", () =>
     yield* Effect.addFinalizer(() => FSUtil.use.chmod(configDir, 0o755).pipe(Effect.ignore))
 
     yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
-  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  }).pipe(Effect.provide(instanceStoreLayer)),
 )
 
 it.effect("creates a missing OPENCODE_CONFIG_DIR", () =>
@@ -1133,7 +1135,7 @@ it.effect("creates a missing OPENCODE_CONFIG_DIR", () =>
     yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
 
     expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toContain("node_modules")
-  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  }).pipe(Effect.provide(instanceStoreLayer)),
 )
 
 it.effect("installs dependencies in writable OPENCODE_CONFIG_DIR", () =>
@@ -1151,7 +1153,7 @@ it.effect("installs dependencies in writable OPENCODE_CONFIG_DIR", () =>
     )
 
     expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toContain("package-lock.json")
-  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  }).pipe(Effect.provide(instanceStoreLayer)),
 )
 
 // Note: deduplication and serialization of npm installs is now handled by the
