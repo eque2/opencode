@@ -68,7 +68,7 @@ const substituteWellKnownRemoteConfig = Effect.fnUntraced(function* (input: {
   env: Record<string, string>
 }) {
   if (!isRecord(input.value) || typeof input.value.url !== "string")
-    return Option.none<{ url: string; headers: Record<string, string> | undefined }>()
+    return Option.none<{ url: string; headers: Record<string, string> }>()
 
   const substitute = (text: string) =>
     ConfigVariable.substitute({
@@ -89,7 +89,7 @@ const substituteWellKnownRemoteConfig = Effect.fnUntraced(function* (input: {
           { concurrency: "unbounded" },
         ),
       )
-    : undefined
+    : {}
 
   return Option.some({ url, headers })
 })
@@ -167,6 +167,8 @@ function writable(info: Patch) {
 function writableGlobal(info: Patch) {
   const next = writable(info)
   // When a user changes config from a value back to default in the Desktop app, we don't want to leave a blank `"shell": "",` key
+  // jsonc-parser modify() deletes a key only for the undefined value, and JSON.stringify drops it.
+  // eslint-disable-next-line effect/no-undefined-use-option -- (a) external boundary: jsonc-parser modify() removes the shell key only when given the JavaScript undefined value
   if ("shell" in next && next.shell === "") return { ...next, shell: undefined }
   return next
 }
@@ -208,14 +210,12 @@ const layer = Layer.effect(
 
     const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(
       url: string,
-      headers: Record<string, string> | undefined,
+      headers: Record<string, string>,
       schema: S,
       loginOrigin: string,
     ) {
       const response = yield* HttpClient.filterStatusOk(withTransientReadRetry(http))
-        .execute(
-          HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers ?? {})),
-        )
+        .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers)))
         .pipe(
           Effect.catch((error) =>
             Effect.die(new Error(`failed to fetch remote config from ${url}: ${error.message}`, { cause: error })),
@@ -391,7 +391,7 @@ const layer = Layer.effect(
             authEnv[value.key] = value.token
             const wellknownURL = `${url}/.well-known/opencode`
             yield* Effect.logDebug("fetching remote config", { url: wellknownURL })
-            const wellknown = yield* fetchRemoteJson(wellknownURL, undefined, ConfigV1.WellKnown, url)
+            const wellknown = yield* fetchRemoteJson(wellknownURL, {}, ConfigV1.WellKnown, url)
             const remote = yield* substituteWellKnownRemoteConfig({
               value: wellknown.remote_config,
               dir: url,
@@ -470,10 +470,8 @@ const layer = Layer.effect(
           const dep = yield* npmSvc
             .install(dir, {
               add: [
-                {
-                  name: "@opencode-ai/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
-                },
+                // A local build installs the plugin package without a version pin.
+                { name: "@opencode-ai/plugin", ...(InstallationLocal ? {} : { version: InstallationVersion }) },
               ],
             })
             .pipe(

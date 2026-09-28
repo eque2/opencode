@@ -137,16 +137,17 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
       // Matches how parse/schema/plugin failures in load() are handled — every
       // broken-config path degrades gracefully rather than crashing TUI startup.
       const text = yield* afs.readFileStringSafe(filepath).pipe(
+        Effect.map(Option.fromNullishOr),
         Effect.catchCause((cause) =>
           Effect.logWarning("failed to read tui config", {
             path: filepath,
             reason: FormatError(Cause.squash(cause)) ?? FormatUnknownError(Cause.squash(cause)),
-          }).pipe(Effect.as(undefined)),
+          }).pipe(Effect.as(Option.none<string>())),
         ),
       )
-      if (!text) return {} as Info
+      if (Option.isNone(text) || !text.value) return {} as Info
       yield* Effect.logInfo("loading tui config", { path: filepath })
-      return yield* load(text, filepath)
+      return yield* load(text.value, filepath)
     })
 
   const mergeFile = (acc: Acc, file: string) =>
@@ -244,10 +245,8 @@ const layer = Layer.effect(
         npm
           .install(dir, {
             add: [
-              {
-                name: "@opencode-ai/plugin",
-                version: InstallationLocal ? undefined : InstallationVersion,
-              },
+              // A local build installs the plugin package without a version pin.
+              { name: "@opencode-ai/plugin", ...(InstallationLocal ? {} : { version: InstallationVersion }) },
             ],
           })
           .pipe(Effect.forkScoped),

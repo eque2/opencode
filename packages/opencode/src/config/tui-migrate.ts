@@ -41,28 +41,22 @@ export const migrateTuiConfig = Effect.fn("TuiConfig.migrate")(function* (input:
     const source = read.value
     const errors: JsoncParseError[] = []
     const data = parseJsonc(source, errors, { allowTrailingComma: true })
-    if (errors.length || !data || typeof data !== "object" || Array.isArray(data)) continue
+    if (errors.length || !isRecord(data)) continue
 
-    const theme = decodeTheme("theme" in data ? data.theme : undefined)
-    const keybinds = decodeRecord("keybinds" in data ? data.keybinds : undefined)
-    const legacyTui = decodeRecord("tui" in data ? data.tui : undefined)
-    const extracted = {
-      theme: Option.getOrUndefined(theme),
-      keybinds: Option.getOrUndefined(keybinds),
-      tui: Option.getOrUndefined(legacyTui),
-    }
-    const tui = extracted.tui ? normalizeTui(extracted.tui) : undefined
-    if (extracted.theme === undefined && extracted.keybinds === undefined && !tui) continue
+    const theme = decodeTheme(data.theme)
+    const keybinds = decodeRecord(data.keybinds)
+    const tui = Option.flatMap(decodeRecord(data.tui), normalizeTui)
+    if (Option.isNone(theme) && Option.isNone(keybinds) && Option.isNone(tui)) continue
 
     const target = path.join(path.dirname(file), "tui.json")
     if (yield* fs.existsSafe(target)) continue
 
-    const payload: Record<string, unknown> = {
+    const payload = {
       $schema: TUI_SCHEMA_URL,
+      ...field("theme", theme),
+      ...field("keybinds", keybinds),
+      ...Option.getOrElse(tui, () => ({})),
     }
-    if (extracted.theme !== undefined) payload.theme = extracted.theme
-    if (extracted.keybinds !== undefined) payload.keybinds = extracted.keybinds
-    if (tui) Object.assign(payload, tui)
 
     const text = yield* Schema.encodeEffect(TuiJsonFile)(payload).pipe(Effect.orDie)
     const wrote = yield* fs.writeWithDirs(target, text).pipe(
@@ -75,23 +69,19 @@ export const migrateTuiConfig = Effect.fn("TuiConfig.migrate")(function* (input:
   }
 })
 
-function normalizeTui(data: Record<string, unknown>):
-  | {
-      scroll_speed: number | undefined
-      scroll_acceleration: { enabled: boolean } | undefined
-      diff_style: "auto" | "stacked" | undefined
-    }
-  | undefined {
-  const parsed = {
-    scroll_speed: Option.getOrUndefined(decodeScrollSpeed(data.scroll_speed)),
-    scroll_acceleration: Option.getOrUndefined(decodeScrollAcceleration(data.scroll_acceleration)),
-    diff_style: Option.getOrUndefined(decodeDiffStyle(data.diff_style)),
+// The recognized legacy tui settings, or None when none of them decodes.
+function normalizeTui(data: Record<string, unknown>): Option.Option<Record<string, unknown>> {
+  const fields = {
+    ...field("scroll_speed", decodeScrollSpeed(data.scroll_speed)),
+    ...field("scroll_acceleration", decodeScrollAcceleration(data.scroll_acceleration)),
+    ...field("diff_style", decodeDiffStyle(data.diff_style)),
   }
-  return parsed.scroll_speed === undefined &&
-    parsed.diff_style === undefined &&
-    parsed.scroll_acceleration === undefined
-    ? undefined
-    : parsed
+  return Object.keys(fields).length ? Option.some(fields) : Option.none()
+}
+
+// A one-key object for a present value, else an empty object, for use in an object spread.
+function field<A>(key: string, value: Option.Option<A>): Record<string, A> {
+  return Option.match(value, { onNone: () => ({}), onSome: (present) => ({ [key]: present }) })
 }
 
 const backupAndStripLegacy = Effect.fnUntraced(function* (file: string, source: string) {
@@ -106,6 +96,7 @@ const backupAndStripLegacy = Effect.fnUntraced(function* (file: string, source: 
   if (!backed) return false
 
   const text = ["theme", "keybinds", "tui"].reduce((acc, key) => {
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) external boundary: jsonc-parser modify() removes a key only when given the JavaScript undefined value
     const edits = modify(acc, [key], undefined, {
       formattingOptions: {
         insertSpaces: true,

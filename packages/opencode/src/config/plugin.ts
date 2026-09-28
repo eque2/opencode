@@ -31,8 +31,10 @@ export function pluginSpecifier(plugin: ConfigPluginV1.Spec): string {
   return Array.isArray(plugin) ? plugin[0] : plugin
 }
 
+// plugin/loader.ts passes the options on as an optional field, so absence stays undefined here.
 export function pluginOptions(plugin: ConfigPluginV1.Spec): ConfigPluginV1.Options | undefined {
-  return Array.isArray(plugin) ? plugin[1] : undefined
+  if (!Array.isArray(plugin)) return undefined
+  return plugin[1]
 }
 
 // Path-like specs are resolved relative to the config file that declared them so merges later on do not
