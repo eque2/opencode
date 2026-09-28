@@ -100,7 +100,7 @@ export function Part(props: PartProps) {
 
               setCopied(true)
               resetCopied = Option.some(
-                Effect.runFork(Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))))),
+                Effect.runFork(Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.sync(() => setCopied(false))), Effect.asVoid)),
               )
             }}
           >
