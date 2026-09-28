@@ -431,4 +431,4 @@ An invalid value turns the sink off. It does not stop startup.
 - Payloads are not gzip-compressed. Add compression when volume makes bandwidth matter.
 - An `Error` keeps only its name and message. The V2 bash `ToolFailure` message holds the command text, so exclude `tool.error` or accept the command text.
 - The global `OPENCODE_LOG_LEVEL` filters records before any sink. To send `Debug` to Datadog, lower both levels.
-- `opencode/src/server/server.ts:124` builds its listener with a fresh memo map, so it can build a second sink instance. Each instance batches on its own, so this is safe, but it doubles the HTTP connections.
+- `opencode/src/server/server.ts:132` builds its listener with a fresh memo map, so it can build a second sink instance. Each instance batches on its own, so this is safe, but it doubles the HTTP connections.
