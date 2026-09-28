@@ -37,7 +37,9 @@ const DatadogLogs = Schema.Struct({
   }),
   service: Schema.optional(Schema.String).annotate({ description: "Datadog service name. Default: opencode" }),
   env: Schema.optional(Schema.String).annotate({ description: "Datadog env tag. Default: the installation channel" }),
-  version: Schema.optional(Schema.String).annotate({ description: "Datadog version tag. Default: the opencode version" }),
+  version: Schema.optional(Schema.String).annotate({
+    description: "Datadog version tag. Default: the opencode version",
+  }),
   tags: Schema.optional(Schema.String).annotate({ description: "Extra Datadog tags, comma-separated" }),
   hostname: Schema.optional(Schema.String).annotate({ description: "Datadog hostname. Default: the OS hostname" }),
   level: Schema.optional(Schema.String).annotate({

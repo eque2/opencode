@@ -14,7 +14,9 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     // OPENCODE_LOG_LEVEL sets the file, stderr and OTLP level. Datadog has its own level.
     const level = yield* Logging.minimumLogLevel
-    const otlpLoggers = (yield* Otlp.loggers).map((make) => Effect.map(make, (logger) => Logging.atLevel(logger, level)))
+    const otlpLoggers = (yield* Otlp.loggers).map((make) =>
+      Effect.map(make, (logger) => Logging.atLevel(logger, level)),
+    )
     const datadog = yield* datadogSettings
     const loggers = [
       ...Logging.loggers(level),

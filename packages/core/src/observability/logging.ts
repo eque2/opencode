@@ -62,11 +62,7 @@ export function atLevel<Message, Output>(logger: Logger.Logger<Message, Output>,
 }
 
 /** A file logger at `level`. Without an explicit id, each line carries the process run ID. */
-export function fileLogger(
-  file = defaultFile(),
-  id?: string,
-  level: LogLevel.LogLevel = "All",
-) {
+export function fileLogger(file = defaultFile(), id?: string, level: LogLevel.LogLevel = "All") {
   return Effect.flatMap(id === undefined ? runID : Effect.succeed(id), (id) =>
     // Do not set batchWindow to 0; it causes high idle CPU usage.
     Logger.toFile(formatter(id), file, { flag: "a" }).pipe(Effect.map((logger) => atLevel(logger, level))),

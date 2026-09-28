@@ -242,7 +242,8 @@ function fileValue(key: string, value: unknown): Option.Option<readonly [string,
   if (key === "content")
     return value === "omit" || value === "hash" ? set(name, value) : 'a file allows only "omit" or "hash"'
   if (key === "site") return SITES.includes(value) ? set(name, value) : "unknown Datadog site"
-  if (key === "flushInterval") return Option.isSome(decodeDuration(value)) ? set(name, value) : 'expected a duration such as "10 seconds"'
+  if (key === "flushInterval")
+    return Option.isSome(decodeDuration(value)) ? set(name, value) : 'expected a duration such as "10 seconds"'
   if (key === "categories") {
     const rules = value
       .split(",")
@@ -389,9 +390,7 @@ export function entry(
   const attributes = Object.assign({}, ...messages.filter(plain), structured.annotations)
   const span = options.fiber.cache.span
   return Option.some<Entry>({
-    ...Object.fromEntries(
-      Object.entries(attributes).map(([key, value]) => [key, redact(value, content, key)]),
-    ),
+    ...Object.fromEntries(Object.entries(attributes).map(([key, value]) => [key, redact(value, content, key)])),
     message: scrub(
       messages
         .filter((value) => !plain(value))
