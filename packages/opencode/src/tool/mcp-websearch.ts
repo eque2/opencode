@@ -24,7 +24,7 @@ const McpResult = Schema.Struct({
       }),
     ),
   }),
-})
+}).annotate({ identifier: "McpWebSearch.Result" })
 
 const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
@@ -56,14 +56,14 @@ export const SearchArgs = Schema.Struct({
   numResults: Schema.Number,
   livecrawl: Schema.String,
   contextMaxCharacters: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "McpWebSearch.SearchArgs" })
 
 export const ParallelSearchArgs = Schema.Struct({
   objective: Schema.String,
   search_queries: Schema.Array(Schema.String),
   session_id: Schema.optional(Schema.String),
   model_name: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "McpWebSearch.ParallelSearchArgs" })
 
 const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
   Schema.Struct({

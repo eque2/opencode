@@ -51,7 +51,7 @@ const BaseParameterFields = {
   command: Schema.optional(Schema.String).annotate({ description: "The command that triggered this task" }),
 }
 
-const BaseParameters = Schema.Struct(BaseParameterFields)
+const BaseParameters = Schema.Struct(BaseParameterFields).annotate({ identifier: "TaskTool.BaseParameters" })
 
 export const Parameters = Schema.Struct({
   ...BaseParameterFields,
