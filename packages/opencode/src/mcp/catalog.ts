@@ -6,7 +6,7 @@ import {
   type Tool as MCPToolDef,
 } from "@modelcontextprotocol/sdk/types.js"
 import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai"
-import { Effect } from "effect"
+import { Array as Arr, Effect, HashSet, Option, Predicate, Schema } from "effect"
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_LIST_PAGES = 1_000
@@ -15,28 +15,48 @@ const TolerantListToolsResultSchema = ListToolsResultSchema.extend({
   tools: ToolSchema.omit({ outputSchema: true }).array(),
 })
 
-export async function paginate<T, R extends { nextCursor?: string }>(
-  list: (cursor?: string) => Promise<R>,
-  items: (result: R) => T[],
+// Structured tool output is opaque MCP payload data; it is only relayed as JSON text.
+const encodeStructuredContent = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
+export class CatalogError extends Schema.TaggedError<CatalogError>()("McpCatalogError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+/** Wrap a rejected MCP SDK call; keep the original message so logs and statuses stay readable. */
+const catalogError = (cause: unknown) =>
+  new CatalogError({ message: cause instanceof Error ? cause.message : String(cause), cause })
+
+const cursorParams = (cursor: Option.Option<string>) =>
+  Option.getOrUndefined(Option.map(cursor, (value) => ({ cursor: value })))
+
+export function paginate<T, R extends { nextCursor?: string }>(
+  list: (cursor: Option.Option<string>) => Effect.Effect<R, CatalogError>,
+  items: (result: R) => ReadonlyArray<T>,
 ) {
-  const result: T[] = []
-  const cursors = new Set<string>()
-  let cursor: string | undefined
-
-  for (let page = 0; page < MAX_LIST_PAGES; page++) {
-    const page = await list(cursor)
-    result.push(...items(page))
-    if (page.nextCursor === undefined) return result
-    if (cursors.has(page.nextCursor)) throw new Error(`MCP list returned duplicate cursor: ${page.nextCursor}`)
-    cursors.add(page.nextCursor)
-    cursor = page.nextCursor
+  const step = (
+    cursor: Option.Option<string>,
+    seen: HashSet.HashSet<string>,
+    collected: Array<T>,
+    page: number,
+  ): Effect.Effect<Array<T>, CatalogError> => {
+    if (page >= MAX_LIST_PAGES) return Effect.fail(new CatalogError({ message: `MCP list exceeded ${MAX_LIST_PAGES} pages` }))
+    return list(cursor).pipe(
+      Effect.flatMap((result) => {
+        const next = Arr.appendAll(collected, items(result))
+        const nextCursor = result.nextCursor
+        if (nextCursor === undefined) return Effect.succeed(next)
+        if (HashSet.has(seen, nextCursor))
+          return Effect.fail(new CatalogError({ message: `MCP list returned duplicate cursor: ${nextCursor}` }))
+        return step(Option.some(nextCursor), HashSet.add(seen, nextCursor), next, page + 1)
+      }),
+    )
   }
-
-  throw new Error(`MCP list exceeded ${MAX_LIST_PAGES} pages`)
+  return step(Option.none(), HashSet.empty(), [], 0)
 }
 
 export function defs(client: Client, timeout?: number) {
-  return listTools(client, timeout ?? DEFAULT_TIMEOUT).pipe(Effect.catch(() => Effect.void))
+  return listTools(client, timeout ?? DEFAULT_TIMEOUT).pipe(Effect.option)
 }
 
 export function convertTool(mcpTool: MCPToolDef, client: Client, timeout?: number): Tool {
@@ -50,53 +70,67 @@ export function convertTool(mcpTool: MCPToolDef, client: Client, timeout?: numbe
   return dynamicTool({
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(inputSchema),
-    execute: async (args: unknown, options) => {
-      const result = await client.callTool(
+    // The AI SDK tool contract is Promise-based, so the Effect runs once at this hook.
+    execute: (args: unknown, options) =>
+      Effect.runPromise(callTool(client, mcpTool.name, args, options.abortSignal, timeout)),
+  })
+}
+
+const callTool = Effect.fnUntraced(function* (
+  client: Client,
+  name: string,
+  args: unknown,
+  signal: AbortSignal | undefined,
+  timeout: number | undefined,
+) {
+  const result = yield* Effect.tryPromise({
+    try: () =>
+      client.callTool(
         {
-          name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
+          name,
+          arguments: Predicate.isObject(args) ? args : {},
         },
         CallToolResultSchema,
         {
           resetTimeoutOnProgress: true,
-          signal: options.abortSignal,
+          signal,
           timeout,
           // The MCP SDK only sends a progress token when this hook is present, enabling timeout resets.
           onprogress: () => {},
         },
-      )
-      if (result.isError)
-        throw new Error(
-          result.content
-            .flatMap((item) => (item.type === "text" ? [item.text] : []))
-            .filter((text) => text.trim())
-            .join("\n\n") || "MCP tool returned an error",
-        )
-      if (result.content.length > 0 || result.structuredContent === undefined || result.structuredContent === null)
-        return result
-      return {
-        ...result,
-        content: [{ type: "text" as const, text: JSON.stringify(result.structuredContent) }],
-      }
-    },
+      ),
+    catch: catalogError,
   })
-}
+  if (result.isError)
+    return yield* new CatalogError({
+      message:
+        result.content
+          .flatMap((item) => (item.type === "text" ? [item.text] : []))
+          .filter((text) => text.trim())
+          .join("\n\n") || "MCP tool returned an error",
+    })
+  if (result.content.length > 0) return result
+  const structured = Option.fromNullishOr(result.structuredContent)
+  if (Option.isNone(structured)) return result
+  const text = yield* encodeStructuredContent(structured.value).pipe(Effect.mapError(catalogError))
+  return {
+    ...result,
+    content: [{ type: "text" as const, text }],
+  }
+})
 
 export function fetch<T extends { name: string }>(
   clientName: string,
   client: Client,
-  list: (client: Client) => Promise<T[]>,
+  list: (client: Client) => Effect.Effect<Array<T>, CatalogError>,
   label: string,
   key?: (item: T) => string,
 ) {
-  return Effect.tryPromise({
-    try: () => list(client),
-    catch: (error) => error,
-  }).pipe(
+  return list(client).pipe(
     Effect.tapError((error) =>
       Effect.logWarning(`failed to get ${label}`, {
         clientName,
-        error: error instanceof Error ? error.message : String(error),
+        error: error.message,
       }),
     ),
     Effect.map((items) => {
@@ -110,7 +144,7 @@ export function fetch<T extends { name: string }>(
         ]),
       )
     }),
-    Effect.orElseSucceed(() => undefined),
+    Effect.orElseSucceed((): Record<string, T & { client: string }> => ({})),
   )
 }
 
@@ -119,51 +153,59 @@ export const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_")
 export const toolName = (clientName: string, name: string) => sanitize(clientName) + "_" + sanitize(name)
 
 export function prompts(client: Client, timeout?: number) {
-  if (!client.getServerCapabilities()?.prompts) return Promise.resolve([])
+  if (!client.getServerCapabilities()?.prompts) return Effect.succeed([])
   return paginate(
-    (cursor) => client.listPrompts(cursor === undefined ? undefined : { cursor }, { timeout }),
+    (cursor) =>
+      Effect.tryPromise({ try: () => client.listPrompts(cursorParams(cursor), { timeout }), catch: catalogError }),
     (result) => result.prompts,
   )
 }
 
 export function resources(client: Client, timeout?: number) {
-  if (!client.getServerCapabilities()?.resources) return Promise.resolve([])
+  if (!client.getServerCapabilities()?.resources) return Effect.succeed([])
   return paginate(
-    (cursor) => client.listResources(cursor === undefined ? undefined : { cursor }, { timeout }),
+    (cursor) =>
+      Effect.tryPromise({ try: () => client.listResources(cursorParams(cursor), { timeout }), catch: catalogError }),
     (result) => result.resources,
   )
 }
 
 export function resourceTemplates(client: Client, timeout?: number) {
-  if (!client.getServerCapabilities()?.resources) return Promise.resolve([])
+  if (!client.getServerCapabilities()?.resources) return Effect.succeed([])
   return paginate(
-    (cursor) => client.listResourceTemplates(cursor === undefined ? undefined : { cursor }, { timeout }),
+    (cursor) =>
+      Effect.tryPromise({
+        try: () => client.listResourceTemplates(cursorParams(cursor), { timeout }),
+        catch: catalogError,
+      }),
     (result) => result.resourceTemplates,
   )
 }
 
 function listTools(client: Client, timeout: number) {
-  return Effect.tryPromise({
-    try: () =>
-      paginate(
-        async (cursor) => {
-          const params = cursor === undefined ? undefined : { cursor }
-          try {
-            return await client.listTools(params, { timeout })
-          } catch (error) {
-            if (!(error instanceof Error) || !isOutputSchemaValidationError(error)) throw error
-            return client.request({ method: "tools/list", params }, TolerantListToolsResultSchema, { timeout })
-          }
-        },
-        (result) => result.tools,
-      ),
-    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-  })
+  return paginate(
+    (cursor) => {
+      const params = cursorParams(cursor)
+      return Effect.tryPromise({ try: () => client.listTools(params, { timeout }), catch: catalogError }).pipe(
+        // Some servers publish output schemas the SDK validator cannot resolve; list them without those schemas.
+        Effect.catchIf(isOutputSchemaValidationError, () =>
+          Effect.tryPromise({
+            try: () => client.request({ method: "tools/list", params }, TolerantListToolsResultSchema, { timeout }),
+            catch: catalogError,
+          }),
+        ),
+      )
+    },
+    (result) => result.tools,
+  )
 }
 
-function isOutputSchemaValidationError(error: Error) {
-  return /can't resolve reference|resolves to more than one schema|outputSchema|schema.*reference|reference.*schema/i.test(
-    error.message,
+function isOutputSchemaValidationError(error: CatalogError) {
+  return (
+    error.cause instanceof Error &&
+    /can't resolve reference|resolves to more than one schema|outputSchema|schema.*reference|reference.*schema/i.test(
+      error.cause.message,
+    )
   )
 }
 
