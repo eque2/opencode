@@ -343,13 +343,17 @@ const layer = Layer.effect(
             const agent = agents[c.default_agent]
             // A misconfigured default agent stays a defect: Interface.defaultInfo has no error channel.
             if (!agent)
-              return yield* Effect.die(new DefaultAgentError({ message: `default agent "${c.default_agent}" not found` }))
+              return yield* Effect.die(
+                new DefaultAgentError({ message: `default agent "${c.default_agent}" not found` }),
+              )
             if (agent.mode === "subagent")
               return yield* Effect.die(
                 new DefaultAgentError({ message: `default agent "${c.default_agent}" is a subagent` }),
               )
             if (agent.hidden === true)
-              return yield* Effect.die(new DefaultAgentError({ message: `default agent "${c.default_agent}" is hidden` }))
+              return yield* Effect.die(
+                new DefaultAgentError({ message: `default agent "${c.default_agent}" is hidden` }),
+              )
             return agent
           }
           const visible = Object.values(agents).find((a) => a.mode !== "subagent" && a.hidden !== true)
