@@ -1,6 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Context, Effect, FiberMap, Iterable, Layer, Option, Predicate, Schema, Stream } from "effect"
+import { Clock, Context, Effect, FiberMap, Iterable, Layer, Option, Predicate, Schema, Stream } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
@@ -509,7 +509,7 @@ const layer = Layer.effect(
         directory: config.directory ?? null,
         extra: config.extra ?? null,
         projectID: input.projectID,
-        timeUsed: Date.now(),
+        timeUsed: yield* Clock.currentTimeMillis,
       }
 
       yield* db
@@ -761,7 +761,7 @@ const layer = Layer.effect(
               directory: item.directory,
               extra: item.extra,
               projectID: item.projectID,
-              timeUsed: Date.now(),
+              timeUsed: yield* Clock.currentTimeMillis,
             }
 
             yield* db
