@@ -2,9 +2,10 @@ import { chmod, mkdir, readFile, stat as statFile, writeFile } from "fs/promises
 import { createWriteStream, existsSync, statSync } from "fs"
 import { realpathSync } from "fs"
 import { dirname, isAbsolute, join, resolve as pathResolve, win32 } from "path"
-import { Readable } from "stream"
+import { Readable, Writable } from "stream"
 import { pipeline } from "stream/promises"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Array as Arr, Predicate, Result, Schema } from "effect"
 import { fileURLToPath } from "url"
 
 // Fast sync version for metadata checks
@@ -13,15 +14,15 @@ export async function exists(p: string): Promise<boolean> {
 }
 
 export async function isDir(p: string): Promise<boolean> {
-  try {
-    return statSync(p).isDirectory()
-  } catch {
-    return false
-  }
+  // Any stat error (missing path, no permission) reads as "not a directory".
+  return Result.getOrElse(
+    Result.try(() => statSync(p).isDirectory()),
+    () => false,
+  )
 }
 
 export function stat(p: string): ReturnType<typeof statSync> | undefined {
-  return statSync(p, { throwIfNoEntry: false }) ?? undefined
+  return statSync(p, { throwIfNoEntry: false })
 }
 
 export async function statAsync(p: string): Promise<ReturnType<typeof statSync> | undefined> {
@@ -49,7 +50,7 @@ export async function readBytes(p: string): Promise<Buffer> {
 }
 
 function isEnoent(e: unknown): e is { code: "ENOENT" } {
-  return typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "ENOENT"
+  return Predicate.hasProperty(e, "code") && e.code === "ENOENT"
 }
 
 export async function write(p: string, content: string | Buffer | Uint8Array, mode?: number): Promise<void> {
@@ -73,8 +74,11 @@ export async function write(p: string, content: string | Buffer | Uint8Array, mo
   }
 }
 
+// Written as JSON.stringify(data, null, 2) wrote it. A value that JSON cannot encode throws.
+const encodeJsonFile = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 export async function writeJson(p: string, data: unknown, mode?: number): Promise<void> {
-  return write(p, JSON.stringify(data, null, 2), mode)
+  return write(p, encodeJsonFile(data), mode)
 }
 
 export async function writeStream(
@@ -87,9 +91,8 @@ export async function writeStream(
     await mkdir(dir, { recursive: true })
   }
 
-  const nodeStream = stream instanceof ReadableStream ? Readable.fromWeb(stream as any) : stream
-  const writeStream = createWriteStream(p)
-  await pipeline(nodeStream, writeStream)
+  if (stream instanceof Readable) await pipeline(stream, createWriteStream(p))
+  else await stream.pipeTo(Writable.toWeb(createWriteStream(p)))
 
   if (mode) {
     await chmod(p, mode)
@@ -109,11 +112,10 @@ export async function mimeType(p: string): Promise<string> {
 export function normalizePath(p: string): string {
   if (process.platform !== "win32") return p
   const resolved = win32.normalize(win32.resolve(windowsPath(p)))
-  try {
-    return realpathSync.native(resolved)
-  } catch {
-    return resolved
-  }
+  return Result.getOrElse(
+    Result.try(() => realpathSync.native(resolved)),
+    () => resolved,
+  )
 }
 
 export function normalizePathPattern(p: string): string {
@@ -130,12 +132,12 @@ export function normalizePathPattern(p: string): string {
 // always get the same canonical path for a given physical directory.
 export function resolve(p: string): string {
   const resolved = pathResolve(windowsPath(p))
-  try {
-    return normalizePath(realpathSync(resolved))
-  } catch (e) {
-    if (isEnoent(e)) return normalizePath(resolved)
-    throw e
-  }
+  // A missing path resolves to itself. Any other realpath error still throws to the caller.
+  const real = Result.try(() => realpathSync(resolved)).pipe(
+    Result.orElse((e) => (isEnoent(e) ? Result.succeed(resolved) : Result.fail(e))),
+    Result.getOrThrow,
+  )
+  return normalizePath(real)
 }
 
 export function resolveFilePath(root: string, file: string): string {
@@ -179,13 +181,13 @@ export async function findUp(
   stop?: string,
   options?: { rootFirst?: boolean },
 ) {
-  const dirs = [start]
+  let dirs = [start]
   let current = start
   while (true) {
     if (stop === current) break
     const parent = dirname(current)
     if (parent === current) break
-    dirs.push(parent)
+    dirs = Arr.append(dirs, parent)
     current = parent
   }
 
