@@ -1857,7 +1857,7 @@ loginPageWellKnown.it.instance(
       expect(Exit.isFailure(exit)).toBe(true)
       const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined
       expect(NamedError.hasName(error, "ConfigRemoteAuthError")).toBe(true)
-      expect((error as { data?: { url?: string } }).data?.url).toBe("https://example.com")
+      expect(error).toMatchObject({ data: { url: "https://example.com" } })
     }),
 )
 
@@ -2153,9 +2153,9 @@ test("parseManagedPlist strips MDM metadata keys", async () => {
   expect(config.share).toBe("disabled")
   expect(config.model).toBe("mdm/model")
   // MDM keys must not leak into the parsed config
-  expect((config as any).PayloadUUID).toBeUndefined()
-  expect((config as any).PayloadType).toBeUndefined()
-  expect((config as any)._manualProfile).toBeUndefined()
+  expect(config).not.toHaveProperty("PayloadUUID")
+  expect(config).not.toHaveProperty("PayloadType")
+  expect(config).not.toHaveProperty("_manualProfile")
 })
 
 test("parseManagedPlist parses server settings", async () => {
@@ -2185,9 +2185,7 @@ test("parseManagedPlist parses permission rules", async () => {
   expect(config.permission?.grep).toBe("allow")
   expect(config.permission?.webfetch).toBe("ask")
   expect(config.permission?.["~/.ssh/*"]).toBe("deny")
-  const bash = config.permission?.bash as Record<string, string>
-  expect(bash?.["rm -rf *"]).toBe("deny")
-  expect(bash?.["curl *"]).toBe("deny")
+  expect(config.permission?.bash).toMatchObject({ "rm -rf *": "deny", "curl *": "deny" })
 })
 
 test("parseManagedPlist parses enabled_providers", async () => {
