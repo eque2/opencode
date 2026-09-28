@@ -1,5 +1,4 @@
 import {
-  Array as Arr,
   Clock,
   Config,
   DateTime,
@@ -83,6 +82,8 @@ const TRUNCATED = "[TRUNCATED]"
 const RETRIES = 3
 const BACKOFF = Duration.millis(500)
 const MAX_RETRY_AFTER = 30_000
+const COOLDOWN = Duration.seconds(60)
+const MAX_BUFFER = 10_000
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
@@ -95,15 +96,16 @@ export const settings = Effect.gen(function* () {
   Effect.orElseSucceed(() => Option.none<Settings>()),
 )
 
-export function logger(settings: Settings) {
+export interface LoggerOptions {
+  /** How long the sink stays off after a batch exhausts its retries. */
+  readonly cooldown?: Duration.Input
+}
+
+export function logger(settings: Settings, options: LoggerOptions = {}) {
+  const cooldown = Duration.fromInputUnsafe(options.cooldown ?? COOLDOWN)
   const url = Option.getOrElse(settings.url, () => `https://http-intake.logs.${settings.site}/api/v2/logs`)
   const apiKey = Option.match(settings.apiKey, { onNone: () => "", onSome: Redacted.value })
   const include = categoryFilter(settings.categories)
-  const format = Logger.make((options) =>
-    LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)
-      ? entry(options, settings, include)
-      : Option.none(),
-  )
   return Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
     const post = (body: Uint8Array) =>
@@ -136,15 +138,54 @@ export function logger(settings: Settings) {
       })
     const send = (batch: Array<Entry>) =>
       deliver(Bun.gzipSync(encodeJson(batch))).pipe(
-        // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
-        Effect.asVoid,
         // The export request must not create spans or logs, or the sink feeds itself.
         Effect.withTracerEnabled(false),
       )
-    return yield* Logger.batched(format, {
-      window: settings.flushInterval,
-      flush: (items) => Effect.forEach(chunks(Arr.getSomes(items)), send, { discard: true }),
+
+    let buffer: Array<Entry> = []
+    // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
+    let others: ReadonlySet<Logger.Logger<unknown, unknown>> = yield* Logger.CurrentLoggers
+    let openUntil = 0
+    const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < openUntil)
+
+    // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
+    const trip = Effect.gen(function* () {
+      openUntil = (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown)
+      yield* Effect.logWarning(`Datadog sink disabled for ${Duration.toSeconds(cooldown)} seconds`).pipe(
+        Effect.provide(Logger.layer(Array.from(others).filter((logger) => logger !== sink))),
+      )
     })
+
+    // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
+    const flush = Effect.suspend(() => {
+      const batch = buffer
+      buffer = []
+      return Effect.forEach(
+        chunks(batch),
+        (chunk) =>
+          Effect.gen(function* () {
+            // An open breaker drops the records, including the chunks after the one that tripped it.
+            if (yield* isOpen) return
+            if ((yield* send(chunk)) === "failed") yield* trip
+          }),
+        { discard: true },
+      )
+    })
+
+    const sink = Logger.make((options) => {
+      if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
+      others = options.fiber.getRef(Logger.CurrentLoggers)
+      Option.map(entry(options, settings, include), (item) => {
+        buffer.push(item)
+        // The oldest records go first when the intake cannot keep up.
+        if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
+      })
+    })
+
+    yield* Effect.addFinalizer(() => flush)
+    // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
+    yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
+    return sink
   })
 }
 
@@ -221,7 +262,7 @@ function redact(input: unknown, content: Settings["content"], key = ""): unknown
 }
 
 /** What an intake status means. `failed` stops the sink: 401 and 403 mean a bad key, and retrying cannot fix it. */
-function verdict(status: number) {
+function verdict(status: number): "sent" | "dropped" | "failed" | "retry" {
   if (status >= 200 && status < 300) return "sent"
   if (status === 401 || status === 403) return "failed"
   if (status === 408 || status === 429 || status >= 500) return "retry"

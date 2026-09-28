@@ -2,7 +2,7 @@
 // Each leaf maps to exactly one AC. Remove `test.skip` (and any `@ts-expect-error`) when its AC lands.
 import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Cause, ConfigProvider, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
+import { Cause, ConfigProvider, Duration, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
@@ -195,7 +195,7 @@ test("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seco
   expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(1900)
 }, 20_000)
 
-test.skip("AC-6 after retries fail the sink sends nothing until the cooldown ends", async () => {
+test("AC-6 after retries fail the sink sends nothing until the cooldown ends", async () => {
   // One attempt plus 3 retries fail, then the intake recovers.
   const failures = 4
   const target = intake(Array.from({ length: failures }, () => ({ status: 503 })))
@@ -208,7 +208,6 @@ test.skip("AC-6 after retries fail the sink sends nothing until the cooldown end
     }),
   )
   await Effect.gen(function* () {
-    // @ts-expect-error AC-6 red phase: the cooldown option lands in stage 3.
     const logger = yield* Datadog.logger(config, { cooldown: "2 seconds" })
     const log = (message: string) =>
       Effect.logInfo(message).pipe(
@@ -363,7 +362,7 @@ test("AC-7b an entry above 1,000,000 bytes has its message truncated", async () 
 
 // Sends one record that gets a 429 with the given Retry-After, under TestClock. Returns the request count after
 // `before` of virtual time, then after `after` more.
-async function retryGap(retryAfter: (now: number) => string, before: string, after: string) {
+async function retryGap(retryAfter: (now: number) => string, before: Duration.Input, after: Duration.Input) {
   const target = intake([{ status: 429, headers: { "Retry-After": retryAfter(1_000) } }])
   using _ = target.server
   const config = required(
@@ -411,3 +410,99 @@ test("AC-5b 400, 401, 403 and 413 drop the batch with no retry", async () => {
     expect([status, target.requests.length]).toEqual([status, 1])
   }
 })
+
+// Records the messages of Warn records, like a file sink next to Datadog.
+function warnings() {
+  const messages: Array<string> = []
+  const logger = Logger.make((options) => {
+    if (options.logLevel === "Warn") messages.push(String(options.message))
+  })
+  return { messages, logger }
+}
+
+test("AC-6b the default cooldown sends nothing at 59 seconds and sends again after 60 seconds", async () => {
+  const target = intake(Array.from({ length: 4 }, () => ({ status: 503 })))
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" }),
+  )
+  const warned = warnings()
+  const settle = () => Effect.promise(() => Bun.sleep(100))
+  await Effect.gen(function* () {
+    const datadog = yield* Datadog.logger(config)
+    const log = (message: string) =>
+      Effect.logInfo(message).pipe(
+        Effect.annotateLogs({ category: "llm.request" }),
+        Effect.provide(Logger.layer([datadog, warned.logger])),
+      )
+    yield* log("first")
+    // One attempt at 1 second, then retries after 0.5, 1 and 2 seconds of backoff.
+    for (const [wait, count] of [["1 second", 1], ["500 millis", 2], ["1 second", 3], ["2 seconds", 4]] as const) {
+      yield* TestClock.adjust(wait)
+      yield* Effect.promise(() => until(() => target.requests.length >= count))
+      yield* settle()
+    }
+    expect(warned.messages).toEqual(["Datadog sink disabled for 60 seconds"])
+    yield* log("second")
+    yield* TestClock.adjust("59 seconds")
+    yield* settle()
+    expect(target.requests.length).toBe(4)
+    yield* TestClock.adjust("1 second")
+    yield* log("third")
+    yield* TestClock.adjust("1 second")
+    yield* Effect.promise(() => until(() => target.requests.length >= 5))
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
+  expect(warned.messages).toHaveLength(1)
+  expect(JSON.stringify(target.requests.map((request) => request.body))).not.toContain("Datadog sink disabled")
+}, 30_000)
+
+test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does not", async () => {
+  const target = intake([{ status: 401 }, { status: 413 }, { status: 401 }])
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+  )
+  const warned = warnings()
+  await Effect.gen(function* () {
+    const datadog = yield* Datadog.logger(config, { cooldown: "1 second" })
+    const log = (message: string) =>
+      Effect.logInfo(message).pipe(
+        Effect.annotateLogs({ category: "llm.request" }),
+        Effect.provide(Logger.layer([datadog, warned.logger])),
+      )
+    yield* log("a")
+    yield* Effect.promise(() => until(() => target.requests.length >= 1))
+    yield* Effect.sleep("200 millis")
+    yield* log("dropped while off")
+    yield* Effect.sleep("300 millis")
+    expect(target.requests.length).toBe(1)
+    yield* Effect.sleep("700 millis")
+    // The 413 drops its batch but leaves the sink on, so the next record is sent at once.
+    yield* log("b")
+    yield* Effect.promise(() => until(() => target.requests.length >= 2))
+    yield* log("c")
+    yield* Effect.promise(() => until(() => target.requests.length >= 3))
+    yield* Effect.sleep("200 millis")
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([["a"], ["b"], ["c"]])
+  expect(warned.messages).toEqual(["Datadog sink disabled for 1 seconds", "Datadog sink disabled for 1 seconds"])
+}, 30_000)
+
+test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }),
+  )
+  await ship(
+    config,
+    Effect.forEach(Array.from({ length: 10_005 }, (_, index) => index), (index) => Effect.logInfo(`record ${index}`), {
+      discard: true,
+    }).pipe(Effect.annotateLogs({ category: "llm.request" })),
+  )
+  const messages = target.requests.flatMap((request) => request.body.map((entry) => entry.message))
+  expect(messages).toHaveLength(10_000)
+  expect(messages[0]).toBe("record 5")
+  expect(messages.at(-1)).toBe("record 10004")
+}, 30_000)
