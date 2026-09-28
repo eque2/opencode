@@ -9,7 +9,7 @@ import os from "os"
 import path from "path"
 import * as TestClock from "effect/testing/TestClock"
 import { Datadog } from "../../src/observability/datadog"
-import { fileLogger } from "../../src/observability/logging"
+import { fileLogger, Logging } from "../../src/observability/logging"
 import { Observability } from "../../src/observability"
 import { ConfigV1 } from "../../src/v1/config/config"
 
@@ -144,7 +144,7 @@ test("AC-3 withPolicy content full ships content only inside its scope and keeps
   expect(scoped.note).not.toContain("abc.def")
 })
 
-test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async () => {
+test("AC-4 a Debug record reaches Datadog but not an Info file log", async () => {
   await using temp = await tempDir()
   const file = path.join(temp.dir, "opencode.log")
   const target = intake()
@@ -157,7 +157,6 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
     yield* Effect.all([Effect.logDebug("debug only"), Effect.logInfo("info too")]).pipe(
       Effect.annotateLogs({ category: "llm.request" }),
       Effect.provide(
-        // @ts-expect-error AC-4 red phase: fileLogger gains a level argument in stage 3.
         Logger.layer([fileLogger(file, "run-a", "Info"), datadog]).pipe(
           Layer.provide(NodeFileSystem.layer),
           Layer.orDie,
@@ -610,3 +609,83 @@ test("AC-3b a policy cannot re-include question or pty unless the env var does",
   expect(await run({})).toEqual(["llm.request"])
   expect(await run({ OPENCODE_DATADOG_CATEGORIES: "*" })).toEqual(["question.asked", "pty.create", "llm.request"])
 })
+
+test("AC-4b the global minimum is the lowest active sink level", async () => {
+  const datadog = async (level: string) =>
+    settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOG_LEVEL: level })
+  // With Datadog off, the global minimum equals the file level exactly.
+  for (const level of ["Debug", "Info", "Warn", "Error"] as const) {
+    expect(Observability.minimumLevel(level, Option.none())).toBe(level)
+  }
+  expect(Observability.minimumLevel("Info", await datadog("Debug"))).toBe("Debug")
+  // A Datadog level above the file level leaves the file level in force.
+  expect(Observability.minimumLevel("Info", await datadog("Error"))).toBe("Info")
+  expect(Observability.minimumLevel("Info", await datadog("None"))).toBe("Info")
+})
+
+test("AC-4b a Datadog level of None sends nothing", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_LOG_LEVEL: "None" }),
+  )
+  await ship(config, Effect.logFatal("never sent").pipe(Effect.annotateLogs({ category: "llm.request" })))
+  expect(target.requests).toEqual([])
+})
+
+test("AC-4b an invalid OPENCODE_LOG_LEVEL keeps INFO", async () => {
+  expect(await withEnv({ OPENCODE_LOG_LEVEL: "LOUD" }, () => Effect.runPromise(Logging.minimumLogLevel))).toBe("Info")
+})
+
+test("AC-4b the stderr and OTLP loggers filter to the file level", async () => {
+  const datadog = intake()
+  using _datadog = datadog.server
+  const otlp: Array<string> = []
+  using collector = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      if (new URL(request.url).pathname === "/v1/logs") otlp.push(await request.text())
+      return new Response("{}", { headers: { "content-type": "application/json" } })
+    },
+  })
+  const stderr: Array<string> = []
+  const write = process.stderr.write
+  process.stderr.write = (chunk: string | Uint8Array) => {
+    stderr.push(String(chunk))
+    return true
+  }
+  try {
+    await withEnv(
+      {
+        OPENCODE_LOG_LEVEL: "INFO",
+        OPENCODE_PRINT_LOGS: "1",
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url.href.replace(/\/$/, ""),
+        DD_API_KEY: "key",
+        OPENCODE_DATADOG_LOGS_URL: datadog.url,
+        OPENCODE_DATADOG_LOG_LEVEL: "Debug",
+      },
+      async () => {
+        // The OTLP flags read the ambient ConfigProvider, which copies process.env once per process.
+        const runtime = ManagedRuntime.make(
+          Observability.layer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv()))),
+        )
+        await runtime.runPromise(
+          Effect.all([Effect.logDebug("per-sink debug"), Effect.logInfo("per-sink info")]).pipe(
+            Effect.annotateLogs({ category: "llm.request" }),
+          ),
+        )
+        await runtime.dispose()
+      },
+    )
+  } finally {
+    process.stderr.write = write
+  }
+  expect(stderr.join("")).toContain("per-sink info")
+  expect(stderr.join("")).not.toContain("per-sink debug")
+  expect(otlp.join("")).toContain("per-sink info")
+  expect(otlp.join("")).not.toContain("per-sink debug")
+  expect(datadog.requests.flatMap((request) => request.body.map((entry) => entry.message))).toEqual([
+    "per-sink debug",
+    "per-sink info",
+  ])
+}, 20_000)
