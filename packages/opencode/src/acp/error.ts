@@ -29,12 +29,9 @@ export class AuthRequiredError extends Schema.TaggedError<AuthRequiredError>()("
   providerId: Schema.optional(Schema.String),
 }) {}
 
-export class UnknownAuthMethodError extends Schema.TaggedError<UnknownAuthMethodError>()(
-  "ACPUnknownAuthMethodError",
-  {
-    methodId: Schema.String,
-  },
-) {}
+export class UnknownAuthMethodError extends Schema.TaggedError<UnknownAuthMethodError>()("ACPUnknownAuthMethodError", {
+  methodId: Schema.String,
+}) {}
 
 export class UnsupportedOperationError extends Schema.TaggedError<UnsupportedOperationError>()(
   "ACPUnsupportedOperationError",
@@ -81,15 +78,15 @@ export function toRequestError(error: Error) {
       return RequestError.invalidParams({ methodId: error.methodId }, `unknown auth method: ${error.methodId}`)
     case "ACPUnsupportedOperationError":
       return RequestError.methodNotFound(error.method)
-    case "ACPServiceFailureError":
-      return RequestError.internalError(
-        {
-          ...(error.service ? { service: error.service } : {}),
-          ...(error.errorName ? { errorName: error.errorName } : {}),
-        },
-        error.safeMessage,
-      )
   }
+  // The switch narrows the remaining case to ServiceFailureError.
+  return RequestError.internalError(
+    {
+      ...(error.service ? { service: error.service } : {}),
+      ...(error.errorName ? { errorName: error.errorName } : {}),
+    },
+    error.safeMessage,
+  )
 }
 
 export function fromUnknownDefect(_defect: unknown, safeMessage = "Internal service failure") {
