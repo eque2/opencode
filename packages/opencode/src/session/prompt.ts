@@ -42,7 +42,21 @@ import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
-import { Array as Arr, Cause, Clock, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  HashSet,
+  Latch,
+  Layer,
+  Option,
+  Scope,
+  Context,
+  Schema,
+  Types,
+} from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -64,7 +78,7 @@ const decodeMessageInfo = Schema.decodeUnknownExit(SessionV1.Info)
 const decodeMessagePart = Schema.decodeUnknownExit(SessionV1.Part)
 const decodeStructuredOutput = Schema.decodeUnknownEffect(Schema.MutableJson)
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
-const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
+const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = HashSet.fromIterable<string>([
   "application/pdf",
   "image/gif",
   "image/jpeg",
@@ -757,7 +771,7 @@ const layer = Layer.effect(
               const mime = "mimeType" in c && typeof c.mimeType === "string" ? c.mimeType : part.mime
               const filename = "uri" in c && typeof c.uri === "string" ? c.uri : part.filename
               const size = mcpResourceBase64Size(c.blob)
-              if (!SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES.has(mime)) {
+              if (!HashSet.has(SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES, mime)) {
                 return [
                   synthetic(
                     `[Binary MCP resource omitted: ${filename ?? uri} (${mime}, ${formatMcpResourceBytes(size)}) is not a supported attachment type]`,
@@ -1420,11 +1434,13 @@ const layer = Layer.effect(
       }
 
       const templateParts = yield* resolvePromptParts(template)
-      const inputFiles = new Set(
-        input.parts?.filter((part) => new URL(part.url).protocol === "file:").map((part) => fileURLToPath(part.url)),
+      const inputFiles = HashSet.fromIterable(
+        (input.parts ?? [])
+          .filter((part) => new URL(part.url).protocol === "file:")
+          .map((part) => fileURLToPath(part.url)),
       )
       const uniqueTemplateParts = templateParts.filter(
-        (part) => part.type !== "file" || !inputFiles.has(fileURLToPath(part.url)),
+        (part) => part.type !== "file" || !HashSet.has(inputFiles, fileURLToPath(part.url)),
       )
       const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
       const parts = isSubtask
