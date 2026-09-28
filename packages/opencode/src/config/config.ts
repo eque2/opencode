@@ -110,6 +110,8 @@ type Info = ConfigV1.Info & {
   plugin_origins?: ConfigPlugin.Origin[]
 }
 
+type Patch = typeof ConfigV1.Info.Type & Pick<Info, "plugin_origins">
+
 type State = {
   config: Info
   directories: string[]
@@ -121,8 +123,10 @@ export interface Interface {
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
-  readonly update: (config: Info) => Effect.Effect<void>
-  readonly updateGlobal: (config: Info) => Effect.Effect<{ info: Info; changed: boolean }>
+  // The patch and the result use the read-only decoded payload type, so HTTP handlers can pass a
+  // request payload unchanged and test doubles can echo it back.
+  readonly update: (config: Patch) => Effect.Effect<void>
+  readonly updateGlobal: (config: Patch) => Effect.Effect<{ info: Patch; changed: boolean }>
   readonly invalidate: () => Effect.Effect<void>
   readonly directories: () => Effect.Effect<string[]>
   readonly waitForDependencies: () => Effect.Effect<void>
@@ -156,12 +160,12 @@ function patchJsonc(input: string, patch: unknown, path: string[] = []): string 
   return Object.entries(patch).reduce((result, [key, value]) => patchJsonc(result, value, [...path, key]), input)
 }
 
-function writable(info: Info) {
+function writable(info: Patch) {
   const { plugin_origins: _plugin_origins, ...next } = info
   return next
 }
 
-function writableGlobal(info: Info) {
+function writableGlobal(info: Patch) {
   const next = writable(info)
   // When a user changes config from a value back to default in the Desktop app, we don't want to leave a blank `"shell": "",` key
   if ("shell" in next && next.shell === "") return { ...next, shell: undefined }
@@ -641,7 +645,7 @@ const layer = Layer.effect(
       )
     })
 
-    const update = Effect.fn("Config.update")(function* (config: Info) {
+    const update = Effect.fn("Config.update")(function* (config: Patch) {
       const dir = yield* InstanceState.directory
       const file = path.join(dir, "config.json")
       const existing = yield* loadFile(file)
@@ -660,7 +664,7 @@ const layer = Layer.effect(
       yield* invalidateGlobal
     })
 
-    const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info) {
+    const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Patch) {
       const file = globalConfigFile()
       const before = (yield* readConfigFile(file)) ?? "{}"
       const patch = writableGlobal(config)

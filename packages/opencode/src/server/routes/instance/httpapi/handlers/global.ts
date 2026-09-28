@@ -1,4 +1,5 @@
 import { Config } from "@/config/config"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -71,7 +72,9 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return yield* config.getGlobal()
     })
 
-    const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {
+    const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx: {
+      payload: typeof ConfigV1.Info.Type
+    }) {
       const result = yield* config.updateGlobal(ctx.payload)
       if (result.changed) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
       return result.info
