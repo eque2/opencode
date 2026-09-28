@@ -275,7 +275,7 @@ describe("code mode execute", () => {
     const tool = await build({
       greeter_hello: mcpTool("hello", (args) => {
         seen.push(args)
-        return { content: [{ type: "text", text: `hello ${args.name}` }] }
+        return { content: [{ type: "text", text: `hello ${String(args.name)}` }] }
       }),
     })
 
