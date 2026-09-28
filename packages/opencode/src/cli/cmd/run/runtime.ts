@@ -25,7 +25,7 @@ import {
   type SessionInfo,
 } from "./runtime.boot"
 import { createRuntimeLifecycle, RuntimeClosedError } from "./runtime.lifecycle"
-import { trace } from "./trace"
+import { loadTrace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
 import type {
   LocalReplayAnchor,
@@ -217,7 +217,7 @@ function resolveExitTitle(ctx: BootContext, input: RunRuntimeInput, state: Runti
 // flips to false so subsequent turns don't re-send attachments.
 const runInteractiveRuntime = Effect.fnUntraced(function* (input: RunRuntimeInput, deps: RunRuntimeDeps) {
   const start = performance.now()
-  const log = trace()
+  const log = Option.getOrUndefined(yield* loadTrace)
   const tuiConfigFiber = yield* Effect.forkChild(
     Effect.promise(() => resolveRunTuiConfig()),
     { startImmediately: true },

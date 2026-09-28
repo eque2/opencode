@@ -9,8 +9,8 @@
 // Useful for debugging stream ordering, permission behavior, and
 // footer/transcript mismatches.
 //
-// Lazy-initialized: the first call to trace() decides whether tracing is
-// active based on the env var, and subsequent calls return the cached result.
+// Lazy-initialized: the first run of loadTrace decides whether tracing is
+// active based on the env var, and later runs return the cached result.
 //
 // The writes stay synchronous. Callers record events from synchronous SDK and
 // renderer callbacks, the run command can end with process.exit, and each line
@@ -105,9 +105,3 @@ export const loadTrace: Effect.Effect<Option.Option<Trace>> = Effect.suspend(() 
       )
     : Effect.succeed(state),
 )
-
-// runtime.ts calls trace() from its async entry and reads the result with
-// `log?.write(...)`, so the Option becomes undefined at this exported edge.
-export function trace(): Trace | undefined {
-  return Option.getOrUndefined(Effect.runSync(loadTrace))
-}
