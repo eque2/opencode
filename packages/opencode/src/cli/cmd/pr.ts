@@ -1,9 +1,20 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { UI } from "../ui"
 import { effectCmd, fail } from "../effect-cmd"
 import { Git } from "@/git"
 import { InstanceRef } from "@/effect/instance-ref"
 import { Process } from "@/util/process"
+
+// The fields that `gh pr view --json ...` returns. gh writes null for the head repository of a deleted fork.
+const PrInfo = Schema.Struct({
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepository: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+  headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  headRefName: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+}).annotate({ identifier: "GhPrInfo", description: "The PR fields that the gh CLI prints as JSON." })
+
+const decodePrInfo = Schema.decodeUnknownEffect(Schema.fromJsonString(PrInfo))
 
 export const PrCommand = effectCmd({
   command: "pr <number>",
@@ -52,9 +63,9 @@ export const PrCommand = effectCmd({
     let sessionId: string | undefined
 
     if (prInfoResult.code === 0 && prInfoResult.text.trim()) {
-      const prInfo = JSON.parse(prInfoResult.text)
+      const prInfo = yield* decodePrInfo(prInfoResult.text).pipe(Effect.orDie)
 
-      if (prInfo?.isCrossRepository && prInfo.headRepository && prInfo.headRepositoryOwner) {
+      if (prInfo.isCrossRepository && prInfo.headRepository && prInfo.headRepositoryOwner) {
         const forkOwner = prInfo.headRepositoryOwner.login
         const forkName = prInfo.headRepository.name
         const remoteName = forkOwner
@@ -72,7 +83,7 @@ export const PrCommand = effectCmd({
         })
       }
 
-      if (prInfo?.body) {
+      if (prInfo.body) {
         const sessionMatch = prInfo.body.match(/https:\/\/opncd\.ai\/s\/([a-zA-Z0-9_-]+)/)
         if (sessionMatch) {
           const sessionUrl = sessionMatch[0]
@@ -111,5 +122,6 @@ export const PrCommand = effectCmd({
     // Match legacy throw semantics — propagate as a defect so the top-level
     // index.ts catch handles it identically (exit 1, "Unexpected error" banner).
     if (code !== 0) return yield* Effect.die(new Error(`opencode exited with code ${code}`))
+    return yield* Effect.void
   }),
 })
