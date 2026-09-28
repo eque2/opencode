@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Effect, Layer, Context } from "effect"
+import { Array as Arr, Context, Effect, HashSet, Layer, MutableHashMap, MutableHashSet, Option } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
@@ -14,25 +14,23 @@ import { Global } from "@opencode-ai/core/global"
 import type { MessageID } from "./schema"
 
 function extract(messages: SessionV1.WithParts[]) {
-  const paths = new Set<string>()
-  for (const msg of messages) {
-    for (const part of msg.parts) {
-      if (part.type === "tool" && part.tool === "read" && part.state.status === "completed") {
-        if (part.state.time.compacted) continue
-        const loaded = part.state.metadata?.loaded
-        if (!loaded || !Array.isArray(loaded)) continue
-        for (const p of loaded) {
-          if (typeof p === "string") paths.add(p)
-        }
-      }
-    }
-  }
-  return paths
+  return HashSet.fromIterable(
+    messages.flatMap((msg) =>
+      msg.parts.flatMap((part) => {
+        if (part.type !== "tool" || part.tool !== "read" || part.state.status !== "completed") return []
+        if (part.state.time.compacted) return []
+        const loaded: unknown = part.state.metadata?.loaded
+        if (!loaded || !Array.isArray(loaded)) return []
+        return loaded.filter((item): item is string => typeof item === "string")
+      }),
+    ),
+  )
 }
 
 export interface Interface {
   readonly clear: (messageID: MessageID) => Effect.Effect<void>
-  readonly systemPaths: () => Effect.Effect<Set<string>, FSUtil.Error>
+  /** The system instruction paths in attach order, without duplicates. */
+  readonly systemPaths: () => Effect.Effect<ReadonlyArray<string>, FSUtil.Error>
   readonly system: () => Effect.Effect<string[], FSUtil.Error>
   readonly find: (dir: string) => Effect.Effect<string | undefined, FSUtil.Error>
   readonly resolve: (
@@ -70,7 +68,7 @@ const layer: Layer.Layer<
       Effect.fn("Instruction.state")(() =>
         Effect.succeed({
           // Track which instruction files have already been attached for a given assistant message.
-          claims: new Map<MessageID, Set<string>>(),
+          claims: MutableHashMap.empty<MessageID, MutableHashSet.MutableHashSet<string>>(),
         }),
       ),
     )
@@ -93,49 +91,45 @@ const layer: Layer.Layer<
 
     const fetch = Effect.fnUntraced(function* (url: string) {
       const res = yield* http.execute(HttpClientRequest.get(url)).pipe(
-        Effect.timeout(5000),
-        Effect.catch(() => Effect.succeed(null)),
+        Effect.timeout("5 seconds"),
+        Effect.map(Option.some),
+        Effect.catch(() => Effect.succeedNone),
       )
-      if (!res) return ""
-      const body = yield* res.arrayBuffer.pipe(Effect.catch(() => Effect.succeed(new ArrayBuffer(0))))
+      if (Option.isNone(res)) return ""
+      const body = yield* res.value.arrayBuffer.pipe(Effect.catch(() => Effect.succeed(new ArrayBuffer(0))))
       return new TextDecoder().decode(body)
     })
 
     const clear = Effect.fn("Instruction.clear")(function* (messageID: MessageID) {
       const s = yield* InstanceState.get(state)
-      s.claims.delete(messageID)
+      MutableHashMap.remove(s.claims, messageID)
     })
 
-    const systemPaths = Effect.fn("Instruction.systemPaths")(function* () {
-      const config = yield* cfg.get()
-      const ctx = yield* InstanceState.context
-      const paths = new Set<string>()
-
+    // The first global file that exists wins.
+    const globalPaths = Effect.fnUntraced(function* () {
       for (const file of globalFiles) {
-        if (yield* fs.existsSafe(file)) {
-          paths.add(path.resolve(file))
-          break
-        }
+        if (yield* fs.existsSafe(file)) return [file]
       }
+      return []
+    })
 
-      // The first project-level match wins so we don't stack AGENTS.md/CLAUDE.md from every ancestor.
-      if (!(yield* FlagConfig.OPENCODE_DISABLE_PROJECT_CONFIG.pipe(Effect.orDie))) {
-        for (const file of instructionFiles) {
-          const matches = yield* fs
-            .findUp(file, ctx.directory, ctx.worktree)
-            .pipe(Effect.catch(() => Effect.succeed([])))
-          if (matches.length > 0) {
-            matches.forEach((item) => paths.add(path.resolve(item)))
-            break
-          }
-        }
+    // The first project-level match wins so we don't stack AGENTS.md/CLAUDE.md from every ancestor.
+    const projectPaths = Effect.fnUntraced(function* () {
+      if (yield* FlagConfig.OPENCODE_DISABLE_PROJECT_CONFIG.pipe(Effect.orDie)) return []
+      const ctx = yield* InstanceState.context
+      for (const file of instructionFiles) {
+        const matches = yield* fs.findUp(file, ctx.directory, ctx.worktree).pipe(Effect.catch(() => Effect.succeed([])))
+        if (matches.length > 0) return matches
       }
+      return []
+    })
 
-      if (config.instructions) {
-        for (const raw of config.instructions) {
-          if (raw.startsWith("https://") || raw.startsWith("http://")) continue
+    const configPaths = Effect.fnUntraced(function* (instructions: ReadonlyArray<string>) {
+      const matches = yield* Effect.forEach(
+        instructions.filter((raw) => !raw.startsWith("https://") && !raw.startsWith("http://")),
+        (raw) => {
           const instruction = raw.startsWith("~/") ? path.join(global.home, raw.slice(2)) : raw
-          const matches = yield* (
+          return (
             path.isAbsolute(instruction)
               ? fs.scan(path.basename(instruction), {
                   cwd: path.dirname(instruction),
@@ -144,11 +138,20 @@ const layer: Layer.Layer<
                 })
               : relative(instruction)
           ).pipe(Effect.catch(() => Effect.succeed([] as string[])))
-          matches.forEach((item) => paths.add(path.resolve(item)))
-        }
-      }
+        },
+      )
+      return matches.flat()
+    })
 
-      return paths
+    const systemPaths = Effect.fn("Instruction.systemPaths")(function* () {
+      const config = yield* cfg.get()
+      const found = [
+        ...(yield* globalPaths()),
+        ...(yield* projectPaths()),
+        ...(yield* configPaths(config.instructions ?? [])),
+      ]
+      // Dedupe keeps the first position of each path, as insertion into a Set did.
+      return Arr.dedupe(found.map((item) => path.resolve(item)))
     })
 
     const system = Effect.fn("Instruction.system")(function* () {
@@ -158,11 +161,11 @@ const layer: Layer.Layer<
         (item) => item.startsWith("https://") || item.startsWith("http://"),
       )
 
-      const files = yield* Effect.forEach(Array.from(paths), read, { concurrency: 8 })
+      const files = yield* Effect.forEach(paths, read, { concurrency: 8 })
       const remote = yield* Effect.forEach(urls, fetch, { concurrency: 4 })
 
       return [
-        ...Array.from(paths).flatMap((item, i) => (files[i] ? [`Instructions from: ${item}\n${files[i]}`] : [])),
+        ...paths.flatMap((item, i) => (files[i] ? [`Instructions from: ${item}\n${files[i]}`] : [])),
         ...urls.flatMap((item, i) => (remote[i] ? [`Instructions from: ${item}\n${remote[i]}`] : [])),
       ]
     })
@@ -182,41 +185,39 @@ const layer: Layer.Layer<
     ) {
       const sys = yield* systemPaths()
       const already = extract(messages)
-      const results: { filepath: string; content: string }[] = []
       const s = yield* InstanceState.get(state)
       const root = path.resolve(yield* InstanceState.directory)
 
       const target = path.resolve(filepath)
-      let current = path.dirname(target)
+      // Walk upward from the file being read, below the instance root.
+      const directories = Arr.unfold(path.dirname(target), (current) =>
+        current.startsWith(root) && current !== root
+          ? Option.some([current, path.dirname(current)] as const)
+          : Option.none(),
+      )
 
-      // Walk upward from the file being read and attach nearby instruction files once per message.
-      while (current.startsWith(root) && current !== root) {
-        const found = yield* find(current)
-        if (!found || found === target || sys.has(found) || already.has(found)) {
-          current = path.dirname(current)
-          continue
-        }
+      // Attach nearby instruction files once per message. The walk runs in order, one directory at a time.
+      const attached = yield* Effect.forEach(
+        directories,
+        Effect.fnUntraced(function* (current) {
+          const found = yield* find(current)
+          if (!found || found === target || sys.includes(found) || HashSet.has(already, found)) return Option.none()
 
-        let set = s.claims.get(messageID)
-        if (!set) {
-          set = new Set()
-          s.claims.set(messageID, set)
-        }
-        if (set.has(found)) {
-          current = path.dirname(current)
-          continue
-        }
+          const claimed = Option.getOrElse(MutableHashMap.get(s.claims, messageID), () => {
+            const created = MutableHashSet.empty<string>()
+            MutableHashMap.set(s.claims, messageID, created)
+            return created
+          })
+          if (MutableHashSet.has(claimed, found)) return Option.none()
 
-        set.add(found)
-        const content = yield* read(found)
-        if (content) {
-          results.push({ filepath: found, content: `Instructions from: ${found}\n${content}` })
-        }
+          MutableHashSet.add(claimed, found)
+          const content = yield* read(found)
+          if (!content) return Option.none()
+          return Option.some({ filepath: found, content: `Instructions from: ${found}\n${content}` })
+        }),
+      )
 
-        current = path.dirname(current)
-      }
-
-      return results
+      return Arr.getSomes(attached)
     })
 
     return Service.of({ clear, systemPaths, system, find, resolve })
