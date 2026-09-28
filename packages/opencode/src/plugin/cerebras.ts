@@ -1,7 +1,8 @@
-import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+import type { Hooks } from "@opencode-ai/plugin"
 import { Effect } from "effect"
 
-export function CerebrasPlugin(_input: PluginInput): Promise<Hooks> {
+// The hooks read no plugin input, so the factory takes none; it still fits the plugin SDK signature.
+export function CerebrasPlugin(): Promise<Hooks> {
   const hooks: Hooks = {
     "chat.params": (input, output) =>
       Effect.runPromise(

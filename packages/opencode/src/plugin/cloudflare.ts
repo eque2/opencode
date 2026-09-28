@@ -1,5 +1,5 @@
 import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
-import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+import type { Hooks } from "@opencode-ai/plugin"
 import { Config, Effect, Option } from "effect"
 
 // An empty variable counts as unset, as the former `!process.env.X` checks did.
@@ -22,7 +22,8 @@ const gatewayIdPrompt = {
   placeholder: "e.g. my-gateway",
 }
 
-export function CloudflareWorkersAuthPlugin(_input: PluginInput): Promise<Hooks> {
+// The factories read no plugin input, so they take none; they still fit the plugin SDK signature.
+export function CloudflareWorkersAuthPlugin(): Promise<Hooks> {
   return Effect.runPromise(
     Effect.gen(function* () {
       const prompts = (yield* envSet("CLOUDFLARE_ACCOUNT_ID")) ? [] : [accountIdPrompt]
@@ -42,7 +43,7 @@ export function CloudflareWorkersAuthPlugin(_input: PluginInput): Promise<Hooks>
   )
 }
 
-export function CloudflareAIGatewayAuthPlugin(_input: PluginInput): Promise<Hooks> {
+export function CloudflareAIGatewayAuthPlugin(): Promise<Hooks> {
   return Effect.runPromise(
     Effect.gen(function* () {
       const prompts = [
