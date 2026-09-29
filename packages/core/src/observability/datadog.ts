@@ -292,18 +292,20 @@ let sinks: ReadonlyArray<{ readonly settings: Settings; readonly logger: Logger.
 
 /**
  * Sends one record to every open sink and to no other logger. The span bridge and the bus tap use it, so the file
- * log does not grow with a record for each span and event. `kind` names the switch that gates the record.
+ * log does not grow with a record for each span and event. `kind` names the switch that gates the record; a
+ * `records` record has no switch. It needs no loggers in the fiber, so code run by `Effect.runPromise` can use it.
  */
 export function emit(
   fiber: Fiber.Fiber<unknown, unknown>,
-  kind: "spans" | "events",
+  kind: "spans" | "events" | "records",
   logLevel: LogLevel.LogLevel,
   message: ReadonlyArray<unknown>,
 ) {
   if (sinks.length === 0) return
   const date = new Date()
   for (const sink of sinks) {
-    if (sink.settings[kind]) sink.logger.log({ fiber, date, logLevel, message, cause: Cause.empty })
+    if (kind === "records" || sink.settings[kind])
+      sink.logger.log({ fiber, date, logLevel, message, cause: Cause.empty })
   }
 }
 

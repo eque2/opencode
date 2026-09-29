@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, Predicate, Tracer } from "effect"
+import { Cause, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
 import type { Payload } from "@opencode-ai/schema/event"
 import { eventCategory, spanCategory } from "./category"
 import { Datadog } from "./datadog"
@@ -16,14 +16,14 @@ export function bridge(inner: Tracer.Tracer): Tracer.Tracer {
       const end = span.end.bind(span)
       span.end = (endTime, exit) => {
         end(endTime, exit)
-        record(span, endTime, exit)
+        recordSpan(span, endTime, exit)
       }
       return span
     },
   }
 }
 
-function record(span: Tracer.Span, endTime: bigint, exit: Exit.Exit<unknown, unknown>) {
+function recordSpan(span: Tracer.Span, endTime: bigint, exit: Exit.Exit<unknown, unknown>) {
   const fiber = Fiber.getCurrent()
   if (fiber === undefined || !Datadog.accepts("spans")) return
   const failed = Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
@@ -76,15 +76,19 @@ export const event = (payload: Payload) =>
     return Effect.void
   })
 
+// The sink writes its own `status` (the log level) and `message`, so these event keys are renamed.
+const RENAMED: Readonly<Record<string, string>> = { status: "eventStatus", name: "eventName" }
+
 function fields(data: unknown): Record<string, unknown> {
   if (!Predicate.isObject(data)) return {}
   return Object.fromEntries(
-    Object.entries(data).flatMap(([key, value]): Array<[string, unknown]> => {
-      if (!(key.endsWith("ID") || EVENT_FIELDS.includes(key))) return []
+    Object.entries(data).flatMap(([name, value]): Array<[string, unknown]> => {
+      const key = RENAMED[name] ?? name
+      if (!(name.endsWith("ID") || EVENT_FIELDS.includes(name))) return []
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return [[key, value]]
       // Token counts are numbers only, so a step record carries its usage. The keys are flattened to
       // `tokens.input` and so on, because the sink treats a bare `input` or `output` key as content.
-      if (key === "tokens" && Predicate.isObject(value)) return numbers(value, key)
+      if (name === "tokens" && Predicate.isObject(value)) return numbers(value, key)
       // A status such as `{ type: "retry", attempt: 2 }` keeps its type.
       if (Predicate.isObject(value) && "type" in value && typeof value.type === "string") return [[key, value.type]]
       return []
@@ -98,5 +102,44 @@ function numbers(input: object, prefix: string): Array<[string, unknown]> {
     return Predicate.isObject(value) ? numbers(value, `${prefix}.${key}`) : []
   })
 }
+
+/**
+ * Sends one Datadog record from any fiber, including one started by `Effect.runPromise` at a Promise edge, which
+ * has none of the application loggers.
+ */
+export const record = (level: LogLevel.LogLevel, message: string, fields: Record<string, unknown>) =>
+  Effect.withFiber((fiber) => {
+    Datadog.emit(fiber, "records", level, [message, fields])
+    return Effect.void
+  })
+
+/**
+ * Records one HTTP request made through a fetch wrapper: method, host, status, duration and outcome. The URL path,
+ * headers and body stay out, because they can carry keys and prompts.
+ */
+export const request =
+  (category: string, input: unknown, init: { readonly method?: string } | undefined) =>
+  <E, R>(self: Effect.Effect<Response, E, R>) =>
+    Effect.suspend(() => {
+      const started = Date.now()
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+      const url = input instanceof Request ? input.url : String(input)
+      return self.pipe(
+        Effect.onExit((exit) =>
+          record(Exit.isSuccess(exit) && exit.value.status < 400 ? "Info" : "Warn", "HTTP request", {
+            category,
+            method,
+            host: URL.parse(url)?.host ?? "unknown",
+            durationMs: Date.now() - started,
+            ...(Exit.isSuccess(exit)
+              ? { httpStatus: exit.value.status, outcome: "ok" }
+              : {
+                  outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
+                  error: Cause.squash(exit.cause),
+                }),
+          }),
+        ),
+      )
+    })
 
 export * as Telemetry from "./telemetry"

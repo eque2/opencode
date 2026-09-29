@@ -58,7 +58,12 @@ test("spans and bus events reach the Datadog sink only, without event content", 
       yield* Telemetry.event({
         id: "evt_1",
         type: "session.next.step.ended",
-        data: { sessionID: "ses_1", text: "my secret plan", tokens: { input: 3, output: 4, cache: { read: 1 } } },
+        data: {
+          sessionID: "ses_1",
+          status: { type: "retry" },
+          text: "my secret plan",
+          tokens: { input: 3, output: 4, cache: { read: 1 } },
+        },
       } as unknown as Payload)
       yield* Telemetry.event({
         id: "evt_2",
@@ -79,6 +84,8 @@ test("spans and bus events reach the Datadog sink only, without event content", 
   expect(by("bus.session.next.step.ended")).toMatchObject({
     eventID: "evt_1",
     sessionID: "ses_1",
+    eventStatus: "retry",
+    status: "info",
     "tokens.input": 3,
     "tokens.output": 4,
     "tokens.cache.read": 1,
@@ -99,4 +106,44 @@ test("the span and event switches turn the records off", async () => {
     yield* Datadog.logger(config)
     expect([Datadog.accepts("spans"), Datadog.accepts("events")]).toEqual([false, false])
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+})
+
+test("a fetch wrapper records method, host, status and duration but not the path", async () => {
+  const bodies: Array<Array<Record<string, any>>> = []
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      bodies.push(JSON.parse(new TextDecoder().decode(Bun.gunzipSync(await request.arrayBuffer()))))
+      return new Response(null, { status: 202 })
+    },
+  })
+  const config = Option.getOrThrow(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: server.url.href,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
+  )
+  await Effect.gen(function* () {
+    yield* Datadog.logger(config)
+    // A Promise edge runs the wrapper with a fresh runtime, as the AI SDK fetch does.
+    yield* Effect.promise(() =>
+      Effect.runPromise(
+        Effect.succeed(new Response(null, { status: 429 })).pipe(
+          Telemetry.request("llm.request", "https://api.example.com/v1/chat?key=secret", { method: "POST" }),
+        ),
+      ),
+    )
+    yield* Datadog.flushAll
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  const entry = bodies.flat().find((item) => item.category === "llm.request")
+  expect(entry).toMatchObject({
+    method: "POST",
+    host: "api.example.com",
+    httpStatus: 429,
+    status: "warn",
+    outcome: "ok",
+  })
+  expect(entry?.durationMs).toBeGreaterThanOrEqual(0)
+  expect(JSON.stringify(bodies)).not.toContain("secret")
 })
