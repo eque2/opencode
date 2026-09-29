@@ -38,8 +38,27 @@ export const make = <Key, E>(options: {
       const ready = Deferred.makeUnsafe<void>()
       const owner = fork(
         (successor ? Effect.yieldNow : Deferred.await(ready)).pipe(
-          Effect.andThen(Effect.suspend(() => options.drain(key, force))),
-          Effect.onExit((exit) => Effect.sync(() => settle(key, entry, exit))),
+          Effect.andThen(
+            Effect.suspend(() => options.drain(key, force)).pipe(
+              Effect.withSpan("SessionRunCoordinator.drain", {
+                attributes: { "session.id": String(key), force, successor },
+              }),
+            ),
+          ),
+          Effect.onExit((exit) =>
+            Effect.sync(() => settle(key, entry, exit)).pipe(
+              // No successor drain means the session has no eligible input left.
+              Effect.andThen(
+                Effect.suspend(() =>
+                  MutableHashMap.has(active, key)
+                    ? Effect.void
+                    : Effect.logInfo("session idle", { "session.id": String(key) }).pipe(
+                        Effect.annotateLogs({ category: "session.idle" }),
+                      ),
+                ),
+              ),
+            ),
+          ),
           Effect.exit,
           Effect.asVoid,
         ),
