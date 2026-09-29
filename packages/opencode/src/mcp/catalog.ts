@@ -40,7 +40,8 @@ export function paginate<T, R extends { nextCursor?: string }>(
     collected: Array<T>,
     page: number,
   ): Effect.Effect<Array<T>, CatalogError> => {
-    if (page >= MAX_LIST_PAGES) return Effect.fail(new CatalogError({ message: `MCP list exceeded ${MAX_LIST_PAGES} pages` }))
+    if (page >= MAX_LIST_PAGES)
+      return Effect.fail(new CatalogError({ message: `MCP list exceeded ${MAX_LIST_PAGES} pages` }))
     return list(cursor).pipe(
       Effect.flatMap((result) => {
         const next = Arr.appendAll(collected, items(result))
@@ -56,7 +57,14 @@ export function paginate<T, R extends { nextCursor?: string }>(
 }
 
 export function defs(client: Client, timeout?: number) {
-  return listTools(client, timeout ?? DEFAULT_TIMEOUT).pipe(Effect.option)
+  return listTools(client, timeout ?? DEFAULT_TIMEOUT).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("MCP tool list failed", { error: error.message }).pipe(
+        Effect.annotateLogs({ category: "mcp.tools" }),
+      ),
+    ),
+    Effect.option,
+  )
 }
 
 export function convertTool(mcpTool: MCPToolDef, client: Client, timeout?: number): Tool {
