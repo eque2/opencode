@@ -31,6 +31,7 @@ import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { Cause, Effect, Option } from "effect"
 import { Datadog } from "@opencode-ai/core/observability/datadog"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 
 const args = hideBin(process.argv)
 
@@ -157,7 +158,12 @@ const help = args.includes("-h") || args.includes("--help")
 
 Effect.runFork(
   (help ? parseHelp() : Effect.promise(() => cli.parseAsync())).pipe(
-    Effect.catchCause((cause) => Effect.sync(() => report(Cause.squash(cause)))),
+    Effect.catchCause((cause) =>
+      // The file log never sees a fatal error, so Datadog gets it before the flush below.
+      Telemetry.record("Error", "fatal CLI error", { category: "cli.fatal", error: Cause.squash(cause) }).pipe(
+        Effect.andThen(Effect.sync(() => report(Cause.squash(cause)))),
+      ),
+    ),
     // Some subprocesses don't react properly to SIGTERM and similar signals.
     // Most notably, some docker-container-based MCP servers don't handle such signals unless
     // run using `docker run --init`.

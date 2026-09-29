@@ -8,16 +8,22 @@ import { ServerAuth } from "@/server/auth"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
-import { Effect, Stream } from "effect"
+import { Cause, Effect, Stream } from "effect"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 import { Datadog } from "@opencode-ai/core/observability/datadog"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 
 // The heap monitor is a detached fiber; the TUI ends this worker with terminate().
 Effect.runFork(Heap.start())
 
-const onUnhandledRejection = (_error: unknown) => {}
+// The worker must survive a stray rejection or exception, but each one is recorded.
+const onUnhandledRejection = (error: unknown) => {
+  Effect.runFork(Telemetry.record("Error", "TUI worker unhandled rejection", { category: "cli.worker", error }))
+}
 
-const onUncaughtException = (_error: Error) => {}
+const onUncaughtException = (error: Error) => {
+  Effect.runFork(Telemetry.record("Error", "TUI worker uncaught exception", { category: "cli.worker", error }))
+}
 
 process.on("unhandledRejection", onUnhandledRejection)
 process.on("uncaughtException", onUncaughtException)
@@ -74,7 +80,13 @@ export const rpc = {
       const store = yield* InstanceStore.Service
       yield* store.load({ directory: input.directory })
       // The update check is best effort; no failure reaches the TUI.
-      yield* upgrade().pipe(Effect.catchCause(() => Effect.void))
+      yield* upgrade().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("update check failed", { cause: Cause.pretty(cause) }).pipe(
+            Effect.annotateLogs({ category: "cli.upgrade" }),
+          ),
+        ),
+      )
     }),
   reload: () =>
     Effect.gen(function* () {
