@@ -2,7 +2,7 @@
 
 This catalogue lists every code site where opencode can capture a log or telemetry record. It is the input for the patterns in [`logging-patterns.md`](./logging-patterns.md) and for the Datadog sink in `packages/core/src/observability/datadog.ts`.
 
-Coverage against the Datadog sink is in [`logging-gaps.md`](./logging-gaps.md).
+The record that captures each site in Datadog is in [`logging-gaps.md`](./logging-gaps.md).
 
 The survey was made on branch `effect-v4-update` (Effect `4.0.0-rc.117`) on 2026-09-27. Line numbers drift. Search for the symbol name when a line does not match.
 
