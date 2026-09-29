@@ -411,6 +411,8 @@ function recordEvent(event: LLMEvent) {
       cacheWriteInputTokens: event.usage?.cacheWriteInputTokens,
       reasoningTokens: event.usage?.reasoningTokens,
       totalTokens: event.usage?.totalTokens,
+      // Copilot bills in nano-AIU, which the adapter puts in the step metadata.
+      copilotNanoAiu: event.providerMetadata?.copilot?.totalNanoAiu,
     }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
   if (event.type === "tool-error")
     return Effect.logWarning("LLM tool error", { tool: event.name, callID: event.id }).pipe(
