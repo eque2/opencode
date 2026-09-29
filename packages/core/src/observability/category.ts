@@ -28,7 +28,7 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
     "session",
   ],
   [/^(Config|Config[A-Z]\w*|TuiConfig|Env)$/, "config"],
-  [/^(Storage|SQLiteDrizzle|State|RepositoryCache)$/, "storage"],
+  [/^(Storage|SQLiteDrizzle|State|RepositoryCache|Database)$/, "storage"],
   [/^(Workspace|Workspace[A-Z]\w*|Worktree|WorktreeAdapter|ProjectCopy|DebugWorkspace)$/, "workspace"],
   [/^(Git|Vcs)$/, "git"],
   [/^(AppProcess|Shell|FileSystem|Flock|EffectFlock|Npm|Format|Image|Archive|Bom)$/, "process"],

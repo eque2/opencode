@@ -30,10 +30,14 @@ const layer = Layer.effect(
     yield* db.run("PRAGMA cache_size = -64000")
     yield* db.run("PRAGMA foreign_keys = ON")
     yield* db.run("PRAGMA wal_checkpoint(PASSIVE)")
-    yield* DatabaseMigration.apply(db)
+    yield* DatabaseMigration.apply(db).pipe(Effect.withSpan("Database.migrate"))
 
     return { db }
-  }).pipe(Effect.orDie),
+  }).pipe(
+    // A failure here is a defect, so the span is its only record before the process dies.
+    Effect.withSpan("Database.open"),
+    Effect.orDie,
+  ),
 )
 
 export function layerFromPath(filename: string) {
