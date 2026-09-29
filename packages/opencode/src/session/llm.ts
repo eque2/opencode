@@ -119,7 +119,11 @@ const live: Layer.Layer<
         const workflowModel = language
         workflowModel.sessionID = input.sessionID
         workflowModel.systemPrompt = prepared.system.join("\n")
-        const executeWorkflowTool = Effect.fnUntraced(function* (toolName: string, argsJson: string, requestID: string) {
+        const executeWorkflowTool = Effect.fnUntraced(function* (
+          toolName: string,
+          argsJson: string,
+          requestID: string,
+        ) {
           const execute = prepared.tools[toolName]?.execute
           if (!execute) return { result: "", error: `Unknown tool: ${toolName}` }
           return yield* decodeJson(argsJson).pipe(
@@ -279,12 +283,17 @@ const live: Layer.Layer<
           includeRawChunks: input.model.providerID.includes("github-copilot"),
           experimental_repairToolCall: (failed) => {
             const lower = failed.toolCall.toolName.toLowerCase()
+            const repaired = (to: string) =>
+              Effect.logWarning("tool call repaired", { tool: failed.toolCall.toolName, repairedTo: to }).pipe(
+                Effect.annotateLogs({ category: "llm.repair", "session.id": input.sessionID }),
+              )
             if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
-              return bridge.promise(Effect.succeed({ ...failed.toolCall, toolName: lower }))
+              return bridge.promise(repaired(lower).pipe(Effect.as({ ...failed.toolCall, toolName: lower })))
             }
             return bridge.promise(
               encodeInvalidToolInput({ tool: failed.toolCall.toolName, error: failed.error.message }).pipe(
                 Effect.map((input) => ({ ...failed.toolCall, input, toolName: "invalid" })),
+                Effect.tap(() => repaired("invalid")),
               ),
             )
           },
@@ -317,7 +326,18 @@ const live: Layer.Layer<
                         )
                       }
                       return args.params
-                    }),
+                    }).pipe(
+                      // The final provider prompt: its shape, never its content.
+                      Effect.tap((params) =>
+                        Effect.logInfo("LLM prompt", {
+                          providerID: input.model.providerID,
+                          modelID: input.model.id,
+                          "session.id": input.sessionID,
+                          messageCount: params.prompt.length,
+                          toolCount: params.tools?.length ?? 0,
+                        }).pipe(Effect.annotateLogs({ category: "llm.prompt" })),
+                      ),
+                    ),
                   ),
               },
             ],
@@ -356,6 +376,15 @@ const live: Layer.Layer<
             ).pipe(
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
+              Stream.tap(recordEvent),
+              // The native runtime has its own `LLM.stream` span; this one covers an AI SDK call.
+              Stream.withSpan("LLM.aisdk", {
+                attributes: {
+                  "llm.provider": input.model.providerID,
+                  "llm.model": input.model.id,
+                  "session.id": input.sessionID,
+                },
+              }),
             )
           }),
         ),
@@ -364,6 +393,25 @@ const live: Layer.Layer<
     return Service.of({ stream })
   }),
 )
+
+/** Logs the usage of each AI SDK step and finish, and each tool error, without content. */
+function recordEvent(event: LLMEvent) {
+  if (event.type === "step-finish" || event.type === "finish")
+    return Effect.logInfo(event.type === "finish" ? "LLM finish" : "LLM step finish", {
+      reason: event.reason,
+      inputTokens: event.usage?.inputTokens,
+      outputTokens: event.usage?.outputTokens,
+      cacheReadInputTokens: event.usage?.cacheReadInputTokens,
+      cacheWriteInputTokens: event.usage?.cacheWriteInputTokens,
+      reasoningTokens: event.usage?.reasoningTokens,
+      totalTokens: event.usage?.totalTokens,
+    }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
+  if (event.type === "tool-error")
+    return Effect.logWarning("LLM tool error", { tool: event.name, callID: event.id }).pipe(
+      Effect.annotateLogs({ category: "tool.error" }),
+    )
+  return Effect.void
+}
 
 export const hasToolCalls = LLMRequestPrep.hasToolCalls
 
