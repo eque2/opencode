@@ -28,9 +28,13 @@ export const dispatch = (tools: Tools, call: ToolCallPart): Effect.Effect<Dispat
 
   return decodeAndExecute(tool, call).pipe(
     Effect.map((value) => result(call, value)),
+    // A failure settles as an error result, so the span marks it for the span bridge record.
     Effect.catchTag("LLM.ToolFailure", (failure) =>
-      Effect.succeed(result(call, { type: "error", value: failure.message }, failure.error)),
+      Effect.annotateCurrentSpan("tool.failed", true).pipe(
+        Effect.as(result(call, { type: "error", value: failure.message }, failure.error)),
+      ),
     ),
+    Effect.withSpan("LLM.tool", { attributes: { "tool.name": call.name, "tool.call_id": call.id } }),
   )
 }
 
