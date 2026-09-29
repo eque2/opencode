@@ -53,6 +53,12 @@ const registryLayer = Layer.effect(
       Option.map(Array.last(localRegistrations(name)), (entry) => entry.registration)
 
     const settleWith = Effect.fn("ToolRegistry.settle")(function* (input: ExecuteInput, advertised?: object) {
+      yield* Effect.annotateCurrentSpan({
+        "tool.name": input.call.name,
+        "tool.call_id": input.call.id,
+        "session.id": input.sessionID,
+        agent: input.agent,
+      })
       const current = Option.orElse(latestLocal(input.call.name), () => applications.get(input.call.name))
       if (Option.isNone(current))
         return {
@@ -71,8 +77,11 @@ const registryLayer = Layer.effect(
         toolCallID: input.call.id,
       }).pipe(
         Effect.map((output) => ({ output })),
+        // A tool failure settles as an error result, so the span marks it for the span bridge record.
         Effect.catchTag("LLM.ToolFailure", (failure) =>
-          Effect.succeed({ result: { type: "error" as const, value: failure.message } }),
+          Effect.annotateCurrentSpan("tool.failed", true).pipe(
+            Effect.as({ result: { type: "error" as const, value: failure.message } }),
+          ),
         ),
       )
       if ("result" in pending) return pending
