@@ -10,7 +10,7 @@ import { WebSocketExecutor } from "./transport"
 import type { Protocol } from "./protocol"
 import { applyCachePolicy } from "../cache-policy"
 import * as ProviderShared from "../protocols/shared"
-import type { LLMError, LLMEvent, PreparedRequestOf, ProtocolID, ProviderOptions } from "../schema"
+import type { LLMError, LLMEvent, PreparedRequestOf, ProtocolID, ProviderOptions, Usage } from "../schema"
 import {
   GenerationOptions,
   HttpOptions,
@@ -384,13 +384,51 @@ const prepareWith = Effect.fn("LLMClient.prepare")(function* (request: LLMReques
   })
 })
 
+// One `LLM.stream` span covers the whole call, so the span bridge records its duration and outcome, and each finish
+// logs its token usage. Content stays out of both.
 const streamRequestWith = (runtime: TransportRuntime) => (request: LLMRequest) =>
   Stream.unwrap(
     Effect.gen(function* () {
       const compiled = yield* compile(request)
       return compiled.route.streamPrepared(compiled.prepared, compiled.request, runtime)
     }),
+  ).pipe(
+    Stream.tap(recordEvent),
+    Stream.withSpan("LLM.stream", {
+      attributes: {
+        "llm.provider": request.model.provider,
+        "llm.model": request.model.id,
+        "llm.route": request.model.route.id,
+        "llm.protocol": request.model.route.protocol,
+      },
+    }),
   )
+
+function recordEvent(event: LLMEvent) {
+  if (event.type === "step-finish" || event.type === "finish")
+    return Effect.logInfo(event.type === "finish" ? "LLM finish" : "LLM step finish", {
+      reason: event.reason,
+      ...usageFields(event.usage),
+    }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
+  if (event.type === "provider-error")
+    return Effect.logWarning("LLM provider error", {
+      classification: event.classification,
+      retryable: event.retryable,
+    }).pipe(Effect.annotateLogs({ category: "llm.error" }))
+  return Effect.void
+}
+
+function usageFields(usage: Usage | undefined) {
+  if (usage === undefined) return {}
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadInputTokens: usage.cacheReadInputTokens,
+    cacheWriteInputTokens: usage.cacheWriteInputTokens,
+    reasoningTokens: usage.reasoningTokens,
+    totalTokens: usage.totalTokens,
+  }
+}
 
 const generateWith = (stream: Interface["stream"]) =>
   Effect.fn("LLM.generate")(function* (request: LLMRequest) {
