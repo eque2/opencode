@@ -2,13 +2,14 @@ export * as Observability from "./observability"
 
 import { NodeFileSystem } from "@effect/platform-node"
 import { LayerNode } from "./effect/layer-node"
-import { Config, ConfigProvider, Effect, Layer, Logger, LogLevel, Option, References } from "effect"
+import { Config, ConfigProvider, Effect, Layer, Logger, LogLevel, Option, References, Tracer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { OtlpExporter, OtlpSerialization } from "effect/unstable/observability"
 import { Global } from "./global"
 import { Datadog } from "./observability/datadog"
 import { Logging } from "./observability/logging"
 import { Otlp } from "./observability/otlp"
+import { Telemetry } from "./observability/telemetry"
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -35,7 +36,14 @@ export const layer = Layer.unwrap(
     const replay = Layer.effectDiscard(
       Effect.forEach(datadog.warnings, (message) => Effect.logWarning(...message), { discard: true }),
     ).pipe(Layer.provide(logs))
-    return Layer.mergeAll(logs, replay, yield* Otlp.tracing)
+    const tracing = yield* Otlp.tracing
+    // The span bridge wraps whichever tracer is active, OTLP or the default, so spans reach Datadog without OTLP.
+    const bridge = Option.exists(datadog.settings, (settings) => settings.spans)
+      ? Layer.unwrap(
+          Effect.map(Effect.tracer, (tracer) => Layer.succeed(Tracer.Tracer, Telemetry.bridge(tracer))),
+        ).pipe(Layer.provide(tracing))
+      : tracing
+    return Layer.mergeAll(logs, replay, bridge)
   }),
 )
 
