@@ -1,4 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 import type {
   Hooks,
   PluginInput,
@@ -258,10 +259,36 @@ const layer = Layer.effect(
             items: plugins,
             kind: "server",
             report: {
-              start() {},
-              missing() {},
-              error(candidate, _retry, stage, error) {
+              start(candidate, retry) {
+                Effect.runFork(
+                  Telemetry.record("Info", "plugin load started", {
+                    category: "plugin.load",
+                    spec: candidate.plan.spec,
+                    retry,
+                  }),
+                )
+              },
+              missing(candidate, retry, message) {
+                Effect.runFork(
+                  Telemetry.record("Warn", "plugin entry missing", {
+                    category: "plugin.load",
+                    spec: candidate.plan.spec,
+                    retry,
+                    reason: message,
+                  }),
+                )
+              },
+              error(candidate, retry, stage, error) {
                 const spec = candidate.plan.spec
+                Effect.runFork(
+                  Telemetry.record("Warn", "plugin load failed", {
+                    category: "plugin.load",
+                    spec,
+                    stage,
+                    retry,
+                    error,
+                  }),
+                )
                 const cause = error instanceof Error ? (error.cause ?? error) : error
                 const message = stage === "load" ? errorMessage(error) : errorMessage(cause)
 
@@ -326,7 +353,16 @@ const layer = Layer.effect(
             // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
             const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
             for (const hook of hooks) {
-              void hook["event"]?.({ event: payload })
+              // A rejected event hook must not stop the fan-out, but it is recorded.
+              void Promise.resolve(hook["event"]?.({ event: payload })).catch((error: unknown) =>
+                Effect.runFork(
+                  Telemetry.record("Warn", "plugin event hook failed", {
+                    category: "plugin.event",
+                    eventType: event.type,
+                    error,
+                  }),
+                ),
+              )
             }
           })
         })
