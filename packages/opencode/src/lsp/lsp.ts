@@ -10,6 +10,7 @@ import { LSPLaunch } from "./launch"
 import { AppProcess } from "@opencode-ai/core/process"
 import {
   Array,
+  Cause,
   Clock,
   Context,
   Deferred,
@@ -251,7 +252,12 @@ const layer = Layer.effect(
       const handle = yield* server.spawn(root, ctx, flags).pipe(
         Effect.provideService(FSUtil.Service, fsu),
         Effect.provideService(AppProcess.Service, appProcess),
-        Effect.catchCause(() => Effect.succeedNone),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("LSP spawn failed", { serverID: server.id, root, cause: Cause.pretty(cause) }).pipe(
+            Effect.annotateLogs({ category: "lsp.spawn" }),
+            Effect.as(Option.none()),
+          ),
+        ),
       )
       if (Option.isNone(handle)) {
         MutableHashSet.add(s.broken, key)
@@ -267,6 +273,12 @@ const layer = Layer.effect(
             directory: ctx.directory,
             instance: ctx,
           }),
+        ).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("LSP initialise failed", { serverID: server.id, root, error }).pipe(
+              Effect.annotateLogs({ category: "lsp.spawn" }),
+            ),
+          ),
         ),
       )
       if (Option.isNone(client)) {
