@@ -1,5 +1,6 @@
 import {
   Array as Arr,
+  Cause,
   Clock,
   Config,
   ConfigProvider,
@@ -7,6 +8,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  Fiber,
   FileSystem,
   Formatter,
   HashSet,
@@ -22,11 +24,13 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import os from "os"
 import path from "path"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
+import { domain } from "./category"
 import { runID } from "./shared"
 
 // User answers and terminal sessions never leave the machine unless the env var re-includes them.
 const GUARDED = ["question", "pty"]
-const DEFAULT_CATEGORIES = "*,-question,-pty"
+// Per-chunk protocol spans and per-token bus deltas are noise; the env var can re-include them.
+const DEFAULT_CATEGORIES = "*,-question,-pty,-llm.chunk,-bus.delta"
 
 // Layer 2 reads these global config files, in this order.
 const CONFIG_FILES = ["config.json", "opencode.json", "opencode.jsonc"]
@@ -39,7 +43,13 @@ const SITES = [
   "ap1.datadoghq.com",
   "ddog-gov.com",
 ]
-// The file keys that narrow, and the env var that each one sets. `enabled` is handled apart.
+// The boolean file keys. A file may only turn one off.
+const TOGGLES: Readonly<Record<string, string>> = {
+  enabled: "OPENCODE_DATADOG_LOGS",
+  spans: "OPENCODE_DATADOG_SPANS",
+  events: "OPENCODE_DATADOG_EVENTS",
+}
+// The file keys that narrow, and the env var that each one sets. The toggles are handled apart.
 const FILE_KEYS: Readonly<Record<string, string>> = {
   service: "DD_SERVICE",
   env: "DD_ENV",
@@ -64,6 +74,10 @@ const LEVEL_NAMES = LogLevel.values.flatMap((level) => [level, level.toLowerCase
 export const config = Config.all({
   apiKey: Config.option(Config.Redacted("DD_API_KEY")),
   enabled: Config.Boolean("OPENCODE_DATADOG_LOGS").pipe(Config.withDefault(true)),
+  // One record per ended span, from the span bridge.
+  spans: Config.Boolean("OPENCODE_DATADOG_SPANS").pipe(Config.withDefault(true)),
+  // One record per bus event, with its type and IDs but not its data.
+  events: Config.Boolean("OPENCODE_DATADOG_EVENTS").pipe(Config.withDefault(true)),
   site: Config.String("DD_SITE").pipe(Config.withDefault("datadoghq.com")),
   url: Config.option(Config.String("OPENCODE_DATADOG_LOGS_URL")),
   service: Config.String("DD_SERVICE").pipe(Config.withDefault("opencode")),
@@ -232,8 +246,9 @@ function fileValue(key: string, value: unknown): Option.Option<readonly [string,
   const set = (name: string, text: string) => Option.some([name, text] as const)
   if (API_KEYS.includes(key)) return "the API key is read only from the DD_API_KEY env var"
   if (key === "url") return "the intake URL is set only by the OPENCODE_DATADOG_LOGS_URL env var"
-  if (key === "enabled") {
-    if (value === false) return set("OPENCODE_DATADOG_LOGS", "false")
+  const toggle = TOGGLES[key]
+  if (toggle !== undefined) {
+    if (value === false) return set(toggle, "false")
     return value === true ? Option.none() : "expected a boolean"
   }
   const name = FILE_KEYS[key]
@@ -272,6 +287,28 @@ export interface LoggerOptions {
 
 // The final flush of every sink that is still open.
 let live: ReadonlyArray<Effect.Effect<void>> = []
+// Every open sink, for the records that go to Datadog only.
+let sinks: ReadonlyArray<{ readonly settings: Settings; readonly logger: Logger.Logger<unknown, void> }> = []
+
+/**
+ * Sends one record to every open sink and to no other logger. The span bridge and the bus tap use it, so the file
+ * log does not grow with a record for each span and event. `kind` names the switch that gates the record.
+ */
+export function emit(
+  fiber: Fiber.Fiber<unknown, unknown>,
+  kind: "spans" | "events",
+  logLevel: LogLevel.LogLevel,
+  message: ReadonlyArray<unknown>,
+) {
+  if (sinks.length === 0) return
+  const date = new Date()
+  for (const sink of sinks) {
+    if (sink.settings[kind]) sink.logger.log({ fiber, date, logLevel, message, cause: Cause.empty })
+  }
+}
+
+/** True when an open sink takes records of this kind, so a caller can skip building one. */
+export const accepts = (kind: "spans" | "events") => sinks.some((sink) => sink.settings[kind])
 
 /**
  * Sends the buffered records of every open sink, each within 5 seconds, and leaves the sinks running. Call it
@@ -376,11 +413,13 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
       Effect.andThen(
         Effect.sync(() => {
           live = live.filter((each) => each !== final)
+          sinks = sinks.filter((each) => each.logger !== sink)
         }),
         final,
       ),
     )
     live = [...live, final]
+    sinks = [...sinks, { settings, logger: sink }]
     // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
     yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
     return sink
@@ -397,9 +436,16 @@ export function entry(
   const policy = options.fiber.getRef(LogPolicy)
   const content = policy.content ?? settings.content
   const structured = Logger.formatStructured.log(options)
-  const category = Option.fromNullishOr(structured.annotations.category).pipe(
+  const messages = Array.isArray(options.message) ? options.message : [options.message]
+  const span = options.fiber.cache.span
+  // An emitted record names its category in its fields. Any other record takes the annotation, then the category
+  // of the enclosing span, so an existing log inside `MCP.create` is `mcp`, not `general`.
+  const category = Option.fromNullishOr(
+    messages.filter(plain).find((value) => typeof value.category === "string")?.category ??
+      structured.annotations.category,
+  ).pipe(
     Option.map(text),
-    Option.getOrElse(() => "general"),
+    Option.getOrElse(() => (span?._tag === "Span" ? domain(span.name) : "general")),
   )
   // ponytail: parses the policy list for each record; cache it by string if policies become common.
   const allowed =
@@ -407,9 +453,7 @@ export function entry(
       ? include(category)
       : categoryFilter(policy.categories)(category) && (!guarded(category) || include(category))
   if (!allowed) return Option.none<Entry>()
-  const messages = Array.isArray(options.message) ? options.message : [options.message]
   const attributes = Object.assign({}, ...messages.filter(plain), structured.annotations)
-  const span = options.fiber.cache.span
   return Option.some<Entry>({
     ...Object.fromEntries(Object.entries(attributes).map(([key, value]) => [key, redact(value, content, key)])),
     message: scrub(

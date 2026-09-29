@@ -820,8 +820,8 @@ test("AC-1d a file cannot widen content, set url, set an unknown site, or re-inc
     [{ content: "full" }, (settings) => expect(settings.content).toBe("omit")],
     [{ url: "https://collector.example/logs" }, (settings) => expect(Option.isNone(settings.url)).toBe(true)],
     [{ site: "datadog.attacker.example" }, (settings) => expect(settings.site).toBe("datadoghq.com")],
-    [{ categories: "llm,question" }, (settings) => expect(settings.categories).toBe("*,-question,-pty")],
-    [{ categories: "pty.create" }, (settings) => expect(settings.categories).toBe("*,-question,-pty")],
+    [{ categories: "llm,question" }, (settings) => expect(settings.categories).toBe("*,-question,-pty,-llm.chunk,-bus.delta")],
+    [{ categories: "pty.create" }, (settings) => expect(settings.categories).toBe("*,-question,-pty,-llm.chunk,-bus.delta")],
   ]
   for (const [datadog, check] of cases) {
     const result = await fromFiles({ "opencode.json": datadogFile(datadog) })

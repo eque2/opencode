@@ -1327,6 +1327,8 @@ export type AttachmentConfig = {
 
 export type DatadogLogsConfig = {
   enabled?: boolean
+  spans?: boolean
+  events?: boolean
   service?: string
   env?: string
   version?: string

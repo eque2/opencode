@@ -35,6 +35,12 @@ const DatadogLogs = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean).annotate({
     description: "Set to false to turn the Datadog log sink off. A file cannot turn it on.",
   }),
+  spans: Schema.optional(Schema.Boolean).annotate({
+    description: "Set to false to stop sending one record per ended span. A file cannot turn it on.",
+  }),
+  events: Schema.optional(Schema.Boolean).annotate({
+    description: "Set to false to stop sending one record per bus event. A file cannot turn it on.",
+  }),
   service: Schema.optional(Schema.String).annotate({ description: "Datadog service name. Default: opencode" }),
   env: Schema.optional(Schema.String).annotate({ description: "Datadog env tag. Default: the installation channel" }),
   version: Schema.optional(Schema.String).annotate({
