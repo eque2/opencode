@@ -1,4 +1,5 @@
 import { Cause, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
+import { HttpServerRequest, type HttpMiddleware } from "effect/unstable/http"
 import type { Payload } from "@opencode-ai/schema/event"
 import { eventCategory, spanCategory } from "./category"
 import { Datadog } from "./datadog"
@@ -141,5 +142,34 @@ export const request =
         ),
       )
     })
+
+/**
+ * An HTTP server middleware that records every request: method, path, status, duration and outcome
+ * (`http.request`). The query string stays out, because a PTY ticket and a URL credential travel there. The
+ * router's own logger stays off, because it would write the full URL to every log.
+ */
+export const accessLog: HttpMiddleware.HttpMiddleware = (app) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const started = Date.now()
+    const fields = { category: "http.request", method: request.method, path: request.url.split("?")[0] }
+    return yield* app.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? record(exit.value.status >= 400 ? "Warn" : "Info", "HTTP request", {
+              ...fields,
+              httpStatus: exit.value.status,
+              durationMs: Date.now() - started,
+              outcome: "ok",
+            })
+          : record("Warn", "HTTP request", {
+              ...fields,
+              durationMs: Date.now() - started,
+              outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
+              error: Cause.squash(exit.cause),
+            }),
+      ),
+    )
+  })
 
 export * as Telemetry from "./telemetry"

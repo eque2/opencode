@@ -1,4 +1,5 @@
 import { Database } from "@opencode-ai/core/database/database"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -65,4 +66,7 @@ function makeRoutes<AuthError, AuthServices>(auth: Layer.Layer<ServerAuth.Config
 export const routes = createRoutes()
 
 export const webHandler = () =>
-  HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), { disableLogger: true })
+  HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+    disableLogger: true,
+    middleware: Telemetry.accessLog,
+  })

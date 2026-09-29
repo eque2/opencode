@@ -51,6 +51,7 @@ export const authorizationLayer = Layer.effect(
         yield* HttpEffect.appendPreResponseHandler((_request, response) =>
           Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", WWW_AUTHENTICATE)),
         )
+        yield* Effect.logWarning("HTTP authentication failed").pipe(Effect.annotateLogs({ category: "http.auth" }))
         return yield* new UnauthorizedError({ message: "Authentication required" })
       }),
     )
