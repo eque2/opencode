@@ -119,11 +119,12 @@ const live: Layer.Layer<
         const workflowModel = language
         workflowModel.sessionID = input.sessionID
         workflowModel.systemPrompt = prepared.system.join("\n")
-        const executeWorkflowTool = Effect.fnUntraced(function* (
+        const executeWorkflowTool = Effect.fn("LLM.gitlabTool")(function* (
           toolName: string,
           argsJson: string,
           requestID: string,
         ) {
+          yield* Effect.annotateCurrentSpan({ "tool.name": toolName, "tool.call_id": requestID })
           const execute = prepared.tools[toolName]?.execute
           if (!execute) return { result: "", error: `Unknown tool: ${toolName}` }
           return yield* decodeJson(argsJson).pipe(
@@ -137,7 +138,12 @@ const live: Layer.Layer<
               ),
             ),
             Effect.flatMap(workflowToolResult),
-            Effect.catch((error) => Effect.succeed({ result: "", error: error.message })),
+            Effect.catch((error) =>
+              Effect.logWarning("GitLab workflow tool failed", { tool: toolName, error: error.message }).pipe(
+                Effect.annotateLogs({ category: "tool.error" }),
+                Effect.as({ result: "", error: error.message }),
+              ),
+            ),
           )
         })
         workflowModel.toolExecutor = (toolName, argsJson, requestID) =>
@@ -150,7 +156,7 @@ const live: Layer.Layer<
         })
 
         const approvedToolsForSession = MutableHashSet.empty<string>()
-        const approveWorkflowTools = Effect.fnUntraced(function* (
+        const approveWorkflowTools = Effect.fn("LLM.gitlabApproval")(function* (
           approvalTools: ReadonlyArray<{ name: string; args: string }>,
         ) {
           const uniqueNames = Arr.dedupe(approvalTools.map((tool) => tool.name))
