@@ -917,7 +917,12 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
               ),
             ),
             // Discovery is best effort: a failed request leaves the static GitLab models.
-            Effect.orElseSucceed(() => ({})),
+            Effect.catch((error) =>
+              Effect.logWarning("GitLab model discovery failed", { error }).pipe(
+                Effect.annotateLogs({ category: "provider.discovery" }),
+                Effect.as({}),
+              ),
+            ),
           )
         },
       }
@@ -1935,6 +1940,10 @@ const layer = Layer.effect(
           }
         }
 
+        yield* Effect.logInfo("providers resolved", {
+          providers: Object.entries(providers).map(([id, provider]) => `${id}:${provider.source}`),
+          count: Object.keys(providers).length,
+        }).pipe(Effect.annotateLogs({ category: "provider.state" }))
         return {
           models: languages,
           providers,
@@ -1949,7 +1958,12 @@ const layer = Layer.effect(
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
 
     // Any failure while loading the SDK package or calling its factory is an InitError for the provider.
-    const resolveSDK = Effect.fnUntraced(function* (model: Model, s: State, envs: Record<string, string | undefined>) {
+    const resolveSDK = Effect.fn("Provider.resolveSDK")(function* (
+      model: Model,
+      s: State,
+      envs: Record<string, string | undefined>,
+    ) {
+      yield* Effect.annotateCurrentSpan({ providerID: model.providerID, npm: model.api.npm })
       const initError = (cause: unknown) => new InitError({ providerID: model.providerID, cause })
       const provider = s.providers[model.providerID]
       const options = { ...provider.options }
