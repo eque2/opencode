@@ -125,7 +125,7 @@ describe("SessionRunCoordinator", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const coordinator = yield* SessionRunCoordinator.make({
-          drain: (key: string) => (key === "failure" ? Effect.fail(new Error("failed")) : Effect.void),
+          drain: (key: string) => (key === "failure" ? Effect.fail("failed" as const) : Effect.void),
         })
 
         yield* coordinator.run("failure").pipe(Effect.exit)
