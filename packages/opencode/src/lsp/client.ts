@@ -201,13 +201,16 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
     new StreamMessageReader(input.server.process.stdout),
     new StreamMessageWriter(input.server.process.stdin),
   )
-  // Server stderr goes to Datadog only, one short record per chunk, so the file log does not grow with it.
+  // Server stderr goes to Datadog only, one short record per chunk, so the file log does not grow with it. The text
+  // travels under `output`, a content key, because language servers print paths and source: the sink omits it by
+  // default and sends it only when the content policy is `full`.
   input.server.process.stderr?.on("data", (chunk: Buffer) => {
     Effect.runFork(
       Telemetry.record("Info", "LSP stderr", {
         category: "lsp.stderr",
         serverID: input.serverID,
-        stderr: chunk.toString("utf8").slice(0, 500),
+        bytes: chunk.length,
+        output: chunk.toString("utf8").slice(0, 500),
       }),
     )
   })
