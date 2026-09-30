@@ -63,7 +63,8 @@ const configDir = Config.option(Config.String("OPENCODE_CONFIG_DIR"))
 
 /** The Datadog settings from the live process env and the global config files, and the warnings they logged. */
 const datadogSettings = Effect.gen(function* () {
-  const dir = yield* configDir.parse(ConfigProvider.fromEnv()).pipe(Effect.orDie)
+  // Observability is optional, so an unreadable value falls back to the global config dir instead of a crash.
+  const dir = yield* configDir.parse(ConfigProvider.fromEnv()).pipe(Effect.orElseSucceed(() => Option.none<string>()))
   const warnings = MutableList.make<ReadonlyArray<unknown>>()
   const hold = Logger.make((options) => {
     MutableList.append(warnings, Array.isArray(options.message) ? options.message : [options.message])
