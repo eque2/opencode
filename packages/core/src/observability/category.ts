@@ -1,4 +1,4 @@
-// Span-name namespaces mapped to the category taxonomy in specs/observability/logging-sites.md. The first
+// Span-name namespaces mapped to the logging category taxonomy (llm, tool, mcp, session, http, ...). The first
 // matching rule wins, so the narrow rules come first.
 const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/HttpApi$/, "http"],
