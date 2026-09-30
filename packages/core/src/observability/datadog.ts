@@ -154,6 +154,7 @@ const MAX_ENTRIES = 1000
 const MAX_BYTES = 4_500_000
 const MAX_ENTRY_BYTES = 1_000_000
 const TRUNCATED = "[TRUNCATED]"
+const MAX_DEPTH = 20
 
 const RETRIES = 3
 const BACKOFF = Duration.millis(500)
@@ -367,7 +368,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
       Effect.withTracerEnabled(false),
     )
 
-  let buffer: Array<Entry> = []
+  let buffer: Array<Fitted> = []
   // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
   let others: ReadonlySet<Logger.Logger<unknown, unknown>> = yield* Logger.CurrentLoggers
   let openUntil = 0
@@ -408,8 +409,9 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   const sink = Logger.make((options) => {
     if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
     others = options.fiber.getRef(Logger.CurrentLoggers)
-    Option.map(entry(options, settings, run, include), (item) => {
-      buffer.push(item)
+    // Measured once here. A record that cannot be encoded as JSON is dropped, so the flush loop never meets one.
+    Option.map(Option.flatMap(entry(options, settings, run, include), fitSafe), (fitted) => {
+      buffer.push(fitted)
       // The oldest records go first when the intake cannot keep up.
       if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
     })
@@ -500,16 +502,22 @@ export function categoryFilter(value: string) {
     !exclude.some((prefix) => matches(category, prefix)) && include.some((prefix) => matches(category, prefix))
 }
 
-function redact(input: unknown, content: Settings["content"], key = ""): unknown {
+function redact(input: unknown, content: Settings["content"], key = "", depth = 0): unknown {
   if (key && secretKey(key)) return "[REDACTED]"
   if (key && HashSet.has(CONTENT, key) && content !== "full") return content === "omit" ? omitted(input) : hash(input)
   if (typeof input === "string") return scrub(input)
-  if (Array.isArray(input)) return input.map((value) => redact(value, content))
+  // JSON cannot hold a bigint.
+  if (typeof input === "bigint") return input.toString()
+  // A cyclic value would recurse without end, so the walk stops at a fixed depth.
+  if (depth >= MAX_DEPTH) return "[DEPTH]"
+  if (Array.isArray(input)) return input.map((value) => redact(value, content, "", depth + 1))
   if (input instanceof Date) return input.toISOString()
   // Provider errors carry the request body in enumerable fields, so an error keeps only its name and message.
   if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
   if (!Predicate.isObject(input)) return input
-  return Object.fromEntries(Object.entries(input).map(([name, value]) => [name, redact(value, content, name)]))
+  return Object.fromEntries(
+    Object.entries(input).map(([name, value]) => [name, redact(value, content, name, depth + 1)]),
+  )
 }
 
 /** What an intake status means. `failed` stops the sink: 401 and 403 mean a bad key, and retrying cannot fix it. */
@@ -563,9 +571,8 @@ function hash(input: unknown) {
   return `sha256:${new Bun.CryptoHasher("sha256").update(text(input)).digest("hex").slice(0, 16)}`
 }
 
-function chunks(items: Array<Entry>) {
+function chunks(items: Array<Fitted>) {
   return items
-    .map(fit)
     .reduce<Array<{ items: Array<Entry>; bytes: number }>>((result, { item, bytes }) => {
       const last = result.at(-1)
       if (last && last.items.length < MAX_ENTRIES && last.bytes + bytes < MAX_BYTES) {
@@ -589,6 +596,11 @@ function fit(item: Entry) {
   const cut = { ...item, message: message.subarray(0, keep).toString().replace(/�$/, "") + TRUNCATED }
   return { item: cut, bytes: Buffer.byteLength(encodeJson(cut)) }
 }
+
+type Fitted = ReturnType<typeof fit>
+
+// `fit` encodes the entry, which throws for a value that JSON cannot hold.
+const fitSafe = Option.liftThrowable(fit)
 
 function decimal(hex: string) {
   return BigInt(`0x${hex.slice(-16)}`).toString()

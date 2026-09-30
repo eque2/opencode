@@ -543,6 +543,33 @@ test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first",
   expect(messages.at(-1)).toBe("record 10004")
 }, 30_000)
 
+test("a record that JSON cannot hold is dropped, and the flush keeps running", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
+  )
+  const cyclic: Record<string, unknown> = { name: "loop" }
+  cyclic.self = cyclic
+  await ship(
+    config,
+    Effect.gen(function* () {
+      yield* Effect.logInfo("before")
+      yield* Effect.logInfo("big", { count: 12n, nested: { deeper: 7n } })
+      yield* Effect.logInfo("cyclic", { cyclic })
+      yield* Effect.logInfo("after")
+    }).pipe(Effect.annotateLogs({ category: "llm.request" })),
+  )
+  const entries = target.requests.flatMap((request) => request.body)
+  expect(entries.map((entry) => entry.message)).toEqual(["before", "big", "cyclic", "after"])
+  expect(entries[1]).toMatchObject({ count: "12", nested: { deeper: "7" } })
+  expect(JSON.stringify(entries[2])).toContain("[DEPTH]")
+}, 30_000)
+
 // Sets process env vars for one test, because Observability.layer reads the live process env when it builds.
 async function withEnv<A>(vars: Record<string, string>, run: () => Promise<A>) {
   const saved = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]))
