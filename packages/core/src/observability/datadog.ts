@@ -174,8 +174,9 @@ export const settings = Effect.gen(function* () {
   const value = yield* config
   return value.enabled && Option.isSome(value.apiKey) ? Option.some(value) : Option.none<Settings>()
 }).pipe(
-  // A bad value must not stop startup; the sink stays off instead, and says why.
-  Effect.catch((error) =>
+  // A bad value must not stop startup; the sink stays off instead, and says why. Only a config error does this, so
+  // any other failure stays visible in the type.
+  Effect.catchTag("ConfigError", (error) =>
     Effect.logWarning("Datadog sink disabled by a bad setting", { reason: error.message }).pipe(
       Effect.as(Option.none<Settings>()),
     ),
