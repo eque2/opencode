@@ -1,0 +1,64 @@
+code: eque2-code
+name: eque2-code
+description: Feature development orchestration from a Jira ticket or a prose brief to a tested, PR-ready change — spec-driven, evidence-obsessed.
+module_version: 0.62.0
+module_greeting: |
+  eque2-code installed. Run `/eque2-code-agent-linus` to talk to Linus (feature development), `/eque2-code-agent-grace` to talk to Grace (test automation), or `/eque2-code-agent-hannibal` to talk to Hannibal (goal planning & execution). Invoke a capability directly with `/eque2-code-agent-linus JF <TICKET>`, `/eque2-code-agent-grace BK <folder>`, or `/eque2-code-agent-hannibal PL <task>`.
+
+agents:
+  - code: linus
+    name: Linus
+    title: Feature Development Orchestrator
+    icon: 👨‍💻
+    description: End-to-end feature orchestrator from a Jira ticket or a prose brief to validated build spec — spec-driven, evidence-obsessed.
+  - code: grace
+    name: Grace
+    title: Test Automation Orchestrator
+    icon: 🧪
+    description: Comprehensive test-automation orchestration over the Xray-backed lifecycle — topology & standards setup, fetch, conformance gating, single-build and bulk backfill through the shared E2E pipeline, test-quality validation, Xray sync, and coverage reporting. Verified with HMAC evidence.
+  - code: hannibal
+    name: Hannibal
+    title: Goal Planning & Execution Orchestrator
+    icon: 🎯
+    description: Plans any task into an approval-gated decision document, prepares the approved plan into a worktree-hosted goal folder with an enforced acceptance contract, pursues it under the stop gate until every criterion is met and evidenced, and hands an active goal to a fresh context safely.
+
+feature_artifacts:
+  prompt: Where should feature artifacts (specs, scenarios, state) be written?
+  default: "{project-root}/_bmad-output/features"
+  example: A per-feature folder is created here for every feature worked — whether sourced from a Jira ticket or a prose brief.
+  result: "{value}"
+
+post-install-notes: |
+  Jira credentials are OPTIONAL. Setup checks for them and continues either way.
+  They unlock the Jira-sourced workflows — [JF] Jira Fetch and [ET]/Xray E2E
+  generation — which authenticate to Jira directly with:
+    JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN
+  (the Atlassian MCP is not a substitute when those workflows run). Without them
+  you can still install, launch Linus, and spec from a plain prose/prompt file —
+  e.g. `CS @brief.md` runs end-to-end with no Jira at all. Add the credentials to
+  your `.env` and re-run /eque2-code-setup whenever you want [JF]/[ET].
+
+  Optional:
+    FIGMA_TOKEN — only needed when a spec references Figma assets
+
+  Stage 10 of [CS] uses the state CLI's `verify` verb for hard-gate
+  validation:
+
+    node {skills-root}/eque2-code-setup/scripts/state.mjs <spec-folder> verify <id> --evidence=<path>
+
+  There is no MCP server, no `claude mcp add`, and no Docker — state, tests,
+  and Xray operations are all plain CLI scripts (bundled `.mjs`, invoked
+  directly with `node`) run directly from the host. Docker is not a
+  prerequisite at install or runtime.
+
+    - State lives as signed plaintext (`state/events.jsonl`), committed to
+      git alongside each spec folder — human-readable and diffable in review,
+      with no volume or container to inspect or reset.
+    - Evidence cryptography (HMAC signing) uses a shared `integrityKey` that
+      lives IN the repo as a committed plaintext keyring
+      (`state/integrity-key.json`) — protected by agent policy, not secrecy;
+      nothing to provision. See `references/key-onboarding.md`.
+
+  First activation triggers Linus's First Breath — a short calibration
+  conversation that learns your team's Jira workflow, codebase shape,
+  and "Ready for Build" discipline. Plan 15–20 minutes for it.

@@ -1,0 +1,224 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "Int": {
+      "type": "integer",
+      "description": "an integer",
+      "title": "int"
+    }
+  },
+  "type": "object",
+  "required": [
+    "value",
+    "context",
+    "status",
+    "tags"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "test_not_exists",
+        "test_exists",
+        "awaiting_verification",
+        "needs_compliance_fix",
+        "needs_run_fix",
+        "running",
+        "verified_passing",
+        "build_aborted",
+        "failed",
+        "aborted",
+        "blocked"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "testId",
+        "folderPath",
+        "complianceAttempts",
+        "runAttempts",
+        "failureReason",
+        "lastRunId",
+        "machineVersion",
+        "lastVerificationAt",
+        "resetCount"
+      ],
+      "properties": {
+        "testId": {
+          "type": "string"
+        },
+        "folderPath": {
+          "type": "string"
+        },
+        "complianceAttempts": {
+          "type": "number"
+        },
+        "runAttempts": {
+          "type": "number"
+        },
+        "failureReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastRunId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "machineVersion": {
+          "type": "string"
+        },
+        "lastVerificationAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resetCount": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "done",
+        "error",
+        "stopped"
+      ]
+    },
+    "tags": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": {
+        "$id": "/schemas/unknown",
+        "title": "unknown"
+      }
+    },
+    "_integrity": {
+      "type": "string"
+    },
+    "_machineVersion": {
+      "type": "string"
+    },
+    "_schemaVersion": {
+      "type": "string"
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "enqueuedAt",
+        "attempt",
+        "leasedBy",
+        "leasedAt",
+        "leaseExpiresAt"
+      ],
+      "properties": {
+        "enqueuedAt": {
+          "type": "string"
+        },
+        "attempt": {
+          "$ref": "#/$defs/Int",
+          "description": "a non-negative number",
+          "title": "greaterThanOrEqualTo(0)",
+          "minimum": 0
+        },
+        "leasedBy": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "a string at least 1 character(s) long",
+              "title": "minLength(1)",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leasedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseExpiresAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nonce": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "failureCategory": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "orphaned",
+            "compliance",
+            "execution",
+            "build",
+            "systemic"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "value": {
+            "const": "awaiting_verification"
+          }
+        }
+      },
+      "then": {},
+      "else": {
+        "properties": {
+          "verification": false
+        }
+      }
+    }
+  ]
+}

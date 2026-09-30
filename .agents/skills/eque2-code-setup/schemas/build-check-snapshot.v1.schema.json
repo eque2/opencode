@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "value",
+    "context",
+    "status",
+    "tags"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "building",
+        "evaluating",
+        "completed",
+        "failed",
+        "remediating",
+        "needsHuman",
+        "skipped"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "checkId",
+        "command",
+        "workingDirectory",
+        "retryCount",
+        "maxRetries"
+      ],
+      "properties": {
+        "checkId": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "workingDirectory": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number"
+        },
+        "retryCount": {
+          "type": "number"
+        },
+        "maxRetries": {
+          "type": "number"
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "output": {
+          "type": "string"
+        },
+        "remediationEnabled": {
+          "type": "boolean"
+        },
+        "remediationAttempt": {
+          "type": "number"
+        },
+        "maxRemediationAttempts": {
+          "type": "number"
+        },
+        "specFolder": {
+          "type": "string"
+        },
+        "transcriptDir": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "trustLevel": {
+              "type": "string",
+              "enum": [
+                "untrusted",
+                "pending_review",
+                "verified",
+                "trusted",
+                "suspect"
+              ]
+            },
+            "trustUpdatedAt": {
+              "type": "string"
+            },
+            "trustReason": {
+              "type": "string"
+            },
+            "verificationMethod": {
+              "type": "string",
+              "enum": [
+                "automated",
+                "semantic_ai",
+                "human_review"
+              ]
+            },
+            "invalidatedBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "trustRequired": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "done",
+        "error",
+        "stopped"
+      ]
+    },
+    "tags": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": {
+        "$id": "/schemas/unknown",
+        "title": "unknown"
+      }
+    },
+    "_integrity": {
+      "type": "string"
+    },
+    "_machineVersion": {
+      "type": "string"
+    },
+    "_schemaVersion": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
