@@ -133,6 +133,8 @@ const SECRET_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   // Query parameters such as `?key=`, `&exaApiKey=` and `&access_token=`.
   [/([?&][^=&#\s]*(?:key|token)=)[^&#\s]*/gi, "$1[REDACTED]"],
   [/((?<![A-Za-z0-9_])(?:api_key|access_token)=)[^&#\s]*/gi, "$1[REDACTED]"],
+  // URL userinfo such as `https://user:token@host`, which a git or npm plugin spec can carry.
+  [/([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[REDACTED]@"],
 ]
 const CONTENT = HashSet.make(
   "prompt",

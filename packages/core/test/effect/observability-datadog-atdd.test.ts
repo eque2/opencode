@@ -296,6 +296,30 @@ test("AC-9 secret shapes anywhere in a record never reach the intake and the sur
   expect(entry.inputTokens).toBe(42)
 })
 
+test("AC-9c URL credentials never reach the intake, and URLs without a password survive", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  // Built at runtime so secret scanners do not flag the fixture.
+  const password = "pw" + "7".repeat(12)
+  const specs = [
+    `https://alice:${password}@github.com/org/plugin.git`,
+    `git+https://bob:${password}@gitlab.test/org/plugin.git`,
+  ]
+  const ordinary = ["https://github.com/org/plugin.git", "git@github.com:org/plugin.git", "someone@example.com"]
+  await ship(
+    config,
+    Effect.logWarning("plugin load failed", { spec: specs[0], error: `clone ${specs[1]} failed`, ordinary }).pipe(
+      Effect.annotateLogs({ category: "plugin.load" }),
+    ),
+  )
+  const [entry] = target.requests[0].body
+  expect(JSON.stringify(entry)).not.toContain(password)
+  expect(entry.spec).toBe("https://[REDACTED]@github.com/org/plugin.git")
+  expect(entry.error).toBe("clone git+https://[REDACTED]@gitlab.test/org/plugin.git failed")
+  expect(entry.ordinary).toEqual(ordinary)
+})
+
 test("AC-10 a Question.reply-shaped record sends no answer text by default", async () => {
   const target = intake()
   using _ = target.server
