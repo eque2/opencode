@@ -97,6 +97,16 @@ test("spans and bus events reach the Datadog sink only, without event content", 
   expect(other).toEqual([["inside"]])
 })
 
+test("closing one sink leaves the other sinks open", async () => {
+  const config = Option.getOrThrow(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }))
+  await Effect.gen(function* () {
+    yield* Datadog.logger(config)
+    yield* Effect.scoped(Datadog.logger(config))
+    expect(Datadog.accepts("spans")).toBe(true)
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  expect(Datadog.accepts("spans")).toBe(false)
+})
+
 test("the span and event switches turn the records off", async () => {
   const config = Option.getOrThrow(
     await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_SPANS: "false", OPENCODE_DATADOG_EVENTS: "false" }),

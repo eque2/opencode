@@ -14,6 +14,7 @@ import {
   HashSet,
   Logger,
   LogLevel,
+  MutableHashSet,
   Option,
   Predicate,
   Redacted,
@@ -285,10 +286,18 @@ export interface LoggerOptions {
   readonly cooldown?: Duration.Input
 }
 
-// The final flush of every sink that is still open.
-let live: ReadonlyArray<Effect.Effect<void>> = []
-// Every open sink, for the records that go to Datadog only.
-let sinks: ReadonlyArray<{ readonly settings: Settings; readonly logger: Logger.Logger<unknown, void> }> = []
+interface OpenSink {
+  readonly settings: Settings
+  readonly logger: Logger.Logger<unknown, void>
+  /** The final flush. */
+  readonly final: Effect.Effect<void>
+}
+
+// Every open sink. This registry is process-global on purpose: the tracer ends spans synchronously, and code run by
+// `Effect.runPromise` at a Promise edge has none of the layer's services, so neither can reach a service or a
+// Reference. Each logger build adds its own entry and its finalizer removes only that entry, by identity, so builds
+// never overwrite each other.
+const open = MutableHashSet.empty<OpenSink>()
 
 /**
  * Sends one record to every open sink and to no other logger. The span bridge and the bus tap use it, so the file
@@ -301,23 +310,23 @@ export function emit(
   logLevel: LogLevel.LogLevel,
   message: ReadonlyArray<unknown>,
 ) {
-  if (sinks.length === 0) return
+  if (MutableHashSet.size(open) === 0) return
   const date = new Date()
-  for (const sink of sinks) {
+  for (const sink of open) {
     if (kind === "records" || sink.settings[kind])
       sink.logger.log({ fiber, date, logLevel, message, cause: Cause.empty })
   }
 }
 
 /** True when an open sink takes records of this kind, so a caller can skip building one. */
-export const accepts = (kind: "spans" | "events") => sinks.some((sink) => sink.settings[kind])
+export const accepts = (kind: "spans" | "events") => Arr.some(Arr.fromIterable(open), (sink) => sink.settings[kind])
 
 /**
  * Sends the buffered records of every open sink, each within 5 seconds, and leaves the sinks running. Call it
  * before `process.exit()`, which skips the scope finalizers and would drop the last batch.
  */
 export const flushAll = Effect.suspend(() =>
-  Effect.forEach(live, (final) => final, { concurrency: "unbounded", discard: true }),
+  Effect.forEach(Arr.fromIterable(open), (sink) => sink.final, { concurrency: "unbounded", discard: true }),
 )
 
 export function logger(settings: Settings, options: LoggerOptions = {}) {
@@ -410,18 +419,15 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
       })
     })
 
+    const registered: OpenSink = { settings, logger: sink, final }
     // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
     yield* Effect.addFinalizer(() =>
       Effect.andThen(
-        Effect.sync(() => {
-          live = live.filter((each) => each !== final)
-          sinks = sinks.filter((each) => each.logger !== sink)
-        }),
+        Effect.sync(() => MutableHashSet.remove(open, registered)),
         final,
       ),
     )
-    live = [...live, final]
-    sinks = [...sinks, { settings, logger: sink }]
+    MutableHashSet.add(open, registered)
     // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
     yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
     return sink
