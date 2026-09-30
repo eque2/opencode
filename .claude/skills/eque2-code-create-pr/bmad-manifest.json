@@ -1,0 +1,21 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "linus",
+  "workflow-name": "create-pr",
+  "menu-code": "PR",
+  "description": "Open a pull request: enforce the repo's review-rules on the diff, confirm the suite is green, sync with the base branch, commit, push, and open the PR. Stops at an open PR — no merge.",
+  "supports-headless": false,
+  "phase-name": "4-pr",
+  "after": ["bug-fix", "develop-spec"],
+  "before": [],
+  "is-required": false,
+  "output-location": "remote pull request",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "n/a — output is an open PR on the remote",
+      "files": []
+    }
+  }
+}

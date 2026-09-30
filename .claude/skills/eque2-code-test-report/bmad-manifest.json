@@ -1,0 +1,13 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "grace",
+  "workflow-name": "test-report",
+  "menu-code": "RP",
+  "description": "Coverage and status report across the backlog; optionally attach evidence to Xray tickets via the Xray MCP.",
+  "supports-headless": true,
+  "phase-name": "4-report",
+  "after": ["backfill"],
+  "before": [],
+  "is-required": false,
+  "output-location": "{project-root}/_bmad-output/test-artifacts"
+}
