@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "unknown",
+    "test_not_exists",
+    "test_exists",
+    "awaiting_verification",
+    "needs_compliance_fix",
+    "needs_run_fix",
+    "running",
+    "verified_passing",
+    "build_aborted",
+    "failed",
+    "aborted",
+    "blocked"
+  ]
+}
