@@ -23,7 +23,7 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { CerebrasPlugin } from "./cerebras"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { Array as Arr, Effect, Layer, Context, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Context, Option, Predicate, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
@@ -203,6 +203,7 @@ const layer = Layer.effect(
           hooks = Arr.append(hooks, hook)
         }
         const bridge = yield* EffectBridge.make()
+        const scope = yield* Scope.Scope
 
         function publishPluginError(message: string) {
           bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
@@ -365,8 +366,11 @@ const layer = Layer.effect(
                     error: failure.cause ?? failure,
                   }),
                 ),
-                // Detached, as before: the fan-out never waits for a hook, and a hook outlives this event.
-                Effect.forkDetach,
+                // The fan-out never waits for a hook, as before. Each hook fiber belongs to this state's scope, so
+                // closing the plugin layer interrupts any hook still running. ponytail: no per-hook bound, as with
+                // the previous fire-and-forget Promise; a hook that never settles holds one fiber per event until
+                // the layer closes. Add a bounded queue per hook if a slow hook shows up.
+                Effect.forkIn(scope),
               ),
             { discard: true },
           )
