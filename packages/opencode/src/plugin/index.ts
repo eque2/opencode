@@ -254,13 +254,15 @@ const layer = Layer.effect(
         }
         if (plugins.length) yield* config.waitForDependencies()
 
+        // The loader reports through plain callbacks, so its records run through the bridge, with this state's
+        // services, instead of on a bare runtime.
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
             items: plugins,
             kind: "server",
             report: {
               start(candidate, retry) {
-                Effect.runFork(
+                bridge.fork(
                   Telemetry.record("Info", "plugin load started", {
                     category: "plugin.load",
                     spec: candidate.plan.spec,
@@ -269,7 +271,7 @@ const layer = Layer.effect(
                 )
               },
               missing(candidate, retry, message) {
-                Effect.runFork(
+                bridge.fork(
                   Telemetry.record("Warn", "plugin entry missing", {
                     category: "plugin.load",
                     spec: candidate.plan.spec,
@@ -280,7 +282,7 @@ const layer = Layer.effect(
               },
               error(candidate, retry, stage, error) {
                 const spec = candidate.plan.spec
-                Effect.runFork(
+                bridge.fork(
                   Telemetry.record("Warn", "plugin load failed", {
                     category: "plugin.load",
                     spec,
