@@ -199,7 +199,17 @@ export const provider = Effect.fn("Datadog.provider")(function* (options: Provid
   const fs = yield* FileSystem.FileSystem
   const files = yield* Effect.forEach(CONFIG_FILES, (name) => {
     const file = path.join(options.configDir, name)
-    return Effect.map(Effect.option(fs.readFileString(file)), (text) => ({ file, text }))
+    return fs.readFileString(file).pipe(
+      Effect.map(Option.some),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+      // Any other read error, such as permission denied, is named; the file then counts as absent.
+      Effect.catch((error) =>
+        Effect.logWarning("Datadog settings file unreadable", { file, reason: error.message }).pipe(
+          Effect.as(Option.none<string>()),
+        ),
+      ),
+      Effect.map((text) => ({ file, text })),
+    )
   })
   // An empty file counts as no file.
   const parsed = files.flatMap(({ file, text }) =>
