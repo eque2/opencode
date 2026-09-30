@@ -348,23 +348,26 @@ const layer = Layer.effect(
 
         const unsubscribe = yield* events.listen((event) => {
           if (event.location?.directory !== ctx.directory) return Effect.void
-          return Effect.sync(() => {
-            // The payload is the same wire shape that the SSE event stream sends to SDK clients.
-            // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
-            const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
-            for (const hook of hooks) {
-              // A rejected event hook must not stop the fan-out, but it is recorded.
-              void Promise.resolve(hook["event"]?.({ event: payload })).catch((error: unknown) =>
-                Effect.runFork(
+          // The payload is the same wire shape that the SSE event stream sends to SDK clients.
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
+          const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
+          return Effect.forEach(
+            hooks.flatMap((hook) => (hook.event ? [hook.event] : [])),
+            (run) =>
+              Effect.tryPromise({ try: () => run({ event: payload }), catch: (error) => error }).pipe(
+                // A rejected event hook must not stop the fan-out, but it is recorded.
+                Effect.catch((error) =>
                   Telemetry.record("Warn", "plugin event hook failed", {
                     category: "plugin.event",
                     eventType: event.type,
                     error,
                   }),
                 ),
-              )
-            }
-          })
+                // Detached, as before: the fan-out never waits for a hook, and a hook outlives this event.
+                Effect.forkDetach,
+              ),
+            { discard: true },
+          )
         })
         yield* Effect.addFinalizer(() => unsubscribe)
 
