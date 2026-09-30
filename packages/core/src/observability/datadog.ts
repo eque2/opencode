@@ -114,10 +114,7 @@ export const LogPolicy = Context.Reference<Policy>("@opencode/Datadog/LogPolicy"
 export const withPolicy =
   (patch: Policy) =>
   <A, E, R>(self: Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      const current = yield* LogPolicy
-      return yield* self.pipe(Effect.provideService(LogPolicy, { ...current, ...defined(patch) }))
-    })
+    Effect.updateService(self, LogPolicy, (current) => ({ ...current, ...defined(patch) }))
 
 type Entry = Record<string, unknown>
 
@@ -192,27 +189,26 @@ export interface ProviderOptions {
  * then the code defaults. A file may only narrow what the process sends, and it never supplies the API key. Every
  * ignored file value logs one warning that names the file.
  */
-export const provider = (options: ProviderOptions) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const files = yield* Effect.forEach(CONFIG_FILES, (name) => {
-      const file = path.join(options.configDir, name)
-      return Effect.map(Effect.option(fs.readFileString(file)), (text) => ({ file, text }))
-    })
-    // An empty file counts as no file.
-    const parsed = files.flatMap(({ file, text }) =>
-      Option.isSome(text) && text.value.trim() ? [fileSettings(file, text.value)] : [],
-    )
-    yield* Effect.forEach(
-      parsed.flatMap((result) => result.warnings),
-      (message) => Effect.logWarning(message),
-      { discard: true },
-    )
-    // Files merge key by key, and the later file wins.
-    const fromFiles: Record<string, string> = Object.assign({}, ...parsed.map((result) => result.values))
-    const fromEnv = Object.entries(options.env).filter((entry): entry is [string, string] => Boolean(entry[1]))
-    return ConfigProvider.fromEnv({ env: { ...fromFiles, ...Object.fromEntries(fromEnv) } })
-  }).pipe(Effect.provide(NodeFileSystem.layer))
+export const provider = Effect.fn("Datadog.provider")(function* (options: ProviderOptions) {
+  const fs = yield* FileSystem.FileSystem
+  const files = yield* Effect.forEach(CONFIG_FILES, (name) => {
+    const file = path.join(options.configDir, name)
+    return Effect.map(Effect.option(fs.readFileString(file)), (text) => ({ file, text }))
+  })
+  // An empty file counts as no file.
+  const parsed = files.flatMap(({ file, text }) =>
+    Option.isSome(text) && text.value.trim() ? [fileSettings(file, text.value)] : [],
+  )
+  yield* Effect.forEach(
+    parsed.flatMap((result) => result.warnings),
+    (message) => Effect.logWarning(message),
+    { discard: true },
+  )
+  // Files merge key by key, and the later file wins.
+  const fromFiles: Record<string, string> = Object.assign({}, ...parsed.map((result) => result.values))
+  const fromEnv = Object.entries(options.env).filter((entry): entry is [string, string] => Boolean(entry[1]))
+  return ConfigProvider.fromEnv({ env: { ...fromFiles, ...Object.fromEntries(fromEnv) } })
+}, Effect.provide(NodeFileSystem.layer))
 
 /** Maps one file's `observability.datadog` object to env var values that narrow, and the warnings for the rest. */
 function fileSettings(file: string, text: string) {
@@ -329,110 +325,108 @@ export const flushAll = Effect.suspend(() =>
   Effect.forEach(Arr.fromIterable(open), (sink) => sink.final, { concurrency: "unbounded", discard: true }),
 )
 
-export function logger(settings: Settings, options: LoggerOptions = {}) {
+export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings, options: LoggerOptions = {}) {
   const cooldown = Duration.fromInputUnsafe(options.cooldown ?? COOLDOWN)
   const url = Option.getOrElse(settings.url, () => `https://http-intake.logs.${settings.site}/api/v2/logs`)
   const apiKey = Option.match(settings.apiKey, { onNone: () => "", onSome: Redacted.value })
   const include = categoryFilter(settings.categories)
-  return Effect.gen(function* () {
-    const http = yield* HttpClient.HttpClient
-    const run = yield* runID
-    const post = (body: Uint8Array) =>
-      http
-        .execute(
-          HttpClientRequest.post(url).pipe(
-            HttpClientRequest.setHeader("DD-API-KEY", apiKey),
-            HttpClientRequest.setHeader("Content-Encoding", "gzip"),
-            HttpClientRequest.bodyUint8Array(body, "application/json"),
-          ),
-        )
-        .pipe(
-          Effect.map((response) => ({
-            verdict: verdict(response.status),
-            retryAfter: Option.fromNullishOr(response.headers["retry-after"]),
-          })),
-          // A transport error is retried like a 5xx.
-          Effect.orElseSucceed(() => ({ verdict: "retry" as const, retryAfter: Option.none<string>() })),
-        )
-    // Each wait, from Retry-After or the backoff, uses one of the retries.
-    const deliver = (body: Uint8Array, attempt = 0): Effect.Effect<"sent" | "dropped" | "failed"> =>
-      Effect.flatMap(post(body), (result) => {
-        if (result.verdict !== "retry") return Effect.succeed(result.verdict)
-        if (attempt >= RETRIES) return Effect.succeed("failed" as const)
-        return retryDelay(result.retryAfter).pipe(
-          Effect.map(Option.getOrElse(() => Duration.times(BACKOFF, 2 ** attempt))),
-          Effect.flatMap(Effect.sleep),
-          Effect.andThen(Effect.suspend(() => deliver(body, attempt + 1))),
-        )
-      })
-    const send = (batch: Array<Entry>) =>
-      deliver(Bun.gzipSync(encodeJson(batch))).pipe(
-        // The export request must not create spans or logs, or the sink feeds itself.
-        Effect.withTracerEnabled(false),
+  const http = yield* HttpClient.HttpClient
+  const run = yield* runID
+  const post = (body: Uint8Array) =>
+    http
+      .execute(
+        HttpClientRequest.post(url).pipe(
+          HttpClientRequest.setHeader("DD-API-KEY", apiKey),
+          HttpClientRequest.setHeader("Content-Encoding", "gzip"),
+          HttpClientRequest.bodyUint8Array(body, "application/json"),
+        ),
       )
-
-    let buffer: Array<Entry> = []
-    // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
-    let others: ReadonlySet<Logger.Logger<unknown, unknown>> = yield* Logger.CurrentLoggers
-    let openUntil = 0
-    const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < openUntil)
-
-    // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
-    const trip = Effect.gen(function* () {
-      openUntil = (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown)
-      yield* Effect.logWarning(`Datadog sink disabled for ${Duration.toSeconds(cooldown)} seconds`).pipe(
-        Effect.provide(Logger.layer(Array.from(others).filter((logger) => logger !== sink))),
+      .pipe(
+        Effect.map((response) => ({
+          verdict: verdict(response.status),
+          retryAfter: Option.fromNullishOr(response.headers["retry-after"]),
+        })),
+        // A transport error is retried like a 5xx.
+        Effect.orElseSucceed(() => ({ verdict: "retry" as const, retryAfter: Option.none<string>() })),
+      )
+  // Each wait, from Retry-After or the backoff, uses one of the retries.
+  const deliver = (body: Uint8Array, attempt = 0): Effect.Effect<"sent" | "dropped" | "failed"> =>
+    Effect.flatMap(post(body), (result) => {
+      if (result.verdict !== "retry") return Effect.succeed(result.verdict)
+      if (attempt >= RETRIES) return Effect.succeed("failed" as const)
+      return retryDelay(result.retryAfter).pipe(
+        Effect.map(Option.getOrElse(() => Duration.times(BACKOFF, 2 ** attempt))),
+        Effect.flatMap(Effect.sleep),
+        Effect.andThen(Effect.suspend(() => deliver(body, attempt + 1))),
       )
     })
-
-    // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
-    // after the one that tripped it.
-    const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
-      Effect.suspend(() => {
-        const batch = buffer
-        buffer = []
-        return Effect.forEach(
-          chunks(batch),
-          (chunk) => Effect.flatMap(isOpen, (open) => (open ? Effect.void : each(chunk))),
-          { discard: true },
-        )
-      })
-
-    // ponytail: no disk spool. The ceiling: an outage loses the batch after its retries, every record while the
-    // breaker is open, and all but the newest 10,000 buffered entries; the file log keeps the local copy. The
-    // upgrade path, when log loss becomes unacceptable: a bounded spool in Global.Path.log with retention rules and
-    // a data-loss-prevention review, because it writes redacted records to disk a second time.
-    const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
-
-    // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
-    const final = drain((chunk) =>
-      post(Bun.gzipSync(encodeJson(chunk))).pipe(Effect.asVoid, Effect.withTracerEnabled(false)),
-    ).pipe(Effect.timeoutOption(FINAL_TIMEOUT), Effect.asVoid)
-
-    const sink = Logger.make((options) => {
-      if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
-      others = options.fiber.getRef(Logger.CurrentLoggers)
-      Option.map(entry(options, settings, run, include), (item) => {
-        buffer.push(item)
-        // The oldest records go first when the intake cannot keep up.
-        if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
-      })
-    })
-
-    const registered: OpenSink = { settings, logger: sink, final }
-    // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
-    yield* Effect.addFinalizer(() =>
-      Effect.andThen(
-        Effect.sync(() => MutableHashSet.remove(open, registered)),
-        final,
-      ),
+  const send = (batch: Array<Entry>) =>
+    deliver(Bun.gzipSync(encodeJson(batch))).pipe(
+      // The export request must not create spans or logs, or the sink feeds itself.
+      Effect.withTracerEnabled(false),
     )
-    MutableHashSet.add(open, registered)
-    // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
-    yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
-    return sink
+
+  let buffer: Array<Entry> = []
+  // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
+  let others: ReadonlySet<Logger.Logger<unknown, unknown>> = yield* Logger.CurrentLoggers
+  let openUntil = 0
+  const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < openUntil)
+
+  // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
+  const trip = Effect.gen(function* () {
+    openUntil = (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown)
+    yield* Effect.logWarning(`Datadog sink disabled for ${Duration.toSeconds(cooldown)} seconds`).pipe(
+      Effect.provide(Logger.layer(Array.from(others).filter((logger) => logger !== sink))),
+    )
   })
-}
+
+  // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
+  // after the one that tripped it.
+  const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
+    Effect.suspend(() => {
+      const batch = buffer
+      buffer = []
+      return Effect.forEach(
+        chunks(batch),
+        (chunk) => Effect.flatMap(isOpen, (open) => (open ? Effect.void : each(chunk))),
+        { discard: true },
+      )
+    })
+
+  // ponytail: no disk spool. The ceiling: an outage loses the batch after its retries, every record while the
+  // breaker is open, and all but the newest 10,000 buffered entries; the file log keeps the local copy. The
+  // upgrade path, when log loss becomes unacceptable: a bounded spool in Global.Path.log with retention rules and
+  // a data-loss-prevention review, because it writes redacted records to disk a second time.
+  const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
+
+  // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
+  const final = drain((chunk) =>
+    post(Bun.gzipSync(encodeJson(chunk))).pipe(Effect.asVoid, Effect.withTracerEnabled(false)),
+  ).pipe(Effect.timeoutOption(FINAL_TIMEOUT), Effect.asVoid)
+
+  const sink = Logger.make((options) => {
+    if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
+    others = options.fiber.getRef(Logger.CurrentLoggers)
+    Option.map(entry(options, settings, run, include), (item) => {
+      buffer.push(item)
+      // The oldest records go first when the intake cannot keep up.
+      if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
+    })
+  })
+
+  const registered: OpenSink = { settings, logger: sink, final }
+  // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
+  yield* Effect.addFinalizer(() =>
+    Effect.andThen(
+      Effect.sync(() => MutableHashSet.remove(open, registered)),
+      final,
+    ),
+  )
+  MutableHashSet.add(open, registered)
+  // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
+  yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
+  return sink
+})
 
 /** Maps one Effect log record to a Datadog log entry, or none when its category is filtered out. */
 export function entry(
