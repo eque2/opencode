@@ -382,7 +382,7 @@ const live: Layer.Layer<
             ).pipe(
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
-              Stream.tap(recordEvent),
+              Stream.tap((event) => LLMClient.recordEvent(event, copilotUsage)),
               // The native runtime has its own `LLM.stream` span; this one covers an AI SDK call.
               Stream.withSpan("LLM.aisdk", {
                 attributes: {
@@ -400,19 +400,10 @@ const live: Layer.Layer<
   }),
 )
 
-/** Logs the usage of each AI SDK step and finish, and each tool error, without content. */
-function recordEvent(event: LLMEvent) {
-  if (event.type === "step-finish" || event.type === "finish")
-    return LLMClient.recordUsage(event, {
-      // Copilot bills in nano-AIU, which the adapter puts in the step metadata.
-      copilotNanoAiu: event.providerMetadata?.copilot?.totalNanoAiu,
-    })
-  if (event.type === "tool-error")
-    return Effect.logWarning("LLM tool error", { tool: event.name, callID: event.id }).pipe(
-      Effect.annotateLogs({ category: "tool.error" }),
-    )
-  return Effect.void
-}
+// Copilot bills in nano-AIU, which the adapter puts in the step metadata.
+const copilotUsage = (event: Extract<LLMEvent, { readonly type: "step-finish" | "finish" }>) => ({
+  copilotNanoAiu: event.providerMetadata?.copilot?.totalNanoAiu,
+})
 
 export const hasToolCalls = LLMRequestPrep.hasToolCalls
 
