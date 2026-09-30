@@ -426,11 +426,15 @@ test("AC-5b 400, 401, 403 and 413 drop the batch with no retry", async () => {
   }
 })
 
-// Records the messages of Warn records, like a file sink next to Datadog.
+// Records the text and fields of Warn records, like a file sink next to Datadog.
 function warnings() {
   const messages: Array<string> = []
   const logger = Logger.make((options) => {
-    if (options.logLevel === "Warn") messages.push(String(options.message))
+    if (options.logLevel !== "Warn") return
+    const [text, ...fields] = Array.isArray(options.message) ? options.message : [options.message]
+    messages.push(
+      fields.length === 0 ? String(text) : `${String(text)} ${JSON.stringify(Object.assign({}, ...fields))}`,
+    )
   })
   return { messages, logger }
 }
@@ -466,7 +470,7 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
       yield* Effect.promise(() => until(() => target.requests.length >= count))
       yield* settle()
     }
-    expect(warned.messages).toEqual(["Datadog sink disabled for 60 seconds"])
+    expect(warned.messages).toEqual(['Datadog sink disabled for the cooldown {"cooldownSeconds":60}'])
     yield* log("second")
     yield* TestClock.adjust("59 seconds")
     yield* settle()
@@ -514,7 +518,9 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does n
     yield* Effect.sleep("200 millis")
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
   expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([["a"], ["b"], ["c"]])
-  expect(warned.messages).toEqual(["Datadog sink disabled for 1 seconds", "Datadog sink disabled for 1 seconds"])
+  expect(warned.messages).toEqual(
+    Array.from({ length: 2 }, () => 'Datadog sink disabled for the cooldown {"cooldownSeconds":1}'),
+  )
 }, 30_000)
 
 test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first", async () => {

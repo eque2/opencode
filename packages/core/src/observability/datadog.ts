@@ -174,7 +174,7 @@ export const settings = Effect.gen(function* () {
 }).pipe(
   // A bad value must not stop startup; the sink stays off instead, and says why.
   Effect.catch((error) =>
-    Effect.logWarning(`Datadog sink disabled by a bad setting: ${error.message}`).pipe(
+    Effect.logWarning("Datadog sink disabled by a bad setting", { reason: error.message }).pipe(
       Effect.as(Option.none<Settings>()),
     ),
   ),
@@ -381,9 +381,9 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
   const trip = Effect.gen(function* () {
     MutableRef.set(openUntil, (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown))
-    yield* Effect.logWarning(`Datadog sink disabled for ${Duration.toSeconds(cooldown)} seconds`).pipe(
-      Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))),
-    )
+    yield* Effect.logWarning("Datadog sink disabled for the cooldown", {
+      cooldownSeconds: Duration.toSeconds(cooldown),
+    }).pipe(Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))))
   })
 
   // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
