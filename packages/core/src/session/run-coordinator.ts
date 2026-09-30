@@ -47,10 +47,11 @@ export const make = <Key, E>(options: {
           ),
           Effect.onExit((exit) =>
             Effect.sync(() => settle(key, entry, exit)).pipe(
-              // No successor drain means the session has no eligible input left.
+              // A successful drain with no successor means the session has no eligible input left. A failed or
+              // interrupted drain is not idle; its span records the outcome.
               Effect.andThen(
                 Effect.suspend(() =>
-                  MutableHashMap.has(active, key)
+                  Exit.isFailure(exit) || MutableHashMap.has(active, key)
                     ? Effect.void
                     : Effect.logInfo("session idle", { "session.id": String(key) }).pipe(
                         Effect.annotateLogs({ category: "session.idle" }),
