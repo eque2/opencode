@@ -403,17 +403,10 @@ const live: Layer.Layer<
 /** Logs the usage of each AI SDK step and finish, and each tool error, without content. */
 function recordEvent(event: LLMEvent) {
   if (event.type === "step-finish" || event.type === "finish")
-    return Effect.logInfo(event.type === "finish" ? "LLM finish" : "LLM step finish", {
-      reason: event.reason,
-      inputTokens: event.usage?.inputTokens,
-      outputTokens: event.usage?.outputTokens,
-      cacheReadInputTokens: event.usage?.cacheReadInputTokens,
-      cacheWriteInputTokens: event.usage?.cacheWriteInputTokens,
-      reasoningTokens: event.usage?.reasoningTokens,
-      totalTokens: event.usage?.totalTokens,
+    return LLMClient.recordUsage(event, {
       // Copilot bills in nano-AIU, which the adapter puts in the step metadata.
       copilotNanoAiu: event.providerMetadata?.copilot?.totalNanoAiu,
-    }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
+    })
   if (event.type === "tool-error")
     return Effect.logWarning("LLM tool error", { tool: event.name, callID: event.id }).pipe(
       Effect.annotateLogs({ category: "tool.error" }),

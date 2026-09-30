@@ -405,11 +405,7 @@ const streamRequestWith = (runtime: TransportRuntime) => (request: LLMRequest) =
   )
 
 function recordEvent(event: LLMEvent) {
-  if (event.type === "step-finish" || event.type === "finish")
-    return Effect.logInfo(event.type === "finish" ? "LLM finish" : "LLM step finish", {
-      reason: event.reason,
-      ...usageFields(event.usage),
-    }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
+  if (event.type === "step-finish" || event.type === "finish") return recordUsage(event)
   if (event.type === "provider-error")
     return Effect.logWarning("LLM provider error", {
       classification: event.classification,
@@ -417,6 +413,21 @@ function recordEvent(event: LLMEvent) {
     }).pipe(Effect.annotateLogs({ category: "llm.error" }))
   return Effect.void
 }
+
+/**
+ * Logs the usage of one step or finish, without content. The native client and the AI SDK runtime both call it, so
+ * the Datadog dashboards see one record shape. It is not an `Effect.fn`: it runs for stream events, and a span per
+ * event would feed the span bridge.
+ */
+const recordUsage = (
+  event: Extract<LLMEvent, { readonly type: "step-finish" | "finish" }>,
+  extra: Readonly<Record<string, unknown>> = {},
+) =>
+  Effect.logInfo(event.type === "finish" ? "LLM finish" : "LLM step finish", {
+    reason: event.reason,
+    ...usageFields(event.usage),
+    ...extra,
+  }).pipe(Effect.annotateLogs({ category: "llm.usage" }))
 
 function usageFields(usage: Usage | undefined) {
   if (usage === undefined) return {}
@@ -492,4 +503,5 @@ export const LLMClient = {
   prepare,
   stream,
   generate,
+  recordUsage,
 } as const
