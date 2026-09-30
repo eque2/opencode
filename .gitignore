@@ -36,3 +36,5 @@ tsconfig.tsbuildinfo
 
 .claude/worktrees/
 .goal-gate/
+_bmad-output/
+specs/
