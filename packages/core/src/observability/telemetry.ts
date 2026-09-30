@@ -14,12 +14,15 @@ export function bridge(inner: Tracer.Tracer): Tracer.Tracer {
     context: inner.context,
     span(options) {
       const span = inner.span(options)
-      const end = span.end.bind(span)
-      span.end = (endTime, exit) => {
-        end(endTime, exit)
+      const end: Tracer.Span["end"] = (endTime, exit) => {
+        span.end(endTime, exit)
         recordSpan(span, endTime, exit)
       }
-      return span
+      // A delegating view, so the inner tracer's span is never mutated and may be frozen. Every other member reads
+      // from the inner span with the inner span as `this`, so its own getters and methods behave unchanged.
+      return new Proxy(span, {
+        get: (target, key) => (key === "end" ? end : Reflect.get(target, key, target)),
+      })
     },
   }
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { ConfigProvider, Effect, Logger, Option } from "effect"
+import { ConfigProvider, Effect, Exit, Logger, Option, Tracer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import type { Payload } from "@opencode-ai/schema/event"
 import { domain, spanCategory } from "../../src/observability/category"
@@ -95,6 +95,68 @@ test("spans and bus events reach the Datadog sink only, without event content", 
   expect(entries.some((entry) => entry.category === "llm.chunk" || entry.category.startsWith("bus.delta"))).toBe(false)
   // The other loggers see only the ordinary log, not the span and event records.
   expect(other).toEqual([["inside"]])
+})
+
+test("the span bridge never mutates the inner span, and a span ended outside a fiber records nothing", async () => {
+  const bodies: Array<Array<Record<string, any>>> = []
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      bodies.push(JSON.parse(new TextDecoder().decode(Bun.gunzipSync(await request.arrayBuffer()))))
+      return new Response(null, { status: 202 })
+    },
+  })
+  const config = Option.getOrThrow(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: server.url.href,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
+  )
+  const created: Array<Tracer.Span> = []
+  const ended: Array<string> = []
+
+  const outside = await Effect.gen(function* () {
+    const logger = yield* Datadog.logger(config)
+    const base = yield* Effect.tracer
+    const inner: Tracer.Tracer = {
+      context: base.context,
+      span(options) {
+        const span = base.span(options)
+        const end = span.end.bind(span)
+        created.push(span)
+        // Records each inner end, so the test sees that the bridge still calls it.
+        return new Proxy(span, {
+          get: (target, key) =>
+            key === "end"
+              ? (...args: Parameters<Tracer.Span["end"]>) => {
+                  ended.push(target.name)
+                  end(...args)
+                }
+              : Reflect.get(target, key, target),
+        })
+      },
+    }
+    const tracer = Telemetry.bridge(inner)
+    yield* Effect.void.pipe(
+      Effect.withSpan("MCP.create"),
+      Effect.withTracer(tracer),
+      Effect.provide(Logger.layer([logger])),
+    )
+    // Created through the bridge but ended after the program, outside any fiber.
+    const detached = yield* Effect.makeSpan("MCP.detached").pipe(Effect.withTracer(tracer))
+    yield* Datadog.flushAll
+    return detached
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+
+  // Outside any fiber: the inner end runs, nothing throws, and no record is sent.
+  outside.end(1n, Exit.void)
+
+  expect(created.every((span) => !Object.hasOwn(span, "end"))).toBe(true)
+  expect(ended).toEqual(["MCP.create", "MCP.detached"])
+  const messages = bodies.flat().map((entry) => entry.message)
+  expect(messages).toContain("MCP.create")
+  expect(messages).not.toContain("MCP.detached")
 })
 
 test("closing one sink leaves the other sinks open", async () => {
