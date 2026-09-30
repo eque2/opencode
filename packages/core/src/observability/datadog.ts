@@ -307,7 +307,8 @@ export function emit(
   message: ReadonlyArray<unknown>,
 ) {
   if (MutableHashSet.size(open) === 0) return
-  const date = new Date()
+  // `emit` runs outside any Effect, so it reads the wall clock directly.
+  const date = DateTime.toDateUtc(DateTime.nowUnsafe())
   for (const sink of open) {
     if (kind === "records" || sink.settings[kind])
       sink.logger.log({ fiber, date, logLevel, message, cause: Cause.empty })

@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
+import { Cause, Clock, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
 import { HttpServerRequest, type HttpMiddleware } from "effect/unstable/http"
 import type { Payload } from "@opencode-ai/schema/event"
 import { eventCategory, spanCategory } from "./category"
@@ -124,27 +124,30 @@ export const record = (level: LogLevel.LogLevel, message: string, fields: Record
 export const request =
   (category: string, input: unknown, init: { readonly method?: string } | undefined) =>
   <E, R>(self: Effect.Effect<Response, E, R>) =>
-    Effect.suspend(() => {
-      const started = Date.now()
+    Effect.flatMap(Clock.currentTimeMillis, (started) => {
       const method = init?.method ?? (input instanceof Request ? input.method : "GET")
       const url = input instanceof Request ? input.url : String(input)
       return self.pipe(
         Effect.onExit((exit) =>
-          record(Exit.isSuccess(exit) && exit.value.status < 400 ? "Info" : "Warn", "HTTP request", {
-            category,
-            method,
-            host: URL.parse(url)?.host ?? "unknown",
-            durationMs: Date.now() - started,
-            ...(Exit.isSuccess(exit)
-              ? { httpStatus: exit.value.status, outcome: "ok" }
-              : {
-                  outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
-                  error: Cause.squash(exit.cause),
-                }),
-          }),
+          Effect.flatMap(elapsedSince(started), (durationMs) =>
+            record(Exit.isSuccess(exit) && exit.value.status < 400 ? "Info" : "Warn", "HTTP request", {
+              category,
+              method,
+              host: URL.parse(url)?.host ?? "unknown",
+              durationMs,
+              ...(Exit.isSuccess(exit)
+                ? { httpStatus: exit.value.status, outcome: "ok" }
+                : {
+                    outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
+                    error: Cause.squash(exit.cause),
+                  }),
+            }),
+          ),
         ),
       )
     })
+
+const elapsedSince = (started: number) => Effect.map(Clock.currentTimeMillis, (now) => now - started)
 
 /**
  * An HTTP server middleware that records every request: method, path, status, duration and outcome
@@ -154,23 +157,25 @@ export const request =
 export const accessLog: HttpMiddleware.HttpMiddleware = (app) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    const started = Date.now()
+    const started = yield* Clock.currentTimeMillis
     const fields = { category: "http.request", method: request.method, path: request.url.split("?")[0] }
     return yield* app.pipe(
       Effect.onExit((exit) =>
-        Exit.isSuccess(exit)
-          ? record(exit.value.status >= 400 ? "Warn" : "Info", "HTTP request", {
-              ...fields,
-              httpStatus: exit.value.status,
-              durationMs: Date.now() - started,
-              outcome: "ok",
-            })
-          : record("Warn", "HTTP request", {
-              ...fields,
-              durationMs: Date.now() - started,
-              outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
-              error: Cause.squash(exit.cause),
-            }),
+        Effect.flatMap(elapsedSince(started), (durationMs) =>
+          Exit.isSuccess(exit)
+            ? record(exit.value.status >= 400 ? "Warn" : "Info", "HTTP request", {
+                ...fields,
+                httpStatus: exit.value.status,
+                durationMs,
+                outcome: "ok",
+              })
+            : record("Warn", "HTTP request", {
+                ...fields,
+                durationMs,
+                outcome: Cause.hasInterruptsOnly(exit.cause) ? "interrupted" : "failed",
+                error: Cause.squash(exit.cause),
+              }),
+        ),
       ),
     )
   })
