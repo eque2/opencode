@@ -1,0 +1,13 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "grace",
+  "workflow-name": "test-setup",
+  "menu-code": "SU",
+  "description": "Discover and persist the test topology — what is under test, where tests live, where Xray definitions land — and establish test standards. Re-runnable whenever the environment changes.",
+  "supports-headless": false,
+  "phase-name": "bootstrap",
+  "after": [],
+  "before": ["fetch-tests", "backfill"],
+  "is-required": false,
+  "output-location": "{project-root}/.env"
+}

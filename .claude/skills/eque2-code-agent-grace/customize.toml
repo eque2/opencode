@@ -1,0 +1,150 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for eque2-code-agent-grace.
+# Team overrides:     {project-root}/_bmad/custom/eque2-code-agent-grace.toml
+# Personal overrides: {project-root}/_bmad/custom/eque2-code-agent-grace.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+
+code = "grace"
+name = "Grace"
+title = "Test Automation Orchestrator"
+icon = "🧪"
+description = "Comprehensive test-automation orchestration over the Xray-backed lifecycle — set up topology and standards, fetch definitions, gate them for conformance, build single tests and bulk-backfill whole folders through the shared E2E pipeline, validate test quality, verify with HMAC evidence, sync results to Xray, and report coverage."
+agent_type = "autonomous"
+
+# --- Configurable below. Overrides merge per BMad structural rules: ---
+#   scalars: override wins • arrays (persistent_facts, activation_steps_*): append
+#   arrays-of-tables with `code`/`id`: replace matching items, append new ones.
+#
+# For memory/autonomous agents: your sanctum (PERSONA/CREED/BOND/CAPABILITIES)
+# is the primary behavior surface. Prefer editing sanctum files over this block.
+
+# Steps to run before the standard activation (config load, greet).
+# Overrides append. Use for pre-flight loads, compliance checks, etc.
+
+activation_steps_prepend = []
+
+# Steps to run after greet but before the agent accepts user input.
+# Overrides append. Use for context-heavy setup that should happen
+# once the user has been acknowledged.
+
+activation_steps_append = []
+
+# Persistent facts the agent keeps in mind for the whole session
+# (org rules, domain constants, user preferences). Overrides append.
+#
+# Each entry is either:
+#   - a literal sentence, e.g. "Our org is AWS-only -- do not propose GCP or Azure."
+#   - a file reference prefixed with `file:`, e.g. "file:{project-root}/docs/standards.md"
+#     (glob patterns are supported; the file's contents are loaded and treated as facts).
+
+persistent_facts = [
+  "file:{project-root}/**/project-context.md",
+]
+
+# Scalar: hook executed when a workflow reports complete. Override wins.
+# Leave empty for no custom post-completion behavior.
+
+on_complete = ""
+
+# Capabilities menu. Each item maps a menu code to a registered sibling skill
+# (the BMad idiom). Grace renders these and dispatches by invoking the skill via
+# the Skill tool — the persona carries through. Overrides merge by `code`:
+# matching codes replace in place, new codes append. `hidden = true` keeps a
+# capability off the interactive menu (still invocable programmatically / by
+# pre-flight). Each item has exactly one of `skill` (invoke a registered skill)
+# or `prompt` (execute prompt text directly).
+
+[[agent.menu]]
+code = "SU"
+description = "Discover and persist the test topology — what is under test, where tests live, where Xray definitions land — and establish test standards. Re-runnable whenever the environment changes."
+skill = "eque2-code-test-setup"
+
+[[agent.menu]]
+code = "FT"
+description = "Pull Xray test definitions for a chosen folder via the Xray MCP and store them under XRAY_OUTPUT_DIR."
+skill = "eque2-code-fetch-tests"
+
+[[agent.menu]]
+code = "AT"
+description = "Dashboard of test lifecycle states from the test-lifecycle MCP server — what's pending, building, blocked, verified."
+skill = "eque2-code-test-status"
+
+[[agent.menu]]
+code = "BT"
+description = "Build one Playwright test for a single Xray test ID by dispatching the shared E2E pipeline (stages 2–7) — gated on an existing Xray definition (HARD STOP if none)."
+skill = "eque2-code-e2e-test"
+
+[[agent.menu]]
+code = "BK"
+description = "Batch-backfill automated Playwright tests for an Xray folder — seed the lifecycle server, fan out parallel subagents through the shared E2E pipeline, verify server-side with HMAC evidence, poll, park, remediate, and report."
+skill = "eque2-code-backfill"
+
+[[agent.menu]]
+code = "US"
+description = "Sync local test results back to Xray — mark tests automated/passing via the Xray MCP write-back verb."
+skill = "eque2-code-update-status"
+
+[[agent.menu]]
+code = "RP"
+description = "Coverage and status report across the backlog; optionally attach evidence to Xray tickets via the Xray MCP."
+skill = "eque2-code-test-report"
+
+[[agent.menu]]
+code = "XC"
+description = "Xray conformance review — fetch fresh and check that an Xray definition with at least one step backs a test ID or every test in a folder. Reports per-test conformance; builds nothing. The same gate [BT]/[BK] run per test, exposed standalone."
+skill = "eque2-code-xray-conformance"
+
+[[agent.menu]]
+code = "TV"
+description = "Validate Playwright tests against the anti-flakiness best-practice rubric — score a single *.spec.ts or a whole folder/glob, report per-test findings with severity and line refs, then offer to auto-fix the mechanically-fixable ones under confirmation. Builds nothing. The same gate [ET] runs after fidelity, exposed standalone."
+skill = "eque2-code-test-validation"
+
+# --- Agent-specific configurables ---
+#
+# Batch-orchestration knobs for [BK] and engine defaults shared by [BT]/[BK].
+# Override wins. These defaults intentionally agree with the repo-global
+# Subagent Circuit Breaker rules in .claude/CLAUDE.md — raise them only with
+# a matching change there.
+
+# Default engine depth for generated tests: "core" (P→C→M→X→L→R) or "full"
+# (all Strategy 6 blocks incl. resilience audit + parallel healer).
+
+engine_depth_default = "core"
+
+# Number of parallel build subagents [BK] dispatches.
+
+batch_concurrency = 5
+
+# Minutes between parent-loop polls of the tests CLI's transitions-since verb.
+
+batch_poll_interval_minutes = 10
+
+# Minutes before an in-flight test build is timed out by the parent loop.
+
+batch_timeout_minutes = 60
+
+# Maximum tests parked (stalled, awaiting remediation) before [BK] stops
+# dispatching new work and surfaces the situation.
+
+max_parked_tasks = 10
+
+# Minutes without progress before [BK] surfaces a verification subagent as
+# stalled. There is no persistent verifier process anymore — verification runs
+# as a fresh, one-shot subagent per submission — so this aligns with the
+# standard Subagent Circuit Breaker (poll every 10 min, kill after two
+# consecutive stalled polls, ~20 min) rather than a container watchdog
+# threshold. The tests engine's own 30-minute lease TTL (`LEASE_TTL_MIN` in
+# `tests-state.ts`) independently re-queues a stuck lease regardless.
+
+verifier_stall_threshold_minutes = 20
+
+# Test-knowledge cache injection limits: newest entries injected into
+# subagent prompts on later runs.
+
+test_knowledge_max_entries = 50
+test_knowledge_max_kb = 20

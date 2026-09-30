@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Forge-proof shared test state — pull-time banner hook.
+#
+# Installed into a target repo's .githooks/ (with
+# `git config core.hooksPath .githooks`). Runs after every `git pull` / merge
+# and prints a bold pass/fail summary of the committed, signed test-state
+# verdicts — so a teammate who never opens the PR still can't miss a test whose
+# verdict fails verification. Green is quiet; red is LOUD.
+#
+# Reads only: verifies each committed verdict's signature against the committed
+# public keys (state/signers/) and re-hashes the test file, so a hand-written or
+# stale verified_passing shows as FAILED, not verified. Never blocks the pull.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Skill root differs per runtime: .claude/skills (Claude Code) or .agents/skills (Codex).
+CLI="$REPO_ROOT/.claude/skills/eque2-code-setup/scripts/verdict-status.mjs"
+[[ -f "$CLI" ]] || CLI="$REPO_ROOT/.agents/skills/eque2-code-setup/scripts/verdict-status.mjs"
+
+# No reader or no committed state yet → nothing to report, stay silent.
+[[ -f "$CLI" ]] || exit 0
+[[ -d "$REPO_ROOT/state" ]] || exit 0
+
+node "$CLI" --spec "$REPO_ROOT" --repo "$REPO_ROOT" || true
