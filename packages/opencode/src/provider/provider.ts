@@ -72,8 +72,9 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   const timedOut = Effect.suspend(() => {
     const err = new ProviderError.ResponseStreamError("SSE read timed out")
     ctl.abort(err)
-    return passThrough(() => reader.cancel(err)).pipe(
-      Effect.andThen(Telemetry.record("Warn", "SSE chunk timeout", { category: "llm.timeout", timeoutMs: ms })),
+    // Recorded first, so a cancel that rejects on an already broken stream cannot skip the record.
+    return Telemetry.record("Warn", "SSE chunk timeout", { category: "llm.timeout", timeoutMs: ms }).pipe(
+      Effect.andThen(passThrough(() => reader.cancel(err))),
       Effect.ignore,
       Effect.forkDetach,
       Effect.andThen(Effect.fail(err)),
