@@ -428,11 +428,11 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
     if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
     MutableRef.set(others, options.fiber.getRef(Logger.CurrentLoggers))
     // Measured once here. A record that cannot be encoded as JSON is dropped, so the flush loop never meets one.
-    Option.map(Option.flatMap(entry(options, settings, run, include), fitSafe), (fitted) => {
-      MutableList.append(buffer, fitted)
-      // The oldest records go first when the intake cannot keep up.
-      if (buffer.length > MAX_BUFFER) MutableList.take(buffer)
-    })
+    const fitted = Option.flatMap(entry(options, settings, run, include), fitSafe)
+    if (Option.isNone(fitted)) return
+    MutableList.append(buffer, fitted.value)
+    // The oldest records go first when the intake cannot keep up.
+    if (buffer.length > MAX_BUFFER) MutableList.take(buffer)
   })
 
   const registered: OpenSink = { settings, logger: sink, final }
