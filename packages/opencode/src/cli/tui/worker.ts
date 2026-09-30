@@ -16,7 +16,11 @@ import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecy
 // The heap monitor is a detached fiber; the TUI ends this worker with terminate().
 Effect.runFork(Heap.start())
 
-// The worker must survive a stray rejection or exception, but each one is recorded.
+// The worker must survive a stray rejection or exception, but each one is recorded. These records run on the bare
+// runtime on purpose: a handler can fire before AppRuntime is built, and AppRuntime.runFork would then build the
+// whole app from a crash handler. `Telemetry.record` needs no services, because the Datadog sink registry is
+// process-global; `Effect.runFork` accepts only an Effect with no requirements, so the type checker would reject
+// these calls if that changed.
 const onUnhandledRejection = (error: unknown) => {
   Effect.runFork(Telemetry.record("Error", "TUI worker unhandled rejection", { category: "cli.worker", error }))
 }
