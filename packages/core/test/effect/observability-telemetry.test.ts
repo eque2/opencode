@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { ConfigProvider, Effect, Exit, Logger, Option, Tracer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import type { Payload } from "@opencode-ai/schema/event"
+import { ID, type Payload } from "@opencode-ai/schema/event"
 import { domain, spanCategory } from "../../src/observability/category"
 import { Datadog } from "../../src/observability/datadog"
 import { Telemetry } from "../../src/observability/telemetry"
@@ -56,7 +56,7 @@ test("spans and bus events reach the Datadog sink only, without event content", 
       yield* Effect.void.pipe(Effect.withSpan("AnthropicMessages.onContentBlockDelta"))
       yield* Effect.logInfo("inside").pipe(Effect.withSpan("MCP.tools"))
       yield* Telemetry.event({
-        id: "evt_1",
+        id: ID.make("evt_1"),
         type: "session.next.step.ended",
         data: {
           sessionID: "ses_1",
@@ -64,12 +64,12 @@ test("spans and bus events reach the Datadog sink only, without event content", 
           text: "my secret plan",
           tokens: { input: 3, output: 4, cache: { read: 1 } },
         },
-      } as unknown as Payload)
+      } satisfies Payload)
       yield* Telemetry.event({
-        id: "evt_2",
+        id: ID.make("evt_2"),
         type: "session.next.text.delta",
         data: { delta: "x" },
-      } as unknown as Payload)
+      } satisfies Payload)
     }).pipe(Effect.withTracer(tracer), Effect.provide(Logger.layer([logger, file])))
     yield* Datadog.flushAll
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
