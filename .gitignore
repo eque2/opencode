@@ -38,3 +38,24 @@ tsconfig.tsbuildinfo
 .goal-gate/
 _bmad-output/
 specs/
+# BMAD installer answers scoped to one person.
+_bmad/config.user.toml
+# >>> eque2-code managed (do not edit this block) >>>
+# NOTE: Linus's sanctum (_bmad/_memory/linus-sidecar/), generated docs
+# (docs/CLAUDE/, .github/review-rules/) and _bmad/config.yaml are intentionally
+# NOT ignored — they are committed and shared across all developers.
+# Personal settings — never shared (user_name, language, user_setting:true keys).
+_bmad/config.user.yaml
+# State engine runtime audit log — regenerated, not version-controlled.
+.state-events.jsonl
+# Per-spec verdict signing key — plaintext Ed25519 private key, policy-protected.
+.signer-key
+# Legacy per-spec evidence key — no longer created; ignored for hygiene on older folders.
+.evidence-key
+# Verifier role marker — machine-local, minted/revoked by the SubagentStart/Stop hooks.
+.eque2-tests/state/.verifier-marker.json
+# Mint-verb policy denial log — machine-local observability, never shared state.
+.eque2-tests/state/policy-denials.log
+# Codex project hook — contains an absolute machine-local executable path.
+/.codex/hooks.json
+# <<< eque2-code managed (do not edit this block) <<<
