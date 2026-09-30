@@ -15,6 +15,8 @@ import {
   Logger,
   LogLevel,
   MutableHashSet,
+  MutableList,
+  MutableRef,
   Option,
   Predicate,
   Redacted,
@@ -368,17 +370,19 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
       Effect.withTracerEnabled(false),
     )
 
-  let buffer: Array<Fitted> = []
+  // `Logger.make` callbacks are synchronous, so the sink state lives in mutable cells, not Refs. Every read-and-write
+  // below is one synchronous step, so no fiber can interleave inside it.
+  const buffer = MutableList.make<Fitted>()
   // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
-  let others: ReadonlySet<Logger.Logger<unknown, unknown>> = yield* Logger.CurrentLoggers
-  let openUntil = 0
-  const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < openUntil)
+  const others = MutableRef.make<ReadonlySet<Logger.Logger<unknown, unknown>>>(yield* Logger.CurrentLoggers)
+  const openUntil = MutableRef.make(0)
+  const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < MutableRef.get(openUntil))
 
   // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
   const trip = Effect.gen(function* () {
-    openUntil = (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown)
+    MutableRef.set(openUntil, (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown))
     yield* Effect.logWarning(`Datadog sink disabled for ${Duration.toSeconds(cooldown)} seconds`).pipe(
-      Effect.provide(Logger.layer(Array.from(others).filter((logger) => logger !== sink))),
+      Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))),
     )
   })
 
@@ -386,8 +390,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   // after the one that tripped it.
   const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
     Effect.suspend(() => {
-      const batch = buffer
-      buffer = []
+      const batch = MutableList.takeAll(buffer)
       return Effect.forEach(
         chunks(batch),
         (chunk) => Effect.flatMap(isOpen, (open) => (open ? Effect.void : each(chunk))),
@@ -408,12 +411,12 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
 
   const sink = Logger.make((options) => {
     if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
-    others = options.fiber.getRef(Logger.CurrentLoggers)
+    MutableRef.set(others, options.fiber.getRef(Logger.CurrentLoggers))
     // Measured once here. A record that cannot be encoded as JSON is dropped, so the flush loop never meets one.
     Option.map(Option.flatMap(entry(options, settings, run, include), fitSafe), (fitted) => {
-      buffer.push(fitted)
+      MutableList.append(buffer, fitted)
       // The oldest records go first when the intake cannot keep up.
-      if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
+      if (buffer.length > MAX_BUFFER) MutableList.take(buffer)
     })
   })
 
