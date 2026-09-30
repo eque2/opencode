@@ -2,7 +2,18 @@ export * as Observability from "./observability"
 
 import { NodeFileSystem } from "@effect/platform-node"
 import { LayerNode } from "./effect/layer-node"
-import { Config, ConfigProvider, Effect, Layer, Logger, LogLevel, Option, References, Tracer } from "effect"
+import {
+  Config,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Logger,
+  LogLevel,
+  MutableList,
+  Option,
+  References,
+  Tracer,
+} from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { OtlpExporter, OtlpSerialization } from "effect/unstable/observability"
 import { Global } from "./global"
@@ -53,9 +64,9 @@ const configDir = Config.option(Config.String("OPENCODE_CONFIG_DIR"))
 /** The Datadog settings from the live process env and the global config files, and the warnings they logged. */
 const datadogSettings = Effect.gen(function* () {
   const dir = yield* configDir.parse(ConfigProvider.fromEnv()).pipe(Effect.orDie)
-  let warnings: ReadonlyArray<ReadonlyArray<unknown>> = []
+  const warnings = MutableList.make<ReadonlyArray<unknown>>()
   const hold = Logger.make((options) => {
-    warnings = [...warnings, Array.isArray(options.message) ? options.message : [options.message]]
+    MutableList.append(warnings, Array.isArray(options.message) ? options.message : [options.message])
   })
   const settings = yield* Datadog.provider({
     env: process.env,
@@ -64,7 +75,7 @@ const datadogSettings = Effect.gen(function* () {
     Effect.flatMap((provider) => Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider)))),
     Effect.provide(Logger.layer([hold])),
   )
-  return { settings, warnings }
+  return { settings, warnings: MutableList.toArray(warnings) }
 })
 
 /**
