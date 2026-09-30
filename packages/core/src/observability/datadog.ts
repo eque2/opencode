@@ -326,6 +326,8 @@ export const accepts = (kind: "spans" | "events") => Arr.some(Arr.fromIterable(o
  * before `process.exit()`, which skips the scope finalizers and would drop the last batch.
  */
 export const flushAll = Effect.suspend(() =>
+  // Unbounded on purpose: each final flush has its own 5-second timeout, so running them together keeps the exit
+  // wait at 5 seconds. The set holds one sink per observability layer build, which is one in the CLI.
   Effect.forEach(Arr.fromIterable(open), (sink) => sink.final, { concurrency: "unbounded", discard: true }),
 )
 
