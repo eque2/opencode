@@ -354,13 +354,13 @@ const layer = Layer.effect(
           return Effect.forEach(
             hooks.flatMap((hook) => (hook.event ? [hook.event] : [])),
             (run) =>
-              Effect.tryPromise({ try: () => run({ event: payload }), catch: (error) => error }).pipe(
-                // A rejected event hook must not stop the fan-out, but it is recorded.
-                Effect.catch((error) =>
+              settle(() => run({ event: payload })).pipe(
+                // A failed event hook must not stop the fan-out, but it is recorded with the hook's own error.
+                Effect.catch((failure) =>
                   Telemetry.record("Warn", "plugin event hook failed", {
                     category: "plugin.event",
                     eventType: event.type,
-                    error,
+                    error: failure.cause ?? failure,
                   }),
                 ),
                 // Detached, as before: the fan-out never waits for a hook, and a hook outlives this event.
