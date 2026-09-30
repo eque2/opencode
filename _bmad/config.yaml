@@ -1,8 +1,0 @@
-document_output_language: English
-output_folder: '{project-root}/_bmad-output'
-eque2-code:
-  name: eque2-code
-  description: Feature development orchestration from a Jira ticket or a prose brief
-    to a tested, PR-ready change — spec-driven, evidence-obsessed.
-  version: 0.62.0
-  feature_artifacts: '{project-root}/_bmad-output/features'
