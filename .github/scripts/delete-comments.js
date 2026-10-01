@@ -10,11 +10,12 @@
 module.exports = async ({ github, context, marker, prNumber }) => {
   const issueNumber = prNumber || context.payload.pull_request.number;
 
-  // Get all comments on the PR
-  const { data: comments } = await github.rest.issues.listComments({
+  // Get all comments on the PR. One page holds at most 100, so a busy PR needs every page.
+  const comments = await github.paginate(github.rest.issues.listComments, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     issue_number: issueNumber,
+    per_page: 100,
   });
 
   let deletedCount = 0;
