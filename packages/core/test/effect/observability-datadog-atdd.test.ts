@@ -385,6 +385,18 @@ test("AC-7b a multi-byte batch splits into gzip chunks measured in UTF-8 bytes",
   expect(target.requests.flatMap((request) => request.body).length).toBe(12)
 }, 30_000)
 
+test("AC-7b secret scrubbing stays fast on a long base64-like value", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  // The old URL pattern backtracked at every start position and took over a minute on this value.
+  await ship(
+    config,
+    Effect.logInfo("image", { data: "A".repeat(300_000) }).pipe(Effect.annotateLogs({ category: "llm.request" })),
+  )
+  expect(target.requests[0].body[0].data).toHaveLength(300_000)
+}, 10_000)
+
 test("AC-7b an entry above 1,000,000 bytes has its message truncated", async () => {
   const target = intake()
   using _ = target.server

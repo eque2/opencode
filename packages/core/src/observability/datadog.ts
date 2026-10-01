@@ -131,10 +131,12 @@ const SECRET_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED]"],
   [/(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]+/g, "[REDACTED]"],
   // Query parameters such as `?key=`, `&exaApiKey=` and `&access_token=`.
-  [/([?&][^=&#\s]*(?:key|token)=)[^&#\s]*/gi, "$1[REDACTED]"],
+  [/([?&][^=&#\s]{0,64}(?:key|token)=)[^&#\s]*/gi, "$1[REDACTED]"],
   [/((?<![A-Za-z0-9_])(?:api_key|access_token)=)[^&#\s]*/gi, "$1[REDACTED]"],
   // URL userinfo such as `https://user:token@host`, which a git or npm plugin spec can carry.
-  [/([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[REDACTED]@"],
+  // The prefix runs are bounded: an unbounded run backtracks at every start position, so a long base64 value took
+  // quadratic time, and the logger runs synchronously.
+  [/([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[REDACTED]@"],
 ]
 const CONTENT = HashSet.make(
   "prompt",
