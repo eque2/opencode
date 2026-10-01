@@ -1,7 +1,7 @@
 code: eque2-code
 name: eque2-code
 description: Feature development orchestration from a Jira ticket or a prose brief to a tested, PR-ready change — spec-driven, evidence-obsessed.
-module_version: 0.62.0
+module_version: 0.62.4
 module_greeting: |
   eque2-code installed. Run `/eque2-code-agent-linus` to talk to Linus (feature development), `/eque2-code-agent-grace` to talk to Grace (test automation), or `/eque2-code-agent-hannibal` to talk to Hannibal (goal planning & execution). Invoke a capability directly with `/eque2-code-agent-linus JF <TICKET>`, `/eque2-code-agent-grace BK <folder>`, or `/eque2-code-agent-hannibal PL <task>`.
 

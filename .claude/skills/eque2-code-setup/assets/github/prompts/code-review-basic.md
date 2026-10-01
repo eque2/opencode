@@ -13,6 +13,8 @@ Review this pull request for code quality and post inline review comments via th
 
 3. Walk the diff and collect every NEW issue (not already covered by an entry in `existing-comments.json`) into an in-memory list. **Do not post anything yet.** Each entry must capture: `path`, `line` (integer, must be a line in the diff), `body` (the full issue detail).
 
+   **Inline comments can attach only to files GitHub lists for the PR.** GitHub lists at most 3,000 files; a comment on any other path fails the whole review with HTTP 422 "Path could not be resolved". If `{CHANGED_FILES}` is above 3000, list the attachable paths with `gh api --paginate repos/{owner}/{repo}/pulls/{PR_NUMBER}/files --jq '.[].filename' > reviewable-files.txt`, keep only findings on those paths in `comments[]`, and put the rest in the summary under `## Findings outside the first 3,000 files` with `path:line` and full detail. Say in the Overall Assessment that the PR is too large for inline comments on every file.
+
 4. Build the review payload `review-payload.json`:
 
    ```json
@@ -50,9 +52,12 @@ Review this pull request for code quality and post inline review comments via th
    }
    ```
 
-   If the call returns non-2xx, abort the workflow run. Do NOT fall back to per-comment posting. Do NOT post a summary in the failure case — the workflow should fail loudly so the failure is visible in CI status.
+   Validate the response: confirm `review-response.json` is valid JSON and the top-level `.id` is a positive integer. If it isn't, the review was NOT posted (the response is an error envelope such as `{"message": "Path could not be resolved"}`). Then:
 
-   Validate the response before continuing: confirm `review-response.json` is valid JSON and the top-level `.id` is a positive integer. If it isn't (e.g. response is an error envelope `{"message": "..."}`), abort.
+   1. Do NOT retry, and do NOT fall back to per-comment posting.
+   2. Post the findings as ONE fallback comment, so they are not lost. First line `<!-- ai-workflow:code-review-summary -->`, then a `# Code Review Summary (inline comments could not be posted)` heading, then a line quoting the API error message and HTTP status. Then list every finding under the same severity sections as the normal summary, each with its `path:line` and its FULL body (no inline thread exists to hold the detail).
+   3. Write the API error (status and message) to `review-post-error.txt` in the working directory. The workflow reads this file and fails the job, so the PR shows a failed check instead of a green one.
+   4. Stop. Skip steps 7 and 8.
 
 7. Fetch each inline comment's `id` for the summary's anchor links. The create-review response does NOT include the inline comments — fetch them separately:
 
@@ -134,6 +139,6 @@ ABSOLUTE REQUIREMENTS - FAILURE TO FOLLOW THESE WILL RESULT IN INCORRECT OUTPUT:
 1. ALL inline findings batched into ONE `gh api .../pulls/{PR_NUMBER}/reviews` call. Never per-comment posting.
 2. Each finding becomes its own entry in `comments[]` with `{path, line, side: "RIGHT", body}` — body holds the full detail.
 3. Skip the review submission entirely when `comments[]` would be empty; only post the summary.
-4. Summary contains ONLY brief titles (max 1 line) + links to inline comments — no details, no explanations, no code examples.
+4. Summary contains ONLY brief titles (max 1 line) + links to inline comments — no details, no explanations, no code examples. Two exceptions carry full detail: the fallback comment when the review POST fails (step 6), and findings outside the first 3,000 files (step 3).
 5. All details belong in the inline comments' `body` field, NOT the summary.
 6. Summary anchor IDs come from `review-comments.json`, fetched after the review is submitted.

@@ -22,7 +22,6 @@ set -uo pipefail
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROOF="${TEST_DIR}/../proof-of-fire.sh"
 GATE="${TEST_DIR}/../goal-gate-stop.sh"
-PURSUE="${TEST_DIR}/../pursue-goal.sh"
 INSTALL="${TEST_DIR}/../install.sh"
 
 PASS_COUNT=0
@@ -377,82 +376,11 @@ else
 	pass "security/unknown-agent-records-nothing"
 fi
 
-# --- claude is exempt -------------------------------------------------------
-#
-# Claude has no trust layer, so a good registration IS the evidence there.
-# Requiring proof under Claude would be friction bought with nothing.
-
-rm -rf "$GOAL_GATE_PROOF_DIR"
-rc=0
-(
-	set -uo pipefail
-	# Sourcing defines the predicate without running the script: pursue-goal.sh
-	# guards its own entry on BASH_SOURCE[0] = $0. It then sets PG_PROOF/PG_GATE
-	# from its own defaults, so there is nothing to inject here — the marker
-	# directory being empty is the whole setup.
-	# shellcheck source=/dev/null
-	source "$PURSUE" >/dev/null 2>&1
-	pg_proof_ok claude
-) || rc=$?
-assert_exit "claude/exempt-with-no-marker-present" 0 "$rc"
-
-# The same predicate, same empty marker directory, under Codex: the contrast is
-# the test. If this ever returned 0 the exemption above would be vacuous.
-rc=0
-(
-	set -uo pipefail
-	# shellcheck source=/dev/null
-	source "$PURSUE" >/dev/null 2>&1
-	pg_proof_ok codex
-) >/dev/null 2>&1 || rc=$?
-assert_exit "codex/not-exempt-with-no-marker-present" 1 "$rc"
-
-# --- pursue-goal proves the hook Codex is actually registered to run --------
-#
-# The checkout copy and the shared runtime copy intentionally diverge here.
-# `install.sh prove` records a hash for the shared path returned by
-# `install_gate_path`; pursue-goal must check that same path, not its own
-# checkout-local goal-gate-stop.sh. Reversing the marker proves that a proof for
-# an unrelated hook remains unacceptable.
-RUNTIME_BASE="$WORK_DIR/runtime-base"
-RUNTIME_GATE="$RUNTIME_BASE/goal-gate/gate/goal-gate-stop.sh"
+# A registered runtime copy that deliberately differs from the checkout copy.
+RUNTIME_GATE="$WORK_DIR/runtime-base/goal-gate/gate/goal-gate-stop.sh"
 mkdir -p "$(dirname -- "$RUNTIME_GATE")"
 cp "$GATE" "$RUNTIME_GATE"
 printf '\n# runtime copy deliberately differs from the checkout\n' >>"$RUNTIME_GATE"
-
-# Run the predicate in one controlled environment. Keeping the override in a
-# single helper avoids leaking it to the surrounding proof cases.
-pursue_runtime_proof() (
-	set -uo pipefail
-	export GOAL_GATE_RUNTIME_HOME="$RUNTIME_BASE"
-	# shellcheck source=/dev/null
-	source "$PURSUE" >/dev/null 2>&1
-	pg_proof_ok codex
-)
-
-rm -rf "$GOAL_GATE_PROOF_DIR"
-bash "$PROOF" record codex "$RUNTIME_GATE" >/dev/null 2>&1
-rc=0
-pursue_runtime_proof >/dev/null 2>&1 || rc=$?
-assert_exit "pursue/runtime-proof-allows-divergent-checkout" 0 "$rc"
-
-# The release path, end to end: the registered gate is upgraded in place. The
-# loop must still bind. If this ever goes back to 1, every eque2-code release
-# blocks every Codex goal until the operator re-proves — the exact regression
-# this contract change exists to prevent.
-rm -rf "$GOAL_GATE_PROOF_DIR"
-bash "$PROOF" record codex "$RUNTIME_GATE" >/dev/null 2>&1
-printf '\n# a shipped upgrade to the registered gate\n' >>"$RUNTIME_GATE"
-rc=0
-pursue_runtime_proof >/dev/null 2>&1 || rc=$?
-assert_exit "pursue/upgraded-runtime-gate-still-binds" 0 "$rc"
-
-rm -rf "$GOAL_GATE_PROOF_DIR"
-bash "$PROOF" record codex "$GATE" >/dev/null 2>&1
-rc=0
-pursue_runtime_proof >/dev/null 2>&1 || rc=$?
-assert_exit "pursue/checkout-proof-does-not-authorize-runtime" 1 "$rc"
-rm -rf "$GOAL_GATE_PROOF_DIR"
 
 # --- diagnostics do not misdiagnose every missed fire as untrusted ----------
 #

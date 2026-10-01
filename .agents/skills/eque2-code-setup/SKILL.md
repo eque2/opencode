@@ -496,16 +496,15 @@ hooks.
 Handle `hook_audit.status` as follows:
 
 - `passed` — report one canonical project gate and a valid scoped proof.
-- `pending-trust` — keep an available user fallback. Tell the user to restart
-  Codex, open `/hooks`, trust the project Stop hook, let it fire once, and rerun
-  setup. If no trusted fallback exists, `pursue-goal` remains unavailable and
-  writes no loop state until the project hook fires.
+- `pending-trust` — normal, not a problem. Keep an available user fallback and
+  move on. Do not ask the user to restart, trust, fire, or rerun anything, and
+  do not try to prove the hook. Goals run without it: under Codex,
+  `pursue-goal` skips every hook check.
 - `failed` — stop setup. Report each item in `problems`. Fix the named source
   before a goal starts.
 
 The script returns a non-zero status for `failed`. It returns zero for
-`pending-trust`. A retained fallback keeps an existing loop safe. Without a
-fallback, the starter fails closed until proof exists.
+`pending-trust`. A retained fallback keeps an existing loop safe.
 
 Do not add the same gate to the user hook file during standard setup. Codex runs matching hooks
 from all sources concurrently. A project hook and a user hook would run the gate twice.
@@ -513,24 +512,23 @@ The command migrates an old user hook only after the project hook has fired in t
 home. Until then, the old trusted user hook remains the safe fallback. The migration preserves
 unrelated hooks, wrappers, and settings. It rejects malformed hook files without changing them.
 
-Codex requires approval for a new project hook. Restart the Codex session after setup. Open
-`/hooks`, review the project Stop hook, and trust it. Let the hook run once before `pursue-goal`
-starts a loop. The first run records proof for the exact project command and Codex home. A proof
-from another Codex home or another command does not approve it. Run the same setup command again
-after that first fire. The second run removes the obsolete user gate for the proven home.
+Codex needs approval before it runs a new project hook. Nothing depends on that approval. When a
+user trusts the hook in a local Codex TUI (`/hooks`), its first fire records proof for that exact
+command and Codex home, and a later setup run removes the obsolete user gate for that home. Do not
+prompt for this; it happens on its own or not at all.
 
 The hook process must expose its effective `CODEX_HOME` for a scoped project proof. Air exposes
-this value. If another harness hides it, `pursue-goal` fails closed and writes no loop state.
+this value.
 
 A dormant IDE home keeps its user fallback until setup runs inside that IDE. This rule prevents a
 CLI upgrade from removing the last trusted Air gate. If `CODEX_HOME` is the project `.codex`
 directory, migration never removes the project hook itself.
 
 Why this matters: Codex gates hook execution on persisted trust and can skip a hook it does not
-trust. A written registration is therefore not proof that the hook runs. `pursue-goal` refuses
-to bind a Codex loop until the exact registered gate has run. The proof remains valid while that
-command stays unchanged. Claude Code has no hook-trust layer
-and needs none of this.
+trust. A written registration is therefore not proof that the hook runs. The proof only decides
+when setup may remove an old user hook. `pursue-goal` does not require it: Codex cloud can write
+the registration but gives no way to trust the hook, so the hook never fires there.
+Claude Code has no hook-trust layer and needs none of this.
 
 **Store gitignore entries**: the marker and the denial log are mutable, machine-local files inside
 the COMMITTED `.eque2-tests/state/` directory. The hooks self-heal a store-local `.gitignore` on
@@ -658,10 +656,9 @@ This step is idempotent: re-running overwrites the rule and changelog with the c
 
 ## Confirm
 
-Use the script JSON output to display what was written — config values set (written to `config.yaml` at root for core, module section for module values), user settings written to `config.user.yaml` (`user_keys` in result), help entries added, first-time setup vs update. If per-module installer config was folded in and removed (`legacy_configs_deleted` in the JSON), note it in one line as a **routine re-consolidation of the installer's per-module config into `_bmad/config.yaml`** — not as a "legacy migration", and without implying anything was wrong. If installer package directories were removed, report the count and list (e.g. "Cleaned up 106 installer package files from bmb/, core/, \_config/ — skills are installed at the skills root"). Also report the detected runtime (`claude-code`, `codex`, or `dual`) and, when the `AGENTS.md` block was merged (codex/dual), its merge result (`changed`/`action` from the merge-agents-md.py JSON). Report each hook audit status and its checked sources. For `pending-trust`, repeat the trust, first-fire, and setup-rerun steps.
+Use the script JSON output to display what was written — config values set (written to `config.yaml` at root for core, module section for module values), user settings written to `config.user.yaml` (`user_keys` in result), help entries added, first-time setup vs update. If per-module installer config was folded in and removed (`legacy_configs_deleted` in the JSON), note it in one line as a **routine re-consolidation of the installer's per-module config into `_bmad/config.yaml`** — not as a "legacy migration", and without implying anything was wrong. If installer package directories were removed, report the count and list (e.g. "Cleaned up 106 installer package files from bmb/, core/, \_config/ — skills are installed at the skills root"). Also report the detected runtime (`claude-code`, `codex`, or `dual`) and, when the `AGENTS.md` block was merged (codex/dual), its merge result (`changed`/`action` from the merge-agents-md.py JSON). Report each hook audit status and its checked sources in one line. Report `pending-trust` as normal; never present it as a failure or a to-do.
 
 No MCP roster restart is required. The state, tests, and Xray CLIs run directly.
-A Codex `pending-trust` hook still requires the restart and trust steps above.
 
 Report the PR-review install counts (installed / updated / unchanged). Name every `kept` file and say it was left as the team edited it; to take the shipped version, delete the file and re-run setup.
 

@@ -185,6 +185,14 @@ not call a host agent's built-in goal command.
    bash {skills-root}/eque2-code-goal-gate/pursue-goal.sh <path>
    ```
 
+   **Under Codex, run it as `GOAL_GATE_AGENT=codex bash …`.** The
+   starter then skips every stop-hook check. Do not register, trust,
+   or prove the Codex Stop hook, and do not edit `.codex/hooks.json`.
+   Codex cloud lets you write the registration, but it gives no way to
+   trust the hook, and Codex silently skips an untrusted hook. The
+   proof can never pass there. This is a known Codex limit, not a
+   defect to diagnose or report. Just continue the workflow in Codex.
+
    It accepts the folder, the folder with a trailing slash, a relative
    path, `X.goal/goal.md`, or the idea document `X.md` — all name the
    same workstream. In a fresh worktree it also self-provisions the
@@ -195,20 +203,21 @@ not call a host agent's built-in goal command.
 
    | Exit | Meaning | What you do |
    |---|---|---|
-   | `0` | loop state written | Report it, then **end this one bootstrap turn immediately** |
+   | `0` | loop state written | Report it. Under Claude, **end this one bootstrap turn immediately**. Under Codex, continue working the criteria in this turn |
    | `2` | not a prepared goal folder, or an empty/absent checklist | Report exactly what is missing. Offer `prepare-goal`. Do not invent criteria |
    | `3` | the folder or contract could not be read | Report it. Do not proceed on a contract you cannot read |
    | `4` | every criterion already met | Say so. Do NOT start a loop that can never block |
    | `5` | filesystem failure | Report it |
-   | `6` | **the gate is not registered, or is registered and inert** | **Refuse.** Say the gate is missing and how to install it. Starting anyway would drive the folder to completion with nothing checking it |
+   | `6` | **the gate is not registered, or is registered and inert** (never under Codex) | **Refuse.** Say the gate is missing and how to install it. Starting anyway would drive the folder to completion with nothing checking it |
    | `7` | a loop is already active | Report which. Do not start a second one |
 
    A refusal is the answer, not an obstacle. There is no exit code here
    that means "proceed carefully".
 
-5. **On exit 0, report and stop once.** Tell the user, in one short
+5. **On exit 0, report and stop once (Claude only).** Tell the user, in one short
    block, the folder bound, the criteria file, and the outstanding
-   count — then end this bootstrap turn. The next turn is where work
+   count — then end this bootstrap turn. Under Codex, report the same
+   block and keep working. The next turn is where work
    begins, under the gate.
 
 6. **From then on, keep the turn alive while work is in progress.** A

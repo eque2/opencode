@@ -92,8 +92,7 @@ assert_states "mapping/drive-row-names-pursue-goal" "$AM" 'pursue-goal'
 assert_states "mapping/one-mechanism-two-registrations" "$AM" 'TWO registrations|two registrations'
 assert_states "mapping/names-claude-location" "$AM" 'settings\.json'
 assert_states "mapping/names-codex-location" "$AM" 'hooks\.json'
-assert_states "mapping/records-the-trust-caveat" "$AM" 'TRUSTED|trusted'
-assert_states "mapping/records-the-silent-skip" "$AM" 'skipped silently|silently skipped'
+assert_states "mapping/codex-skips-hook-checks" "$AM" 'skips every hook check'
 
 # Boundary: a reference naming one agent but not the other.
 ONE_SIDED=0

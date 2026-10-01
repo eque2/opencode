@@ -55,13 +55,7 @@ PG_PARSE_ACS="${GOAL_GATE_PARSE_ACS:-$PG_SELF_DIR/parse-acs.sh}"
 PG_LOOP_STATE="${GOAL_GATE_LOOP_STATE:-$PG_SELF_DIR/loop-state.sh}"
 PG_INSTALL="${GOAL_GATE_INSTALL:-$PG_SELF_DIR/install.sh}"
 PG_FOLDER_PATH="${GOAL_GATE_FOLDER_PATH:-$PG_SELF_DIR/goal-folder-path.sh}"
-PG_PROOF="${GOAL_GATE_PROOF:-$PG_SELF_DIR/proof-of-fire.sh}"
 PG_MIRROR="${GOAL_GATE_MIRROR_SPEC:-$PG_SELF_DIR/mirror-spec.sh}"
-# An explicit override is useful for hermetic fixtures and for an operator who
-# knows the registered hook lives elsewhere. Without one, proof must resolve
-# the shared runtime path via install.sh; the checkout copy is not necessarily
-# the executable the host invokes.
-PG_GATE="${GOAL_GATE_STOP:-}"
 
 PG_MARKER="${GOAL_GATE_MARKER:-.goal-gate}"
 
@@ -116,7 +110,7 @@ pg_detect_agent() {
 # Codex also discovers `.codex/hooks.json` from the project configuration
 # layer. In a linked worktree it uses the file from the main checkout, so an
 # inert worktree-local file is ignored here too. The function prints the exact
-# executable that must own the proof; a user-global proof cannot approve it.
+# registered executable.
 pg_direct_command_path() {
 	command -v python3 >/dev/null 2>&1 || return 1
 	# shellcheck disable=SC2016 # The single-quoted text is a Python program.
@@ -231,89 +225,6 @@ EOF
 	return 0
 }
 
-# pg_proof_gate — prints the exact hook executable whose proof is relevant.
-#
-# install.sh prove resolves this same path with `gate-path`. Keeping this as a
-# subprocess rather than duplicating install_gate_path prevents the two proof
-# boundaries from silently drifting when the runtime layout changes.
-pg_proof_gate() {
-	local gate
-	if [ -n "$PG_GATE" ]; then
-		printf '%s' "$PG_GATE"
-		return 0
-	fi
-	if [ ! -r "$PG_INSTALL" ]; then
-		pg_note "cannot resolve the registered gate for proof: installer is not readable at $PG_INSTALL"
-		return 1
-	fi
-	gate="$(bash "$PG_INSTALL" gate-path 2>/dev/null)" || {
-		pg_note "cannot resolve the registered gate path through $PG_INSTALL gate-path"
-		return 1
-	}
-	if [ -z "$gate" ]; then
-		pg_note "the installer returned an empty registered gate path"
-		return 1
-	fi
-	printf '%s' "$gate"
-}
-
-# pg_proof_ok <agent> — 0 when this agent has been OBSERVED to run the gate on
-# this machine, for the exact executable the host is registered to invoke.
-#
-# Registration is a claim; a fire is evidence. Under Codex the two come apart:
-# an untrusted hook is skipped silently, so a registration that is present,
-# correct and executable can govern nothing at all, and `doctor` cannot tell —
-# it says as much itself. Claude has no such trust layer, so a good registration
-# there IS the evidence and this check does not apply.
-#
-# Empty proof directory on a machine that has never run the gate is the expected
-# first-run state, not a fault. The refusal explains the one-off bootstrap.
-pg_proof_ok() {
-	local agent="${1-}" gate rc=0
-	[ "$agent" = "codex" ] || return 0
-	if [ ! -r "$PG_PROOF" ]; then
-		pg_note "cannot prove the Codex gate: proof helper is not readable at $PG_PROOF"
-		return 1
-	fi
-	gate="$(pg_proof_gate)" || return 1
-
-	GOAL_GATE_PROOF_REQUIRE_DEFINITION="${PG_REQUIRE_DEFINITION:-0}" \
-	GOAL_GATE_PROOF_REQUIRE_SCOPE="${PG_REQUIRE_SCOPE:-0}" \
-		bash "$PG_PROOF" check "$agent" "$gate" || rc=$?
-	case "$rc" in
-	0) return 0 ;;
-	4)
-		# Content drift under an unchanged registration. Codex's trust is keyed
-		# on the definition, so the observed "yes, run this" still stands and the
-		# loop may bind. Say it once; the next fire clears it.
-		pg_note "note — the gate implementation changed since it was last observed to fire. Binding anyway; the next turn-end re-records the proof."
-		return 0
-		;;
-	2)
-		pg_note "the gate has fired under Codex on this machine before, but the REGISTRATION has moved since."
-		if [ "${PG_REQUIRE_DEFINITION:-0}" = "1" ]; then
-			pg_note "Codex trusts a specific command. Open /hooks and trust the project Stop hook."
-			pg_note "End this turn so that hook fires. Then run pursue-goal again."
-		else
-			pg_note "Codex trusts a specific command; let the new one fire once, then check again:"
-			pg_note "  bash $PG_INSTALL prove codex"
-		fi
-		;;
-	*)
-		pg_note "the gate has never been observed to fire under Codex on this machine."
-		pg_note "Codex SILENTLY SKIPS a hook it does not trust — it exits 0 and says nothing — so a"
-		pg_note "registration alone is not evidence the gate runs."
-		if [ "${PG_REQUIRE_DEFINITION:-0}" = "1" ]; then
-			pg_note "Open /hooks and trust the project Stop hook. End this turn, then run pursue-goal again."
-		else
-			pg_note "Prove it once:"
-			pg_note "  bash $PG_INSTALL prove codex"
-		fi
-		;;
-	esac
-	return 1
-}
-
 # pg_require_mirrored_spec <folder> — the workstream's documents live in the
 # workstream's folder.
 #
@@ -370,38 +281,23 @@ pg_require_mirrored_spec() {
 # command is missing or non-executable is present in config and completely
 # inert, which is precisely the state this refusal exists to catch.
 #
-# Under Codex it is NOT sufficient: see pg_proof_ok. Registration is checked
-# first so the operator fixes the simpler problem first.
+# Codex never reaches this check: see the Codex branch in pg_main.
 pg_registration_ok() {
-	local agent="$1" project_gate=""
+	local agent="$1"
 
 	# A project-scoped registration governs this tree regardless of what the
 	# user-global configuration says — but only for the agent that reads it.
-	project_gate="$(pg_project_registration "$agent" "${2-}")" || project_gate=""
-	if [ -n "$project_gate" ]; then
-		PG_GATE="$project_gate" PG_REQUIRE_DEFINITION=1 PG_REQUIRE_SCOPE=1 \
-			pg_proof_ok "$agent" || return 1
-		return 0
-	fi
+	[ -n "$(pg_project_registration "$agent" "${2-}")" ] && return 0
 
 	if [ "$agent" = "unknown" ]; then
 		# An unidentified host is not a licence to guess. Both agents must be
-		# registered before we will start a loop we cannot attribute — and a
-		# Claude project file cannot answer for the one we could not identify.
-		local a ok=1
-		for a in claude codex; do
-			bash "$PG_INSTALL" doctor "$a" >/dev/null 2>&1 || ok=0
-		done
-		# The host we could not name may well BE Codex, so it must clear Codex's
-		# bar too. Guessing generously here is how an unproven gate gets a pass.
-		if [ "$ok" -eq 1 ] && ! pg_proof_ok codex; then
-			ok=0
-		fi
-		return $((1 - ok))
+		# registered before we will start a loop we cannot attribute.
+		bash "$PG_INSTALL" doctor claude >/dev/null 2>&1 &&
+			bash "$PG_INSTALL" doctor codex >/dev/null 2>&1
+		return
 	fi
 
-	bash "$PG_INSTALL" doctor "$agent" >/dev/null 2>&1 || return 1
-	pg_proof_ok "$agent"
+	bash "$PG_INSTALL" doctor "$agent" >/dev/null 2>&1
 }
 
 # --- resolving the folder from whatever the caller typed --------------------
@@ -600,7 +496,13 @@ pg_main() {
 		pg_provision_worktree "$anchor" || true
 	fi
 
-	if [ "${GOAL_GATE_SKIP_REGISTRATION_CHECK-}" != "1" ]; then
+	# ponytail: Codex skips every hook check. Codex cloud lets an agent write
+	# .codex/hooks.json, but it offers no way to trust the hook (no /hooks
+	# review), and Codex silently skips an untrusted hook. So proof-of-fire can
+	# never pass there, and requiring it only made agents burn turns trying.
+	# Under Codex the agent drives the criteria to done itself; a gate that
+	# does fire still claims the loop state at its first turn end.
+	if [ "$agent" != "codex" ] && [ "${GOAL_GATE_SKIP_REGISTRATION_CHECK-}" != "1" ]; then
 		if ! pg_registration_ok "$agent" "$anchor"; then
 			pg_die 6 "the goal-gate stop hook is not registered (or is registered but cannot run) for agent '$agent', in this project or user-globally. Refusing to start: without the gate, this would drive the folder to completion with nothing checking it. Install it first, then re-run." || return
 		fi
@@ -824,6 +726,10 @@ pg_start_locked() {
 	printf 'goal_folder=%s\n' "$folder"
 	printf 'acs_path=%s\n' "$acs"
 	printf 'agent=%s\n' "$agent"
+	if [ "$agent" = "codex" ]; then
+		pg_note "loop state written. Continue in Codex now: work the outstanding criteria in this turn, and do not end it to wait for a gate. Do not register, trust, or prove the Stop hook."
+		return 0
+	fi
 	pg_note "loop state written and UNCLAIMED. End this one bootstrap turn without further work so the gate can claim it. Once claimed, do not yield for ordinary waits: hard-wait/poll background work inside the active turn."
 }
 
