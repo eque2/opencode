@@ -273,7 +273,10 @@ withMcp.effect("logs each MCP tool call with its outcome and without its argumen
 
     const calls = records.filter((record) => record.annotations.category === "mcp.tool")
     expect(calls.map((record) => record.level)).toEqual(["Info", "Warn"])
-    const fields = { server: "weather", sessionID, durationMs: 0 }
+    // The clock is live, so a slow run takes a few milliseconds.
+    const fields = { server: "weather", sessionID, durationMs: expect.any(Number) }
+    for (const call of calls)
+      expect((call.message as [string, { durationMs: number }])[1].durationMs).toBeGreaterThanOrEqual(0)
     expect(calls[0]?.message).toEqual([
       "MCP tool call",
       { ...fields, tool: "weather_current", callID: "call-weather_current", outcome: "ok" },
