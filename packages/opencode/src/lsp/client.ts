@@ -203,10 +203,12 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
   )
   // Server stderr goes to Datadog only, one short record per chunk, so the file log does not grow with it. The text
   // travels under `output`, a content key, because language servers print paths and source: the sink omits it by
-  // default and sends it only when the content policy is `full`.
+  // default and sends it only when the content policy is `full`. A chatty or crash-looping server writes one chunk
+  // after another, so the records are Debug: the default Info sink level drops them, and OPENCODE_DATADOG_LOG_LEVEL
+  // =Debug brings them back while debugging a server.
   input.server.process.stderr?.on("data", (chunk: Buffer) => {
     Effect.runFork(
-      Telemetry.record("Info", "LSP stderr", {
+      Telemetry.record("Debug", "LSP stderr", {
         category: "lsp.stderr",
         serverID: input.serverID,
         bytes: chunk.length,
