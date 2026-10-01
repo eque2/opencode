@@ -174,6 +174,8 @@ test("a bridged span runs its methods on the inner span, so #private fields work
   const span = Telemetry.bridge(inner).span({} as never)
   span.attribute("tool", "read")
   expect((span as unknown as Branded).size).toBe(1)
+  // Bound once per span, not on every access.
+  expect(span.attribute).toBe(span.attribute)
 })
 
 test("closing one sink leaves the other sinks open", async () => {
