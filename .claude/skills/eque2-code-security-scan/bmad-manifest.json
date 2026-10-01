@@ -1,0 +1,20 @@
+{
+  "module-code": "eque2-code",
+  "workflow-name": "security-scan",
+  "menu-code": "SS",
+  "description": "Audit the repository against a 50-check security checklist and write a ranked report plus a remediation plan for plan-goal. Read-only; never executes the plan.",
+  "supports-headless": true,
+  "phase-name": "anytime",
+  "after": [],
+  "before": ["eque2-code-plan-goal:plan-goal"],
+  "is-required": false,
+  "output-location": "{output_folder}/security-scans",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "{output_folder}/security-scans",
+      "files": ["<YYYY-MM-DD>/scope.md", "<YYYY-MM-DD>/findings.json", "<YYYY-MM-DD>/report.md", "<YYYY-MM-DD>/remediation-plan.md"]
+    }
+  }
+}

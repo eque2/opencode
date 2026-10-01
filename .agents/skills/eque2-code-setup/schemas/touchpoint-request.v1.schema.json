@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "task_id",
+    "task_description",
+    "reason",
+    "attempts",
+    "recent_attempts",
+    "options"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "task_description": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "attempts": {
+      "type": "number"
+    },
+    "recent_attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "number",
+          "approach",
+          "result"
+        ],
+        "properties": {
+          "number": {
+            "type": "number"
+          },
+          "approach": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "success",
+              "failure",
+              "partial"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "action",
+          "description"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "touchpoint_type": {
+      "type": "string",
+      "enum": [
+        "max_retries",
+        "evidence_review",
+        "cascade_escalation",
+        "semantic_uncertainty"
+      ]
+    },
+    "evidence_context": {
+      "type": "object",
+      "required": [
+        "entity_id",
+        "entity_type",
+        "trust_level"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "entity_type": {
+          "type": "string",
+          "enum": [
+            "task",
+            "scenario"
+          ]
+        },
+        "trust_level": {
+          "type": "string",
+          "enum": [
+            "untrusted",
+            "pending_review",
+            "verified",
+            "trusted",
+            "suspect"
+          ]
+        },
+        "screenshot_path": {
+          "type": "string"
+        },
+        "trace_path": {
+          "type": "string"
+        },
+        "invalidated_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "cascade_context": {
+      "type": "object",
+      "required": [
+        "source_scenario_id",
+        "source_scenario_name",
+        "cascade_depth",
+        "max_depth",
+        "tasks_to_invalidate"
+      ],
+      "properties": {
+        "source_scenario_id": {
+          "type": "string"
+        },
+        "source_scenario_name": {
+          "type": "string"
+        },
+        "cascade_depth": {
+          "type": "number"
+        },
+        "max_depth": {
+          "type": "number"
+        },
+        "tasks_to_invalidate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "root_cause_analysis": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

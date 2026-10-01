@@ -1,0 +1,139 @@
+name: AI-Powered PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write # Required for workflow operations
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read # handle-errors reads the failed job's log to quote its error
+
+env:
+  ENABLE_JIRA_INTEGRATION: 'false' # Enable / disable Jira integration
+  AUTO_RESOLVE_ON_FIXED: 'true' # Resolve the conversation when subsequent commits fix an issue
+
+jobs:
+  setup-config:
+    runs-on: ubuntu-latest
+    outputs:
+      auto_resolve_enabled: ${{ steps.config.outputs.auto_resolve_enabled }}
+      jira_enabled: ${{ steps.config.outputs.jira_enabled }}
+    steps:
+      - name: Set configuration outputs
+        id: config
+        run: |
+          echo "auto_resolve_enabled=${{ env.AUTO_RESOLVE_ON_FIXED }}" >> $GITHUB_OUTPUT
+          echo "jira_enabled=${{ env.ENABLE_JIRA_INTEGRATION }}" >> $GITHUB_OUTPUT
+
+  extract-pr-info:
+    runs-on: ubuntu-latest
+    outputs:
+      jira_tickets: ${{ steps.pr-info.outputs.jira_ticket }}
+      pr_number: ${{ steps.pr-info.outputs.pr_number }}
+      pr_title: ${{ steps.pr-info.outputs.pr_title }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # A failure comment from an earlier run is stale once a new run starts;
+      # handle-errors posts a fresh one if this run fails too.
+      - name: Delete previous failure comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deleteComments = require('${{ github.workspace }}/.github/scripts/delete-comments.js');
+            await deleteComments({ github, context, marker: '<!-- ai-workflow:pr-review-failed -->', prNumber: context.payload.pull_request.number });
+
+      - name: Extract PR information
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const extractPRInfo = require('${{ github.workspace }}/.github/scripts/extract-pr-info.js');
+            await extractPRInfo({ context, core });
+
+  jira-verification:
+    needs: [setup-config, extract-pr-info]
+    if: needs.setup-config.outputs.jira_enabled == 'true' && needs.extract-pr-info.outputs.jira_tickets != '' && github.event.repository.private
+    uses: ./.github/workflows/jira-verification.yml
+    secrets:
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      pr_number: ${{ fromJSON(needs.extract-pr-info.outputs.pr_number) }}
+      jira_tickets: ${{ needs.extract-pr-info.outputs.jira_tickets }}
+
+  code-review:
+    needs: [setup-config, extract-pr-info]
+    uses: ./.github/workflows/code-review.yml
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      pr_number: ${{ fromJSON(needs.extract-pr-info.outputs.pr_number) }}
+      auto_resolve_enabled: ${{ needs.setup-config.outputs.auto_resolve_enabled == 'true' }}
+
+  handle-errors:
+    needs: [setup-config, extract-pr-info, jira-verification, code-review]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post error comment
+        uses: actions/github-script@v7
+        env:
+          HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          JIRA_ENABLED: ${{ needs.setup-config.outputs.jira_enabled }}
+        with:
+          script: |
+            const prNumber = context.payload.pull_request?.number;
+            if (!prNumber) return;
+
+            // Name the job and step that failed, and quote the first error line
+            // from its log, instead of guessing at a cause.
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.runId, attempt_number: context.runAttempt,
+            });
+            const failed = jobs.filter(j => j.conclusion === 'failure');
+            const authPattern = /\b401\b|unauthori[sz]ed|authentication (failed|error)|invalid (api key|oauth token|x-api-key)|OAuth token (has )?expired/i;
+            let authFailure = false;
+            const lines = [];
+            for (const job of failed) {
+              const step = job.steps?.find(s => s.conclusion === 'failure')?.name ?? 'unknown step';
+              let firstError = '';
+              try {
+                const log = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner, repo: context.repo.repo, job_id: job.id,
+                });
+                // Match only error lines: the Claude job log also holds the code
+                // under review, where "401" or "unauthorized" means nothing.
+                const errorLines = String(log.data).split('\n').filter(l => /##\[error\]|Error:|error:/.test(l));
+                if (errorLines.some(l => authPattern.test(l))) authFailure = true;
+                firstError = (errorLines[0] ?? '')
+                  .replace(/^\S+Z\s+/, '').replace('##[error]', '').trim().slice(0, 300);
+              } catch (e) {
+                firstError = `(could not read the job log: ${e.message})`;
+              }
+              lines.push(`- **${job.name}** failed at step **${step}**` + (firstError ? `\n  \`\`\`\n  ${firstError}\n  \`\`\`` : ''));
+            }
+
+            let body = '<!-- ai-workflow:pr-review-failed -->\n## ⚠️ PR Review Failed\n\n';
+            body += lines.length ? lines.join('\n') + '\n' : 'A job failed, but the run lists no failed job. See the workflow logs.\n';
+
+            if (process.env.HAS_CLAUDE_TOKEN !== 'true') {
+              body += '\n**The `CLAUDE_CODE_OAUTH_TOKEN` secret is not set.** Create it with `claude setup-token` and add it as a repository secret.\n';
+            } else if (authFailure) {
+              body += '\n**The log shows an authentication error.** `CLAUDE_CODE_OAUTH_TOKEN` may have expired; create a new one with `claude setup-token`.\n';
+            }
+            if (process.env.JIRA_ENABLED === 'true' && failed.some(j => /jira/i.test(j.name))) {
+              body += '\nJira verification needs the `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets.\n';
+            }
+            body += `\n[View workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body,
+            });

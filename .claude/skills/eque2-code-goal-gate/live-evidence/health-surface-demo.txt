@@ -1,0 +1,16 @@
+Health-surface demonstration (S32, T4.3)
+Command: cancel.sh status
+Elapsed: 0s (budget: 60s)
+
+goal-gate: gate directory: /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/tmp.e01S6jQgVk/tree/.goal-gate
+goal-gate: workstream: _anon-c8f15661c8e535f1.state
+goal-gate: status: active   iteration: 0
+goal-gate: goal folder: /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/tmp.e01S6jQgVk/tree/X.goal
+goal-gate: criteria: /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/tmp.e01S6jQgVk/tree/X.goal/ACs.md
+goal-gate: last evaluation: none yet — the gate has not evaluated this loop.
+goal-gate: run log: /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/tmp.e01S6jQgVk/tree/X.goal/run-log.jsonl
+goal-gate: recent decisions (newest last):
+  1  refused  2 outstanding
+  2  refused  2 outstanding
+  3  refused  1 outstanding
+goal-gate: UNCLAIMED — written by pursue-goal, not yet picked up by the gate.
