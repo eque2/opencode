@@ -14,7 +14,7 @@ import {
   References,
   Schema,
 } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -626,12 +626,16 @@ test("AC-6b a batch interrupted mid-send goes out in the final flush", async () 
 }, 30_000)
 
 test("AC-6b a request the intake never answers times out and trips the breaker", async () => {
-  const target = intake(Array.from({ length: 4 }, () => ({ status: 202, delay: 60_000 })))
-  using _ = target.server
+  // A client that never answers: no socket and no real time, so only TestClock moves the attempts.
+  const attempts: Array<string> = []
+  const stalled = HttpClient.make((request) => {
+    attempts.push(request.url)
+    return Effect.never
+  })
   const config = required(
     await settings({
       DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_LOGS_URL: "http://intake.test/api/v2/logs",
       OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
     }),
   )
@@ -650,13 +654,16 @@ test("AC-6b a request the intake never answers times out and trips the breaker",
       ["12 seconds", 4],
     ] as const) {
       yield* TestClock.adjust(wait)
-      yield* Effect.promise(() => until(() => target.requests.length >= count))
-      yield* Effect.promise(() => Bun.sleep(50))
+      expect(attempts).toHaveLength(count)
     }
+    expect(warned.messages).toEqual([])
     yield* TestClock.adjust("10 seconds")
-    yield* Effect.promise(() => until(() => warned.messages.length >= 1))
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
-  expect(target.requests).toHaveLength(4)
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, stalled))),
+    Effect.runPromise,
+  )
+  expect(attempts).toHaveLength(4)
   expect(warned.messages).toHaveLength(1)
   expect(warned.messages[0]).toMatch(/^Datadog sink disabled for the cooldown \{"cooldownSeconds":60,"error":".+"\}$/)
 }, 30_000)
