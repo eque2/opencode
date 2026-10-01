@@ -408,7 +408,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
       const batch = MutableList.takeAll(buffer)
       return Effect.forEach(
         chunks(batch),
-        (chunk) => Effect.flatMap(isOpen, (open) => (open ? Effect.void : each(chunk))),
+        (chunk) => Effect.flatMap(isOpen, (tripped) => (tripped ? Effect.void : each(chunk))),
         { discard: true },
       )
     })
