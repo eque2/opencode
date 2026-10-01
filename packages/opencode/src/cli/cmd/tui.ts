@@ -1,4 +1,5 @@
 import { Config, Effect, Option, Result, Schema } from "effect"
+import { exitProcess } from "../exit"
 import { cmd } from "@/cli/cmd/cmd"
 import { Rpc } from "@/util/rpc"
 import { type rpc } from "../tui/worker"
@@ -286,10 +287,7 @@ export const TuiThreadCommand = cmd({
               // Rpc calls resolve only; a worker that does not answer the shutdown in 5 seconds is terminated.
               const stop = Effect.gen(function* () {
                 yield* Effect.sync(() => process.off("SIGUSR2", reload))
-                yield* client.call("shutdown").pipe(
-                  Effect.timeout("5 seconds"),
-                  Effect.ignore,
-                )
+                yield* client.call("shutdown").pipe(Effect.timeout("5 seconds"), Effect.ignore)
                 yield* Effect.sync(() => worker.terminate())
               })
 
@@ -361,7 +359,7 @@ export const TuiThreadCommand = cmd({
           // A failing Ctrl+C guard release is ignored, as the former empty catch did.
           (unguard) => Effect.try(() => unguard?.()).pipe(Effect.ignore),
         )
-        if (completed) yield* Effect.sync((): void => process.exit())
+        if (completed) yield* exitProcess()
       }),
     ),
 })

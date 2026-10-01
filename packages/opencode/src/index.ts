@@ -1,4 +1,5 @@
 import yargs from "yargs"
+import { exitProcess } from "./cli/exit"
 import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
 import { GenerateCommand } from "./cli/cmd/generate"
@@ -30,7 +31,6 @@ import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { Cause, Effect, Option } from "effect"
-import { Datadog } from "@opencode-ai/core/observability/datadog"
 import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 
 const args = hideBin(process.argv)
@@ -168,15 +168,7 @@ Effect.runFork(
     // Most notably, some docker-container-based MCP servers don't handle such signals unless
     // run using `docker run --init`.
     // Explicitly exit to avoid any hanging subprocesses.
-    // process.exit() skips the runtime finalizers, so the log sinks send their last batch first.
-    Effect.ensuring(
-      Datadog.flushAll.pipe(
-        Effect.andThen(
-          Effect.sync((): void => {
-            process.exit()
-          }),
-        ),
-      ),
-    ),
+    // process.exit() skips the runtime finalizers, so exitProcess sends the log sinks' last batch first.
+    Effect.ensuring(exitProcess()),
   ),
 )
