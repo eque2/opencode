@@ -14,7 +14,7 @@ import {
   References,
   Schema,
 } from "effect"
-import { FetchHttpClient, HttpClient } from "effect/unstable/http"
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -50,6 +50,28 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
   })
   return { requests, server, url: server.url.href }
 }
+
+// An in-memory intake for TestClock tests: no socket and no real time, so a test can assert right after each
+// TestClock.adjust. Replies with the queued statuses in order, then 202. `refuse` fails each request like a refused
+// connection instead.
+function stub(statuses: Array<{ status: number; headers?: Record<string, string> }> = [], refuse = false) {
+  const requests: Array<{ body: Array<Record<string, any>> }> = []
+  const client = HttpClient.make((request) => {
+    const raw = (request.body as HttpBody.Uint8Array).body
+    requests.push({ body: JSON.parse(new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(raw)))) })
+    if (refuse)
+      return Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, description: "connection refused" }),
+        }),
+      )
+    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, statuses.shift() ?? { status: 202 })))
+  })
+  return { requests, layer: Layer.succeed(HttpClient.HttpClient, client) }
+}
+
+const stubbed = (env: Record<string, string>) =>
+  settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: "http://intake.test/api/v2/logs", ...env }).then(required)
 
 const settings = (env: Record<string, string>) =>
   Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))), Effect.runPromise)
@@ -425,15 +447,8 @@ test("AC-7b an entry whose attributes pass 1,000,000 bytes keeps only its standa
 // Sends one record that gets a 429 with the given Retry-After, under TestClock. Returns the request count after
 // `before` of virtual time, then after `after` more.
 async function retryGap(retryAfter: (now: number) => string, before: Duration.Input, after: Duration.Input) {
-  const target = intake([{ status: 429, headers: { "Retry-After": retryAfter(1_000) } }])
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
-    }),
-  )
+  const target = stub([{ status: 429, headers: { "Retry-After": retryAfter(1_000) } }])
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" })
   return await Effect.gen(function* () {
     const logger = yield* Datadog.logger(config)
     yield* Effect.logInfo("limited").pipe(
@@ -441,16 +456,12 @@ async function retryGap(retryAfter: (now: number) => string, before: Duration.In
       Effect.provide(Logger.layer([logger])),
     )
     yield* TestClock.adjust("1 second")
-    yield* Effect.promise(() => until(() => target.requests.length >= 1))
-    // Let the client read the response and start its wait before virtual time moves.
-    yield* Effect.promise(() => Bun.sleep(100))
+    expect(target.requests).toHaveLength(1)
     yield* TestClock.adjust(before)
-    yield* Effect.promise(() => Bun.sleep(200))
     const early = target.requests.length
     yield* TestClock.adjust(after)
-    yield* Effect.promise(() => until(() => target.requests.length >= 2, 3_000))
     return [early, target.requests.length]
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
 }
 
 test("AC-5b an HTTP-date Retry-After is honoured", async () => {
@@ -468,11 +479,18 @@ test("AC-5b a Retry-After of -1 falls back to the exponential backoff", async ()
 
 test("AC-5b 400, 401, 403 and 413 drop the batch with no retry", async () => {
   for (const status of [400, 401, 403, 413]) {
-    const target = intake([{ status }])
-    using _ = target.server
-    const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
-    await ship(config, Effect.logInfo("rejected").pipe(Effect.annotateLogs({ category: "llm.request" })))
-    await Bun.sleep(700)
+    const target = stub([{ status }])
+    const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" })
+    await Effect.gen(function* () {
+      const logger = yield* Datadog.logger(config)
+      yield* Effect.logInfo("rejected").pipe(
+        Effect.annotateLogs({ category: "llm.request" }),
+        Effect.provide(Logger.layer([logger])),
+      )
+      yield* TestClock.adjust("1 second")
+      // Past every backoff and Retry-After cap, so a retry would have happened by now.
+      yield* TestClock.adjust("1 minute")
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
     expect([status, target.requests.length]).toEqual([status, 1])
   }
 })
@@ -491,17 +509,9 @@ function warnings() {
 }
 
 test("AC-6b the default cooldown sends nothing at 59 seconds and sends again after 60 seconds", async () => {
-  const target = intake(Array.from({ length: 4 }, () => ({ status: 503 })))
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
-    }),
-  )
+  const target = stub(Array.from({ length: 4 }, () => ({ status: 503 })))
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" })
   const warned = warnings()
-  const settle = () => Effect.promise(() => Bun.sleep(100))
   await Effect.gen(function* () {
     const datadog = yield* Datadog.logger(config)
     const log = (message: string) =>
@@ -518,19 +528,17 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
       ["2 seconds", 4],
     ] as const) {
       yield* TestClock.adjust(wait)
-      yield* Effect.promise(() => until(() => target.requests.length >= count))
-      yield* settle()
+      expect(target.requests).toHaveLength(count)
     }
     expect(warned.messages).toEqual(['Datadog sink disabled for the cooldown {"cooldownSeconds":60,"status":503}'])
     yield* log("second")
     yield* TestClock.adjust("59 seconds")
-    yield* settle()
     expect(target.requests.length).toBe(4)
     yield* TestClock.adjust("1 second")
     yield* log("third")
     yield* TestClock.adjust("1 second")
-    yield* Effect.promise(() => until(() => target.requests.length >= 5))
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
+    expect(target.requests).toHaveLength(5)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
   expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
   expect(warned.messages).toHaveLength(1)
   expect(JSON.stringify(target.requests.map((request) => request.body))).not.toContain("Datadog sink disabled")
@@ -577,14 +585,8 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 warns 
 }, 30_000)
 
 test("AC-6b a transport error names its cause in the breaker warning", async () => {
-  // Nothing listens on port 1, so every attempt fails before a response.
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: "http://127.0.0.1:1/api/v2/logs",
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
-    }),
-  )
+  const target = stub([], true)
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" })
   const warned = warnings()
   await Effect.gen(function* () {
     const datadog = yield* Datadog.logger(config)
@@ -592,11 +594,9 @@ test("AC-6b a transport error names its cause in the breaker warning", async () 
       Effect.annotateLogs({ category: "llm.request" }),
       Effect.provide(Logger.layer([datadog, warned.logger])),
     )
-    for (const wait of ["1 second", "500 millis", "1 second", "2 seconds"] as const) {
-      yield* TestClock.adjust(wait)
-      yield* Effect.promise(() => Bun.sleep(100))
-    }
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
+    for (const wait of ["1 second", "500 millis", "1 second", "2 seconds"] as const) yield* TestClock.adjust(wait)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
+  expect(target.requests).toHaveLength(4)
   expect(warned.messages).toHaveLength(1)
   expect(warned.messages[0]).toMatch(/^Datadog sink disabled for the cooldown \{"cooldownSeconds":60,"error":".+"\}$/)
 }, 30_000)
