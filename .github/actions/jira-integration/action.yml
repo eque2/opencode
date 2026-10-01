@@ -51,7 +51,6 @@ runs:
         JIRA_EMAIL: ${{ inputs.jira_email }}
         JIRA_API_TOKEN: ${{ inputs.jira_api_token }}
         JIRA_TICKETS: ${{ inputs.jira_tickets }}
-      continue-on-error: true
 
     - name: Find previous Jira verification comment
       id: find-comment
