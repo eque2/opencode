@@ -285,9 +285,10 @@ withMcp.effect("logs each MCP tool call with its outcome and without its argumen
         tool: "weather_broken",
         callID: "call-weather_broken",
         outcome: "failed",
-        error: { message: "upstream down" },
+        errorType: "McpCatalogError",
       },
     ])
+    expect(JSON.stringify(calls[1]?.message)).not.toContain("upstream down")
     expect(JSON.stringify(calls)).not.toMatch(/Paris|sunny/)
   }),
 )

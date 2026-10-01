@@ -584,7 +584,14 @@ function logMcpCall(
     if (Exit.isSuccess(exit)) return Effect.logInfo("MCP tool call", { ...fields, outcome: "ok" })
     if (Cause.hasInterruptsOnly(exit.cause))
       return Effect.logInfo("MCP tool call", { ...fields, outcome: "interrupted" })
-    return Effect.logWarning("MCP tool call", { ...fields, outcome: "failed", error: Cause.squash(exit.cause) })
+    // A failed MCP result puts the tool's text in the error message, so only the error type is logged.
+    const error = Cause.squash(exit.cause)
+    const errorType = Predicate.hasProperty(error, "_tag")
+      ? String(error._tag)
+      : error instanceof Error
+        ? error.name
+        : typeof error
+    return Effect.logWarning("MCP tool call", { ...fields, outcome: "failed", errorType })
   }).pipe(Effect.annotateLogs({ category: "mcp.tool" }))
 }
 
