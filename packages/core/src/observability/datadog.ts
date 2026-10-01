@@ -428,19 +428,21 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
     Effect.suspend(() => {
       const batch = MutableList.takeAll(buffer)
-      // `chunks` keeps every record in order, so a count of finished records marks where the rest starts.
-      let done = 0
+      // The records not yet handled. Each finished chunk takes its records off the front, so this loop must stay
+      // sequential: `chunks` keeps the batch order, and concurrency would take the wrong records.
+      const pending = MutableList.make<Fitted>()
+      MutableList.appendAll(pending, batch)
       return Effect.forEach(
         chunks(batch),
         (chunk) =>
           Effect.flatMap(isOpen, (tripped) => (tripped ? Effect.void : each(chunk))).pipe(
-            Effect.andThen(Effect.sync(() => (done += chunk.length))),
+            Effect.andThen(Effect.sync(() => MutableList.takeNVoid(pending, chunk.length))),
           ),
         { discard: true },
       ).pipe(
         Effect.onInterrupt(() =>
           Effect.sync(() => {
-            MutableList.prependAll(buffer, batch.slice(done))
+            MutableList.prependAll(buffer, MutableList.takeAll(pending))
             while (buffer.length > MAX_BUFFER) MutableList.take(buffer)
           }),
         ),
