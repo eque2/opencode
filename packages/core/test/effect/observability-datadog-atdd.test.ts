@@ -1,5 +1,5 @@
 // Acceptance tests for the Datadog log sink.
-// Each leaf maps to exactly one AC. Remove `test.skip` (and any `@ts-expect-error`) when its AC lands.
+// Each test maps to exactly one AC, and every AC is implemented.
 import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
 import {
