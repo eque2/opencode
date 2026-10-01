@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.62.4 — 2026-09-30
+
+- fix: Codex agents no longer raise the Stop hook as a problem. `pursue-goal` now gives the real reason it skips the hook check under Codex: cloud Codex can write `.codex/hooks.json` but has no way to trust the hook, so the hook never fires. It calls this a known Codex limit, not a defect to diagnose or report. The v0.62.3 note that said the configuration directory is read-only was wrong.
+- fix: setup reports a Codex `pending-trust` hook audit as normal, in one line. It no longer asks the user to restart Codex, trust the hook in `/hooks`, let it fire, and rerun setup.
+- fix: the `pursue-goal` starter tells a Codex agent to continue once, not twice.
+
+## v0.62.3 — 2026-09-30
+
+- fix: `pursue-goal` no longer asks Codex to prove its Stop hook. In Codex cloud the configuration directory is read-only, so the hook could never be registered or trusted, and goals stalled while the agent chased the proof. Under Codex the starter now skips every hook check, writes the loop state, and tells the agent to keep working in the same turn. Claude Code keeps its registration check.
+- docs: the `pursue-goal`, setup, and agent-mapping instructions now say to run the starter with `GOAL_GATE_AGENT=codex` and never to register, trust, or prove the Codex hook.
+
+## v0.62.2 — 2026-09-30
+
+- fix: a PR review that GitHub rejected no longer ends green. When the batched review cannot be posted (for example HTTP 422 "Path could not be resolved"), Claude posts every finding in one fallback comment, and a new "Verify the review was posted" step fails the job with the API error. The step also fails the job if Claude finishes without posting a summary at all. (#5)
+- fix: on a PR with more than 3,000 changed files, inline comments go only on files GitHub can attach them to; findings on the rest go in the summary with full detail, instead of the whole review being rejected. (#5)
+- fix: the "PR Review Failed" comment names the job and step that failed and quotes the first error line. It mentions `CLAUDE_CODE_OAUTH_TOKEN` only when the secret is missing or the log shows an authentication error, and a stale failure comment is removed when the next run starts. The workflow now needs `actions: read` to read the failed job's log. (#5)
+
+Re-run `/eque2-code-setup` to pick these up; workflow files you have edited are kept, and setup lists them.
+
+## v0.62.1 — 2026-09-30
+
+- fix: the PR-review workflow installed by `/eque2-code-setup` failed in repositories whose root `package.json` sets `"type": "module"` — Node loaded the `.github/scripts/*.js` helpers as ES modules, `extract-pr-info` failed with "module is not defined in ES module scope", and the review never started. Setup now also installs `.github/scripts/package.json` (`{ "type": "commonjs" }`), so the review runs whatever the repository's module type. Re-run `/eque2-code-setup` to pick it up; if you added that file by hand, setup leaves yours in place. (#4)
+
 ## v0.62.0 — 2026-09-30
 
 - feat: add `[SS]` security scan (`eque2-code-security-scan`). It audits the repository against 50 checks in seven categories — secrets hygiene, auth and access, input and data, AI and agents, failure handling, supply chain and CI, and transport headers — built from a 30-item practitioner checklist extended with OWASP Top 10:2025, API Top 10, LLM Top 10, ASVS 5.0, and GitHub Actions hardening guidance. Findings carry a severity banded to CVSS v4.0 and a confidence; low-confidence findings go to an appendix. Checks code cannot prove (key rotation, spending caps, restore tests) are asked of the owner, or left as needing attestation in `--headless` runs. Writes `report.md`, `remediation-plan.md` (a ready brief for `[PL]`), and `findings.json` to `{output_folder}/security-scans/<date>/`, and marks each finding new, still open, regressed, or resolved against the previous scan. Read-only: it never changes code and never executes its plan.
