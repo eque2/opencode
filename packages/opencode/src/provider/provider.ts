@@ -45,6 +45,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
 
@@ -59,9 +60,7 @@ const passThrough = <A>(evaluate: () => PromiseLike<A>) =>
 // Runs an Effect for a Promise-based caller (the AI SDK fetch, a ReadableStream source). The
 // Promise rejects with the original SDK error or failure, which the AI SDK and retry logic inspect.
 const runAtEdge = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    effect.pipe(Effect.catch((error) => Effect.die(error instanceof SdkError ? error.cause : error))),
-  )
+  Effect.runPromise(effect.pipe(Effect.catch((error) => Effect.die(error instanceof SdkError ? error.cause : error))))
 
 function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (typeof ms !== "number" || ms <= 0) return res
@@ -73,7 +72,9 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   const timedOut = Effect.suspend(() => {
     const err = new ProviderError.ResponseStreamError("SSE read timed out")
     ctl.abort(err)
-    return passThrough(() => reader.cancel(err)).pipe(
+    // Recorded first, so a cancel that rejects on an already broken stream cannot skip the record.
+    return Telemetry.record("Warn", "SSE chunk timeout", { category: "llm.timeout", timeoutMs: ms }).pipe(
+      Effect.andThen(passThrough(() => reader.cancel(err))),
       Effect.ignore,
       Effect.forkDetach,
       Effect.andThen(Effect.fail(err)),
@@ -131,7 +132,7 @@ function timeoutFetch(input: {
 
     // Bun applies its own fetch timeout unless it is disabled: https://github.com/oven-sh/bun/issues/16682
     const bunInit = { ...opts, timeout: false }
-    const fetched = passThrough(() => fetchFn(request, bunInit))
+    const fetched = passThrough(() => fetchFn(request, bunInit)).pipe(Telemetry.request("llm.request", request, opts))
     // The header timeout aborts the request signal, so the fetch itself rejects with HeaderTimeoutError.
     const response = Option.match(header, {
       onNone: () => fetched,
@@ -140,6 +141,7 @@ function timeoutFetch(input: {
           const timer = yield* Effect.forkChild(
             Effect.sleep(Duration.millis(ms)).pipe(
               Effect.andThen(Effect.sync(() => ctl.abort(new ProviderError.HeaderTimeoutError(ms)))),
+              Effect.andThen(Telemetry.record("Warn", "Header timeout", { category: "llm.timeout", timeoutMs: ms })),
             ),
           )
           return yield* fetched.pipe(Effect.ensuring(Fiber.interrupt(timer)))
@@ -229,7 +231,9 @@ function snowflakeStream(response: Response, body: ReadableStream<Uint8Array>) {
             done
               ? ctrl.close()
               : ctrl.enqueue(
-                  encoder.encode(decoder.decode(value, { stream: true }).replace(/"role"\s*:\s*""/g, '"role":"assistant"')),
+                  encoder.encode(
+                    decoder.decode(value, { stream: true }).replace(/"role"\s*:\s*""/g, '"role":"assistant"'),
+                  ),
                 ),
           ),
         ),
@@ -570,7 +574,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         },
         getModel: (sdk: any, modelID: string, options?: Record<string, any>, model?: Model) =>
           languageModel(() => {
-            if (model?.api.npm === "@ai-sdk/amazon-bedrock/mantle") return selectBedrockMantleLanguageModel(sdk, modelID)
+            if (model?.api.npm === "@ai-sdk/amazon-bedrock/mantle")
+              return selectBedrockMantleLanguageModel(sdk, modelID)
 
             // Skip region prefixing if model already has a cross-region inference profile prefix
             // Models from models.dev may already include prefixes like us., eu., global., etc.
@@ -658,7 +663,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
               }
             }
 
-  return sdk.languageModel(modelID)
+            return sdk.languageModel(modelID)
           }),
       }
     }),
@@ -913,7 +918,12 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
               ),
             ),
             // Discovery is best effort: a failed request leaves the static GitLab models.
-            Effect.orElseSucceed(() => ({})),
+            Effect.catch((error) =>
+              Effect.logWarning("GitLab model discovery failed", { error }).pipe(
+                Effect.annotateLogs({ category: "provider.discovery" }),
+                Effect.as({}),
+              ),
+            ),
           )
         },
       }
@@ -936,7 +946,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             Effect.fail(
               new LoaderError({
                 providerID: input.id,
-                message: "CLOUDFLARE_ACCOUNT_ID is missing. Set it with: export CLOUDFLARE_ACCOUNT_ID=<your-account-id>",
+                message:
+                  "CLOUDFLARE_ACCOUNT_ID is missing. Set it with: export CLOUDFLARE_ACCOUNT_ID=<your-account-id>",
               }),
             ),
         }
@@ -1024,8 +1035,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       // The gateway factory takes plain optional values, so absent metadata becomes undefined here.
       const metadata =
-        input.options?.metadata ||
-        Option.getOrUndefined(decodeJsonText(input.options?.headers?.["cf-aig-metadata"]))
+        input.options?.metadata || Option.getOrUndefined(decodeJsonText(input.options?.headers?.["cf-aig-metadata"]))
       const opts = {
         metadata,
         cacheTtl: input.options?.cacheTtl,
@@ -1080,7 +1090,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
               baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
               apiKey: apiToken,
               headers: { "cf-aig-gateway-id": gateway },
-  })(modelID)
+            })(modelID)
           }),
         options: {},
       }
@@ -1654,7 +1664,9 @@ const layer = Layer.effect(
         // now read config providers - includes any modifications from plugin config() hook
         const configProviders = Object.entries(cfg.provider ?? {})
         const disabled = HashSet.fromIterable<string>(cfg.disabled_providers ?? [])
-        const enabled = Option.map(Option.fromNullishOr(cfg.enabled_providers), (ids) => HashSet.fromIterable<string>(ids))
+        const enabled = Option.map(Option.fromNullishOr(cfg.enabled_providers), (ids) =>
+          HashSet.fromIterable<string>(ids),
+        )
 
         function isProviderAllowed(providerID: ProviderV2.ID): boolean {
           if (Option.isSome(enabled) && !HashSet.has(enabled.value, providerID)) return false
@@ -1929,6 +1941,10 @@ const layer = Layer.effect(
           }
         }
 
+        yield* Effect.logInfo("providers resolved", {
+          providers: Object.entries(providers).map(([id, provider]) => `${id}:${provider.source}`),
+          count: Object.keys(providers).length,
+        }).pipe(Effect.annotateLogs({ category: "provider.state" }))
         return {
           models: languages,
           providers,
@@ -1943,11 +1959,12 @@ const layer = Layer.effect(
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
 
     // Any failure while loading the SDK package or calling its factory is an InitError for the provider.
-    const resolveSDK = Effect.fnUntraced(function* (
+    const resolveSDK = Effect.fn("Provider.resolveSDK")(function* (
       model: Model,
       s: State,
       envs: Record<string, string | undefined>,
     ) {
+      yield* Effect.annotateCurrentSpan({ providerID: model.providerID, npm: model.api.npm })
       const initError = (cause: unknown) => new InitError({ providerID: model.providerID, cause })
       const provider = s.providers[model.providerID]
       const options = { ...provider.options }
@@ -2012,7 +2029,10 @@ const layer = Layer.effect(
       const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
       if (bundledLoader) {
         const factory = yield* Effect.tryPromise({ try: () => bundledLoader(), catch: initError })
-        const loaded = yield* Effect.try({ try: () => factory({ name: model.providerID, ...options }), catch: initError })
+        const loaded = yield* Effect.try({
+          try: () => factory({ name: model.providerID, ...options }),
+          catch: initError,
+        })
         MutableHashMap.set(s.sdk, key, loaded)
         return loaded
       }

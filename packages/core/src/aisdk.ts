@@ -18,6 +18,7 @@ import {
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
+import { Telemetry } from "./observability/telemetry"
 
 type SDK = any
 
@@ -52,6 +53,7 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   const timedOut = Effect.gen(function* () {
     const error = new ChunkTimeoutError({ message: "SSE read timed out" })
     ctl.abort(error)
+    yield* Telemetry.record("Warn", "SSE chunk timeout", { category: "llm.timeout", timeoutMs: ms })
     yield* Effect.promise(() => reader.cancel(error)).pipe(
       Effect.ignoreCause,
       Effect.forkDetach({ startImmediately: true }),
@@ -151,7 +153,7 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
         ...opts,
         timeout: false,
       }),
-    )
+    ).pipe(Telemetry.request("llm.request", input, opts))
     return Option.match(chunk, { onNone: () => res, onSome: (item) => wrapSSE(res, item.ms, item.ctl) })
   })
 

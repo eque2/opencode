@@ -194,6 +194,8 @@ export interface McpTool {
   /** Shared cached definition; consumers must copy rather than mutate it. */
   readonly def: MCPToolDef
   readonly client: MCPClient
+  /** The config key of the server that provides the tool. */
+  readonly server: string
   readonly timeout?: number
 }
 
@@ -319,7 +321,7 @@ const layer = Layer.effect(
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       let lastStatus: Status | undefined
 
-      for (const { transport } of transports) {
+      for (const { name, transport } of transports) {
         const result = yield* connectTransport(transport, connectTimeout).pipe(
           Effect.map(Option.some),
           Effect.catch((error) => {
@@ -356,10 +358,20 @@ const layer = Layer.effect(
             }
 
             lastStatus = { status: "failed" as const, error: error.message }
-            return Effect.succeed(Option.none<MCPClient>())
+            // A StreamableHTTP failure falls through to SSE, so each failed transport is logged.
+            return Effect.logWarning("MCP transport failed", {
+              server: key,
+              transport: name,
+              error: error.message,
+            }).pipe(Effect.annotateLogs({ category: "mcp.connect" }), Effect.as(Option.none<MCPClient>()))
           }),
         )
-        if (Option.isSome(result)) return { client: result, status: { status: "connected" } as Status }
+        if (Option.isSome(result)) {
+          yield* Effect.logInfo("MCP connected", { server: key, transport: name }).pipe(
+            Effect.annotateLogs({ category: "mcp.connect" }),
+          )
+          return { client: result, status: { status: "connected" } as Status }
+        }
         // If this was an auth error, stop trying other transports
         if (lastStatus?.status === "needs_auth" || lastStatus?.status === "needs_client_registration") break
       }
@@ -434,11 +446,7 @@ const layer = Layer.effect(
             defs: listed.value,
             instructions: mcpClient.getInstructions()?.trim(),
           } satisfies CreateResult
-        }).pipe(
-          Effect.catchCause((cause) =>
-            closeQuietly(mcpClient).pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-        )
+        }).pipe(Effect.catchCause((cause) => closeQuietly(mcpClient).pipe(Effect.andThen(Effect.failCause(cause)))))
       },
       Effect.map((result): CreateResult => result),
       Effect.catchCause((cause) => {
@@ -729,7 +737,7 @@ const layer = Layer.effect(
         }
         const timeout = requestTimeout(s, clientName, mcpConfig, defaultTimeout)
         for (const def of listed) {
-          result[McpCatalog.toolName(clientName, def.name)] = { def, client, timeout }
+          result[McpCatalog.toolName(clientName, def.name)] = { def, client, server: clientName, timeout }
         }
       }
       return result

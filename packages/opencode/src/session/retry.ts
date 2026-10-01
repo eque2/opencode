@@ -215,7 +215,11 @@ export function policy(opts: {
       const error = opts.parse(meta.input)
       const retry = retryable(error, opts.provider)
       if (!retry) return Cause.done(meta.attempt)
-      if (meta.attempt > RETRY_MAX_RETRIES) return Cause.done(meta.attempt)
+      if (meta.attempt > RETRY_MAX_RETRIES)
+        return Effect.logWarning("session retry gave up", { provider: opts.provider, attempts: meta.attempt }).pipe(
+          Effect.annotateLogs({ category: "session.retry" }),
+          Effect.andThen(Cause.done(meta.attempt)),
+        )
       return Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         const random = yield* Random.next
@@ -231,6 +235,11 @@ export function policy(opts: {
           action: retry.action,
           next: now + wait,
         })
+        yield* Effect.logWarning("session retry", {
+          provider: opts.provider,
+          attempt: meta.attempt,
+          delayMs: wait,
+        }).pipe(Effect.annotateLogs({ category: "session.retry" }))
         return [meta.attempt, Duration.millis(wait)] as [number, Duration.Duration]
       })
     }),

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Deferred, Effect, Exit, Option } from "effect"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
@@ -149,50 +149,100 @@ const clientFor = (directory: string) => {
   }
 }
 
+let mocking = true
+afterAll(() => {
+  mocking = false
+})
+
 beforeAll(() =>
   Effect.runPromise(
     Effect.gen(function* () {
       const rootClient = clientFor("/repo/main")
+      // Bun keeps a module mock for the rest of the process. Each mock keeps the real exports, so a later test file
+      // that imports another name from the same module still finds it.
+      const actual: Record<string, Record<string, unknown>> = Object.fromEntries(
+        yield* Effect.promise(() =>
+          Promise.all(
+            [
+              "@solidjs/router",
+              "@opencode-ai/sdk/v2/client",
+              "@opencode-ai/ui/toast",
+              "@opencode-ai/core/util/encode",
+              "@/context/server",
+              "@/context/local",
+              "@/context/permission",
+              "@/context/tabs",
+              "@/context/prompt",
+              "@/context/layout",
+              "@/context/sdk",
+              "@/context/sync",
+              "@/context/server-sync",
+              "@/context/platform",
+              "@/context/language",
+            ].map(async (path) => [path, { ...(await import(path)) }] as const),
+          ),
+        ),
+      )
+      // Every overridden function answers with the fake while this file's tests run, and with the real export after
+      // them, because the mock itself never goes away.
+      const scoped = (path: string, overrides: Record<string, unknown>) => ({
+        ...actual[path],
+        ...Object.fromEntries(
+          Object.entries(overrides).map(([key, fake]) => {
+            const real = actual[path]?.[key]
+            if (typeof fake !== "function" || typeof real !== "function") return [key, fake]
+            return [key, (...args: unknown[]) => (mocking ? fake : real)(...args)]
+          }),
+        ),
+      })
 
-      mock.module("@solidjs/router", () => ({
-        useNavigate: () => () => {},
-        useParams: () => params,
-        useLocation: () => ({}),
-        useSearchParams: () => [search, () => {}],
-      }))
+      mock.module("@solidjs/router", () =>
+        scoped("@solidjs/router", {
+          useNavigate: () => () => {},
+          useParams: () => params,
+          useLocation: () => ({}),
+          useSearchParams: () => [search, () => {}],
+        }),
+      )
 
-      mock.module("@opencode-ai/sdk/v2/client", () => ({
-        createOpencodeClient: (input: { directory: string }) => {
-          createdClients = [...createdClients, input.directory]
-          return clientFor(input.directory)
-        },
-      }))
-
-      mock.module("@opencode-ai/ui/toast", () => ({
-        Toast: { Region: () => [] },
-        showToast: () => 0,
-      }))
-
-      mock.module("@opencode-ai/core/util/encode", () => ({
-        base64Encode: (value: string) => value,
-      }))
-
-      mock.module("@/context/local", () => ({
-        useLocal: () => ({
-          model: {
-            current: () => ({ id: "model", provider: { id: "provider" } }),
-            variant: { current: () => Option.getOrUndefined(variant) },
-          },
-          agent: {
-            current: () => ({ name: "agent" }),
-          },
-          session: {
-            promote(directory: string, sessionID: string) {
-              promoted = [...promoted, { directory, sessionID }]
-            },
+      mock.module("@opencode-ai/sdk/v2/client", () =>
+        scoped("@opencode-ai/sdk/v2/client", {
+          createOpencodeClient: (input: { directory: string }) => {
+            createdClients = [...createdClients, input.directory]
+            return clientFor(input.directory)
           },
         }),
-      }))
+      )
+
+      mock.module("@opencode-ai/ui/toast", () =>
+        scoped("@opencode-ai/ui/toast", {
+          Toast: { Region: () => [] },
+          showToast: () => 0,
+        }),
+      )
+
+      mock.module("@opencode-ai/core/util/encode", () =>
+        scoped("@opencode-ai/core/util/encode", { base64Encode: (value: string) => value }),
+      )
+
+      mock.module("@/context/local", () =>
+        scoped("@/context/local", {
+          useLocal: () => ({
+            model: {
+              current: () => ({ id: "model", provider: { id: "provider" } }),
+              variant: { current: () => Option.getOrUndefined(variant) },
+            },
+            agent: {
+              current: () => ({ name: "agent" }),
+            },
+            session: {
+              promote(directory: string, sessionID: string) {
+                promoted = [...promoted, { directory, sessionID }]
+              },
+            },
+          }),
+        }),
+      )
 
       mock.module("@/context/permission", () => {
         const state = (server: string) => ({
@@ -200,116 +250,136 @@ beforeAll(() =>
             enabledAutoAccept = [...enabledAutoAccept, { server, sessionID, directory }]
           },
         })
-        return { usePermission: () => ({ currentServerState: () => state(permissionServer) }) }
+        return scoped("@/context/permission", {
+          usePermission: () => ({ currentServerState: () => state(permissionServer) }),
+        })
       })
 
-      mock.module("@/context/server", () => ({
-        useServer: () => ({ key: "server-key" }),
-      }))
-
-      mock.module("@/context/tabs", () => ({
-        useTabs: () => ({
-          draft: () => ({ server: "project-server" }),
-          promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
-            promotedDrafts = [...promotedDrafts, { draftID, ...session }]
-          },
+      mock.module("@/context/server", () =>
+        scoped("@/context/server", {
+          useServer: () => ({ key: "server-key" }),
         }),
-      }))
+      )
 
-      mock.module("@/context/prompt", () => ({
-        usePrompt: () => prompt,
-      }))
-
-      mock.module("@/context/layout", () => ({
-        useLayout: () => ({
-          handoff: {
-            setTabs: () => {},
-          },
-        }),
-      }))
-
-      mock.module("@/context/sdk", () => ({
-        useSDK: () => {
-          const sdk = {
-            scope: "local",
-            directory: "/repo/main",
-            client: rootClient,
-            api: rootClient.api,
-            url: "http://localhost:4096",
-            createClient(opts: any) {
-              return clientFor(opts.directory)
+      mock.module("@/context/tabs", () =>
+        scoped("@/context/tabs", {
+          useTabs: () => ({
+            draft: () => ({ server: "project-server" }),
+            promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
+              promotedDrafts = [...promotedDrafts, { draftID, ...session }]
             },
-          }
-          return () => sdk
-        },
-      }))
+          }),
+        }),
+      )
 
-      mock.module("@/context/sync", () => ({
-        useSync: () => () => ({
-          data: { command: commands },
-          session: {
-            optimistic: {
-              add: (value: {
-                directory?: string
-                sessionID?: string
-                message: { agent: string; model: { providerID: string; modelID: string; variant?: string } }
-              }) => {
-                optimistic = [...optimistic, value]
-                optimisticSeeded = [
-                  ...optimisticSeeded,
-                  !!value.directory &&
-                    !!value.sessionID &&
-                    !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
-                ]
+      mock.module("@/context/prompt", () =>
+        scoped("@/context/prompt", {
+          usePrompt: () => prompt,
+        }),
+      )
+
+      mock.module("@/context/layout", () =>
+        scoped("@/context/layout", {
+          useLayout: () => ({
+            handoff: {
+              setTabs: () => {},
+            },
+          }),
+        }),
+      )
+
+      mock.module("@/context/sdk", () =>
+        scoped("@/context/sdk", {
+          useSDK: () => {
+            const sdk = {
+              scope: "local",
+              directory: "/repo/main",
+              client: rootClient,
+              api: rootClient.api,
+              url: "http://localhost:4096",
+              createClient(opts: any) {
+                return clientFor(opts.directory)
               },
-              remove: () => {},
-            },
+            }
+            return () => sdk
           },
-          set: () => {},
         }),
-      }))
+      )
 
-      mock.module("@/context/server-sync", () => ({
-        useServerSync: () => () => ({
-          session: {
-            remember: () => {},
+      mock.module("@/context/sync", () =>
+        scoped("@/context/sync", {
+          useSync: () => () => ({
+            data: { command: commands },
+            session: {
+              optimistic: {
+                add: (value: {
+                  directory?: string
+                  sessionID?: string
+                  message: { agent: string; model: { providerID: string; modelID: string; variant?: string } }
+                }) => {
+                  optimistic = [...optimistic, value]
+                  optimisticSeeded = [
+                    ...optimisticSeeded,
+                    !!value.directory &&
+                      !!value.sessionID &&
+                      !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
+                  ]
+                },
+                remove: () => {},
+              },
+            },
             set: () => {},
-            sync: () =>
-              Effect.runPromise(
-                Effect.sync(() => {
-                  serverSessionSyncs++
-                }),
-              ),
-          },
-          child: (directory: string) => {
-            syncedDirectories = [...syncedDirectories, directory]
-            storedSessions[directory] ??= []
-            return [
-              { session: storedSessions[directory] },
-              (key: string, next: StoredSession[] | ((list: StoredSession[]) => StoredSession[])) => {
-                if (key !== "session") return
-                if (typeof next === "function") {
-                  storedSessions[directory] = next(storedSessions[directory] ?? [])
-                  return
-                }
-                storedSessions[directory] = next
-              },
-            ]
-          },
+          }),
         }),
-      }))
+      )
 
-      mock.module("@/context/platform", () => ({
-        usePlatform: () => ({
-          fetch: fetch,
+      mock.module("@/context/server-sync", () =>
+        scoped("@/context/server-sync", {
+          useServerSync: () => () => ({
+            session: {
+              remember: () => {},
+              set: () => {},
+              sync: () =>
+                Effect.runPromise(
+                  Effect.sync(() => {
+                    serverSessionSyncs++
+                  }),
+                ),
+            },
+            child: (directory: string) => {
+              syncedDirectories = [...syncedDirectories, directory]
+              storedSessions[directory] ??= []
+              return [
+                { session: storedSessions[directory] },
+                (key: string, next: StoredSession[] | ((list: StoredSession[]) => StoredSession[])) => {
+                  if (key !== "session") return
+                  if (typeof next === "function") {
+                    storedSessions[directory] = next(storedSessions[directory] ?? [])
+                    return
+                  }
+                  storedSessions[directory] = next
+                },
+              ]
+            },
+          }),
         }),
-      }))
+      )
 
-      mock.module("@/context/language", () => ({
-        useLanguage: () => ({
-          t: (key: string) => key,
+      mock.module("@/context/platform", () =>
+        scoped("@/context/platform", {
+          usePlatform: () => ({
+            fetch: fetch,
+          }),
         }),
-      }))
+      )
+
+      mock.module("@/context/language", () =>
+        scoped("@/context/language", {
+          useLanguage: () => ({
+            t: (key: string) => key,
+          }),
+        }),
+      )
 
       const mod = yield* Effect.promise(() => import("./submit"))
       createPromptSubmit = mod.createPromptSubmit

@@ -1,0 +1,44 @@
+name: 'Find Comment by Marker'
+description: 'Find a PR comment by HTML marker'
+inputs:
+  marker:
+    description: 'HTML marker to search for in comments'
+    required: true
+  pr_number:
+    description: 'PR number (defaults to current PR)'
+    required: false
+  github_token:
+    description: 'GitHub token'
+    required: true
+outputs:
+  comment_id:
+    description: 'ID of the found comment (empty if not found)'
+    value: ${{ steps.find.outputs.comment_id }}
+  found:
+    description: 'Whether a comment was found (true/false)'
+    value: ${{ steps.find.outputs.comment_id != '' }}
+runs:
+  using: composite
+  steps:
+    - name: Validate script exists
+      shell: bash
+      run: |
+        if [ ! -f "${{ github.workspace }}/.github/scripts/find-comment.js" ]; then
+          echo "Error: Required script .github/scripts/find-comment.js not found"
+          exit 1
+        fi
+
+    - name: Find comment
+      id: find
+      uses: actions/github-script@v8
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const findComment = require('${{ github.workspace }}/.github/scripts/find-comment.js');
+          // Use environment variables to prevent code injection
+          const marker = process.env.MARKER_INPUT;
+          const prNumber = process.env.PR_NUMBER || context.payload.pull_request.number;
+          await findComment({ github, context, core, marker, prNumber });
+      env:
+        MARKER_INPUT: ${{ inputs.marker }}
+        PR_NUMBER: ${{ inputs.pr_number }}

@@ -33,3 +33,8 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 .effect-v4-migrate-progress.json
+
+.claude/worktrees/
+.goal-gate/
+_bmad-output/
+specs/observability/

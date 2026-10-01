@@ -368,6 +368,11 @@ const retryStatusFailures = <A, R>(
   Effect.catchTag(effect, "LLM.Error", (error): Effect.Effect<A, LLMError, R> => {
     if (!error.retryable || retries <= 0) return Effect.fail(error)
     return retryDelay(error, attempt).pipe(
+      Effect.tap((delayMs) =>
+        Effect.logWarning("LLM retry", { attempt: attempt + 1, delayMs, reason: error.reason._tag }).pipe(
+          Effect.annotateLogs({ category: "llm.retry" }),
+        ),
+      ),
       Effect.flatMap((delay) => Effect.sleep(delay)),
       Effect.flatMap(() => retryStatusFailures(effect, retries - 1, attempt + 1)),
     )
@@ -380,15 +385,29 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient> = Layer.e
     const executeOnce = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.gen(function* () {
         const redactedNames = yield* Headers.CurrentRedactedNames
-        return yield* http
-          .execute(request)
-          .pipe(Effect.mapError(toHttpError(redactedNames)), Effect.flatMap(statusError(request, redactedNames)))
-      })
+        return yield* http.execute(request).pipe(
+          Effect.mapError(toHttpError(redactedNames)),
+          Effect.tap((response) => Effect.annotateCurrentSpan("http.status", response.status)),
+          Effect.flatMap(statusError(request, redactedNames)),
+          Effect.tapError((error) =>
+            Effect.annotateCurrentSpan({ "llm.reason": error.reason._tag, "llm.retryable": error.retryable }),
+          ),
+        )
+      }).pipe(
+        // One span per HTTP attempt. The URL path and query stay out, because a provider may put a key there.
+        Effect.withSpan("LLM.http", {
+          attributes: { "http.method": request.method, "http.host": hostOf(request.url) },
+        }),
+      )
     return Service.of({
       execute: (request) => retryStatusFailures(executeOnce(request)),
     })
   }),
 )
+
+function hostOf(url: string) {
+  return URL.parse(url)?.host ?? "unknown"
+}
 
 export const fetchLayer = layer.pipe(Layer.provide(FetchHttpClient.layer))
 

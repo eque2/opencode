@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Effect, Formatter, Logger, Option, Predicate, Schema, type LogLevel } from "effect"
+import { Config, ConfigProvider, Effect, Formatter, Logger, LogLevel, Option, Predicate, Schema } from "effect"
 import { constVoid } from "effect/Function"
 import path from "path"
 import { Global } from "../global"
@@ -49,11 +49,23 @@ function format(input: unknown) {
   return /^[^\s="\\]+$/.test(value) ? value : quote(value)
 }
 
-/** A file logger. Without an explicit id, each line carries the process run ID. */
-export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id?: string) {
+const defaultFile = () => path.join(Global.Path.log, "opencode.log")
+
+/**
+ * Passes only records at or above `level` to `logger`. The global minimum is the lowest level of any active sink,
+ * so each sink filters to its own level.
+ */
+export function atLevel<Message, Output>(logger: Logger.Logger<Message, Output>, level: LogLevel.LogLevel) {
+  return Logger.make<Message, void>((options) => {
+    if (LogLevel.isGreaterThanOrEqualTo(options.logLevel, level)) logger.log(options)
+  })
+}
+
+/** A file logger at `level`. Without an explicit id, each line carries the process run ID. */
+export function fileLogger(file = defaultFile(), id?: string, level: LogLevel.LogLevel = "All") {
   return Effect.flatMap(id === undefined ? runID : Effect.succeed(id), (id) =>
     // Do not set batchWindow to 0; it causes high idle CPU usage.
-    Logger.toFile(formatter(id), file, { flag: "a" }),
+    Logger.toFile(formatter(id), file, { flag: "a" }).pipe(Effect.map((logger) => atLevel(logger, level))),
   )
 }
 
@@ -99,14 +111,17 @@ export const minimumLogLevel: Effect.Effect<LogLevel.LogLevel> = Effect.suspend(
   ),
 )
 
-export function loggers() {
+/** The file logger and, with OPENCODE_PRINT_LOGS=1, the stderr logger, both at `level`. */
+export function loggers(level: LogLevel.LogLevel) {
   // The CLI sets OPENCODE_PRINT_LOGS after startup and the ambient ConfigProvider copies
   // process.env once, so read it from a fresh env provider when the logger layer builds.
   const printed = printLogs.parse(ConfigProvider.fromEnv()).pipe(
     Effect.orDie,
-    Effect.flatMap((print) => (print ? Effect.map(runID, stderrLogger) : Effect.succeed(silentLogger))),
+    Effect.flatMap((print) =>
+      print ? Effect.map(runID, (id) => atLevel(stderrLogger(id), level)) : Effect.succeed(silentLogger),
+    ),
   )
-  return [fileLogger(), printed]
+  return [Effect.flatMap(runID, (id) => fileLogger(defaultFile(), id, level)), printed]
 }
 
 export * as Logging from "./logging"

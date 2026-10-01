@@ -1,4 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 import type {
   Hooks,
   PluginInput,
@@ -22,7 +23,7 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { CerebrasPlugin } from "./cerebras"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { Array as Arr, Effect, Layer, Context, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Context, Option, Predicate, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
@@ -202,6 +203,7 @@ const layer = Layer.effect(
           hooks = Arr.append(hooks, hook)
         }
         const bridge = yield* EffectBridge.make()
+        const scope = yield* Scope.Scope
 
         function publishPluginError(message: string) {
           bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
@@ -253,15 +255,43 @@ const layer = Layer.effect(
         }
         if (plugins.length) yield* config.waitForDependencies()
 
+        // The loader reports through plain callbacks, so its records run through the bridge, with this state's
+        // services, instead of on a bare runtime.
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
             items: plugins,
             kind: "server",
             report: {
-              start() {},
-              missing() {},
-              error(candidate, _retry, stage, error) {
+              start(candidate, retry) {
+                bridge.fork(
+                  Telemetry.record("Info", "plugin load started", {
+                    category: "plugin.load",
+                    spec: candidate.plan.spec,
+                    retry,
+                  }),
+                )
+              },
+              missing(candidate, retry, message) {
+                bridge.fork(
+                  Telemetry.record("Warn", "plugin entry missing", {
+                    category: "plugin.load",
+                    spec: candidate.plan.spec,
+                    retry,
+                    reason: message,
+                  }),
+                )
+              },
+              error(candidate, retry, stage, error) {
                 const spec = candidate.plan.spec
+                bridge.fork(
+                  Telemetry.record("Warn", "plugin load failed", {
+                    category: "plugin.load",
+                    spec,
+                    stage,
+                    retry,
+                    error,
+                  }),
+                )
                 const cause = error instanceof Error ? (error.cause ?? error) : error
                 const message = stage === "load" ? errorMessage(error) : errorMessage(cause)
 
@@ -321,14 +351,29 @@ const layer = Layer.effect(
 
         const unsubscribe = yield* events.listen((event) => {
           if (event.location?.directory !== ctx.directory) return Effect.void
-          return Effect.sync(() => {
-            // The payload is the same wire shape that the SSE event stream sends to SDK clients.
-            // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
-            const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
-            for (const hook of hooks) {
-              void hook["event"]?.({ event: payload })
-            }
-          })
+          // The payload is the same wire shape that the SSE event stream sends to SDK clients.
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the plugin SDK Hooks.event takes the generated SDK Event union, and EventV2 payloads carry untyped data with no runtime schema for that union
+          const payload = { id: event.id, type: event.type, properties: event.data } as PluginEvent
+          return Effect.forEach(
+            hooks.flatMap((hook) => (hook.event ? [hook.event] : [])),
+            (run) =>
+              settle(() => run({ event: payload })).pipe(
+                // A failed event hook must not stop the fan-out, but it is recorded with the hook's own error.
+                Effect.catch((failure) =>
+                  Telemetry.record("Warn", "plugin event hook failed", {
+                    category: "plugin.event",
+                    eventType: event.type,
+                    error: failure.cause ?? failure,
+                  }),
+                ),
+                // The fan-out never waits for a hook, as before. Each hook fiber belongs to this state's scope, so
+                // closing the plugin layer interrupts any hook still running. ponytail: no per-hook bound, as with
+                // the previous fire-and-forget Promise; a hook that never settles holds one fiber per event until
+                // the layer closes. Add a bounded queue per hook if a slow hook shows up.
+                Effect.forkIn(scope),
+              ),
+            { discard: true },
+          )
         })
         yield* Effect.addFinalizer(() => unsubscribe)
 

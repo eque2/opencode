@@ -1,0 +1,119 @@
+name: AI-Powered PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read # The review only reads code; comments and threads use pull-requests and issues
+  pull-requests: write
+  issues: write
+  id-token: write
+
+env:
+  ENABLE_JIRA_INTEGRATION: 'false' # Enable / disable Jira integration
+  AUTO_RESOLVE_ON_FIXED: 'true' # Resolve the conversation when subsequent commits fix an issue
+
+jobs:
+  setup-config:
+    runs-on: ubuntu-latest
+    outputs:
+      auto_resolve_enabled: ${{ steps.config.outputs.auto_resolve_enabled }}
+      jira_enabled: ${{ steps.config.outputs.jira_enabled }}
+    steps:
+      - name: Set configuration outputs
+        id: config
+        run: |
+          echo "auto_resolve_enabled=${{ env.AUTO_RESOLVE_ON_FIXED }}" >> $GITHUB_OUTPUT
+          echo "jira_enabled=${{ env.ENABLE_JIRA_INTEGRATION }}" >> $GITHUB_OUTPUT
+
+  extract-pr-info:
+    runs-on: ubuntu-latest
+    outputs:
+      jira_tickets: ${{ steps.pr-info.outputs.jira_ticket }}
+      pr_number: ${{ steps.pr-info.outputs.pr_number }}
+      pr_title: ${{ steps.pr-info.outputs.pr_title }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Extract PR information
+        id: pr-info
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const extractPRInfo = require('${{ github.workspace }}/.github/scripts/extract-pr-info.js');
+            await extractPRInfo({ context, core });
+
+  jira-verification:
+    needs: [setup-config, extract-pr-info]
+    if: needs.setup-config.outputs.jira_enabled == 'true' && needs.extract-pr-info.outputs.jira_tickets != '' && github.event.repository.private
+    uses: ./.github/workflows/jira-verification.yml
+    secrets:
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      pr_number: ${{ fromJSON(needs.extract-pr-info.outputs.pr_number) }}
+      jira_tickets: ${{ needs.extract-pr-info.outputs.jira_tickets }}
+
+  code-review:
+    needs: [setup-config, extract-pr-info]
+    uses: ./.github/workflows/code-review.yml
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      pr_number: ${{ fromJSON(needs.extract-pr-info.outputs.pr_number) }}
+      auto_resolve_enabled: ${{ needs.setup-config.outputs.auto_resolve_enabled == 'true' }}
+
+  handle-errors:
+    needs: [setup-config, extract-pr-info, jira-verification, code-review]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post error comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = context.payload.pull_request?.number;
+
+            if (!prNumber) {
+              console.log('Could not determine PR number from context');
+              return;
+            }
+
+            const jiraEnabled = '${{ needs.setup-config.outputs.jira_enabled }}' === 'true';
+            const jiraTickets = '${{ needs.extract-pr-info.outputs.jira_tickets }}';
+
+            let errorMessage = '## ⚠️ PR Review Failed\n\n';
+            errorMessage += 'The automated review encountered an error. Possible causes:\n\n';
+
+            if (jiraEnabled && '${{ needs.jira-verification.result }}' === 'failure') {
+              errorMessage += '- ❌ Failed to fetch Jira ticket (check credentials and permissions)\n';
+            }
+
+            if ('${{ needs.code-review.result }}' === 'failure') {
+              errorMessage += '- ❌ Code review failed\n';
+            }
+
+            // Always show required secrets for debugging
+            errorMessage += '\n**Required Secrets:**\n';
+            errorMessage += '- `CLAUDE_CODE_OAUTH_TOKEN` (run: claude setup-token)\n';
+
+            if (jiraEnabled) {
+              errorMessage += '\n**Required Secrets for Jira (if enabled):**\n';
+              errorMessage += '- `JIRA_BASE_URL` (e.g., https://eque2.atlassian.net)\n';
+              errorMessage += '- `JIRA_EMAIL` (bot email)\n';
+              errorMessage += '- `JIRA_API_TOKEN` (API token)\n';
+            }
+
+            errorMessage += '\n\n';
+            errorMessage += `[View workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: errorMessage
+            });

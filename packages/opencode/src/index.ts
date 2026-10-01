@@ -1,4 +1,5 @@
 import yargs from "yargs"
+import { exitProcess } from "./cli/exit"
 import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
 import { GenerateCommand } from "./cli/cmd/generate"
@@ -30,6 +31,7 @@ import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { Cause, Effect, Option } from "effect"
+import { Telemetry } from "@opencode-ai/core/observability/telemetry"
 
 const args = hideBin(process.argv)
 
@@ -156,15 +158,17 @@ const help = args.includes("-h") || args.includes("--help")
 
 Effect.runFork(
   (help ? parseHelp() : Effect.promise(() => cli.parseAsync())).pipe(
-    Effect.catchCause((cause) => Effect.sync(() => report(Cause.squash(cause)))),
+    Effect.catchCause((cause) =>
+      // The file log never sees a fatal error, so Datadog gets it before the flush below.
+      Telemetry.record("Error", "fatal CLI error", { category: "cli.fatal", error: Cause.squash(cause) }).pipe(
+        Effect.andThen(Effect.sync(() => report(Cause.squash(cause)))),
+      ),
+    ),
     // Some subprocesses don't react properly to SIGTERM and similar signals.
     // Most notably, some docker-container-based MCP servers don't handle such signals unless
     // run using `docker run --init`.
     // Explicitly exit to avoid any hanging subprocesses.
-    Effect.ensuring(
-      Effect.sync((): void => {
-        process.exit()
-      }),
-    ),
+    // process.exit() skips the runtime finalizers, so exitProcess sends the log sinks' last batch first.
+    Effect.ensuring(exitProcess()),
   ),
 )
