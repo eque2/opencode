@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Deferred, Effect, Exit, Option } from "effect"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
@@ -149,35 +149,72 @@ const clientFor = (directory: string) => {
   }
 }
 
+let mocking = true
+afterAll(() => {
+  mocking = false
+})
+
 beforeAll(() =>
   Effect.runPromise(
     Effect.gen(function* () {
       const rootClient = clientFor("/repo/main")
+      // Bun keeps a module mock for the rest of the process. Each mock keeps the real exports, so a later test file
+      // that imports another name from the same module still finds it.
+      const actual: Record<string, Record<string, unknown>> = Object.fromEntries(
+        yield* Effect.promise(() =>
+          Promise.all(
+            [
+              "@solidjs/router",
+              "@/context/local",
+              "@/context/permission",
+              "@/context/tabs",
+              "@/context/prompt",
+              "@/context/layout",
+              "@/context/sdk",
+              "@/context/sync",
+              "@/context/server-sync",
+              "@/context/platform",
+              "@/context/language",
+            ].map(async (path) => [path, { ...(await import(path)) }] as const),
+          ),
+        ),
+      )
 
       mock.module("@solidjs/router", () => ({
+        ...actual["@solidjs/router"],
         useNavigate: () => () => {},
         useParams: () => params,
         useLocation: () => ({}),
         useSearchParams: () => [search, () => {}],
       }))
 
+      // Bun keeps a module mock for the rest of the process, so a later test file (bootstrap.test.ts on Linux)
+      // would get this fake client. The real module is kept, and the fake answers only while these tests run.
+      const sdk = { ...(yield* Effect.promise(() => import("@opencode-ai/sdk/v2/client"))) }
       mock.module("@opencode-ai/sdk/v2/client", () => ({
-        createOpencodeClient: (input: { directory: string }) => {
+        ...sdk,
+        createOpencodeClient: (input: Parameters<typeof sdk.createOpencodeClient>[0] & { directory: string }) => {
+          if (!mocking) return sdk.createOpencodeClient(input)
           createdClients = [...createdClients, input.directory]
           return clientFor(input.directory)
         },
       }))
 
+      const toast = yield* Effect.promise(() => import("@opencode-ai/ui/toast"))
       mock.module("@opencode-ai/ui/toast", () => ({
+        ...toast,
         Toast: { Region: () => [] },
         showToast: () => 0,
       }))
 
+      const encode = { ...(yield* Effect.promise(() => import("@opencode-ai/core/util/encode"))) }
       mock.module("@opencode-ai/core/util/encode", () => ({
-        base64Encode: (value: string) => value,
+        ...encode,
+        base64Encode: (value: string) => (mocking ? value : encode.base64Encode(value)),
       }))
 
       mock.module("@/context/local", () => ({
+        ...actual["@/context/local"],
         useLocal: () => ({
           model: {
             current: () => ({ id: "model", provider: { id: "provider" } }),
@@ -200,14 +237,20 @@ beforeAll(() =>
             enabledAutoAccept = [...enabledAutoAccept, { server, sessionID, directory }]
           },
         })
-        return { usePermission: () => ({ currentServerState: () => state(permissionServer) }) }
+        return {
+          ...actual["@/context/permission"],
+          usePermission: () => ({ currentServerState: () => state(permissionServer) }),
+        }
       })
 
+      const server = yield* Effect.promise(() => import("@/context/server"))
       mock.module("@/context/server", () => ({
+        ...server,
         useServer: () => ({ key: "server-key" }),
       }))
 
       mock.module("@/context/tabs", () => ({
+        ...actual["@/context/tabs"],
         useTabs: () => ({
           draft: () => ({ server: "project-server" }),
           promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
@@ -217,10 +260,12 @@ beforeAll(() =>
       }))
 
       mock.module("@/context/prompt", () => ({
+        ...actual["@/context/prompt"],
         usePrompt: () => prompt,
       }))
 
       mock.module("@/context/layout", () => ({
+        ...actual["@/context/layout"],
         useLayout: () => ({
           handoff: {
             setTabs: () => {},
@@ -229,6 +274,7 @@ beforeAll(() =>
       }))
 
       mock.module("@/context/sdk", () => ({
+        ...actual["@/context/sdk"],
         useSDK: () => {
           const sdk = {
             scope: "local",
@@ -245,6 +291,7 @@ beforeAll(() =>
       }))
 
       mock.module("@/context/sync", () => ({
+        ...actual["@/context/sync"],
         useSync: () => () => ({
           data: { command: commands },
           session: {
@@ -270,6 +317,7 @@ beforeAll(() =>
       }))
 
       mock.module("@/context/server-sync", () => ({
+        ...actual["@/context/server-sync"],
         useServerSync: () => () => ({
           session: {
             remember: () => {},
@@ -300,12 +348,14 @@ beforeAll(() =>
       }))
 
       mock.module("@/context/platform", () => ({
+        ...actual["@/context/platform"],
         usePlatform: () => ({
           fetch: fetch,
         }),
       }))
 
       mock.module("@/context/language", () => ({
+        ...actual["@/context/language"],
         useLanguage: () => ({
           t: (key: string) => key,
         }),
