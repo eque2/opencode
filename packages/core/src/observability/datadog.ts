@@ -406,13 +406,16 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   const openUntil = MutableRef.make(0)
   const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < MutableRef.get(openUntil))
 
+  // A sink warning goes to the other loggers only, so the sink does not feed itself.
+  const warn = (message: string, fields: object) =>
+    Effect.logWarning(message, fields).pipe(
+      Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))),
+    )
+
   // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
   const trip = Effect.fnUntraced(function* (detail: Detail) {
     MutableRef.set(openUntil, (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown))
-    yield* Effect.logWarning("Datadog sink disabled for the cooldown", {
-      cooldownSeconds: Duration.toSeconds(cooldown),
-      ...detail,
-    }).pipe(Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))))
+    yield* warn("Datadog sink disabled for the cooldown", { cooldownSeconds: Duration.toSeconds(cooldown), ...detail })
   })
 
   // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
@@ -431,7 +434,15 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   // breaker is open, and all but the newest 10,000 buffered entries; the file log keeps the local copy. The
   // upgrade path, when log loss becomes unacceptable: a bounded spool in Global.Path.log with retention rules and
   // a data-loss-prevention review, because it writes redacted records to disk a second time.
-  const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result.verdict === "failed" ? trip(result.detail) : Effect.void)))
+  const flush = drain((chunk) =>
+    Effect.flatMap(send(chunk), (result) =>
+      result.verdict === "failed"
+        ? trip(result.detail)
+        : result.verdict === "dropped"
+          ? warn("Datadog intake rejected a batch", result.detail)
+          : Effect.void,
+    ),
+  )
 
   // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
   const final = drain((chunk) =>

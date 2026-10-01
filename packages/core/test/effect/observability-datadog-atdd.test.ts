@@ -509,7 +509,7 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
   expect(JSON.stringify(target.requests.map((request) => request.body))).not.toContain("Datadog sink disabled")
 }, 30_000)
 
-test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does not", async () => {
+test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 warns without it", async () => {
   const target = intake([{ status: 401 }, { status: 413 }, { status: 401 }])
   using _ = target.server
   const config = required(
@@ -542,9 +542,11 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does n
     yield* Effect.sleep("200 millis")
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
   expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([["a"], ["b"], ["c"]])
-  expect(warned.messages).toEqual(
-    Array.from({ length: 2 }, () => 'Datadog sink disabled for the cooldown {"cooldownSeconds":1,"status":401}'),
-  )
+  expect(warned.messages).toEqual([
+    'Datadog sink disabled for the cooldown {"cooldownSeconds":1,"status":401}',
+    'Datadog intake rejected a batch {"status":413}',
+    'Datadog sink disabled for the cooldown {"cooldownSeconds":1,"status":401}',
+  ])
 }, 30_000)
 
 test("AC-6b a transport error names its cause in the breaker warning", async () => {
