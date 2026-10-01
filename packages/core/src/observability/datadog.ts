@@ -46,6 +46,7 @@ const SITES = [
   "us5.datadoghq.com",
   "datadoghq.eu",
   "ap1.datadoghq.com",
+  "ap2.datadoghq.com",
   "ddog-gov.com",
 ]
 // The boolean file keys. A file may only turn one off.

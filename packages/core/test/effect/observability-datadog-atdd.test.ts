@@ -971,6 +971,12 @@ test.skipIf(process.platform === "win32")(
   },
 )
 
+test("AC-1c a config file can select the AP2 Datadog site", async () => {
+  const result = await fromFiles({ "config.json": datadogFile({ site: "ap2.datadoghq.com" }) })
+  expect(result.warnings).toEqual([])
+  expect(required(result.settings).site).toBe("ap2.datadoghq.com")
+})
+
 test("AC-1c an empty file counts as no file", async () => {
   const result = await fromFiles({ "config.json": datadogFile({ service: "kept" }), "opencode.json": "  \n " })
   expect(result.warnings).toEqual([])
