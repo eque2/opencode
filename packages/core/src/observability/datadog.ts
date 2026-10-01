@@ -131,8 +131,10 @@ const SECRET_KEYS = ["apikey", "authorization", "password", "secret", "token", "
 const SECRET_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/(bearer\s+)[\w.~+/=-]+/gi, "$1[REDACTED]"],
   [/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED]"],
-  [/(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}/g, "[REDACTED]"],
-  [/(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED]"],
+  // The same formats as packages/http-recorder/src/redaction.ts.
+  [/(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}/g, "[REDACTED]"],
+  [/(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{20,}/g, "[REDACTED]"],
+  [/(?<![A-Za-z0-9])(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}/g, "[REDACTED]"],
   [/(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]+/g, "[REDACTED]"],
   // Query parameters such as `?key=`, `&exaApiKey=` and `&access_token=`.
   [/([?&][^=&#\s]{0,64}(?:key|token)=)[^&#\s]*/gi, "$1[REDACTED]"],

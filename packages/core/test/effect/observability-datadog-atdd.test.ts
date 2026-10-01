@@ -297,9 +297,13 @@ test("AC-9 secret shapes anywhere in a record never reach the intake and the sur
     "xoxb-123-456-" + "d4".repeat(6),
     "zz" + "9".repeat(14),
     "yy" + "8".repeat(14),
+    "ASIA" + "E5".repeat(8),
+    "AIza" + "f6_".repeat(8),
+    "ghp_" + "g7_".repeat(8),
+    "github_pat_" + "h8_".repeat(10),
   ]
   const ordinary = ["task-0123456789abcdef", "risk-assessment-document", "monkey=1", "tokenizer"]
-  const line = `ran ${secrets[0]} ${secrets[1]} ${secrets[2]} ${secrets[3]} https://api.test/v1?api_key=${secrets[4]}&exaApiKey=${secrets[5]}`
+  const line = `ran ${secrets[0]} ${secrets[1]} ${secrets[2]} ${secrets[3]} https://api.test/v1?api_key=${secrets[4]}&exaApiKey=${secrets[5]} ${secrets.slice(6).join(" ")}`
   await ship(
     config,
     Effect.logError(line, {
