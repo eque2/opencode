@@ -32,8 +32,8 @@ type Received = {
   body: Array<Record<string, any>>
 }
 
-// Replies with the queued statuses in order, then 202.
-function intake(statuses: Array<{ status: number; headers?: Record<string, string> }> = []) {
+// Replies with the queued statuses in order, then 202. A `delay` holds that reply back.
+function intake(statuses: Array<{ status: number; headers?: Record<string, string>; delay?: number }> = []) {
   const requests: Array<Received> = []
   const server = Bun.serve({
     port: 0,
@@ -44,6 +44,7 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
       const body = JSON.parse(new TextDecoder().decode(decoded))
       requests.push({ at: Date.now(), key: request.headers.get("DD-API-KEY"), encoding, bytes: decoded.length, body })
       const next = statuses.shift() ?? { status: 202 }
+      if (next.delay) await Bun.sleep(next.delay)
       return new Response(null, next)
     },
   })
@@ -572,6 +573,30 @@ test("AC-6b a transport error names its cause in the breaker warning", async () 
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
   expect(warned.messages).toHaveLength(1)
   expect(warned.messages[0]).toMatch(/^Datadog sink disabled for the cooldown \{"cooldownSeconds":60,"error":".+"\}$/)
+}, 30_000)
+
+test("AC-6b a batch interrupted mid-send goes out in the final flush", async () => {
+  // The loop's request hangs, so the scope closes while that batch is in flight.
+  const target = intake([{ status: 202, delay: 10_000 }])
+  using _ = target.server
+  const config = required(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
+    }),
+  )
+  await ship(
+    config,
+    Effect.logInfo("in flight").pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+      Effect.andThen(Effect.promise(() => until(() => target.requests.length >= 1))),
+    ),
+  )
+  expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([
+    ["in flight"],
+    ["in flight"],
+  ])
 }, 30_000)
 
 test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first", async () => {

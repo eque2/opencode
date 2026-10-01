@@ -419,14 +419,28 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   })
 
   // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
-  // after the one that tripped it.
+  // after the one that tripped it. An interruption puts the unfinished records back at the front, so the final
+  // flush that runs after the loop is interrupted still sends them. A chunk that was delivered just before the
+  // interruption can be sent twice; that beats losing it.
   const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
     Effect.suspend(() => {
       const batch = MutableList.takeAll(buffer)
+      // `chunks` keeps every record in order, so a count of finished records marks where the rest starts.
+      let done = 0
       return Effect.forEach(
         chunks(batch),
-        (chunk) => Effect.flatMap(isOpen, (tripped) => (tripped ? Effect.void : each(chunk))),
+        (chunk) =>
+          Effect.flatMap(isOpen, (tripped) => (tripped ? Effect.void : each(chunk))).pipe(
+            Effect.andThen(Effect.sync(() => (done += chunk.length))),
+          ),
         { discard: true },
+      ).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            MutableList.prependAll(buffer, batch.slice(done))
+            while (buffer.length > MAX_BUFFER) MutableList.take(buffer)
+          }),
+        ),
       )
     })
 
