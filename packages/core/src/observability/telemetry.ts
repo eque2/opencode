@@ -120,7 +120,8 @@ function numbers(input: object, prefix: string): Array<[string, unknown]> {
 
 /**
  * Sends one Datadog record from any fiber, including one started by `Effect.runPromise` at a Promise edge, which
- * has none of the application loggers.
+ * has none of the application loggers. Like the helpers below, it is not an `Effect.fn`: it runs for every
+ * record, and a span per record would feed the span bridge, which would send a record per span.
  */
 export const record = (level: LogLevel.LogLevel, message: string, fields: Record<string, unknown>) =>
   Effect.withFiber((fiber) => {
@@ -130,7 +131,8 @@ export const record = (level: LogLevel.LogLevel, message: string, fields: Record
 
 /**
  * Records one HTTP request made through a fetch wrapper: method, host, status, duration and outcome. The URL path,
- * headers and body stay out, because they can carry keys and prompts.
+ * headers and body stay out, because they can carry keys and prompts. Not an `Effect.fn`, for the same reason as
+ * `record`: a span per HTTP call would feed the span bridge.
  */
 export const request =
   (category: string, input: unknown, init: { readonly method?: string } | undefined) =>
@@ -163,7 +165,8 @@ const elapsedSince = (started: number) => Effect.map(Clock.currentTimeMillis, (n
 /**
  * An HTTP server middleware that records every request: method, path, status, duration and outcome
  * (`http.request`). The query string stays out, because a PTY ticket and a URL credential travel there. The
- * router's own logger stays off, because it would write the full URL to every log.
+ * router's own logger stays off, because it would write the full URL to every log. Not an `Effect.fn`: a span per
+ * request would feed the span bridge, so each request would also send a span record.
  */
 export const accessLog: HttpMiddleware.HttpMiddleware = (app) =>
   Effect.gen(function* () {
