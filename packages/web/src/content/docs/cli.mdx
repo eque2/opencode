@@ -732,7 +732,7 @@ OpenCode can send its logs to the Datadog Logs intake. The sink turns on when `D
 
 An empty value counts as unset. An invalid value turns the sink off and writes one warning to the log file. It does not stop startup.
 
-You can also set most of these values in the `observability.datadog` object of a global config file: `config.json`, `opencode.json` or `opencode.jsonc` in the global config directory (`OPENCODE_CONFIG_DIR` when set). The keys are `enabled`, `service`, `env`, `version`, `tags`, `hostname`, `level`, `categories`, `content`, `flushInterval` and `site`. An environment variable overrides the file value.
+You can also set most of these values in the `observability.datadog` object of a global config file: `config.json`, `opencode.json` or `opencode.jsonc` in the global config directory (`OPENCODE_CONFIG_DIR` when set). The keys are `enabled`, `spans`, `events`, `service`, `env`, `version`, `tags`, `hostname`, `level`, `categories`, `content`, `flushInterval` and `site`. An environment variable overrides the file value.
 
 ```json title="~/.config/opencode/opencode.json"
 {
@@ -749,7 +749,7 @@ You can also set most of these values in the `observability.datadog` object of a
 A config file can only narrow what is sent:
 
 - A project config file has no effect.
-- `enabled` has an effect only when it is `false`.
+- `enabled`, `spans` and `events` have an effect only when they are `false`.
 - `content` accepts only `omit` or `hash`. Only the environment can set `full`.
 - `site` accepts only a known Datadog site.
 - `categories` cannot re-include `question` or `pty`.
