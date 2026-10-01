@@ -649,17 +649,47 @@ function chunks(items: Array<Fitted>) {
     .map((chunk) => chunk.items)
 }
 
-/** Measures an entry in UTF-8 bytes, and cuts its message when the entry is above the 1 MB entry limit. */
+/** Measures an entry in UTF-8 bytes. Above the 1 MB limit it cuts the message, then drops the attributes. */
 function fit(item: Entry) {
   const bytes = Buffer.byteLength(encodeJson(item))
+  if (bytes <= MAX_ENTRY_BYTES) return { item, bytes }
+  const cut = cutMessage(item, bytes)
+  if (cut.bytes <= MAX_ENTRY_BYTES) return cut
+  // A large attribute (a full prompt under content "full", for example) keeps the entry above the limit, so the
+  // entry keeps only the short fields that `entry` always sets, with its whole message, and says the rest was cut.
+  const bare: Entry = {
+    ...Object.fromEntries(BARE_FIELDS.filter((key) => key in item).map((key) => [key, item[key]])),
+    truncated: true,
+  }
+  return cutMessage(bare, Buffer.byteLength(encodeJson(bare)))
+}
+
+/** Cuts the message by the bytes that the entry is above the limit. */
+function cutMessage(item: Entry, bytes: number) {
   if (bytes <= MAX_ENTRY_BYTES || typeof item.message !== "string") return { item, bytes }
   const message = Buffer.from(item.message)
   // ponytail: the JSON escaping of the kept text is not counted, so a message full of quotes can stay slightly above the limit.
   const keep = Math.max(0, message.length - (bytes - MAX_ENTRY_BYTES) - Buffer.byteLength(TRUNCATED))
   // A cut inside a multi-byte character decodes to U+FFFD, so drop it.
-  const cut = { ...item, message: message.subarray(0, keep).toString().replace(/�$/, "") + TRUNCATED }
+  const cut: Entry = { ...item, message: message.subarray(0, keep).toString().replace(/�$/, "") + TRUNCATED }
   return { item: cut, bytes: Buffer.byteLength(encodeJson(cut)) }
 }
+
+// The short fields that stay when the attributes of an entry are too large to send.
+const BARE_FIELDS = [
+  "message",
+  "status",
+  "date",
+  "service",
+  "hostname",
+  "ddsource",
+  "ddtags",
+  "category",
+  "run",
+  "trace_id",
+  "span_id",
+  "dd",
+]
 
 type Fitted = ReturnType<typeof fit>
 

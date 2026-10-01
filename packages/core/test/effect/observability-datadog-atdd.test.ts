@@ -408,6 +408,20 @@ test("AC-7b an entry above 1,000,000 bytes has its message truncated", async () 
   expect(Buffer.byteLength(JSON.stringify(entry))).toBeLessThanOrEqual(1_000_000)
 }, 30_000)
 
+test("AC-7b an entry whose attributes pass 1,000,000 bytes keeps only its standard fields", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  await ship(
+    config,
+    Effect.logInfo("large", { detail: "x".repeat(1_200_000) }).pipe(Effect.annotateLogs({ category: "llm.request" })),
+  )
+  const [entry] = target.requests[0].body
+  expect(entry.detail).toBeUndefined()
+  expect(entry).toMatchObject({ message: "large", truncated: true, category: "llm.request", ddsource: "opencode" })
+  expect(Buffer.byteLength(JSON.stringify(entry))).toBeLessThanOrEqual(1_000_000)
+}, 30_000)
+
 // Sends one record that gets a 429 with the given Retry-After, under TestClock. Returns the request count after
 // `before` of virtual time, then after `after` more.
 async function retryGap(retryAfter: (now: number) => string, before: Duration.Input, after: Duration.Input) {
