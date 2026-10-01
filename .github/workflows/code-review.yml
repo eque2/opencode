@@ -15,7 +15,7 @@ on:
         required: true
 
 permissions:
-  contents: write # Write required for workflow operations
+  contents: read # The review only reads code; comments and threads use pull-requests and issues
   pull-requests: write
   issues: write
   id-token: write
@@ -89,7 +89,7 @@ jobs:
     if: needs.detect-fixed-issues.outputs.has_fixes == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read # The review only reads code; comments and threads use pull-requests and issues
       pull-requests: write
     steps:
       - name: Download fixed issues artifact

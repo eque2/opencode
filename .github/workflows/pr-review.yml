@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write # Required for workflow operations
+  contents: read # The review only reads code; comments and threads use pull-requests and issues
   pull-requests: write
   issues: write
   id-token: write
