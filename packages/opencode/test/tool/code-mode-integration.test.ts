@@ -94,7 +94,7 @@ async function buildTool() {
   const listed = (await client.listTools()).tools
   const mcpTools: Record<string, MCP.McpTool> = {}
   for (const def of listed) {
-    mcpTools[McpCatalog.toolName(SERVER, def.name)] = { def, client }
+    mcpTools[McpCatalog.toolName(SERVER, def.name)] = { def, client, server: SERVER }
   }
   const passthrough: Plugin.Interface["trigger"] = (_name, _input, output) => Effect.succeed(output)
   const session: Session.Info = {

@@ -14,7 +14,7 @@ import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
 import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js"
-import { Clock, Effect, HashSet, Option, Predicate, Result, Schema } from "effect"
+import { Cause, Clock, Effect, Exit, HashSet, Option, Predicate, Result, Schema } from "effect"
 import { Session } from "./session"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
@@ -448,6 +448,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
             { args },
           )
+          const started = yield* Clock.currentTimeMillis
           const result = yield* Effect.gen(function* () {
             yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
             // The AI SDK types execute as any. McpCatalog.convertTool returns a CallToolResult.
@@ -467,6 +468,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 "message.id": input.processor.message.id,
               },
             }),
+            // The span reaches only an OTLP collector, so the log sinks see an MCP call through this record alone.
+            Effect.onExit((exit) =>
+              logMcpCall(exit, {
+                tool: key,
+                server: entry.server,
+                callID: opts.toolCallId,
+                sessionID: ctx.sessionID,
+                started,
+              }),
+            ),
           )
           yield* plugin.trigger(
             "tool.execute.after",
@@ -552,6 +563,37 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   return tools
 })
+
+/**
+ * Logs one MCP tool call with its outcome and duration. The arguments and the result stay out of the record,
+ * because they can hold user content.
+ */
+function logMcpCall(
+  exit: Exit.Exit<unknown, unknown>,
+  call: { tool: string; server: string; callID: string; sessionID: string; started: number },
+) {
+  return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+    const fields = {
+      tool: call.tool,
+      server: call.server,
+      callID: call.callID,
+      sessionID: call.sessionID,
+      durationMs: now - call.started,
+    }
+    // McpCatalog turns an `isError` result into a failure, so a success is always "ok".
+    if (Exit.isSuccess(exit)) return Effect.logInfo("MCP tool call", { ...fields, outcome: "ok" })
+    if (Cause.hasInterruptsOnly(exit.cause))
+      return Effect.logInfo("MCP tool call", { ...fields, outcome: "interrupted" })
+    // A failed MCP result puts the tool's text in the error message, so only the error type is logged.
+    const error = Cause.squash(exit.cause)
+    const errorType = Predicate.hasProperty(error, "_tag")
+      ? String(error._tag)
+      : error instanceof Error
+        ? error.name
+        : typeof error
+    return Effect.logWarning("MCP tool call", { ...fields, outcome: "failed", errorType })
+  }).pipe(Effect.annotateLogs({ category: "mcp.tool" }))
+}
 
 function toRecord(value: unknown) {
   if (isRecord(value)) return value

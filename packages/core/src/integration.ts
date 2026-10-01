@@ -442,8 +442,19 @@ export const locationLayer = Layer.effect(
           if (Option.isNone(refresh)) return credential.value
           const now = yield* Clock.currentTimeMillis
           if (credential.value.expires > now + Duration.toMillis(Duration.minutes(5))) return credential.value
-          const value = yield* authorize(refresh.value(credential.value))
+          // Every plugin OAuth refresh (OpenAI, OpenCode, ...) runs here, so one span and one log cover them all.
+          const attributes = {
+            integrationID: credential.integrationID,
+            methodID: credential.value.methodID,
+            connectionID: credential.id,
+          }
+          const value = yield* authorize(refresh.value(credential.value)).pipe(
+            Effect.withSpan("Integration.refresh", { attributes }),
+          )
           yield* credentials.update(credential.id, { value })
+          yield* Effect.logInfo("OAuth token refreshed", attributes).pipe(
+            Effect.annotateLogs({ category: "auth.refresh" }),
+          )
           return value
         }),
         key: Effect.fn("Integration.connection.key")(function* (input) {

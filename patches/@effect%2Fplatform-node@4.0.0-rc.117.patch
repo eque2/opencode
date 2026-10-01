@@ -1,0 +1,41 @@
+diff --git a/dist/NodeHttpServer.js b/dist/NodeHttpServer.js
+index 97fdf21d050d87e6bd4d7e938275f15a14226ee9..827b1820ec87d5af5416e89a99f2b13840984aba 100644
+--- a/dist/NodeHttpServer.js
++++ b/dist/NodeHttpServer.js
+@@ -158,6 +158,15 @@ export const makeUpgradeHandler = (lazyWss, httpEffect, options) => {
+       let nodeResponse_ = undefined;
+       const nodeResponse = () => {
+         if (nodeResponse_ === undefined) {
++          if (!upgraded && socket._httpMessage) {
++            // Bun attaches its own response to an upgrade socket that the handler did not answer synchronously, and
++            // rejects a second assignSocket, so a rejection (401, 403, 404) is written through that response.
++            nodeResponse_ = socket._httpMessage;
++            nodeResponse_.on("finish", () => {
++              socket.end();
++            });
++            return nodeResponse_;
++          }
+           nodeResponse_ = new Http.ServerResponse(nodeRequest);
+           if (upgraded) {
+             // the connection now carries WebSocket frames, so end the response
+diff --git a/src/NodeHttpServer.ts b/src/NodeHttpServer.ts
+index 2e0f7e2690434ee8b5b9526f1584eea8728627f5..626f75ba02e6de83d72edc89aacd41106b7fc933 100644
+--- a/src/NodeHttpServer.ts
++++ b/src/NodeHttpServer.ts
+@@ -253,6 +253,16 @@ export const makeUpgradeHandler = <
+       let nodeResponse_: Http.ServerResponse | undefined = undefined
+       const nodeResponse = () => {
+         if (nodeResponse_ === undefined) {
++          const attached = (socket as Duplex & { _httpMessage?: Http.ServerResponse | null })._httpMessage
++          if (!upgraded && attached) {
++            // Bun attaches its own response to an upgrade socket that the handler did not answer synchronously, and
++            // rejects a second assignSocket, so a rejection (401, 403, 404) is written through that response.
++            nodeResponse_ = attached
++            nodeResponse_.on("finish", () => {
++              socket.end()
++            })
++            return nodeResponse_
++          }
+           nodeResponse_ = new Http.ServerResponse(nodeRequest)
+           if (upgraded) {
+             // the connection now carries WebSocket frames, so end the response

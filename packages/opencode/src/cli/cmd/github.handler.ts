@@ -1,4 +1,5 @@
 import path from "path"
+import { exitProcess } from "../exit"
 import { exec } from "child_process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as prompts from "@clack/prompts"
@@ -208,8 +209,7 @@ const hasPullRequest = (payload: object): payload is PullRequestEvent | PullRequ
   "pull_request" in payload
 const hasComment = (payload: object): payload is IssueCommentEvent | PullRequestReviewCommentEvent =>
   "comment" in payload
-const isIssueCommentEvent = (payload: object): payload is IssueCommentEvent =>
-  hasIssue(payload) && hasComment(payload)
+const isIssueCommentEvent = (payload: object): payload is IssueCommentEvent => hasIssue(payload) && hasComment(payload)
 const isReviewCommentEvent = (payload: object): payload is PullRequestReviewCommentEvent =>
   hasPullRequest(payload) && hasComment(payload)
 const isPartUpdated = (event: EventV2.Payload): event is EventV2.Payload<typeof MessageV2.Event.PartUpdated> =>
@@ -222,9 +222,7 @@ const tryGithub = <A>(run: () => Promise<A>) =>
 
 // The command runs under AppRuntime, which always provides the instance; a missing one is a defect.
 const requireInstance = Effect.gen(function* () {
-  return yield* Effect.fromOption(yield* InstanceRef).pipe(
-    Effect.catch(() => Effect.die("InstanceRef not provided")),
-  )
+  return yield* Effect.fromOption(yield* InstanceRef).pipe(Effect.catch(() => Effect.die("InstanceRef not provided")))
 })
 
 const cancelled = () => Effect.die(new UI.CancelledError())
@@ -462,7 +460,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
   if (!SUPPORTED_EVENTS.some((name) => name === context.eventName)) {
     yield* Effect.sync(() => core.setFailed(`Unsupported event type: ${context.eventName}`))
     // process.exit returns never; the void annotation keeps the thunk from reading as a Promise-returning one.
-    return yield* Effect.sync((): void => process.exit(1))
+    return yield* exitProcess(1)
   }
 
   // Determine event category for routing
@@ -710,9 +708,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
           const gh = client.value
           yield* gh.createComment(`${msg}${footer()}`).pipe(
             Effect.andThen(gh.removeReaction()),
-            Effect.catchCause((failure) =>
-              Console.error("Failed to report error on GitHub:", Cause.squash(failure)),
-            ),
+            Effect.catchCause((failure) => Console.error("Failed to report error on GitHub:", Cause.squash(failure))),
           )
         }
         yield* Effect.sync(() => core.setFailed(msg))
@@ -727,7 +723,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
     yield* revokeAppToken().pipe(Effect.orDie)
   }
   if (Option.isSome(unsubscribe)) yield* unsubscribe.value
-  return yield* Effect.sync((): void => process.exit(exitCode))
+  return yield* exitProcess(exitCode)
 
   function normalizeModel() {
     return Effect.gen(function* () {
@@ -1140,7 +1136,8 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
   function restoreGitConfig() {
     return Option.match(gitConfig, {
       onNone: () => Effect.void,
-      onSome: (value) => gitRun(["config", "--local", "http.https://github.com/.extraheader", value]).pipe(Effect.asVoid),
+      onSome: (value) =>
+        gitRun(["config", "--local", "http.https://github.com/.extraheader", value]).pipe(Effect.asVoid),
     })
   }
 
@@ -1273,7 +1270,11 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
     })
   }
 
-  function withRetry<A>(effect: Effect.Effect<A, GithubError>, retries = 1, delayMs = 5000): Effect.Effect<A, GithubError> {
+  function withRetry<A>(
+    effect: Effect.Effect<A, GithubError>,
+    retries = 1,
+    delayMs = 5000,
+  ): Effect.Effect<A, GithubError> {
     return effect.pipe(
       Effect.catch((error) => {
         if (retries <= 0) return Effect.fail(error)

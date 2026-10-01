@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Logger } from "effect"
 import { SessionRunCoordinator } from "@opencode-ai/core/session/run-coordinator"
 import { testEffect } from "./lib/effect"
 
@@ -118,6 +118,24 @@ describe("SessionRunCoordinator", () => {
       }),
     ),
   )
+
+  it.effect("logs session idle after a successful drain only", () => {
+    const messages: Array<unknown> = []
+    const capture = Logger.make((options) => messages.push(options.message))
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const coordinator = yield* SessionRunCoordinator.make({
+          drain: (key: string) => (key === "failure" ? Effect.fail("failed" as const) : Effect.void),
+        })
+
+        yield* coordinator.run("failure").pipe(Effect.exit)
+        expect(messages).toEqual([])
+
+        yield* coordinator.run("success")
+        expect(messages).toEqual([["session idle", { "session.id": "success" }]])
+      }),
+    ).pipe(Effect.provide(Logger.layer([capture])))
+  })
 
   it.effect("cleans active executions when its scope closes", () =>
     Effect.gen(function* () {

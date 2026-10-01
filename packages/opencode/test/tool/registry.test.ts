@@ -76,6 +76,7 @@ const withCodeMode = testEffect(
                 inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
               } as MCPToolDef,
               client: new Client({ name: "registry-test", version: "1.0.0" }),
+              server: "weather",
             },
           }),
         clients: () => Effect.succeed({ weather: new Client({ name: "registry-test", version: "1.0.0" }) }),

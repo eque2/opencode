@@ -35,6 +35,9 @@ tsconfig.tsbuildinfo
 .effect-v4-migrate-progress.json
 
 .claude/worktrees/
+.goal-gate/
+_bmad-output/
+specs/observability/
 # BMAD installer answers scoped to one person.
 _bmad/config.user.toml
 # >>> eque2-code managed (do not edit this block) >>>

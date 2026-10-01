@@ -482,6 +482,19 @@ const layer = Layer.effect(
               usage: value.usage ?? new Usage({}),
               metadata: value.providerMetadata,
             })
+            yield* Effect.logInfo("LLM cost", {
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.id,
+              providerID: ctx.model.providerID,
+              modelID: ctx.model.id,
+              reason: value.reason,
+              cost: usage.cost,
+              "tokens.input": usage.tokens.input,
+              "tokens.output": usage.tokens.output,
+              "tokens.reasoning": usage.tokens.reasoning,
+              "tokens.cache.read": usage.tokens.cache.read,
+              "tokens.cache.write": usage.tokens.cache.write,
+            }).pipe(Effect.annotateLogs({ category: "llm.cost" }))
             ctx.assistantMessage.finish = value.reason
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens

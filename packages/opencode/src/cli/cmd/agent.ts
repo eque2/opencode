@@ -1,4 +1,5 @@
 import { cmd } from "./cmd"
+import { exitProcess } from "../exit"
 import * as prompts from "@clack/prompts"
 import { UI } from "../ui"
 import { Global } from "@opencode-ai/core/global"
@@ -110,7 +111,10 @@ const AgentCreateCommand = effectCmd({
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             const error = Cause.squash(cause)
-            yield* spinner.stop(`LLM failed to generate agent: ${error instanceof Error ? error.message : String(error)}`, 1)
+            yield* spinner.stop(
+              `LLM failed to generate agent: ${error instanceof Error ? error.message : String(error)}`,
+              1,
+            )
             if (isFullyNonInteractive) yield* exit(1)
             return yield* cancelled()
           }),
@@ -199,8 +203,7 @@ const cancelled = () => Effect.die(new UI.CancelledError())
 
 const required = <A>(value: Option.Option<A>) => Option.match(value, { onNone: cancelled, onSome: Effect.succeed })
 
-// process.exit returns never; the void annotation keeps the thunk from reading as a Promise-returning one.
-const exit = (code: number) => Effect.sync((): void => process.exit(code))
+const exit = exitProcess
 
 const selectScope = (worktree: string) =>
   Prompt.select({

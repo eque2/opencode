@@ -58,6 +58,7 @@ function mcpTool(
   return {
     def: { name, description: name, inputSchema, ...(outputSchema ? { outputSchema } : {}) },
     client: new StubClient(handler),
+    server: "test",
   }
 }
 
@@ -238,6 +239,7 @@ describe("code mode execute", () => {
           inputSchema: { type: "object", properties: { value: { type: "string" }, count: { type: "number" } } },
         },
         client: new StubClient(() => ({ content: [] })),
+        server: "alpha",
       }
     }
     tools["zeta_only_tool"] = mcpTool("only_tool", () => "", {

@@ -20,6 +20,7 @@ import { and, asc, eq, gt, inArray } from "drizzle-orm"
 import { Database } from "./database/database"
 import { EventSequenceTable, EventTable } from "./event/sql"
 import { Location } from "./location"
+import { Telemetry } from "./observability/telemetry"
 import { makeGlobalNode } from "./effect/app-node"
 import { isDeepStrictEqual } from "node:util"
 import { Durable } from "@opencode-ai/schema/durable-event-manifest"
@@ -451,6 +452,7 @@ export const layerWith = (options?: LayerOptions) =>
 
       function notify(event: Payload, isolateListeners: boolean) {
         return Effect.gen(function* () {
+          yield* Telemetry.event(event)
           yield* Effect.forEach(
             yield* Ref.get(listeners),
             (listener) => (isolateListeners ? observe(event, listener) : listener(event)),

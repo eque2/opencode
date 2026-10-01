@@ -335,7 +335,14 @@ export function CopilotAuthPlugin(input: Pick<PluginInput, "client" | "directory
         "X-GitHub-Api-Version": API_VERSION,
       },
       provider.models,
-    ).pipe(Effect.option)
+    ).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Copilot model list failed", { error }).pipe(
+          Effect.annotateLogs({ category: "provider.discovery" }),
+        ),
+      ),
+      Effect.option,
+    )
 
     if (Option.isNone(loaded)) {
       models = {}

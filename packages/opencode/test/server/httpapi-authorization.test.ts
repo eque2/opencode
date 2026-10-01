@@ -1,7 +1,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Schema } from "effect"
-import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServerRequest } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiError, HttpApiGroup } from "effect/unstable/httpapi"
 import { ServerAuth } from "../../src/server/auth"
 import {
@@ -10,6 +10,7 @@ import {
   ServerAuthorization,
   serverAuthorizationLayer,
 } from "../../src/server/routes/instance/httpapi/middleware/authorization"
+import { credentialSource } from "@opencode-ai/server/middleware/authorization"
 import { testEffect } from "../lib/effect"
 
 const Api = HttpApi.make("test-authorization").add(
@@ -175,4 +176,17 @@ describe("HttpApi authorization middleware", () => {
       expect(body).toEqual({ _tag: "UnauthorizedError", message: "Authentication required" })
     }),
   )
+})
+
+describe("credentialSource", () => {
+  test("names where a failed request put its credential, without reading it", () => {
+    const source = (url: string, headers: Record<string, string> = {}) =>
+      credentialSource(HttpServerRequest.fromWeb(new Request(url, { headers })))
+    expect(source("http://localhost/probe?auth_token=abc")).toBe("query")
+    expect(source("http://localhost/probe", { authorization: "Basic abc" })).toBe("header")
+    expect(source("http://localhost/probe")).toBe("none")
+    // A target that `new URL` rejects must not throw out of the 401 path.
+    const crafted = HttpServerRequest.fromWeb(new Request("http://localhost/probe")).modify({ url: "//" })
+    expect(() => credentialSource(crafted)).not.toThrow()
+  })
 })
