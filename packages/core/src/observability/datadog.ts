@@ -69,8 +69,10 @@ const FILE_KEYS: Readonly<Record<string, string>> = {
 }
 const decodeDuration = Schema.decodeUnknownOption(Schema.DurationFromString)
 // Bun.JSONC accepts comments and trailing commas, and throws on a malformed file. The jsonc-parser package is not
-// used here, because its UMD entry breaks a Node bundle of any module that reaches this sink.
-const parseJsonc = Option.liftThrowable((text: string): unknown => Bun.JSONC.parse(text))
+// used here, because its UMD entry breaks a Node bundle of any module that reaches this sink. Under Node, which has
+// no Bun global, plain JSON still parses, and the warning names the runtime instead of blaming the file.
+const jsonc = typeof Bun !== "undefined"
+const parseJsonc = Option.liftThrowable((text: string): unknown => (jsonc ? Bun.JSONC.parse(text) : JSON.parse(text)))
 
 // Levels are case-insensitive, for example `DEBUG`, `debug` or `Debug`.
 const LEVEL_NAMES = LogLevel.values.flatMap((level) => [level, level.toLowerCase(), level.toUpperCase()])
@@ -236,7 +238,10 @@ export const provider = Effect.fn("Datadog.provider")(function* (options: Provid
 function fileSettings(file: string, text: string) {
   const ignored = (reason: string) => ({ values: {}, warnings: [`Datadog settings in ${file} ignored: ${reason}`] })
   const parsed = parseJsonc(text)
-  if (Option.isNone(parsed)) return ignored("the file is not valid JSONC")
+  if (Option.isNone(parsed))
+    return ignored(
+      jsonc ? "the file is not valid JSONC" : "the file is not plain JSON, and this runtime cannot parse JSONC",
+    )
   const input = parsed.value
   if (!Predicate.isObject(input) || !("observability" in input)) return { values: {}, warnings: [] }
   const observability = input.observability
