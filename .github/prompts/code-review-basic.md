@@ -6,7 +6,8 @@ Review this pull request for code quality and post inline review comments via th
 1. Fetch existing PR review comments to avoid duplicates:
 
    ```bash
-   gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments > existing-comments.json
+   # One page holds 30 comments, so --paginate reads them all and jq joins the pages into one array.
+   gh api --paginate repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments | jq -s 'add // []' > existing-comments.json
    ```
 
 2. Examine the PR changes using `git diff` and read the styleguide files (if any) to understand standards.

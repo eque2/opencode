@@ -29,7 +29,8 @@ You are analyzing PR #{PR_NUMBER} to detect which existing review comments have 
 ## Step 1: Fetch ALL existing review comments
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments --jq '[.[] | {id: .id, path: .path, line: .line, body: .body}]' > all-comments.json
+# One page holds 30 comments, so --paginate reads them all and jq joins the pages into one array.
+gh api --paginate repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments --jq '.[] | {id: .id, path: .path, line: .line, body: .body}' | jq -s '.' > all-comments.json
 ```
 
 ## Step 2: For EACH comment, check if the issue is CURRENTLY FIXED
