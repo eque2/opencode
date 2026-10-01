@@ -37,7 +37,8 @@ function credentialFromRequest(request: HttpServerRequest.HttpServerRequest) {
 
 /** Where the request put its credential: the `auth_token` query, the Authorization header, or nowhere. */
 export function credentialSource(request: HttpServerRequest.HttpServerRequest) {
-  if (new URL(request.url, "http://localhost").searchParams.has(AUTH_TOKEN_QUERY)) return "query"
+  // URL.parse returns null for a target that `new URL` would throw on, so a crafted path still gets its 401.
+  if (URL.parse(request.url, "http://localhost")?.searchParams.has(AUTH_TOKEN_QUERY)) return "query"
   return request.headers.authorization ? "header" : "none"
 }
 

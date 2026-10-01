@@ -185,5 +185,8 @@ describe("credentialSource", () => {
     expect(source("http://localhost/probe?auth_token=abc")).toBe("query")
     expect(source("http://localhost/probe", { authorization: "Basic abc" })).toBe("header")
     expect(source("http://localhost/probe")).toBe("none")
+    // A target that `new URL` rejects must not throw out of the 401 path.
+    const crafted = HttpServerRequest.fromWeb(new Request("http://localhost/probe")).modify({ url: "//" })
+    expect(() => credentialSource(crafted)).not.toThrow()
   })
 })
