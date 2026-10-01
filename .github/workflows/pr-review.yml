@@ -9,6 +9,7 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  actions: read # handle-errors reads the failed job's log to quote its error
 
 env:
   ENABLE_JIRA_INTEGRATION: 'false' # Enable / disable Jira integration
@@ -36,6 +37,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      # A failure comment from an earlier run is stale once a new run starts;
+      # handle-errors posts a fresh one if this run fails too.
+      - name: Delete previous failure comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const deleteComments = require('${{ github.workspace }}/.github/scripts/delete-comments.js');
+            await deleteComments({ github, context, marker: '<!-- ai-workflow:pr-review-failed -->', prNumber: context.payload.pull_request.number });
 
       - name: Extract PR information
         id: pr-info
@@ -74,46 +84,56 @@ jobs:
     steps:
       - name: Post error comment
         uses: actions/github-script@v8
+        env:
+          HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          JIRA_ENABLED: ${{ needs.setup-config.outputs.jira_enabled }}
         with:
           script: |
             const prNumber = context.payload.pull_request?.number;
+            if (!prNumber) return;
 
-            if (!prNumber) {
-              console.log('Could not determine PR number from context');
-              return;
+            // Name the job and step that failed, and quote the first error line
+            // from its log, instead of guessing at a cause.
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.runId, attempt_number: context.runAttempt,
+            });
+            const failed = jobs.filter(j => j.conclusion === 'failure');
+            const authPattern = /\b401\b|unauthori[sz]ed|authentication (failed|error)|invalid (api key|oauth token|x-api-key)|OAuth token (has )?expired/i;
+            let authFailure = false;
+            const lines = [];
+            for (const job of failed) {
+              const step = job.steps?.find(s => s.conclusion === 'failure')?.name ?? 'unknown step';
+              let firstError = '';
+              try {
+                const log = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner, repo: context.repo.repo, job_id: job.id,
+                });
+                // Match only error lines: the Claude job log also holds the code
+                // under review, where "401" or "unauthorized" means nothing.
+                const errorLines = String(log.data).split('\n').filter(l => /##\[error\]|Error:|error:/.test(l));
+                if (errorLines.some(l => authPattern.test(l))) authFailure = true;
+                firstError = (errorLines[0] ?? '')
+                  .replace(/^\S+Z\s+/, '').replace('##[error]', '').trim().slice(0, 300);
+              } catch (e) {
+                firstError = `(could not read the job log: ${e.message})`;
+              }
+              lines.push(`- **${job.name}** failed at step **${step}**` + (firstError ? `\n  \`\`\`\n  ${firstError}\n  \`\`\`` : ''));
             }
 
-            const jiraEnabled = '${{ needs.setup-config.outputs.jira_enabled }}' === 'true';
-            const jiraTickets = '${{ needs.extract-pr-info.outputs.jira_tickets }}';
+            let body = '<!-- ai-workflow:pr-review-failed -->\n## ⚠️ PR Review Failed\n\n';
+            body += lines.length ? lines.join('\n') + '\n' : 'A job failed, but the run lists no failed job. See the workflow logs.\n';
 
-            let errorMessage = '## ⚠️ PR Review Failed\n\n';
-            errorMessage += 'The automated review encountered an error. Possible causes:\n\n';
-
-            if (jiraEnabled && '${{ needs.jira-verification.result }}' === 'failure') {
-              errorMessage += '- ❌ Failed to fetch Jira ticket (check credentials and permissions)\n';
+            if (process.env.HAS_CLAUDE_TOKEN !== 'true') {
+              body += '\n**The `CLAUDE_CODE_OAUTH_TOKEN` secret is not set.** Create it with `claude setup-token` and add it as a repository secret.\n';
+            } else if (authFailure) {
+              body += '\n**The log shows an authentication error.** `CLAUDE_CODE_OAUTH_TOKEN` may have expired; create a new one with `claude setup-token`.\n';
             }
-
-            if ('${{ needs.code-review.result }}' === 'failure') {
-              errorMessage += '- ❌ Code review failed\n';
+            if (process.env.JIRA_ENABLED === 'true' && failed.some(j => /jira/i.test(j.name))) {
+              body += '\nJira verification needs the `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets.\n';
             }
-
-            // Always show required secrets for debugging
-            errorMessage += '\n**Required Secrets:**\n';
-            errorMessage += '- `CLAUDE_CODE_OAUTH_TOKEN` (run: claude setup-token)\n';
-
-            if (jiraEnabled) {
-              errorMessage += '\n**Required Secrets for Jira (if enabled):**\n';
-              errorMessage += '- `JIRA_BASE_URL` (e.g., https://eque2.atlassian.net)\n';
-              errorMessage += '- `JIRA_EMAIL` (bot email)\n';
-              errorMessage += '- `JIRA_API_TOKEN` (API token)\n';
-            }
-
-            errorMessage += '\n\n';
-            errorMessage += `[View workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            body += `\n[View workflow logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
 
             await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              body: errorMessage
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body,
             });

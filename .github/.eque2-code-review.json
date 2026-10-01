@@ -1,7 +1,7 @@
 {
   "actions/find-comment/action.yml": "d41fe683604641993047304644abb6707f82e47b776d82730e782aac6ba65161",
   "actions/jira-integration/action.yml": "05fb45a939f855b487843ee174fdcb3498ff71846334de746b545af7427c647f",
-  "prompts/code-review-basic.md": "476b1588e6912c10b5d16cd6fd33da5c8ab651ddf28cc5b06ad1a6b5618684f4",
+  "prompts/code-review-basic.md": "0316352b4d3661aecd96596adb5c55be1b9278ffcdac41e2ce73192991c314af",
   "prompts/detect-fixed-issues.md": "317ad867909b199fc08041c02d84a3b1e588895fa0530e5ca78ccaa8ae0b275c",
   "prompts/jira-verification.md": "a65c745bf4ce96f2b444b602377bfbf640b7e7d424d8ce569f8de963312a34de",
   "scripts/delete-comments.js": "ab052c35b54b5e6ccb5cde0ae015cecc661baf38ab4be52a5ed2b1ab30c5182e",
@@ -9,7 +9,7 @@
   "scripts/fetch-jira-tickets.sh": "3cd5659002e7ee7f6aba6e62074439243224e9cd93cd250f27eda6a99fd07347",
   "scripts/find-comment.js": "2a593ac9a356cceb4529d6c12439fec3d54b914d9650ac856086fae33b55f1f7",
   "workflows/README.md": "873435c8a55a2d305f6ccb9081dc43d9f019ab8e540f7c0b583f22af74f5efc2",
-  "workflows/code-review.yml": "a5f0151522c3fedf07c79bf047b0f4c3512e7c0c192cd56c369d4666ab063d67",
+  "workflows/code-review.yml": "bec646062b687cff0ab6faa5abaf1880766a2c5d6aae52aa8b482553a07a89c4",
   "workflows/jira-verification.yml": "342737cc232c4f63accacc416551f5ad72816c9c217f009e54333733105628ec",
-  "workflows/pr-review.yml": "35acdc8c41241941ad0d64d6ba9b65a6b3cc900b3670186061bbd6924433ed4e"
+  "workflows/pr-review.yml": "33b9ec575dbcca94b46fa73307766bbb719d14bfcde3f9e1f48bae8c3846ab1b"
 }

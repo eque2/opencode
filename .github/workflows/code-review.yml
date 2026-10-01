@@ -164,6 +164,8 @@ jobs:
       - name: Build code review prompt
         id: build-prompt
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Always use basic template - resolution is handled in separate jobs
           PROMPT_FILE=".github/prompts/code-review-basic.md"
@@ -211,6 +213,9 @@ jobs:
           PROMPT="${PROMPT//\{PR_NUMBER\}/${{ inputs.pr_number }}}"
           PROMPT="${PROMPT//\{owner\}/${{ github.repository_owner }}}"
           PROMPT="${PROMPT//\{repo\}/${{ github.event.repository.name }}}"
+          # GitHub attaches review comments only within the first 3,000 files.
+          CHANGED_FILES=$(gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }} --jq .changed_files)
+          PROMPT="${PROMPT//\{CHANGED_FILES\}/$CHANGED_FILES}"
 
           # Output
           echo "prompt<<EOFPROMPT" >> $GITHUB_OUTPUT
@@ -232,3 +237,23 @@ jobs:
             }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The action exits 0 even when Claude could not post the review, so check
+      # the outcome here: a green check must mean the PR really got its review.
+      - name: Verify the review was posted
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f review-post-error.txt ]; then
+            echo "::error title=Review not posted::GitHub rejected the review: $(head -c 500 review-post-error.txt | tr '\n' ' '). The findings should be in a single fallback comment on the PR."
+            exit 1
+          fi
+          FOUND=$(gh api --paginate repos/${{ github.repository }}/issues/${{ inputs.pr_number }}/comments \
+            --jq '[.[] | select(.body | startswith("<!-- ai-workflow:code-review-summary -->"))] | length' \
+            | awk '{ n += $1 } END { print n + 0 }')
+          if [ "$FOUND" -eq 0 ]; then
+            echo "::error title=Review not posted::Claude finished without posting a review summary on the PR. See the 'Claude Code PR Review' step output for the reason."
+            exit 1
+          fi
+          echo "Review summary found on the PR."
