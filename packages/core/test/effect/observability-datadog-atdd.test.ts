@@ -948,24 +948,28 @@ test("AC-1c files merge key by key and the later file wins", async () => {
   expect(required(result.settings)).toMatchObject({ service: "b", env: "x", version: "3" })
 })
 
-test("AC-1c an unreadable file is skipped with one warning that names it, and a missing file is silent", async () => {
-  await using temp = await tempDir()
-  const locked = path.join(temp.dir, "opencode.json")
-  await Bun.write(path.join(temp.dir, "config.json"), datadogFile({ service: "kept" }))
-  await Bun.write(locked, datadogFile({ service: "unread" }))
-  await fs.chmod(locked, 0o000)
-  const warned = warnings()
-  const resolved = await Datadog.provider({ env: { DD_API_KEY: "key" }, configDir: temp.dir }).pipe(
-    Effect.flatMap((provider) => Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider)))),
-    Effect.provide(Logger.layer([warned.logger])),
-    Effect.runPromise,
-  )
-  await fs.chmod(locked, 0o600)
-  expect(warned.messages).toHaveLength(1)
-  expect(warned.messages[0]).toStartWith("Datadog settings file unreadable")
-  expect(warned.messages[0]).toContain(locked)
-  expect(required(resolved).service).toBe("kept")
-})
+// Windows ignores the chmod permission bits, so it cannot make the file unreadable.
+test.skipIf(process.platform === "win32")(
+  "AC-1c an unreadable file is skipped with one warning that names it, and a missing file is silent",
+  async () => {
+    await using temp = await tempDir()
+    const locked = path.join(temp.dir, "opencode.json")
+    await Bun.write(path.join(temp.dir, "config.json"), datadogFile({ service: "kept" }))
+    await Bun.write(locked, datadogFile({ service: "unread" }))
+    await fs.chmod(locked, 0o000)
+    const warned = warnings()
+    const resolved = await Datadog.provider({ env: { DD_API_KEY: "key" }, configDir: temp.dir }).pipe(
+      Effect.flatMap((provider) => Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider)))),
+      Effect.provide(Logger.layer([warned.logger])),
+      Effect.runPromise,
+    )
+    await fs.chmod(locked, 0o600)
+    expect(warned.messages).toHaveLength(1)
+    expect(warned.messages[0]).toStartWith("Datadog settings file unreadable")
+    expect(warned.messages[0]).toContain(locked)
+    expect(required(resolved).service).toBe("kept")
+  },
+)
 
 test("AC-1c an empty file counts as no file", async () => {
   const result = await fromFiles({ "config.json": datadogFile({ service: "kept" }), "opencode.json": "  \n " })
