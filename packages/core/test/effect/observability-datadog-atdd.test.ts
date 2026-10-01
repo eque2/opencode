@@ -209,38 +209,27 @@ test("AC-4 a Debug record reaches Datadog but not an Info file log", async () =>
 })
 
 test("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seconds", async () => {
-  const target = intake([{ status: 429, headers: { "Retry-After": "2" } }])
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
-    }),
-  )
-  // The periodic flush retries; the final flush at scope close makes one attempt only.
-  await ship(
-    config,
-    Effect.logInfo("rate limited").pipe(
+  const target = stub([{ status: 429, headers: { "Retry-After": "2" } }])
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" })
+  await Effect.gen(function* () {
+    const logger = yield* Datadog.logger(config)
+    yield* Effect.logInfo("rate limited").pipe(
       Effect.annotateLogs({ category: "llm.request" }),
-      Effect.andThen(Effect.promise(() => until(() => target.requests.length >= 2))),
-    ),
-  )
-  expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(1900)
-}, 20_000)
+      Effect.provide(Logger.layer([logger])),
+    )
+    yield* TestClock.adjust("1 second")
+    expect(target.requests).toHaveLength(1)
+    yield* TestClock.adjust("1999 millis")
+    expect(target.requests).toHaveLength(1)
+    yield* TestClock.adjust("1 millis")
+    expect(target.requests).toHaveLength(2)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
+})
 
 test("AC-6 after retries fail the sink sends nothing until the cooldown ends", async () => {
   // One attempt plus 3 retries fail, then the intake recovers.
-  const failures = 4
-  const target = intake(Array.from({ length: failures }, () => ({ status: 503 })))
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
-    }),
-  )
+  const target = stub(Array.from({ length: 4 }, () => ({ status: 503 })))
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" })
   await Effect.gen(function* () {
     const logger = yield* Datadog.logger(config, { cooldown: "2 seconds" })
     const log = (message: string) =>
@@ -249,14 +238,17 @@ test("AC-6 after retries fail the sink sends nothing until the cooldown ends", a
         Effect.provide(Logger.layer([logger])),
       )
     yield* log("first")
-    yield* Effect.promise(() => until(() => target.requests.length >= failures))
+    // The attempt at 50 milliseconds, then the backoff of 0.5, 1 and 2 seconds.
+    for (const wait of ["50 millis", "500 millis", "1 second", "2 seconds"] as const) yield* TestClock.adjust(wait)
+    expect(target.requests).toHaveLength(4)
     yield* log("second")
-    yield* Effect.sleep("500 millis")
-    expect(target.requests.length).toBe(failures)
-    yield* Effect.sleep("2 seconds")
+    yield* TestClock.adjust("500 millis")
+    expect(target.requests).toHaveLength(4)
+    yield* TestClock.adjust("2 seconds")
     yield* log("third")
-    yield* Effect.promise(() => until(() => target.requests.length > failures, 3_000))
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+    yield* TestClock.adjust("50 millis")
+    expect(target.requests).toHaveLength(5)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
   expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
 }, 30_000)
 
@@ -549,15 +541,8 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
 }, 30_000)
 
 test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 warns without it", async () => {
-  const target = intake([{ status: 401 }, { status: 413 }, { status: 401 }])
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
-    }),
-  )
+  const target = stub([{ status: 401 }, { status: 413 }, { status: 401 }])
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" })
   const warned = warnings()
   await Effect.gen(function* () {
     const datadog = yield* Datadog.logger(config, { cooldown: "1 second" })
@@ -567,19 +552,20 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 warns 
         Effect.provide(Logger.layer([datadog, warned.logger])),
       )
     yield* log("a")
-    yield* Effect.promise(() => until(() => target.requests.length >= 1))
-    yield* Effect.sleep("200 millis")
+    yield* TestClock.adjust("50 millis")
+    expect(target.requests).toHaveLength(1)
     yield* log("dropped while off")
-    yield* Effect.sleep("300 millis")
-    expect(target.requests.length).toBe(1)
-    yield* Effect.sleep("700 millis")
+    yield* TestClock.adjust("500 millis")
+    expect(target.requests).toHaveLength(1)
+    yield* TestClock.adjust("600 millis")
     // The 413 drops its batch but leaves the sink on, so the next record is sent at once.
     yield* log("b")
-    yield* Effect.promise(() => until(() => target.requests.length >= 2))
+    yield* TestClock.adjust("50 millis")
+    expect(target.requests).toHaveLength(2)
     yield* log("c")
-    yield* Effect.promise(() => until(() => target.requests.length >= 3))
-    yield* Effect.sleep("200 millis")
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+    yield* TestClock.adjust("50 millis")
+    expect(target.requests).toHaveLength(3)
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), target.layer)), Effect.runPromise)
   expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([["a"], ["b"], ["c"]])
   expect(warned.messages).toEqual([
     'Datadog sink disabled for the cooldown {"cooldownSeconds":1,"status":401}',
@@ -775,27 +761,23 @@ test("AC-8b disposal against a 503 or a 429 intake makes one attempt and finishe
     const start = Date.now()
     await runtime.dispose()
     expect(Date.now() - start).toBeLessThan(5_000)
-    await Bun.sleep(700)
+    // Disposal waits for the final attempt's response, and nothing runs after it, so the count is final here.
     expect([reply.status, target.requests.length]).toEqual([reply.status, 1])
   }
 }, 20_000)
 
 test("AC-8b disposal while the breaker is open sends nothing", async () => {
-  const target = intake([{ status: 401 }])
-  using _ = target.server
-  const config = required(
-    await settings({
-      DD_API_KEY: "key",
-      OPENCODE_DATADOG_LOGS_URL: target.url,
-      OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
-    }),
+  const target = stub([{ status: 401 }])
+  const config = await stubbed({ OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" })
+  const runtime = ManagedRuntime.make(
+    // provideMerge shares one TestClock between the sink's flush loop and the test's adjust calls.
+    Logger.layer([Datadog.logger(config)]).pipe(Layer.provideMerge(TestClock.layer()), Layer.provide(target.layer)),
   )
-  const runtime = ManagedRuntime.make(Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)))
   const log = (message: string) =>
     runtime.runPromise(Effect.logInfo(message).pipe(Effect.annotateLogs({ category: "cli.exit" })))
   await log("trips the breaker")
-  await until(() => target.requests.length >= 1)
-  await Bun.sleep(100)
+  await runtime.runPromise(TestClock.adjust("50 millis"))
+  expect(target.requests).toHaveLength(1)
   await log("buffered while off")
   await runtime.dispose()
   expect(target.requests).toHaveLength(1)
