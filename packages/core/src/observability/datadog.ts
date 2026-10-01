@@ -298,6 +298,9 @@ export interface LoggerOptions {
   readonly cooldown?: Duration.Input
 }
 
+/** Why a delivery ended: the intake status, or the transport error message. */
+type Detail = { readonly status: number } | { readonly error: string }
+
 interface OpenSink {
   readonly settings: Settings
   readonly logger: Logger.Logger<unknown, void>
@@ -364,15 +367,25 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
         Effect.map((response) => ({
           verdict: verdict(response.status),
           retryAfter: Option.fromNullishOr(response.headers["retry-after"]),
+          detail: { status: response.status } as Detail,
         })),
-        // A transport error is retried like a 5xx.
-        Effect.orElseSucceed(() => ({ verdict: "retry" as const, retryAfter: Option.none<string>() })),
+        // A transport error is retried like a 5xx. Its message, never the request, goes to the breaker warning.
+        Effect.catch((error) =>
+          Effect.succeed({
+            verdict: "retry" as const,
+            retryAfter: Option.none<string>(),
+            detail: { error: error.message } as Detail,
+          }),
+        ),
       )
   // Each wait, from Retry-After or the backoff, uses one of the retries.
-  const deliver = (body: Uint8Array, attempt = 0): Effect.Effect<"sent" | "dropped" | "failed"> =>
+  const deliver = (
+    body: Uint8Array,
+    attempt = 0,
+  ): Effect.Effect<{ verdict: "sent" | "dropped" | "failed"; detail: Detail }> =>
     Effect.flatMap(post(body), (result) => {
-      if (result.verdict !== "retry") return Effect.succeed(result.verdict)
-      if (attempt >= RETRIES) return Effect.succeed("failed" as const)
+      if (result.verdict !== "retry") return Effect.succeed({ verdict: result.verdict, detail: result.detail })
+      if (attempt >= RETRIES) return Effect.succeed({ verdict: "failed" as const, detail: result.detail })
       return retryDelay(result.retryAfter).pipe(
         Effect.map(Option.getOrElse(() => Duration.times(BACKOFF, 2 ** attempt))),
         Effect.flatMap(Effect.sleep),
@@ -394,10 +407,11 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < MutableRef.get(openUntil))
 
   // Like OtlpExporter, the sink turns itself off for the cooldown instead of retrying every flush.
-  const trip = Effect.gen(function* () {
+  const trip = Effect.fnUntraced(function* (detail: Detail) {
     MutableRef.set(openUntil, (yield* Clock.currentTimeMillis) + Duration.toMillis(cooldown))
     yield* Effect.logWarning("Datadog sink disabled for the cooldown", {
       cooldownSeconds: Duration.toSeconds(cooldown),
+      ...detail,
     }).pipe(Effect.provide(Logger.layer(Array.from(MutableRef.get(others)).filter((logger) => logger !== sink))))
   })
 
@@ -417,7 +431,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   // breaker is open, and all but the newest 10,000 buffered entries; the file log keeps the local copy. The
   // upgrade path, when log loss becomes unacceptable: a bounded spool in Global.Path.log with retention rules and
   // a data-loss-prevention review, because it writes redacted records to disk a second time.
-  const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
+  const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result.verdict === "failed" ? trip(result.detail) : Effect.void)))
 
   // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
   const final = drain((chunk) =>

@@ -494,7 +494,7 @@ test("AC-6b the default cooldown sends nothing at 59 seconds and sends again aft
       yield* Effect.promise(() => until(() => target.requests.length >= count))
       yield* settle()
     }
-    expect(warned.messages).toEqual(['Datadog sink disabled for the cooldown {"cooldownSeconds":60}'])
+    expect(warned.messages).toEqual(['Datadog sink disabled for the cooldown {"cooldownSeconds":60,"status":503}'])
     yield* log("second")
     yield* TestClock.adjust("59 seconds")
     yield* settle()
@@ -543,8 +543,33 @@ test("AC-6b each off period emits one Warn, 401 opens the breaker and 413 does n
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
   expect(target.requests.map((request) => request.body.map((entry) => entry.message))).toEqual([["a"], ["b"], ["c"]])
   expect(warned.messages).toEqual(
-    Array.from({ length: 2 }, () => 'Datadog sink disabled for the cooldown {"cooldownSeconds":1}'),
+    Array.from({ length: 2 }, () => 'Datadog sink disabled for the cooldown {"cooldownSeconds":1,"status":401}'),
   )
+}, 30_000)
+
+test("AC-6b a transport error names its cause in the breaker warning", async () => {
+  // Nothing listens on port 1, so every attempt fails before a response.
+  const config = required(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: "http://127.0.0.1:1/api/v2/logs",
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
+    }),
+  )
+  const warned = warnings()
+  await Effect.gen(function* () {
+    const datadog = yield* Datadog.logger(config)
+    yield* Effect.logInfo("lost").pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+      Effect.provide(Logger.layer([datadog, warned.logger])),
+    )
+    for (const wait of ["1 second", "500 millis", "1 second", "2 seconds"] as const) {
+      yield* TestClock.adjust(wait)
+      yield* Effect.promise(() => Bun.sleep(100))
+    }
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
+  expect(warned.messages).toHaveLength(1)
+  expect(warned.messages[0]).toMatch(/^Datadog sink disabled for the cooldown \{"cooldownSeconds":60,"error":".+"\}$/)
 }, 30_000)
 
 test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first", async () => {
