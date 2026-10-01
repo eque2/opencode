@@ -24,6 +24,8 @@ import {
 } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { createHash } from "node:crypto"
+import { gzipSync } from "node:zlib"
 import os from "os"
 import path from "path"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -398,7 +400,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
       )
     })
   const send = (batch: Array<Entry>) =>
-    deliver(Bun.gzipSync(encodeJson(batch))).pipe(
+    deliver(gzipSync(encodeJson(batch))).pipe(
       // The export request must not create spans or logs, or the sink feeds itself.
       Effect.withTracerEnabled(false),
     )
@@ -467,7 +469,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
 
   // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
   const final = drain((chunk) =>
-    post(Bun.gzipSync(encodeJson(chunk))).pipe(Effect.asVoid, Effect.withTracerEnabled(false)),
+    post(gzipSync(encodeJson(chunk))).pipe(Effect.asVoid, Effect.withTracerEnabled(false)),
   ).pipe(Effect.timeoutOption(FINAL_TIMEOUT), Effect.asVoid)
 
   const sink = Logger.make((options) => {
@@ -632,7 +634,7 @@ function omitted(input: unknown) {
 }
 
 function hash(input: unknown) {
-  return `sha256:${new Bun.CryptoHasher("sha256").update(text(input)).digest("hex").slice(0, 16)}`
+  return `sha256:${createHash("sha256").update(text(input)).digest("hex").slice(0, 16)}`
 }
 
 function chunks(items: Array<Fitted>) {
