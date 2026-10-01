@@ -1,5 +1,5 @@
 import { ServerAuth } from "@/server/auth"
-import { Effect, Encoding, Layer, Redacted } from "effect"
+import { Effect, Encoding, Layer, Option, Redacted } from "effect"
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiError, HttpApiMiddleware } from "effect/unstable/httpapi"
 import { hasPtyConnectTicketURL } from "@/server/shared/pty-ticket"
@@ -8,6 +8,7 @@ export {
   Authorization as ServerAuthorization,
   authorizationLayer as serverAuthorizationLayer,
 } from "@opencode-ai/server/middleware/authorization"
+import { credentialSource } from "@opencode-ai/server/middleware/authorization"
 
 const AUTH_TOKEN_QUERY = "auth_token"
 const UNAUTHORIZED = 401
@@ -48,7 +49,17 @@ function validateCredential<A, E, R>(
       yield* HttpEffect.appendPreResponseHandler((_request, response) =>
         Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", WWW_AUTHENTICATE)),
       )
-      yield* Effect.logWarning("HTTP authentication failed").pipe(Effect.annotateLogs({ category: "http.auth" }))
+      // The method and the credential source tell a misconfigured client from a probe. The URL stays out: its
+      // query can carry the auth token, and the record can go to a remote sink.
+      const request = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest)
+      yield* Effect.logWarning("HTTP authentication failed").pipe(
+        Effect.annotateLogs({
+          category: "http.auth",
+          ...(Option.isSome(request)
+            ? { method: request.value.method, credential: credentialSource(request.value) }
+            : {}),
+        }),
+      )
       return yield* new HttpApiError.Unauthorized({})
     }
     return yield* effect

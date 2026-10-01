@@ -35,6 +35,12 @@ function credentialFromRequest(request: HttpServerRequest.HttpServerRequest) {
   return Effect.succeed(emptyCredential())
 }
 
+/** Where the request put its credential: the `auth_token` query, the Authorization header, or nowhere. */
+export function credentialSource(request: HttpServerRequest.HttpServerRequest) {
+  if (new URL(request.url, "http://localhost").searchParams.has(AUTH_TOKEN_QUERY)) return "query"
+  return request.headers.authorization ? "header" : "none"
+}
+
 export const authorizationLayer = Layer.effect(
   Authorization,
   Effect.gen(function* () {
@@ -51,7 +57,11 @@ export const authorizationLayer = Layer.effect(
         yield* HttpEffect.appendPreResponseHandler((_request, response) =>
           Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", WWW_AUTHENTICATE)),
         )
-        yield* Effect.logWarning("HTTP authentication failed").pipe(Effect.annotateLogs({ category: "http.auth" }))
+        // The method and the credential source tell a misconfigured client from a probe. The URL stays out: its
+        // query can carry the auth token, and the record can go to a remote sink.
+        yield* Effect.logWarning("HTTP authentication failed").pipe(
+          Effect.annotateLogs({ category: "http.auth", method: request.method, credential: credentialSource(request) }),
+        )
         return yield* new UnauthorizedError({ message: "Authentication required" })
       }),
     )
