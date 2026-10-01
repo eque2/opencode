@@ -585,8 +585,16 @@ function redact(input: unknown, content: Settings["content"], key = "", depth = 
   if (depth >= MAX_DEPTH) return "[DEPTH]"
   if (Array.isArray(input)) return input.map((value) => redact(value, content, "", depth + 1))
   if (input instanceof Date) return input.toISOString()
-  // Provider errors carry the request body in enumerable fields, so an error keeps only its name and message.
-  if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
+  // Provider errors carry the request body in enumerable fields, so an error keeps only its name, tag and message.
+  // The message follows the content switch, because LLMError and JsonError messages embed response bodies and
+  // whole config files.
+  if (input instanceof Error)
+    return {
+      name: input.name,
+      ...(Predicate.hasProperty(input, "_tag") ? { tag: String(input._tag) } : {}),
+      message:
+        content === "full" ? scrub(input.message) : content === "omit" ? omitted(input.message) : hash(input.message),
+    }
   if (!Predicate.isObject(input)) return input
   return Object.fromEntries(
     Object.entries(input).map(([name, value]) => [name, redact(value, content, name, depth + 1)]),

@@ -67,7 +67,8 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
   expect(requests[0].key).toBe("test-key")
   const [entry, failure] = requests[0].body
   expect(requests[0].body).toHaveLength(2)
-  expect(failure.error).toEqual({ name: "Error", message: "Bearer [REDACTED] failed" })
+  // Under content "hash" the error message is hashed, like a prompt.
+  expect(failure.error).toEqual({ name: "Error", message: expect.stringMatching(/^sha256:[0-9a-f]{16}$/) })
   expect(entry).toMatchObject({
     message: "llm request",
     status: "info",

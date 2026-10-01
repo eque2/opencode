@@ -712,23 +712,23 @@ OpenCode can be configured using environment variables.
 
 OpenCode can send its logs to the Datadog Logs intake. The sink turns on when `DD_API_KEY` is set.
 
-| Variable                          | Type     | Default                                  | Description                                                                         |
-| --------------------------------- | -------- | ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| `DD_API_KEY`                      | string   | none                                     | Datadog API key. Required. Read only from the environment                           |
-| `OPENCODE_DATADOG_LOGS`           | boolean  | `true`                                   | Set to `false` to turn the sink off while the key stays set                         |
-| `OPENCODE_DATADOG_SPANS`          | boolean  | `true`                                   | Send one record per ended span, with its name, duration, outcome and attributes     |
-| `OPENCODE_DATADOG_EVENTS`         | boolean  | `true`                                   | Send one record per bus event, with its type and IDs but not its data               |
-| `DD_SITE`                         | string   | `datadoghq.com`                          | Datadog site, such as `datadoghq.eu`                                                |
-| `OPENCODE_DATADOG_LOGS_URL`       | string   | derived from `DD_SITE`                   | Full intake URL, for a proxy or the Datadog Agent. Read only from the environment   |
-| `DD_SERVICE`                      | string   | `opencode`                               | Service name                                                                        |
-| `DD_ENV`                          | string   | the installation channel                 | Environment tag                                                                     |
-| `DD_VERSION`                      | string   | the opencode version                     | Version tag                                                                         |
-| `DD_TAGS`                         | string   | empty                                    | Extra comma-separated `key:value` tags                                              |
-| `DD_HOSTNAME`                     | string   | the OS hostname                          | Hostname                                                                            |
-| `OPENCODE_DATADOG_LOG_LEVEL`      | string   | `Info`                                   | Lowest level sent to Datadog, in any case. Independent of `OPENCODE_LOG_LEVEL`      |
-| `OPENCODE_DATADOG_CATEGORIES`     | string   | `*,-question,-pty,-llm.chunk,-bus.delta` | Category prefixes to send; a `-` prefix excludes, for example `llm,tool,-tool.read` |
-| `OPENCODE_DATADOG_CONTENT`        | string   | `omit`                                   | Prompt and file content: `omit`, `hash` or `full`. Secrets are always redacted      |
-| `OPENCODE_DATADOG_FLUSH_INTERVAL` | duration | `5 seconds`                              | How often buffered logs are sent                                                    |
+| Variable                          | Type     | Default                                  | Description                                                                                           |
+| --------------------------------- | -------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `DD_API_KEY`                      | string   | none                                     | Datadog API key. Required. Read only from the environment                                             |
+| `OPENCODE_DATADOG_LOGS`           | boolean  | `true`                                   | Set to `false` to turn the sink off while the key stays set                                           |
+| `OPENCODE_DATADOG_SPANS`          | boolean  | `true`                                   | Send one record per ended span, with its name, duration, outcome and attributes                       |
+| `OPENCODE_DATADOG_EVENTS`         | boolean  | `true`                                   | Send one record per bus event, with its type and IDs but not its data                                 |
+| `DD_SITE`                         | string   | `datadoghq.com`                          | Datadog site, such as `datadoghq.eu`                                                                  |
+| `OPENCODE_DATADOG_LOGS_URL`       | string   | derived from `DD_SITE`                   | Full intake URL, for a proxy or the Datadog Agent. Read only from the environment                     |
+| `DD_SERVICE`                      | string   | `opencode`                               | Service name                                                                                          |
+| `DD_ENV`                          | string   | the installation channel                 | Environment tag                                                                                       |
+| `DD_VERSION`                      | string   | the opencode version                     | Version tag                                                                                           |
+| `DD_TAGS`                         | string   | empty                                    | Extra comma-separated `key:value` tags                                                                |
+| `DD_HOSTNAME`                     | string   | the OS hostname                          | Hostname                                                                                              |
+| `OPENCODE_DATADOG_LOG_LEVEL`      | string   | `Info`                                   | Lowest level sent to Datadog, in any case. Independent of `OPENCODE_LOG_LEVEL`                        |
+| `OPENCODE_DATADOG_CATEGORIES`     | string   | `*,-question,-pty,-llm.chunk,-bus.delta` | Category prefixes to send; a `-` prefix excludes, for example `llm,tool,-tool.read`                   |
+| `OPENCODE_DATADOG_CONTENT`        | string   | `omit`                                   | Prompt, file content and error object messages: `omit`, `hash` or `full`. Secrets are always redacted |
+| `OPENCODE_DATADOG_FLUSH_INTERVAL` | duration | `5 seconds`                              | How often buffered logs are sent                                                                      |
 
 An empty value counts as unset. An invalid value turns the sink off and writes one warning to the log file. It does not stop startup.
 
