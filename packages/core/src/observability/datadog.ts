@@ -166,6 +166,8 @@ const MAX_RETRY_AFTER = 30_000
 const COOLDOWN = Duration.seconds(60)
 const MAX_BUFFER = 10_000
 const FINAL_TIMEOUT = Duration.seconds(5)
+// An intake that accepts a request and never answers would stall the flush loop, so each request is bounded.
+const REQUEST_TIMEOUT = Duration.seconds(10)
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
@@ -364,12 +366,13 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
         ),
       )
       .pipe(
+        Effect.timeout(REQUEST_TIMEOUT),
         Effect.map((response) => ({
           verdict: verdict(response.status),
           retryAfter: Option.fromNullishOr(response.headers["retry-after"]),
           detail: { status: response.status } as Detail,
         })),
-        // A transport error is retried like a 5xx. Its message, never the request, goes to the breaker warning.
+        // A transport error or a timeout is retried like a 5xx. Its message, never the request, goes to the breaker warning.
         Effect.catch((error) =>
           Effect.succeed({
             verdict: "retry" as const,

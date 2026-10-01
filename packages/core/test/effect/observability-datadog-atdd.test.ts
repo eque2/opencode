@@ -599,6 +599,42 @@ test("AC-6b a batch interrupted mid-send goes out in the final flush", async () 
   ])
 }, 30_000)
 
+test("AC-6b a request the intake never answers times out and trips the breaker", async () => {
+  const target = intake(Array.from({ length: 4 }, () => ({ status: 202, delay: 60_000 })))
+  using _ = target.server
+  const config = required(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: target.url,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second",
+    }),
+  )
+  const warned = warnings()
+  await Effect.gen(function* () {
+    const datadog = yield* Datadog.logger(config)
+    yield* Effect.logInfo("stalled").pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+      Effect.provide(Logger.layer([datadog, warned.logger])),
+    )
+    // Each attempt waits 10 seconds, then the backoff of 0.5, 1 and 2 seconds starts the next one.
+    for (const [wait, count] of [
+      ["1 second", 1],
+      ["10.5 seconds", 2],
+      ["11 seconds", 3],
+      ["12 seconds", 4],
+    ] as const) {
+      yield* TestClock.adjust(wait)
+      yield* Effect.promise(() => until(() => target.requests.length >= count))
+      yield* Effect.promise(() => Bun.sleep(50))
+    }
+    yield* TestClock.adjust("10 seconds")
+    yield* Effect.promise(() => until(() => warned.messages.length >= 1))
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(TestClock.layer(), FetchHttpClient.layer)), Effect.runPromise)
+  expect(target.requests).toHaveLength(4)
+  expect(warned.messages).toHaveLength(1)
+  expect(warned.messages[0]).toMatch(/^Datadog sink disabled for the cooldown \{"cooldownSeconds":60,"error":".+"\}$/)
+}, 30_000)
+
 test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first", async () => {
   const target = intake()
   using _ = target.server
