@@ -21,7 +21,12 @@ export function bridge(inner: Tracer.Tracer): Tracer.Tracer {
       // A delegating view, so the inner tracer's span is never mutated and may be frozen. Every other member reads
       // from the inner span with the inner span as `this`, so its own getters and methods behave unchanged.
       return new Proxy(span, {
-        get: (target, key) => (key === "end" ? end : Reflect.get(target, key, target)),
+        get: (target, key) => {
+          if (key === "end") return end
+          const value = Reflect.get(target, key, target)
+          // A method called through the proxy would get the proxy as `this`, which breaks `#private` fields.
+          return typeof value === "function" ? value.bind(target) : value
+        },
       })
     },
   }

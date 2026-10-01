@@ -159,6 +159,23 @@ test("the span bridge never mutates the inner span, and a span ended outside a f
   expect(messages).not.toContain("MCP.detached")
 })
 
+test("a bridged span runs its methods on the inner span, so #private fields work", () => {
+  // Like a tracer whose span keeps its state in #private fields, which reject any other `this`.
+  class Branded {
+    #attributes = new Map<string, unknown>()
+    attribute(key: string, value: unknown) {
+      this.#attributes.set(key, value)
+    }
+    get size() {
+      return this.#attributes.size
+    }
+  }
+  const inner = { span: () => new Branded() } as unknown as Tracer.Tracer
+  const span = Telemetry.bridge(inner).span({} as never)
+  span.attribute("tool", "read")
+  expect((span as unknown as Branded).size).toBe(1)
+})
+
 test("closing one sink leaves the other sinks open", async () => {
   const config = Option.getOrThrow(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }))
   await Effect.gen(function* () {
