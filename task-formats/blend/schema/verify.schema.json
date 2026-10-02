@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eque2.dev/task-spec/1/verify.schema.json",
+  "title": "VERIFY.md front matter",
+  "description": "How a task is judged: numbered obligations (ensures, preserves, forbids), each with a proof, the gates it must pass, the weak proofs a verifier must refuse, and any tightening of the spec policy. Qualified obligation id = `<task id>.<key>`.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "gates": {
+      "description": "Gates (SPEC.md gates) that must pass at this task's final commit.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/gateId" }
+    },
+    "hint": {
+      "description": "Where the tests probably live. Never the binding; the title tag is.",
+      "$ref": "#/$defs/text"
+    },
+    "ensures": {
+      "description": "What must be true when the work is done. Keys `c<n>` on a leaf, `e<n>` on a parent.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/ensuresKey" },
+      "additionalProperties": { "$ref": "#/$defs/ensures" }
+    },
+    "preserves": {
+      "description": "What must still be true after the work. Keys `p<n>`.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^p[1-9][0-9]*$" },
+      "additionalProperties": { "$ref": "#/$defs/rule" }
+    },
+    "forbids": {
+      "description": "What this task must not do; scoped to this task only. Keys `f<n>`.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^f[1-9][0-9]*$" },
+      "additionalProperties": { "$ref": "#/$defs/rule" }
+    },
+    "rejects": {
+      "description": "Weak proofs the verifier refuses, keyed by the obligation they would wrongly prove. A list, because the lessons of earlier rejections accumulate.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/obligationKey" },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": { "$ref": "#/$defs/text" }
+      }
+    },
+    "policy": {
+      "description": "This task's tightening of the spec policy. It can only add judges and lower budgets (R13).",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "judges": {
+          "description": "Judges for a proof kind; each list must contain the spec's judges for that kind.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "test": { "description": "Judges of a tagged-test proof.", "$ref": "#/$defs/judges" },
+            "gate": { "description": "Judges of a gate proof.", "$ref": "#/$defs/judges" },
+            "unchanged": { "description": "Judges of an unchanged-path proof.", "$ref": "#/$defs/judges" },
+            "review": { "description": "Judges of a review proof.", "$ref": "#/$defs/judges" }
+          }
+        },
+        "budgets": {
+          "description": "Lower limits than the spec's; never higher.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "taskAttempts": { "description": "Build attempts for this task.", "type": "integer", "minimum": 1 },
+            "retries": { "description": "Retries per proof of this task.", "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "judge": { "enum": ["runner", "verifier", "reviewer", "engine", "human"] },
+    "judges": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/judge" }
+    },
+    "gateId": { "type": "string", "pattern": "^BUILD-[1-9][0-9]*$" },
+    "scenarioOrRefId": {
+      "type": "string",
+      "anyOf": [
+        { "pattern": "^S[1-9][0-9]*$" },
+        { "pattern": "^[A-Z]+-[A-Z]*[0-9]+(\\.[a-z0-9]+)?$" }
+      ]
+    },
+    "ensuresKey": { "type": "string", "pattern": "^[ce][1-9][0-9]*$" },
+    "obligationKey": { "type": "string", "pattern": "^[cepf][1-9][0-9]*$" },
+    "category": {
+      "enum": ["happy-path", "empty", "boundary", "invalid-input", "failure", "concurrency", "security", "compatibility", "regression", "money"]
+    },
+    "path": {
+      "description": "A repository-relative path: no leading slash, no `..` segment.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"
+    },
+    "proof": {
+      "description": "How an obligation is proved. `test`: a passing test titled with the obligation's own qualified id. `review`: the parent's independent review. `{test: <key>}`: the test tagged with another ensures obligation of this task. `{gate: <id>}`: the gate's command exits 0. `{unchanged: <path>}`: no commit of this task changes the path.",
+      "oneOf": [
+        { "const": "test" },
+        { "const": "review" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["test"],
+          "properties": { "test": { "description": "An ensures key in this VERIFY.md.", "$ref": "#/$defs/ensuresKey" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gate"],
+          "properties": { "gate": { "description": "A gate id from SPEC.md.", "$ref": "#/$defs/gateId" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unchanged"],
+          "properties": { "unchanged": { "description": "A path this task's commits must not change.", "$ref": "#/$defs/path" } }
+        }
+      ]
+    },
+    "ensures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "category": { "description": "The kind of case; required on a leaf, absent on a parent.", "$ref": "#/$defs/category" },
+        "text": { "description": "The obligation, as one statement that can be proved or refuted.", "$ref": "#/$defs/text" },
+        "covers": {
+          "description": "Scenarios or references this obligation also speaks to.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/scenarioOrRefId" }
+        },
+        "proof": { "description": "Defaults to `test`.", "$ref": "#/$defs/proof" }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "proof"],
+      "properties": {
+        "text": { "description": "The rule, as one statement.", "$ref": "#/$defs/text" },
+        "proof": { "description": "How the rule is proved.", "$ref": "#/$defs/proof" }
+      }
+    }
+  }
+}

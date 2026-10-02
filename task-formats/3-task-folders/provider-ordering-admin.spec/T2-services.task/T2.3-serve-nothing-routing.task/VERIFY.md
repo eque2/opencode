@@ -1,0 +1,31 @@
+---
+verifies: T2.3
+supports: [S3, S6, S7, S22, S44, S56]
+gates: []
+hint: libs/media/src/tests/verify-provider-ordering-admin-S7.spec.ts
+---
+
+# Verify T2.3 — Update the router so a pair configured to serve nothing is not treated as unconfigured
+
+## Cases
+
+1. `T2.3.c1` · *happy path* — a configured pair routes to its first enabled candidate in stored order, reported as `'policy'`.
+2. `T2.3.c2` · *empty / null* — an absent pair routes by `orderedCandidatesFor`, reported as `'default-precedence'`. (→ S6, S44)
+3. `T2.3.c3` · *boundary* — a pair configured with every provider disabled fails with a typed error naming the pair, distinguishable from the absent case. (→ S7)
+4. `T2.3.c4` · *boundary* — a disabled provider is never a candidate, even when every enabled candidate has failed. (→ S3, S22)
+5. `T2.3.c5` · *invalid input* — an override naming a disabled provider is refused by the existing `OverrideNotACandidate`, not silently honoured.
+6. `T2.3.c6` · *regression* — candidate order is verbatim and never re-sorted; a policy for a pair remains strictly additive over default precedence for every pair that is merely absent.
+
+## Supports
+
+- [S3](../../acceptance/S3.md) — Switching a provider off removes it from consideration entirely
+- [S6](../../acceptance/S6.md) — A model with no stored ordering routes by the built-in default
+- [S7](../../acceptance/S7.md) — A model whose providers are all switched off refuses to serve, distinguishably
+- [S22](../../acceptance/S22.md) — A failing first provider hands over to the next switched-on provider
+- [S44](../../acceptance/S44.md) — Models nobody has configured behave exactly as before
+- [S56](../../acceptance/S56.md) — A model configured to serve nothing is part of the configuration's identity
+
+## Weak proofs to reject
+
+- c3: asserting only that an error occurred. Assert the error's tag and the pair it names; only that separates serve-nothing from absent.
+- c4: a single failing candidate. Fail every enabled candidate, then assert the disabled provider was never called.

@@ -1,0 +1,38 @@
+---
+id: T2.2
+title: "Wire source selection, polling and load semantics"
+parent: T2
+after: [T2.1]
+touches:
+  - path: libs/media/src/routing-policy-source.ts
+    change: update
+  - path: apps/api/src/main.ts
+    change: update
+  - path: libs/media/src/routing-policy.ts
+    change: update
+refs: [POA-R2, POA-D7, EFF-32]
+---
+
+# T2.2 — Wire source selection, polling and load semantics
+
+## Goal
+
+Make the database the selectable source, and prove the existing load properties still hold when reached through it.
+
+## Approach
+
+**Finding POA-R2:** the Apply path and the background poller are two independent writers of `RoutingPolicyService`. Without a revision comparison in the swap, a poll in flight across an Apply silently reverts the administrator's change for up to one poll interval — after they were told it succeeded. The swap must therefore refuse an older revision, not merely a matching hash.
+
+## Preserve
+
+- the existing environment variables keep selecting the source they select today
+- `ROUTING_POLICY_DEFAULT_POLL_INTERVAL` and the bounded retry count — this task adds a source, it does not retune the poller
+- the `RoutingPolicyLive` composition and `provideMerge` structure in `main.ts`
+- a request sees one snapshot for its lifetime
+- a rejected replacement never disturbs the serving snapshot
+
+## Change detail
+
+- `libs/media/src/routing-policy-source.ts`: extend `routingPolicySourceSpecConfig` so the source is selected by configuration
+- `apps/api/src/main.ts`: wire the database-backed source
+- `libs/media/src/routing-policy.ts`: the compare-and-swap refuses a document whose revision is older than the one in force (POA-R2)

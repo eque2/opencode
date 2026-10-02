@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eque2.dev/task-spec/1/scenario.schema.json",
+  "title": "acceptance/S<n>.md front matter",
+  "description": "A shared acceptance scenario: the tasks it needs (the only place the scenario-task edge is written), its grouping, and any environment it needs. The id comes from the file name; the title and steps from the Gherkin block.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["needs", "category"],
+  "properties": {
+    "needs": {
+      "description": "Leaf tasks that must all be trusted before the scenario is judged.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/taskId" }
+    },
+    "category": {
+      "description": "The scenario group, as the feature file's section names it.",
+      "$ref": "#/$defs/text"
+    },
+    "environment": {
+      "description": "Where the scenario can be judged. Absent means `local`. A `deployed` scenario is judged only in a run that has a deployed target; until then it waits.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "description": "`local`: the local test run. `deployed`: the service running in its hosting environment.", "enum": ["local", "deployed"] },
+        "setup": { "description": "What must be in place before the run, for the agent that prepares it.", "$ref": "#/$defs/text" }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "taskId": { "type": "string", "pattern": "^T[1-9][0-9]*(\\.[1-9][0-9]*)*$" }
+  }
+}
