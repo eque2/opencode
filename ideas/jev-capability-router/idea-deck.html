@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Router for opencode</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: fixed 1920×1080 canvas scaled to the window; light slides for the story, dark slides for code. */
+:root {
+  --light: #F3F5F1; --card: #FBFCF9; --line: #D5DDD8; --ink: #14211E; --body: #44524E; --muted: #5E6D68;
+  --teal: #0D7565; --teal-soft: #DCEDE8; --tool: #2D5FA8; --skill: #A3560A; --bar: #C9D2CD;
+  --dark: #14211E; --panel: #1D2C28; --on-dark: #BFD2CB; --on-dark-muted: #93A8A0;
+  --code: #DCE6E1; --c-comment: #93A8A0; --c-string: #E8B36B; --c-word: #86C5F0; --c-key: #9FD8C5;
+  --display: "Bricolage Grotesque", Georgia, serif;
+  --text: "IBM Plex Sans", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+html, body { height: 100%; margin: 0; background: #0B1210; }
+#viewport { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; }
+#stage { width: 1920px; height: 1080px; position: relative; flex: none; }
+.slide {
+  position: absolute; inset: 0; box-sizing: border-box; padding: 96px 128px 120px;
+  display: none; flex-direction: column; gap: 32px; overflow: hidden;
+  background: var(--light); color: var(--body); font: 28px/1.45 var(--text);
+}
+.slide.on { display: flex; }
+.slide.dark { background: var(--dark); color: var(--on-dark); }
+.slide.teal { background: var(--teal); color: var(--light); }
+.slide.code { padding: 80px 128px 80px; gap: 28px; }
+.eyebrow { font: 600 24px/1 var(--text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--teal); margin: 0; }
+.dark .eyebrow { color: var(--c-key); }
+.teal .eyebrow { color: var(--teal-soft); }
+h1, h2, h3 { font-family: var(--display); color: var(--ink); margin: 0; text-wrap: balance; }
+.dark h1, .dark h2, .teal h1, .teal h2 { color: var(--light); }
+h1 { font-size: 112px; line-height: 1.02; font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 56px; line-height: 1.12; font-weight: 650; letter-spacing: -0.01em; }
+h2.long { font-size: 44px; }
+.code h2 { font-size: 44px; }
+h3 { font-size: 36px; line-height: 1.2; font-weight: 600; }
+p { margin: 0; }
+.lede { font-size: 36px; line-height: 1.4; max-width: 1400px; }
+.small { font-size: 24px; color: var(--muted); }
+.dark .small { color: var(--on-dark-muted); }
+.mono { font-family: var(--mono); }
+.tool { color: var(--tool); }
+.skill { color: var(--skill); }
+.row { display: flex; gap: 32px; }
+.grow { flex: 1; min-width: 0; }
+.footer {
+  position: absolute; left: 128px; right: 128px; bottom: 44px; display: flex; justify-content: space-between;
+  font: 22px/1 var(--text); color: var(--muted);
+}
+.dark .footer { color: var(--on-dark-muted); }
+.teal .footer { color: var(--teal-soft); }
+
+/* Cards and chips */
+.card { background: var(--card); border: 2px solid var(--line); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; gap: 12px; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.card-head .mono { font-size: 26px; font-weight: 600; }
+.tag { font: 600 20px/1 var(--text); letter-spacing: 0.06em; text-transform: uppercase; }
+.desc { font-size: 24px; line-height: 1.42; color: var(--ink); white-space: pre-line; }
+.more { font-size: 22px; color: var(--muted); font-style: italic; }
+.strip { display: flex; flex-direction: column; gap: 0; }
+.strip .tag { margin-bottom: 12px; }
+.toolrow { display: grid; grid-template-columns: 150px 1fr auto; gap: 24px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.toolrow .mono { font-size: 24px; font-weight: 600; }
+.toolrow .first { font-size: 24px; color: var(--ink); }
+.why { font-size: 28px; line-height: 1.4; color: var(--ink); border-left: 4px solid var(--teal); padding-left: 20px; }
+.chips { display: flex; flex-wrap: wrap; gap: 12px; }
+.chip { font: 24px/1 var(--mono); padding: 12px 16px; border-radius: 999px; background: var(--card); border: 2px solid var(--line); }
+.chip.tool { border-color: #B9CBE6; }
+.chip.skill { border-color: #E6CBAE; }
+
+/* Prompt and transcript */
+.you { background: var(--ink); color: var(--light); border-radius: 20px; padding: 28px 32px; display: flex; flex-direction: column; gap: 10px; }
+.you .who { font: 600 22px/1 var(--text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-key); }
+.you .said { font-size: 34px; line-height: 1.35; }
+.transcript { display: flex; flex-direction: column; gap: 14px; }
+.call { font: 26px/1.35 var(--mono); color: var(--ink); display: flex; gap: 16px; }
+.call .verb { font-weight: 600; min-width: 110px; }
+.call .out { color: var(--muted); }
+.reply { font-size: 32px; line-height: 1.45; color: var(--ink); white-space: pre-line; max-width: 1500px; }
+.agent { font: 600 22px/1 var(--text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--teal); }
+
+/* Score chart */
+.chart { display: flex; flex-direction: column; gap: 8px; }
+.chart .r { display: grid; grid-template-columns: 370px 76px 300px 72px 72px 96px; gap: 16px; align-items: center; }
+.chart .h { font: 600 20px/1.2 var(--text); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.chart .name { font: 24px/1.2 var(--mono); color: var(--ink); white-space: nowrap; }
+.chart .num { font: 24px/1 var(--mono); text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+.chart .conf { color: var(--muted); }
+.chart .track { position: relative; height: 24px; background: #E4EAE6; border-radius: 6px; }
+.chart .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--bar); }
+.chart .fill.kept.tool { background: var(--tool); }
+.chart .fill.kept.skill { background: var(--skill); }
+.chart .line { position: absolute; top: -8px; bottom: -8px; width: 3px; left: 40%; background: var(--ink); }
+.chart .dec { font: 600 24px/1 var(--text); }
+.chart .dec.kept { color: var(--teal); }
+.chart .dec.dropped { color: var(--muted); font-weight: 400; }
+.chart .rest { font-size: 24px; color: var(--muted); padding-top: 6px; }
+.stat { display: flex; flex-direction: column; gap: 4px; }
+.stat b { font: 700 44px/1.1 var(--display); color: var(--ink); }
+.stat span { font-size: 24px; color: var(--muted); }
+
+/* Big numbers */
+.big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+.big .n { font: 700 120px/1 var(--display); color: var(--ink); letter-spacing: -0.03em; }
+.big .u { font-size: 30px; color: var(--body); margin-top: 16px; }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; font-size: 28px; }
+th { text-align: left; font: 600 22px/1.2 var(--text); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 0 20px 14px 0; border-bottom: 2px solid var(--line); }
+td { padding: 16px 20px 16px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink); }
+td.mono { font-size: 24px; }
+td.num { font-family: var(--mono); font-size: 26px; font-variant-numeric: tabular-nums; }
+
+/* Code */
+.codebox { background: var(--panel); border-radius: 18px; padding: 32px 40px; flex: 1; min-height: 0; overflow: hidden; }
+.codebox pre { margin: 0; font: 22px/1.38 var(--mono); color: var(--code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.codebox.light { background: var(--ink); }
+.c { color: var(--c-comment); font-style: italic; }
+.s { color: var(--c-string); }
+.w { color: var(--c-word); }
+.k { color: var(--c-key); }
+.n { color: #F2A0A0; }
+.caption { font-size: 24px; color: var(--on-dark-muted); }
+
+/* Choice vs Score */
+.vs { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+.vs .card { gap: 20px; padding: 36px; }
+.verdict { font-size: 30px; color: var(--ink); }
+.vs .chart .r { grid-template-columns: 340px 70px 160px 72px; }
+.vs { align-items: start; }
+.card p .mono { white-space: nowrap; }
+
+/* Chrome outside the slide */
+#nav { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center;
+  font: 14px/1 var(--text); color: #93A8A0; opacity: 0.25; transition: opacity 0.2s; }
+#nav:hover, #nav:focus-within { opacity: 1; }
+#nav button { font: 600 14px/1 var(--text); color: #DCE6E1; background: #1D2C28; border: 1px solid #2F423C; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+#nav button:focus-visible { outline: 2px solid #9FD8C5; outline-offset: 2px; }
+#notes { position: fixed; left: 0; right: 0; bottom: 0; max-height: 34vh; overflow: auto; background: #0F1A17; color: #DCE6E1;
+  font: 18px/1.5 var(--text); padding: 18px 28px 56px; border-top: 1px solid #2F423C; }
+@media (prefers-reduced-motion: reduce) { #nav { transition: none; } }
+@media print {
+  @page { size: 1920px 1080px; margin: 0; }
+  html, body { background: none; }
+  #viewport { position: static; display: block; }
+  #stage { transform: none !important; width: auto; height: auto; }
+  .slide { position: relative; display: flex !important; width: 1920px; height: 1080px; break-after: page; }
+  #nav, #notes { display: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="viewport"><div id="stage"></div></div>
+<div id="nav">
+  <button id="prev" type="button" aria-label="Previous slide">←</button>
+  <span id="count">1 / 1</span>
+  <button id="next" type="button" aria-label="Next slide">→</button>
+  <button id="notesBtn" type="button">Notes (N)</button>
+</div>
+<div id="notes" hidden></div>
+
+<!-- Code shown on the slides. Plain text; highlighted at load. -->
+<script type="text/plain" id="code-ask">import type { Plugin } from "@opencode-ai/plugin"
+import { score, TypeSafeClient } from "@typesafe-ai/sdk"
+
+export const JevRouter: Plugin = async () => {
+  const jev = new TypeSafeClient() // reads TYPESAFE_API_KEY
+
+  return {
+    // Runs once per user prompt, before opencode saves the message (session/prompt.ts:1037).
+    "chat.message": async (_input, output) => {
+      const latest = output.parts
+        .flatMap((p) => (p.type === "text" && !p.synthetic ? [p.text] : []))
+        .join("\n")
+
+      // One request, one Score question per capability. Jev answers them in parallel.
+      const { answers } = await jev.systemOne({
+        model: "jev-1.13.0", // pinned: the thresholds are tuned per model version
+        state: { latest_message: latest },
+        questions: Object.fromEntries(ROSTER.map((c) => [c.id, score({
+          capability: { name: c.id, kind: c.kind, description: c.description },
+          question: "How much does the agent need `capability` to act on `latest_message`?",
+        }, LEVELS)])),
+      })</script>
+<script type="text/plain" id="code-tools">      const KEEP = 0.8   // score, on the 0–2 scale
+      const UNSURE = 0.3 // confidence; below it on a plausible match, send everything
+
+      const unsure = ROSTER.some((c) => answers[c.id].score >= 0.5 && answers[c.id].confidence < UNSURE)
+      const kept = ROSTER.filter((c) => unsure || answers[c.id].score >= KEEP)
+      const skills = kept.filter((c) => c.kind === "skill")
+
+      // Tools: switch off what Jev did not keep, for every step of this turn.
+      // opencode drops them in LLMRequestPrep.resolveTools (session/llm/request.ts:210).
+      output.message.tools = Object.fromEntries(
+        ROSTER.filter((c) => c.kind === "tool" && !kept.includes(c)).map((c) => [c.id, false]),
+      )
+      if (skills.length === 0) output.message.tools.skill = false</script>
+<script type="text/plain" id="code-skills">      // Skills: list the kept ones inside this message, so the system prompt never changes.
+      if (skills.length > 0)
+        output.parts.push({
+          id: `prt_jev_${output.message.id}`, // any id that starts with "prt" is valid
+          sessionID: output.message.sessionID,
+          messageID: output.message.id,
+          type: "text",
+          synthetic: true,
+          text: [
+            "<relevant_skills>",
+            ...skills.map((s) => `<skill><name>${s.id}</name><description>${s.description}</description></skill>`),
+            "</relevant_skills>",
+          ].join("\n"),
+        })
+    },
+
+    // Remove the full index that SystemPrompt.skills renders (session/system.ts:110).
+    "experimental.chat.system.transform": async (_input, output) => {
+      output.system = output.system.map((s) => s.replace(/<available_skills>[\s\S]*?<\/available_skills>/, ""))
+    },
+  }
+}</script>
+
+<script>
+// Verbatim: tool text from packages/opencode/src/tool/*.txt (bash rendered for macOS),
+// skill text from the `description` frontmatter of .claude/skills/<name>/SKILL.md.
+const ROSTER = [
+ {
+  "id": "read",
+  "kind": "tool",
+  "description": "Read a file or directory from the local filesystem. If the path does not exist, an error is returned.\n\nUsage:\n- The filePath parameter should be an absolute path.\n- By default, this tool returns up to 2000 lines from the start of the file.\n- The offset parameter is the line number to start from (1-indexed).\n- To read later sections, call this tool again with a larger offset.\n- Use the grep tool to find specific content in large files or files with long lines.\n- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.\n- Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents \"foo\\n\", you will receive \"1: foo\\n\". For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.\n- Any line longer than 2000 characters is truncated.\n- Call this tool in parallel when you know there are multiple files you want to read.\n- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.\n- This tool can read image files and PDFs and return them as file attachments."
+ },
+ {
+  "id": "glob",
+  "kind": "tool",
+  "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths\n- Use this tool when you need to find files by name patterns\n- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead\n- You have the capability to call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful."
+ },
+ {
+  "id": "grep",
+  "kind": "tool",
+  "description": "- Fast content search tool that works with any codebase size\n- Searches file contents using regular expressions\n- Supports full regex syntax (eg. \"log.*Error\", \"function\\s+\\w+\", etc.)\n- Filter files by pattern with the include parameter (eg. \"*.js\", \"*.{ts,tsx}\")\n- Returns file paths and line numbers with matching lines\n- Use this tool when you need to find files containing specific patterns\n- If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.\n- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead"
+ },
+ {
+  "id": "edit",
+  "kind": "tool",
+  "description": "Performs exact string replacements in files. \n\nUsage:\n- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. \n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + colon + space (e.g., `1: `). Everything after that space is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n- The edit will FAIL if `oldString` is not found in the file with an error \"oldString not found in content\".\n- The edit will FAIL if `oldString` is found multiple times in the file with an error \"Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.\" Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. \n- Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."
+ },
+ {
+  "id": "write",
+  "kind": "tool",
+  "description": "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provided path.\n- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
+ },
+ {
+  "id": "bash",
+  "kind": "tool",
+  "description": "Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.\n\nBe aware: OS: darwin, Shell: bash\n\nAll commands run in the current working directory by default. Use the `workdir` parameter if you need to run a command in a different directory. AVOID using `cd <directory> && <command>` patterns - use `workdir` instead.\n\nUse `$TMPDIR/opencode` for temporary work outside the workspace. This directory has already been created, already exists, and is pre-approved for external directory access.\n\nIMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.\n\nBefore executing the command, please follow these steps:\n\n1. Directory Verification:\n   - If the command will create new directories or files, first use `ls` to verify the parent directory exists and is the correct location\n   - For example, before running \"mkdir foo/bar\", first use `ls foo` to check that \"foo\" exists and is the intended parent directory\n\n2. Command Execution:\n   - Always quote file paths that contain spaces with double quotes (e.g., rm \"path with spaces/file.txt\")\n   - Examples of proper quoting:\n     - mkdir \"/Users/name/My Documents\" (correct)\n     - mkdir /Users/name/My Documents (incorrect - will fail)\n     - python \"/path/with spaces/script.py\" (correct)\n     - python /path/with spaces/script.py (incorrect - will fail)\n   - After ensuring proper quoting, execute the command.\n   - Capture the output of the command.\n\nUsage notes:\n  - The command argument is required.\n  - You can specify an optional timeout in milliseconds. If not specified, commands will time out after 120000ms.\n  - If the output exceeds 2000 lines or 51200 bytes, it will be truncated and the full output will be written to a file. You can use Read with offset/limit to read specific sections or Grep to search the full content. Do NOT use `head`, `tail`, or other truncation commands to limit output; the full output will already be captured to a file for more precise searching.\n\n  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:\n    - File search: Use Glob (NOT find or ls)\n    - Content search: Use Grep (NOT grep or rg)\n    - Read files: Use Read (NOT cat/head/tail)\n    - Edit files: Use Edit (NOT sed/awk)\n    - Write files: Use Write (NOT echo >/cat <<EOF)\n    - Communication: Output text directly (NOT echo/printf)\n  - When issuing multiple commands:\n    - If the commands are independent and can run in parallel, make multiple bash tool calls in a single message. For example, if you need to run \"git status\" and \"git diff\", send a single message with two bash tool calls in parallel.\n    - If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead.\n    - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail\n    - DO NOT use newlines to separate commands (newlines are ok in quoted strings)\n  - AVOID using `cd <directory> && <command>`. Use the `workdir` parameter to change directories instead.\n    <good-example>\n    Use workdir=\"/foo/bar\" with command: pytest tests\n    <\/good-example>\n    <bad-example>\n    cd /foo/bar && pytest tests\n    <\/bad-example>\n\n# Git and GitHub\n- Only commit, amend, push, or create PRs when explicitly requested.\n- Before committing, inspect `git status`, `git diff`, and `git log --oneline -10`; stage only intended files and never commit secrets.\n- Write a concise commit message that matches the repo style.\n- Do not update git config, skip hooks, use interactive `-i`, force-push, or create empty commits unless explicitly requested.\n- If a commit fails or hooks reject it, fix the issue and create a new commit; do not amend the failed commit.\n- Before creating a PR, inspect status, diff, remote tracking, recent commits, and the diff from the base branch.\n- Review all commits included in the PR, not just the latest commit.\n- Use `gh` for GitHub tasks, including PRs, issues, checks, and releases; return the PR URL when done."
+ },
+ {
+  "id": "webfetch",
+  "kind": "tool",
+  "description": "- Fetches content from a specified URL\n- Takes a URL and optional format as input\n- Fetches the URL content, converts to requested format (markdown by default)\n- Returns the content in the specified format\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.\n  - The URL must be a fully-formed valid URL\n  - HTTP URLs will be automatically upgraded to HTTPS\n  - Format options: \"markdown\" (default), \"text\", or \"html\"\n  - This tool is read-only and does not modify any files\n  - Results may be summarized if the content is very large"
+ },
+ {
+  "id": "bmad-forge-idea",
+  "kind": "skill",
+  "description": "Test a half-formed idea in a questioning conversation, with different personas probing its weak points, until the user can act on it or drop it with confidence. Optionally writes a short brief for planning skills to build on. Use when the user says 'forge an idea', 'pressure-test this idea', 'stress-test my thinking', or 'harden this idea'"
+ },
+ {
+  "id": "bmad-brainstorming",
+  "kind": "skill",
+  "description": "Facilitate a brainstorming session using diverse creative techniques. Use when the user says 'help me brainstorm' or 'help me ideate'"
+ },
+ {
+  "id": "bmad-advanced-elicitation",
+  "kind": "skill",
+  "description": "Push the LLM to reconsider, refine, and improve its recent output. Use when user asks for deeper critique or mentions a known deeper critique method, e.g. socratic, first principles, pre-mortem, red team"
+ },
+ {
+  "id": "bmad-deep-recon",
+  "kind": "skill",
+  "description": "Research a topic to support a decision, three ways: draft a research prompt for the user to run in their own tool (ChatGPT, Gemini, Grok, Perplexity, …), turn a finished research report into a short summary with cited sources that other skills can use directly, or run the research here with parallel web searches. Built-in research types: market, domain, technical, competitive, user-voice, academic-lit; also supports choosing between candidates, and custom types via overrides. Use when the user says \"deep recon\", \"research this\", \"draft a research prompt\", \"process this research report\", \"market research\", \"domain research\", \"technical research\", \"competitor research\", \"literature review\", or \"help me choose between\""
+ },
+ {
+  "id": "bmad-spec",
+  "kind": "skill",
+  "description": "Condense any input — an idea, brief, PRD, transcript, or mixed notes — into a short spec: SPEC.md plus supporting files that downstream skills build from. Also updates and validates existing specs, and can break a spec into stories. Use when the user says \"create a spec\", \"distill this into a spec\", \"validate this spec\", \"update the spec\", or \"break this into stories\""
+ },
+ {
+  "id": "eque2-code-create-spec",
+  "kind": "skill",
+  "description": "Produces a validated, executable build spec — context, coverage, scenarios, tasks, and a definitions.json handoff to the state CLI — gated by cs-generate-definitions.py and the state CLI's `init` verb decode. Invoked by Linus when the user selects [CS] or requests a spec."
+ },
+ {
+  "id": "eque2-code-plan-goal",
+  "kind": "skill",
+  "description": "Hannibal stage 1 — plan a goal. Take a task (a prose brief, a prompt file, or an inline description) and produce a reviewable set: the technical decisions (decisions.md, each with justification and alternatives), the acceptance criteria (ACs.md, which the stop gate later enforces), and the plan (plan.md — workflows per stage, lane, worktree). Writes _bmad-output/goals/<slug>.goal/ in the main checkout and STOPS for the user's approval — it prepares nothing and executes nothing. Triggers on: \"plan a goal\", \"plan-goal\", \"plan this task\", \"make a plan for\", \"/eque2-code-plan-goal\", or Hannibal's [PL]. Do NOT use to prepare an approved plan (that is prepare-goal) or to execute a prepared folder (that is pursue-goal)."
+ },
+ {
+  "id": "eque2-code-agent-hannibal",
+  "kind": "skill",
+  "description": "Goal planning and execution orchestrator — takes a task through three gated stages: plan it (technical decisions, acceptance criteria, lane choice, user approval), prepare it (worktree, spec, hardened charter), and pursue it under the stop gate until every acceptance criterion is met and evidenced. An explicit “pursue the goal of <task>” request creates a direct contract and starts the same gate without the plan and preparation ceremony. It can also hand an active goal to a fresh context without losing its gate. Use when user says 'talk to Hannibal', requests the planner/executor agent, or asks to 'plan a goal', 'plan this task', 'prepare the goal', 'pursue the goal', 'pursue the goal of <task>', 'hand over the goal', or 'status of all goals'."
+ },
+ {
+  "id": "eque2-code-bug-fix",
+  "kind": "skill",
+  "description": "Fix a bug the disciplined way — reproduce it, write a test that fails for the right reason, fix it, and confirm the full suite stays green. Use when the user selects [BF], says 'fix this bug', 'BF <ticket>', or hands over a bug report."
+ },
+ {
+  "id": "bmad-build",
+  "kind": "skill",
+  "description": "Turns implementation work into working code, reviewed and verified. Use when the user delegates a feature, story, bug fix, or meaningful change; a bare story or issue link counts. Skip obvious, low-risk mechanical maintenance such as small ignore-file, typo-only, formatting-only, or configuration-hygiene edits. Explicit BMAD requests always qualify. Do not volunteer for user-directed interactive edits or version-control operations that only record existing work."
+ },
+ {
+  "id": "eque2-code-review",
+  "kind": "skill",
+  "description": "Reviews local changes against the repo's styleguide review rules. Use when the user selects [RV], says 'review my changes', 'run the code review locally', or 'review against the styleguides'."
+ },
+ {
+  "id": "bmad-code-review",
+  "kind": "skill",
+  "description": "Review code changes with several independent reviewers in parallel, then triage and present the findings. Use when the user says \"run code review\" or \"review this code\""
+ },
+ {
+  "id": "bmad-review",
+  "kind": "skill",
+  "description": "Runs one or more installed review lenses — adversarial critique, edge cases, verification gaps, structure, prose — and reports triaged findings. Use when, and only when, the user asks you to review a diff, a pull request, or an artifact — code or documents, one or many — and actually says \"review\"; an explicit skill:bmad-review directive from another skill counts as that ask. A request to act on feedback from an earlier review is a change, not a review. Never invoke this uninvited, including on edits you just made."
+ },
+ {
+  "id": "eque2-code-create-pr",
+  "kind": "skill",
+  "description": "Open a pull request — enforce the repo's review-rules on the diff, confirm the suite is green, sync with the base branch, commit, push, and open the PR. Stops at an open PR (no auto-merge). Use when the user selects [PR], says 'open a PR', 'create a pull request', 'PR this', or hands over a verified fix to ship."
+ },
+ {
+  "id": "bmad-cis-storytelling",
+  "kind": "skill",
+  "description": "Craft compelling narratives using story frameworks. Use when the user says \"help me with storytelling\" or \"I want to create a narrative through storytelling\""
+ },
+ {
+  "id": "eque2-code-security-scan",
+  "kind": "skill",
+  "description": "Audits a repository against a 50-check security checklist and writes a report plus a remediation plan. Use when the user says 'security scan', 'security audit', 'check this repo's security', 'run SS', or '/eque2-code-security-scan'."
+ }
+];
+const STATS = {"skills": 83, "eque2": 29, "bmad": 54, "skillTokens": 10248, "tools": 15, "toolTokens": 4771};
+
+const LEVELS = [
+  "Not needed: the agent can reply without it",
+  "Might help: useful for a likely next step, not the first one",
+  "Needed: the agent cannot do what was asked without it",
+];
+const KEEP = 0.8, UNSURE = 0.3;
+
+// Scripted Jev scores for the walkthrough. A number is a score on 0–2; an array is [p0, p1, p2].
+// Capabilities a turn does not list get a low score (below 0.25).
+const TURNS = [
+  {
+    title: "Poke holes in the idea",
+    prompt: "I want to stop putting every skill into the system prompt and let Jev pick the relevant ones each turn. Poke holes in that idea.",
+    scores: { "bmad-forge-idea": 1.86, "bmad-advanced-elicitation": 1.31, "bmad-brainstorming": 0.94, "bmad-review": 0.46, "bmad-deep-recon": 0.33 },
+    ms: 128,
+    why: "Three skills clear the bar, and all three are about critique. A Choice question would force one of them.",
+    reply: [
+      ["skill", "bmad-forge-idea"],
+      "Three weak points to test first:\n1. A skill that the router drops cannot come back later in the same turn.\n2. A skill list that changes every turn breaks the prompt cache.\n3. Jev reads prompts literally, so “do the usual” can match nothing.\nWhich one do we probe first?",
+    ],
+  },
+  {
+    title: "Research the Jev API",
+    prompt: "Find out what TypeSafe's Jev API offers: limits, pricing, and the TypeScript SDK.",
+    scores: { "bmad-deep-recon": 1.84, "webfetch": 1.71, "bash": 0.52, "bmad-forge-idea": 0.31 },
+    ms: 141,
+    why: "A research skill and a fetch tool pass together. bash scores 0.52: it might help, but it is not needed.",
+    reply: [
+      ["skill", "bmad-deep-recon"],
+      ["webfetch", "https://docs.typesafe.ai/api.md"],
+      ["webfetch", "https://docs.typesafe.ai/models.md"],
+      "One endpoint: POST /v1/systemone. Three question types: Noul, Choice and Score. 64k tokens per request. $0.042 per million input tokens, and output is free. TypeScript SDK: @typesafe-ai/sdk.",
+    ],
+  },
+  {
+    title: "Find the code",
+    prompt: "Where does opencode put the skill list into the prompt today?",
+    scores: { "grep": 1.89, "read": 1.83, "glob": 0.97, "bmad-deep-recon": 0.31 },
+    ms: 117,
+    why: "Three search tools pass and no skill does. All 16 skill descriptions stay out of the context.",
+    reply: [
+      ["grep", "\"available_skills\" packages/opencode/src"],
+      ["read", "packages/opencode/src/session/system.ts"],
+      "SystemPrompt.skills (system.ts:110) renders every skill as <available_skills> XML. It goes into the system prompt on every step, whatever the user asked.",
+    ],
+  },
+  {
+    title: "Write the spec",
+    prompt: "Good. Write the idea up as a spec.",
+    scores: { "bmad-spec": 1.79, "write": 1.66, "eque2-code-create-spec": 1.48, "read": 1.12, "edit": 0.71, "bmad-forge-idea": 0.38 },
+    ms: 152,
+    why: "Two spec skills overlap. Jev passes both, and the main model reads both descriptions to pick one.",
+    reply: [
+      ["skill", "bmad-spec"],
+      ["read", "idea.md"],
+      ["write", "specs/jev-router/SPEC.md"],
+      "I used bmad-spec, because it condenses an idea into SPEC.md. eque2-code-create-spec makes an executable build spec for Linus, which comes later. SPEC.md is written.",
+    ],
+  },
+  {
+    title: "Plan the goal",
+    prompt: "Plan this as a goal.",
+    scores: { "eque2-code-plan-goal": 1.88, "eque2-code-agent-hannibal": 1.61, "read": 0.95, "bmad-build": 0.44, "write": 0.36 },
+    ms: 133,
+    why: "The orchestrator and its stage-1 skill both pass. The plan-goal text tells the model to stop for approval.",
+    reply: [
+      ["skill", "eque2-code-plan-goal"],
+      ["read", "specs/jev-router/SPEC.md"],
+      "The plan is in _bmad-output/goals/jev-router.goal/: decisions.md, ACs.md and plan.md. Planning stops here until you approve it.",
+    ],
+  },
+  {
+    title: "Fix, review, ship",
+    prompt: "The router crashes when a skill has no description. Fix it, review the change, and open a PR.",
+    scores: {
+      "eque2-code-bug-fix": 1.87, "read": 1.86, "grep": 1.84, "bash": 1.82, "edit": 1.78, "eque2-code-create-pr": 1.69,
+      "eque2-code-review": 1.41, "bmad-code-review": 1.12, "bmad-build": 1.05, "bmad-review": 0.93, "write": 0.48, "eque2-code-security-scan": 0.34,
+    },
+    ms: 176,
+    why: "One prompt, three jobs: four tools and six skills pass. This is why each capability gets its own Score.",
+    reply: [
+      ["skill", "eque2-code-bug-fix"],
+      ["grep", "\"description\" .opencode/plugins/jev-router.ts"],
+      ["bash", "bun test jev-router", "1 fail"],
+      ["edit", ".opencode/plugins/jev-router.ts"],
+      ["bash", "bun test jev-router", "1 pass"],
+      ["skill", "eque2-code-review"],
+      ["skill", "eque2-code-create-pr"],
+      ["bash", "gh pr create --fill"],
+      "Fixed and shipped. The router now skips a skill with no description, as Skill.fmt does. The review found nothing that blocks the merge. The PR is open.",
+    ],
+  },
+  {
+    title: "An unclear prompt",
+    prompt: "Make it nicer.",
+    scores: {
+      "edit": [0.45, 0.2, 0.35], "bmad-review": [0.48, 0.2, 0.32], "write": [0.5, 0.18, 0.32],
+      "bmad-brainstorming": [0.5, 0.2, 0.3], "bmad-advanced-elicitation": [0.52, 0.2, 0.28], "eque2-code-review": [0.6, 0.2, 0.2],
+    },
+    ms: 149,
+    why: "Jev spreads its answer over all three levels. The router fails open and sends everything, the same as today.",
+    reply: ["Which part: the spec wording, the goal plan, or the router code?"],
+  },
+];
+
+// ---- Scoring (the same rules as the plugin code in the deck) ----
+const probs = (v) => Array.isArray(v) ? v : [Math.max(0, 1 - v), 1 - Math.max(0, 1 - v) - Math.max(0, v - 1), Math.max(0, v - 1)];
+const confidence = (p) => 1 + p.reduce((a, x) => (x > 0 ? a + x * Math.log(x) : a), 0) / Math.log(3); // ponytail: our stand-in for Jev's confidence
+function noise(seed) { let h = 2166136261; for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return Math.round((0.02 + ((h >>> 0) % 1000) / 1000 * 0.22) * 100) / 100; }
+function judge(turn, i) {
+  const answers = {};
+  for (const c of ROSTER) {
+    const p = probs(turn.scores[c.id] ?? noise(i + c.id));
+    answers[c.id] = { score: p[1] + 2 * p[2], confidence: confidence(p), probabilities: p };
+  }
+  const unsure = ROSTER.some((c) => answers[c.id].score >= 0.5 && answers[c.id].confidence < UNSURE);
+  const kept = ROSTER.filter((c) => unsure || answers[c.id].score >= KEEP);
+  return { answers, unsure, kept };
+}
+TURNS.forEach((t, i) => Object.assign(t, judge(t, i)));
+
+// ---- Helpers ----
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const f2 = (x) => x.toFixed(2);
+const tokens = (chars) => Math.round(chars / 4);
+const kTok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+const byId = Object.fromEntries(ROSTER.map((c) => [c.id, c]));
+const allChars = ROSTER.reduce((a, c) => a + c.description.length, 0);
+const keptChars = (t) => t.kept.reduce((a, c) => a + c.description.length, 0);
+const firstPara = (c) => (c.kind === "tool" ? c.description.split(/\n\s*\n/)[0] : c.description);
+const tag = (c) => `<span class="tag ${c.kind}">${c.kind}</span>`;
+
+function jevRequest(t, ids) {
+  return {
+    model: "jev-1.13.0",
+    state: { latest_message: t.prompt },
+    questions: Object.fromEntries((ids ?? ROSTER.map((c) => c.id)).map((id) => [id, {
+      type: "score",
+      instructions: {
+        capability: { name: id, kind: byId[id].kind, description: byId[id].description },
+        question: "How much does the agent need `capability` to act on `latest_message`?",
+      },
+      criteria: LEVELS,
+    }])),
+  };
+}
+const jevTokens = (t) => tokens(JSON.stringify(jevRequest(t)).length);
+const jevCost = (t) => `$${(jevTokens(t) * 0.042 / 1e6).toFixed(4)}`;
+
+function highlight(code, lang) {
+  const re = lang === "json"
+    ? /("(?:\\.|[^"\\])*")(\s*:)?|(-?\b\d+(?:\.\d+)?\b)|\b(true|false|null)\b/g
+    : /(\/\/[^\n]*)|("(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`)|\b(import|from|export|const|async|await|return|if|as|type|new|true|false)\b|(\b\d+(?:\.\d+)?\b)/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(code))) {
+    out += esc(code.slice(last, m.index));
+    if (lang === "json") {
+      if (m[1]) out += m[2] ? `<span class="k">${esc(m[1])}</span>${m[2]}` : `<span class="s">${esc(m[1])}</span>`;
+      else if (m[3]) out += `<span class="n">${m[3]}</span>`;
+      else out += `<span class="w">${m[4]}</span>`;
+    } else if (m[1]) out += `<span class="c">${esc(m[1])}</span>`;
+    else if (m[2]) out += `<span class="s">${esc(m[2])}</span>`;
+    else if (m[3]) out += `<span class="w">${m[3]}</span>`;
+    else out += `<span class="n">${m[4]}</span>`;
+    last = re.lastIndex;
+  }
+  return out + esc(code.slice(last));
+}
+const codebox = (code, lang = "ts") => `<div class="codebox"><pre>${highlight(code, lang)}</pre></div>`;
+const tsString = (s) => (s.includes("\n") ? "`" + s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${") + "`" : JSON.stringify(s));
+
+// Two-column card packing: estimate each card's height and start a new slide when a column is full.
+// Real rendered height of a piece of slide HTML at a given width (offsetHeight ignores the stage scale).
+const stage = document.getElementById("stage");
+const probe = Object.assign(document.createElement("div"), { style: "position:absolute;left:-99999px;top:0;font:28px/1.45 var(--text)" });
+stage.appendChild(probe);
+function measure(html, width) { probe.style.width = `${width}px`; probe.innerHTML = html; return probe.firstElementChild.offsetHeight; }
+const COL = 816, WIDE = 1664;
+// budgets: the column height on the first slide, then on the rest.
+function pack(caps, first, rest = first) {
+  const pages = [];
+  let cols = [[], []], h = [0, 0], budget = first;
+  for (const c of caps) {
+    const ch = measure(card(c), COL) + 20;
+    const fits = (i) => h[i] === 0 || h[i] + ch - 20 <= budget; // the last card has no gap below it
+    let i = h[0] <= h[1] ? 0 : 1;
+    if (!fits(i)) i = 1 - i;
+    if (!fits(i)) { pages.push(cols); cols = [[], []]; h = [0, 0]; budget = rest; i = 0; }
+    cols[i].push(c); h[i] += ch;
+  }
+  pages.push(cols);
+  return pages;
+}
+const firstLine = (c) => c.description.split("\n")[0].replace(/^- /, "");
+const toolStrip = (tools) => !tools.length ? "" : `<div class="strip"><p class="tag tool">Tools · first line shown, full text sent</p>${tools.map((c) =>
+  `<div class="toolrow"><span class="mono tool">${c.id}</span><span class="first">${esc(firstLine(c))}</span><span class="more">+ ${(c.description.length - firstLine(c).length).toLocaleString()} characters</span></div>`).join("")}</div>`;
+function card(c) {
+  const shown = firstPara(c);
+  const rest = c.description.length - shown.length;
+  return `<div class="card"><div class="card-head"><span class="mono ${c.kind}">${esc(c.id)}</span>${tag(c)}</div>
+    <p class="desc">${esc(shown)}</p>${rest > 0 ? `<p class="more">+ ${rest.toLocaleString()} more characters of usage notes, sent in full</p>` : ""}</div>`;
+}
+const columns = (cols) => `<div class="row grow">${cols.map((col) => `<div class="grow" style="display:flex;flex-direction:column;gap:20px">${col.map(card).join("")}</div>`).join("")}</div>`;
+
+function chart(t) {
+  const rows = ROSTER.filter((c) => t.answers[c.id].score >= 0.3 || (!t.unsure && t.kept.includes(c)))
+    .sort((a, b) => t.answers[b.id].score - t.answers[a.id].score);
+  const rest = ROSTER.length - rows.length;
+  const max = Math.max(...ROSTER.filter((c) => !rows.includes(c)).map((c) => t.answers[c.id].score), 0);
+  return `<div class="chart">
+    <div class="r h"><span>Capability</span><span>Kind</span><span>Score 0–2 · line = 0.8</span><span style="text-align:right">Score</span><span style="text-align:right">Conf.</span><span>Decision</span></div>
+    ${rows.map((c) => {
+      const a = t.answers[c.id], kept = t.kept.includes(c);
+      return `<div class="r"><span class="name">${esc(c.id)}</span>${tag(c)}
+        <div class="track"><div class="fill ${kept ? "kept" : ""} ${c.kind}" style="width:${(a.score / 2) * 100}%"></div><div class="line"></div></div>
+        <span class="num">${f2(a.score)}</span><span class="num conf">${f2(a.confidence)}</span>
+        <span class="dec ${kept ? "kept" : "dropped"}">${kept ? "Kept" : "Dropped"}</span></div>`;
+    }).join("")}
+    ${rest ? `<p class="rest">${rest} other capabilities score ${f2(max)} or less. All dropped${t.unsure ? ", but the router sends everything this turn" : ""}.</p>` : ""}
+  </div>`;
+}
+function transcript(t) {
+  return `<div class="transcript">${t.reply.map((r) => typeof r === "string"
+    ? `<p class="reply">${esc(r)}</p>`
+    : `<div class="call"><span class="verb ${r[0] === "skill" ? "skill" : "tool"}">${esc(r[0])}</span><span>${esc(r[1])}</span>${r[2] ? `<span class="out">→ ${esc(r[2])}</span>` : ""}</div>`).join("")}</div>`;
+}
+const keptLine = (t) => {
+  const tools = t.kept.filter((c) => c.kind === "tool").length, skills = t.kept.length - tools;
+  return t.unsure ? "everything (Jev is unsure)" : `${tools} tool${tools === 1 ? "" : "s"}, ${skills} skill${skills === 1 ? "" : "s"}`;
+};
+
+// ---- Slides ----
+const S = [];
+function build() {
+const add = (section, cls, html, notes) => S.push({ section, cls, html, notes });
+
+add("The idea", "dark", `
+  <p class="eyebrow">eque2 opencode fork · an idea to test</p>
+  <div style="flex:1"></div>
+  <h1>Jev Router<br>for opencode</h1>
+  <p class="lede" style="color:var(--on-dark)">Score every skill and tool against each prompt. Send the model only what the turn needs.</p>
+  <div style="flex:1"></div>
+  <p class="small">7 prompts · ${ROSTER.length} real descriptions from this repo · scripted Jev scores · press → to start, N for notes</p>`,
+  "Today opencode sends every skill description and every tool definition with every request. The idea: ask Jev, a fast decision model, which ones this prompt needs, and send only those.");
+
+add("The idea", "", `
+  <p class="eyebrow">Today</p>
+  <h2>Every request carries every description</h2>
+  <div class="big" style="margin-top:24px">
+    <div><div class="n">${STATS.skills}</div><p class="u">skills in <span class="mono">.claude/skills</span>: ${STATS.eque2} eque2 and ${STATS.bmad} bmad. The index is ≈ ${kTok(STATS.skillTokens)} tokens.</p></div>
+    <div><div class="n">${STATS.tools}</div><p class="u">built-in tool descriptions, ≈ ${kTok(STATS.toolTokens)} tokens of text, before their JSON schemas.</p></div>
+    <div><div class="n">≈ ${kTok(STATS.skillTokens + STATS.toolTokens)}</div><p class="u">tokens of capability text in each step, whatever the user asked.</p></div>
+  </div>
+  <div style="flex:1"></div>
+  <p class="small">Sizes are characters ÷ 4. Skill index in the layout of <span class="mono">Skill.fmt</span> (packages/opencode/src/skill/index.ts:319); tool text from packages/opencode/src/tool/*.txt.</p>`,
+  "These numbers are measured from the files in this repo, as characters divided by four. They do not include MCP tools, which this repo does not configure.");
+
+add("The idea", "", `
+  <p class="eyebrow">The model</p>
+  <h2>Jev answers typed questions fast</h2>
+  <table>
+    <tr><th style="width:24%">Fact</th><th>Value</th></tr>
+    <tr><td>What it is</td><td>TypeSafe's first “System One” model. It returns typed answers with probabilities and writes no text.</td></tr>
+    <tr><td>Question types</td><td><b>Noul</b>: probability of yes. <b>Choice</b>: one of a set. <b>Score</b>: a position on ordered levels.</td></tr>
+    <tr><td>Speed and price</td><td>70–500 ms end to end. $0.042 per million input tokens; output is free.</td></tr>
+    <tr><td>Limits</td><td>64k tokens per request; 32k for the state plus the longest question.</td></tr>
+    <tr><td>API</td><td><span class="mono">POST https://api.typesafe.ai/v1/systemone</span> · SDK <span class="mono">@typesafe-ai/sdk</span></td></tr>
+  </table>
+  <div style="flex:1"></div>
+  <p class="small">Source: docs.typesafe.ai (API reference, Models). Vendor figures, not measured here.</p>`,
+  "TypeSafe publishes a skill-suggestion cookbook that does something close to this. On a 182-skill roster it cut wrong skill loads from 16.8% to 7.3%. It uses a Choice to pick one skill, plus yes/no questions.");
+
+{
+  const t = TURNS[3];
+  const rows = [...t.kept].sort((a, b) => t.answers[b.id].score - t.answers[a.id].score).map((c) => `<div class="r"><span class="name">${esc(c.id)}</span>${tag(c)}<div class="track"><div class="fill kept ${c.kind}" style="width:${(t.answers[c.id].score / 2) * 100}%"></div><div class="line"></div></div><span class="num">${f2(t.answers[c.id].score)}</span></div>`).join("");
+  add("The idea", "", `
+    <p class="eyebrow">Choice or Score</p>
+    <h2>Real prompts match more than one skill or tool</h2>
+    <div class="you"><span class="who">You</span><p class="said">${esc(t.prompt)}</p></div>
+    <div class="vs">
+      <div class="card"><h3>Choice: “Which capability does this need?”</h3>
+        <p class="verdict">One winner: <span class="mono skill">bmad-spec</span>.</p>
+        <p>The answer cannot also include <span class="mono tool">write</span>, <span class="mono tool">read</span> or <span class="mono skill">eque2-code-create-spec</span>.</p></div>
+      <div class="card"><h3>Score: “How much does it need each one?”</h3>
+        <div class="chart">${rows}</div>
+        <p class="verdict">Four pass the keep line. The model gets all four.</p></div>
+    </div>`,
+    "A Choice distributes one unit of probability across the options, so it ranks them against each other. A Score per capability is independent: any number of capabilities can be needed at once. The scores here are from turn 4 of the walkthrough.");
+}
+
+{
+  const spec = byId["bmad-spec"], a = TURNS[3].answers["bmad-spec"];
+  add("The idea", "dark code", `
+    <p class="eyebrow">The question</p>
+    <h2>One Score question per capability, all in one request</h2>
+    ${codebox(`const LEVELS = [
+  "Not needed: the agent can reply without it",
+  "Might help: useful for a likely next step, not the first one",
+  "Needed: the agent cannot do what was asked without it",
+] as const
+
+score(
+  {
+    capability: {
+      name: "bmad-spec",
+      kind: "skill",
+      description: ${tsString(spec.description)},
+    },
+    question: "How much does the agent need \`capability\` to act on \`latest_message\`?",
+  },
+  LEVELS,
+)
+// → { type: "score", score: ${f2(a.score)}, confidence: ${f2(a.confidence)}, probabilities: { "0": ${f2(a.probabilities[0])}, "1": ${f2(a.probabilities[1])}, "2": ${f2(a.probabilities[2])} } }`)}
+    <p class="caption">Keep a capability when its score is 0.8 or more. If any score of 0.5 or more has a confidence under 0.3, send everything.</p>`,
+    "The description goes in verbatim. The question id is not sent to the model, so the instruction names the capability itself. Jev evaluates all questions in parallel against one state.");
+}
+
+add("The idea", "", `
+  <p class="eyebrow">The roster for this walkthrough</p>
+  <h2>${ROSTER.filter((c) => c.kind === "tool").length} tools and ${ROSTER.filter((c) => c.kind === "skill").length} skills, descriptions verbatim</h2>
+  <div class="row" style="gap:64px">
+    <div style="width:520px;display:flex;flex-direction:column;gap:20px"><h3 class="tool">Tools</h3><div class="chips">${ROSTER.filter((c) => c.kind === "tool").map((c) => `<span class="chip tool">${c.id}</span>`).join("")}</div></div>
+    <div class="grow" style="display:flex;flex-direction:column;gap:20px"><h3 class="skill">Skills</h3><div class="chips">${ROSTER.filter((c) => c.kind === "skill").map((c) => `<span class="chip skill">${c.id}</span>`).join("")}</div></div>
+  </div>
+  <div style="flex:1"></div>
+  <p class="small">Tool text: packages/opencode/src/tool/*.txt. Skill text: the description in .claude/skills/&lt;name&gt;/SKILL.md. Each description appears in full later in the deck.</p>`,
+  "A subset of the real roster keeps the walkthrough readable. The same code scores all 83 skills and every tool in one request.");
+
+TURNS.forEach((t, i) => {
+  const n = `Turn ${i + 1} of ${TURNS.length}`;
+  add("Walkthrough", "", `
+    <p class="eyebrow">${n} · ${esc(t.title)}</p>
+    <div class="you"><span class="who">You</span><p class="said">${esc(t.prompt)}</p></div>
+    <div class="row grow" style="gap:56px">
+      ${chart(t)}
+      <div class="grow" style="display:flex;flex-direction:column;gap:28px;padding-top:36px">
+        <div class="stat"><b>${keptLine(t)}</b><span>sent to the model</span></div>
+        <div class="stat"><b>${t.ms} ms</b><span>one Jev request, ${ROSTER.length} questions</span></div>
+        <div class="stat"><b>${jevCost(t)}</b><span>≈ ${kTok(jevTokens(t))} input tokens</span></div>
+        <p class="why">${esc(t.why)}</p>
+      </div>
+    </div>`,
+    `${t.why} Scores are scripted for this walkthrough.`);
+
+  const sent = t.unsure ? allChars : keptChars(t);
+  const foot = `<p class="small">≈ ${kTok(tokens(sent))} of ≈ ${kTok(tokens(allChars))} description tokens are sent. ${t.unsure ? "" : `${ROSTER.length - t.kept.length} capabilities are dropped.`}</p>`;
+  if (t.unsure) {
+    add("Walkthrough", "", `
+      <p class="eyebrow">${n} · What the model reads</p>
+      <h2>All ${ROSTER.length} descriptions are sent, as today</h2>
+      <div class="chips">${ROSTER.map((c) => `<span class="chip ${c.kind}">${c.id}</span>`).join("")}</div>
+      <div style="flex:1"></div>${foot}`,
+      "Fail open: a wrong guess here would remove a capability the user needs. Sending everything costs one turn at today's size.");
+  } else {
+    const ranked = [...t.kept].sort((a, b) => t.answers[b.id].score - t.answers[a.id].score);
+    const tools = ranked.filter((c) => c.kind === "tool"), skills = ranked.filter((c) => c.kind === "skill");
+    const region = 626, stripH = tools.length ? measure(toolStrip(tools), WIDE) + 32 : 0;
+    const pages = skills.length ? pack(skills, region - stripH, region) : [[[], []]];
+    pages.forEach((cols, p) => add("Walkthrough", "", `
+      <p class="eyebrow">${n} · ${esc(t.title)}</p>
+      <h2>What the model reads${pages.length > 1 ? ` (${p + 1} of ${pages.length})` : ""}</h2>
+      ${p === 0 ? toolStrip(tools) : ""}${cols[0].length ? columns(cols) : '<div class="grow"></div>'}${foot}`,
+      "These are the descriptions that reach the main model this turn, verbatim. Skills are shown in full. Tools show their first line; the model gets their full text."));
+  }
+
+  add("Walkthrough", "", `
+    <p class="eyebrow">${n} · opencode replies</p>
+    <div class="you"><span class="who">You</span><p class="said">${esc(t.prompt)}</p></div>
+    <p class="agent">opencode</p>
+    ${transcript(t)}`,
+    "The reply is scripted. Each call line uses only a capability that Jev kept this turn.");
+});
+
+add("Walkthrough", "teal", `
+  <p class="eyebrow">Seven prompts</p>
+  <h2>Six prompts match more than one capability</h2>
+  <table style="color:var(--light)">
+    <tr><th style="width:44%;color:var(--teal-soft)">Prompt</th><th style="color:var(--teal-soft)">Sent</th><th style="color:var(--teal-soft);text-align:right">Description tokens</th></tr>
+    ${TURNS.map((t) => `<tr><td style="color:var(--light)">${esc(t.prompt.length > 58 ? t.prompt.slice(0, 56) + "…" : t.prompt)}</td><td style="color:var(--light)">${keptLine(t)}</td><td class="num" style="color:var(--light);text-align:right">${kTok(tokens(t.unsure ? allChars : keptChars(t)))} of ${kTok(tokens(allChars))}</td></tr>`).join("")}
+  </table>`,
+  "Only turn 7 sends everything, and that is the safety net. Turn 2 is the closest to a single match, and even there a skill and a tool pass together.");
+
+{
+  const sample = ["glob", "bmad-spec", "eque2-code-create-spec"].map((id) => byId[id]);
+  const rest = ROSTER.filter((c) => !sample.includes(c));
+  add("How it is built", "dark code", `
+    <p class="eyebrow">Plugin · 1 of 4</p>
+    <h2>The roster: descriptions copied verbatim</h2>
+    ${codebox(`// .opencode/plugins/jev-router.ts
+const ROSTER = [
+${sample.map((c) => `  { id: "${c.id}", kind: "${c.kind}", description: ${tsString(c.description)} },`).join("\n")}
+  // … ${rest.length} more entries, each verbatim from its source file
+] as const`)}
+    <p class="caption">This deck carries all ${ROSTER.length} entries in its own source, in the same shape.</p>`,
+    "A real plugin would read the roster from opencode at start-up. For the demo the text is copied in, so everyone can see exactly what Jev reads.");
+}
+add("How it is built", "dark code", `
+  <p class="eyebrow">Plugin · 2 of 4</p>
+  <h2>Ask Jev once per prompt</h2>
+  ${codebox(document.getElementById("code-ask").textContent)}`,
+  "chat.message runs inside createUserMessage, once per prompt, before the message is saved. No fork is needed for this part.");
+add("How it is built", "dark code", `
+  <p class="eyebrow">Plugin · 3 of 4</p>
+  <h2>Keep, or fail open, and switch off the other tools</h2>
+  ${codebox(document.getElementById("code-tools").textContent)}`,
+  "message.tools is saved with the user message. Every step of the turn then filters on it, in one place that all provider paths share.");
+add("How it is built", "dark code", `
+  <p class="eyebrow">Plugin · 4 of 4</p>
+  <h2>List only the kept skills, inside the message</h2>
+  ${codebox(document.getElementById("code-skills").textContent)}`,
+  "The kept skills go into the user message, not the system prompt. So the system prompt stays the same on every turn, and its prompt cache stays valid.");
+
+{
+  const t = TURNS[5];
+  add("How it is built", "dark code", `
+    <p class="eyebrow">On the wire · turn 6</p>
+    <h2>The Jev request</h2>
+    ${codebox(JSON.stringify(jevRequest(t, ["eque2-code-bug-fix"]), null, 2).replace(/\[\s+("[^\]]*?)\s+\]/g, (_, x) => `[${x.replace(/,\s+/g, ", ")}]`), "json")}
+    <p class="caption">1 of ${ROSTER.length} questions shown. The others differ only in <span class="mono">capability</span>. Whole request ≈ ${kTok(jevTokens(t))} tokens, ${jevCost(t)}.</p>`,
+    "POST https://api.typesafe.ai/v1/systemone with a bearer key. The SDK builds this body from the score() calls.");
+  const ans = (id) => ({ type: "score", score: +f2(t.answers[id].score), confidence: +f2(t.answers[id].confidence),
+    probabilities: Object.fromEntries(t.answers[id].probabilities.map((p, i) => [String(i), +f2(p)])) });
+  const body = { model: "jev-1.13.0", answers: { "eque2-code-bug-fix": ans("eque2-code-bug-fix"), "eque2-code-security-scan": ans("eque2-code-security-scan") },
+    usage: { input_tokens: jevTokens(t), output_tokens: 20 * ROSTER.length } };
+  add("How it is built", "dark code", `
+    <p class="eyebrow">On the wire · turn 6</p>
+    <h2>The Jev response</h2>
+    ${codebox(JSON.stringify(body, null, 2).replace(/\{\s+("0"[^}]*?)\s+\}/g, (_, x) => `{ ${x.replace(/\s+/g, " ")} }`), "json")}
+    <p class="caption">2 of ${ROSTER.length} answers shown, scripted. Each real answer also carries a <span class="mono">legend</span> that maps levels to their text.</p>`,
+    "The score is the probability-weighted level, so 1.87 means mostly 'Needed'. Confidence comes from how concentrated the probabilities are.");
+}
+
+add("How it is built", "", `
+  <p class="eyebrow">Where it plugs in</p>
+  <h2>Two plugin hooks, no fork</h2>
+  <table>
+    <tr><th style="width:30%">Hook or function</th><th style="width:30%">File</th><th>Role</th></tr>
+    <tr><td class="mono">chat.message</td><td class="mono">session/prompt.ts:1037</td><td>The router asks Jev, sets <span class="mono">message.tools</span>, and appends the kept skills.</td></tr>
+    <tr><td class="mono">resolveTools</td><td class="mono">session/llm/request.ts:210</td><td>opencode drops each tool set to false, on every step of the turn.</td></tr>
+    <tr><td class="mono">experimental.chat.<br>system.transform</td><td class="mono">session/llm/request.ts:68</td><td>The router removes the static <span class="mono">&lt;available_skills&gt;</span> index.</td></tr>
+    <tr><td class="mono">SystemPrompt.skills</td><td class="mono">session/system.ts:110</td><td>Renders every skill today. A fork could filter here instead of the string removal.</td></tr>
+  </table>
+  <div style="flex:1"></div>
+  <p class="small">Paths under packages/opencode/src/. The title generator (session/prompt.ts:240) already calls a second, smaller model in the same loop.</p>`,
+  "The plugin route needs no fork. The string removal of the skill index is the fragile part; a fork would pass the kept set into SystemPrompt.skills.");
+
+add("How it is built", "", `
+  <p class="eyebrow">Open questions</p>
+  <h2>What to settle before a prototype</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px">
+    <div class="card"><h3>1. The tool list and the prompt cache</h3><p>Tool definitions come first in the cached prefix. A tool list that changes per turn invalidates the cache. Route skills only, or let the tool set only grow within a session?</p></div>
+    <div class="card"><h3>2. A tool needed mid-turn</h3><p>The decision holds for the whole turn. Should the model get an escape tool that asks for a dropped capability?</p></div>
+    <div class="card"><h3>3. Old calls to a dropped tool</h3><p>Earlier messages can hold calls to a tool that is now off. Some providers reject that (see the workaround at session/llm/request.ts:158).</p></div>
+    <div class="card"><h3>4. Thresholds</h3><p>0.8 and 0.3 are guesses. Tune them on a labelled set of real prompts, and pin the Jev version they were tuned on.</p></div>
+  </div>`,
+  "Question 1 is the big one. Moving the skills into the message keeps the system prompt stable, but the tools sit before it in the cache order.");
+
+{
+  const never = ROSTER.filter((c) => c.kind === "skill" && !TURNS.some((t) => !t.unsure && t.kept.includes(c)));
+  add("Appendix", "", `
+    <p class="eyebrow">Appendix</p>
+    <h2>The skills Jev never kept</h2>
+    ${columns(pack(never, 640)[0])}
+    <p class="small">Every other skill description appears in full on a turn slide.</p>`,
+    "These two are in the roster to show that unrelated skills score low on every prompt.");
+  add("Appendix", "", `
+    <p class="eyebrow">Appendix · the tools in this deck</p>
+    ${toolStrip(ROSTER.filter((c) => c.kind === "tool"))}
+    <div style="flex:1"></div>
+    <p class="small">The full tool text is in packages/opencode/src/tool/*.txt, and verbatim in this file's source.</p>`,
+    "Tool descriptions are long usage guides; their first lines identify them.");
+}
+
+// ---- Render and navigate ----
+probe.remove();
+stage.innerHTML = S.map((s, i) => `<section class="slide ${s.cls}" aria-label="Slide ${i + 1}">${s.html}
+  <div class="footer"><span>${esc(s.section)}</span><span>${i + 1} / ${S.length}</span></div></section>`).join("");
+const slides = [...stage.children], notes = document.getElementById("notes");
+let cur = 0;
+function show(i) {
+  cur = Math.max(0, Math.min(slides.length - 1, i));
+  slides.forEach((s, j) => s.classList.toggle("on", j === cur));
+  document.getElementById("count").textContent = `${cur + 1} / ${slides.length}`;
+  notes.textContent = S[cur].notes ?? "";
+  history.replaceState(null, "", `#${cur + 1}`);
+}
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  stage.style.transform = `scale(${s})`;
+}
+addEventListener("resize", fit);
+addEventListener("hashchange", () => { const n = parseInt(location.hash.slice(1), 10); if (n && n - 1 !== cur) show(n - 1); });
+addEventListener("keydown", (e) => {
+  if (["ArrowRight", "PageDown", " ", "l"].includes(e.key)) { e.preventDefault(); show(cur + 1); }
+  else if (["ArrowLeft", "PageUp", "h"].includes(e.key)) { e.preventDefault(); show(cur - 1); }
+  else if (e.key === "Home") show(0);
+  else if (e.key === "End") show(slides.length - 1);
+  else if (e.key === "n" || e.key === "N") notes.hidden = !notes.hidden;
+  else if (e.key === "f") document.documentElement.requestFullscreen?.().catch(() => {});
+});
+document.getElementById("prev").onclick = () => show(cur - 1);
+document.getElementById("next").onclick = () => show(cur + 1);
+document.getElementById("notesBtn").onclick = () => (notes.hidden = !notes.hidden);
+fit();
+show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+}
+const faces = ['24px "IBM Plex Sans"', '600 24px "IBM Plex Sans"', '24px "JetBrains Mono"', '600 24px "JetBrains Mono"', '700 56px "Bricolage Grotesque"'];
+Promise.race([Promise.all(faces.map((f) => document.fonts.load(f))), new Promise((r) => setTimeout(r, 2500))]).catch(() => {}).then(build);
+</script>
+</body>
+</html>
