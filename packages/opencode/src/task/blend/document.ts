@@ -67,8 +67,10 @@ interface Frame {
 
 interface Scan {
   readonly frames: ReadonlyArray<Frame>
-  // The indent of the key that opened a block scalar (`|` or `>`); its more-indented lines are text, not keys.
+  // While a block scalar (`|` or `>`) is open: the column its text is indented past. Those lines are text.
   readonly scalar: Option.Option<number>
+  // While a quoted scalar runs over several lines: its quote character. Those lines are text.
+  readonly quote: Option.Option<string>
   readonly problems: ReadonlyArray<string>
 }
 
@@ -77,17 +79,23 @@ const BLOCK_SCALAR = /^[|>][1-9+-]{0,2}\s*(#.*)?$/
 
 // Bun.YAML keeps the last of two equal keys silently, and the format refuses duplicate keys (R3). This scan finds
 // them in block mappings: it tracks one key list for each open mapping, by indent, and opens a fresh mapping for
-// each sequence item. Flow mappings (`{a: 1}`) are not scanned.
+// each sequence item. It skips the text of block scalars and of quoted scalars that run over several lines.
+// ponytail: flow mappings are not scanned, so `{a: 1, a: 2}` is accepted with the last value. The upgrade path is
+// a YAML parser that refuses duplicate keys itself, which would replace this scan.
 export const duplicateKeys = (lines: ReadonlyArray<string>, firstLine: number): ReadonlyArray<string> =>
   lines.reduce<Scan>((scan, line, index) => step(scan, line, firstLine + index), {
     frames: [],
     scalar: Option.none(),
+    quote: Option.none(),
     problems: [],
   }).problems
 
 const indentOf = (line: string) => line.length - line.trimStart().length
 
 const step = (scan: Scan, line: string, number: number): Scan => {
+  if (Option.isSome(scan.quote)) {
+    return closesQuote(line, scan.quote.value) ? { ...scan, quote: Option.none() } : scan
+  }
   const trimmed = line.trim()
   const indent = indentOf(line)
   if (Option.isSome(scan.scalar) && (trimmed === "" || indent > scan.scalar.value)) return scan
@@ -104,29 +112,55 @@ const step = (scan: Scan, line: string, number: number): Scan => {
   const column = Option.match(item, { onNone: () => indent, onSome: (start) => start.indent })
   const rest = Option.match(item, { onNone: () => line.slice(indent), onSome: (start) => start.rest })
   const match = KEY.exec(rest)
-  if (!match) return { ...open, frames }
+  if (!match) {
+    // A value on its own line: a sequence item such as `- |` opens a block scalar indented past its dash, and a
+    // quote that does not close on this line opens a multi-line quoted scalar.
+    const scalar = Option.filter(
+      Option.map(item, (start) => start.dash),
+      () => BLOCK_SCALAR.test(rest.trim()),
+    )
+    return { ...open, frames, scalar, quote: opensQuote(rest) }
+  }
   const key = unquote(match[1])
   const value = (match[2] ?? "").trim()
   const kept = frames.filter((frame) => frame.indent <= column)
   const top = kept.at(-1)
   const scalar = BLOCK_SCALAR.test(value) ? Option.some(column) : Option.none<number>()
+  const quote = opensQuote(value)
   if (top && top.indent === column) {
     const problems = top.keys.includes(key)
       ? [...open.problems, `YAML line ${number}: duplicate key '${key}'`]
       : open.problems
-    return { frames: [...kept.slice(0, -1), { indent: column, keys: [...top.keys, key] }], scalar, problems }
+    return { frames: [...kept.slice(0, -1), { indent: column, keys: [...top.keys, key] }], scalar, quote, problems }
   }
-  return { frames: [...kept, { indent: column, keys: [key] }], scalar, problems: open.problems }
+  return { frames: [...kept, { indent: column, keys: [key] }], scalar, quote, problems: open.problems }
 }
 
 // `- key: value` opens a mapping whose keys sit at the column after the dash. Nested items (`- - a`) go deeper.
-const sequenceItem = (text: string, indent: number): Option.Option<{ indent: number; rest: string }> => {
+// `dash` is the column of the innermost dash.
+const sequenceItem = (
+  text: string,
+  indent: number,
+): Option.Option<{ indent: number; dash: number; rest: string }> => {
   const dash = /^-(\s+|$)/.exec(text)
   if (!dash) return Option.none()
   const start = indent + dash[0].length
   const rest = text.slice(dash[0].length)
-  return Option.some(Option.getOrElse(sequenceItem(rest, start), () => ({ indent: start, rest })))
+  return Option.some(Option.getOrElse(sequenceItem(rest, start), () => ({ indent: start, dash: indent, rest })))
 }
+
+// The quote character of a quoted scalar that starts in `value` and does not close on the same line.
+const opensQuote = (value: string): Option.Option<string> => {
+  const text = value.trim()
+  const quote = text.charAt(0)
+  if (quote !== '"' && quote !== "'") return Option.none()
+  return closesQuote(text.slice(1), quote) ? Option.none() : Option.some(quote)
+}
+
+// True when `text`, read from inside a quoted scalar, holds its closing quote. In a double-quoted scalar `\"` is an
+// escaped quote; in a single-quoted scalar `''` is.
+const closesQuote = (text: string, quote: string) =>
+  (quote === '"' ? /^(?:[^"\\]|\\.)*"/ : /^(?:[^']|'')*'(?!')/).test(text)
 
 const unquote = (key: string) => {
   if (key.startsWith('"') && key.endsWith('"')) return key.slice(1, -1)
