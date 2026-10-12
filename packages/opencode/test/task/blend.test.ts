@@ -1,9 +1,10 @@
 import { NodeServices } from "@effect/platform-node"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, FileSystem, Schema } from "effect"
 import { readdirSync } from "node:fs"
 import path from "path"
 import { Blend } from "@/task/blend"
+import { BlendDocument } from "@/task/blend/document"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(NodeServices.layer)
@@ -144,4 +145,43 @@ describe("Blend.load", () => {
       expect(spec.scenarios.find((each) => each.id === "S13")?.environment?.kind).toBe("deployed")
     }),
   )
+})
+
+describe("BlendDocument.duplicateKeys", () => {
+  const rows: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+    [
+      "block scalar with repeated key-like lines",
+      ["text: |", "  note: one", "  note: two", "rejects:", "  c1:", "    - |", "      note: one", "      note: two"].join(
+        "\n",
+      ),
+      [],
+    ],
+    [
+      "multi-line quoted scalar with key-like lines",
+      ['text: "first', "  note: one", '  note: two"', "items:", "  - 'start", "    note: one", "    note: two'"].join(
+        "\n",
+      ),
+      [],
+    ],
+    [
+      "nested-mapping duplicate",
+      ["policy:", "  judges:", "    test: [runner]", "    test: [human]"].join("\n"),
+      ["YAML line 4: duplicate key 'test'"],
+    ],
+    [
+      "duplicate inside one sequence item",
+      ["touches:", "  - path: a", "    change: new", "    path: b"].join("\n"),
+      ["YAML line 4: duplicate key 'path'"],
+    ],
+    [
+      "two sequence items with the same keys",
+      ["touches:", "  - path: a", "    change: new", "  - path: b", "    change: update"].join("\n"),
+      [],
+    ],
+  ]
+  for (const [name, yaml, problems] of rows) {
+    test(name, () => {
+      expect(BlendDocument.duplicateKeys(yaml.split("\n"), 1)).toEqual(problems)
+    })
+  }
 })
