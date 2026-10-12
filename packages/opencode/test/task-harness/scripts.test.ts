@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import { Reply, type Hit } from "../lib/llm-server"
 import { solutionTasks } from "./arms/workspace"
-import { parse, REJECT_REASON, Script } from "./scripts"
+import { ERROR_TEXT, parse, REJECT_REASON, Script } from "./scripts"
 
 type Msg = Record<string, unknown>
 
@@ -78,6 +78,23 @@ describe("parse", () => {
 
   test("the tools list is read from the request", () => {
     expect(parse(hit([user("hi")], ["read", "task_ready"])).tools).toEqual(["read", "task_ready"])
+  })
+})
+
+describe("ERROR_TEXT", () => {
+  test.each([
+    "[Tool execution was interrupted]",
+    "The arguments provided to the tool are invalid: Model tried to call unavailable tool 'verdict'.",
+    "Error: verdict is a verifier tool",
+    "The command was aborted",
+    "Permission denied",
+    "verdict is not allowed for a builder",
+  ])("an error result: %s", (text) => {
+    expect(ERROR_TEXT.test(text)).toBe(true)
+  })
+
+  test.each(["0 failed", "no errors found", "passed", "Wrote file successfully."])("not an error: %s", (text) => {
+    expect(ERROR_TEXT.test(text)).toBe(false)
   })
 })
 

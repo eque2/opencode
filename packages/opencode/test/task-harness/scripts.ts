@@ -51,8 +51,9 @@ const REOPEN = /^[ \t]*(?:[-*][ \t]+)?reopen[ \t]+([A-Za-z0-9._-]+?):[ \t]*(.*)$
 
 export const REJECT_REASON = "the refs test does not cover Refs #"
 // A tool result is an error when its text says so: the OpenAI chat format has no error flag on a tool message.
+// Whole words only, so "0 failed", "no errors found" or "passed" never read as an error.
 export const ERROR_TEXT =
-  /error|invalid|unavailable|not available|unknown tool|interrupt|abort|cancel|denied|not allowed|forbidden|refused|fail/i
+  /\berror\b|\binterrupted\b|\baborted\b|\bdenied\b|\bunavailable\b|\bunknown tool\b|\binvalid\b|\bnot allowed\b|\brefused\b/i
 
 function record(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
