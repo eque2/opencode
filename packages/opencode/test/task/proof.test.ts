@@ -61,9 +61,14 @@ const baseFiles = {
 
 const feature = { "src/feature.ts": "export const answer = 42\n" }
 
-const write = async (dir: string, files: Record<string, string>) => {
+// Writes each file; a null content deletes the file.
+const write = async (dir: string, files: Record<string, string | null>) => {
   for (const [relative, content] of Object.entries(files)) {
     const file = path.join(dir, relative)
+    if (content === null) {
+      await fs.rm(file, { force: true })
+      continue
+    }
     await fs.mkdir(path.dirname(file), { recursive: true })
     await Bun.write(file, content)
   }
@@ -76,7 +81,7 @@ const commit = async (dir: string, message: string) => {
 }
 
 // A repository with the base commit and the task's commit, removed when the test's scope closes.
-const taskRepo = (head: Record<string, string>) =>
+const taskRepo = (head: Record<string, string | null>) =>
   Effect.acquireRelease(
     Effect.promise(async () => {
       const tmp = await tmpdir({ git: true })
@@ -259,6 +264,23 @@ describe("TaskProof", () => {
       }
       expect(statusOf(proof, "T1.1.p2")).toBe("passed")
       expect(statusOf(proof, "T1.1.f1")).toBe("passed")
+    }),
+    proveTimeout,
+  )
+
+  groupIt("tampering by deletion: deleting a test file that held another task's tag is a violation", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({
+        ...feature,
+        "test/feature.test.ts": testsOf(passing("T1.1.c1"), passing("T1.1.c2")),
+        "test/other.test.ts": null,
+      })
+      const proof = yield* prove(repo)
+      expect(proof.structural.status).toBe("failed")
+      expect(proof.structural.violations).toHaveLength(1)
+      expect(proof.structural.violations[0]?.path).toBe("test/other.test.ts")
+      expect(proof.structural.violations[0]?.reason).toContain("base content holds [T1.2.c1]")
+      expect(reasonOf(proof, "T1.1.c1")).toBe("structural: test/other.test.ts")
     }),
     proveTimeout,
   )
