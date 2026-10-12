@@ -324,7 +324,11 @@ check("H4", "order and parallelism", 600_000 + SETUP_MS, async () => {
     problems.push("the first builder requests of T1.1 and T1.2 did not both arrive")
   else if (Math.max(...arrived.map(Number)) > Math.min(...released.map(Number)))
     problems.push("the first builder requests of T1.1 and T1.2 did not both arrive before either was released")
-  const real = (p: string) => (fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p))
+  // A relative worktree path is relative to the repository, not to this test's working directory.
+  const real = (p: string) => {
+    const full = path.resolve(c.ws.repo, p)
+    return fs.existsSync(full) ? fs.realpathSync(full) : full
+  }
   const w1 = s.tasks["T1.1"]?.worktree
   const w2 = s.tasks["T1.2"]?.worktree
   const root = real(c.ws.repo)
