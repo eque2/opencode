@@ -252,18 +252,21 @@ check("H1", "refuse before the model", 30_000 + SETUP_MS, async () => {
 check("H2", "parse T2", 30_000 + SETUP_MS, async () => {
   await using c = await open("H2")
   const ids = ["T2.1", "T2.2", "T2.3", "T2.4", "T2.5", "T2.6"]
+  // Each waits on outside ids or on its waiting T2 siblings, and the six lists name at least one outside id.
   const waits = (s: Status.Status, id: string) => {
     const task = s.tasks[id]
-    return task?.state === "waiting" && task.waitingOn.length > 0 && task.waitingOn.every((w) => t2Outside.includes(w))
+    return task?.state === "waiting" && task.waitingOn.length > 0 && task.waitingOn.every((w) => t2Outside.includes(w) || ids.includes(w))
   }
+  const loaded = (s: Status.Status) =>
+    ids.every((id) => waits(s, id)) && ids.some((id) => s.tasks[id]?.waitingOn.some((w) => t2Outside.includes(w)))
   await c.arm.start(Workspace.t2Task)
   await until(
     c,
-    "T2.1-T2.6 waiting on outside ids only",
+    "T2.1-T2.6 waiting on their outside preconditions",
     30_000,
     async (s) => {
       await noRequests(c, "while loading T2")
-      return s && ids.every((id) => waits(s, id)) ? s : undefined
+      return s && loaded(s) ? s : undefined
     },
     {
       detail: () => {
