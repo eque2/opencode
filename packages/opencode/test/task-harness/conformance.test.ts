@@ -159,6 +159,7 @@ async function until<T>(
 ): Promise<T> {
   const deadline = (options.from ?? Date.now()) + ms
   for (;;) {
+    apparatus(c)
     const s = c.arm.status()
     const value = await probe(s)
     if (value !== undefined) return value
@@ -181,11 +182,18 @@ function ended(s: Status.Status | undefined, expected: Status.RunState[] = []) {
     throw new Error(`the run ended in ${s.run.state}${s.run.reason ? ` (${s.run.reason})` : ""}; ${Status.summary(s)}`)
 }
 
-function verify(problems: string[]) {
+// A script exception is an apparatus bug, not the arm's failure: it fails the check ahead of any assertion.
+function apparatus(c: Ctx) {
+  if (c.script.errors.length > 0) throw new Error(`apparatus error in the scripted model: ${c.script.errors.join("; ")}`)
+}
+
+function verify(problems: string[], c?: Ctx) {
+  if (c) apparatus(c)
   if (problems.length > 0) throw new Error(problems.join("\n"))
 }
 
 async function noRequests(c: Ctx, when: string) {
+  apparatus(c)
   const hits = await c.model.hits()
   if (hits.length > 0)
     throw new Error(`the scripted model received ${hits.length} request(s) ${when}; no model request is allowed`)
@@ -289,7 +297,7 @@ check("H3", "happy path", 600_000 + SETUP_MS, async () => {
     ended(s)
     return s?.run.state === "done" ? s : undefined
   })
-  verify(happyEnd(c, s))
+  verify(happyEnd(c, s), c)
 })
 
 check("H4", "order and parallelism", 600_000 + SETUP_MS, async () => {
@@ -329,7 +337,7 @@ check("H4", "order and parallelism", 600_000 + SETUP_MS, async () => {
     problems.push("T1.4's first building entry is not after both T1.2's and T1.3's trusted entries")
   if (!s.tasks["T1.5"]?.waitingOn.includes("T9")) problems.push(`T1.5 waits on [${s.tasks["T1.5"]?.waitingOn.join(", ")}], not T9`)
   if (!s.scenarios["S13"]?.waitingOn.includes("T8")) problems.push(`S13 waits on [${s.scenarios["S13"]?.waitingOn.join(", ")}], not T8`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H5", "ready is a request", 180_000 + SETUP_MS, async () => {
@@ -351,7 +359,7 @@ check("H5", "ready is a request", 180_000 + SETUP_MS, async () => {
     if (trusted.length > 0) problems.push(`obligations trusted before attempt 2: ${trusted.map((h) => h.unit).join(", ")}`)
   }
   if (s.tasks["T1.1"]?.attempts !== 2) problems.push(`T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected 2`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H6", "forced rejection", 180_000 + SETUP_MS, async () => {
@@ -383,7 +391,7 @@ check("H6", "forced rejection", 180_000 + SETUP_MS, async () => {
     if (bad.length > 0) problems.push(`${id} went ${bad.map((h) => h.to).join(", ")}`)
   }
   if (s.tasks["T1.1"]?.attempts !== 2) problems.push(`T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected 2`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H7", "budget", 240_000 + SETUP_MS, async () => {
@@ -400,7 +408,7 @@ check("H7", "budget", 240_000 + SETUP_MS, async () => {
     problems.push(`T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected ${taskAttempts} (taskAttempts)`)
   const beyond = builders(c, "T1.1").filter((r) => r.attempt > taskAttempts)
   if (beyond.length > 0) problems.push(`a builder attempt ${beyond[0]?.attempt} message exists`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
@@ -447,7 +455,7 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
   )
   if (after.length > 0) problems.push(`${after.length} builder or verifier request(s) for T1.1 or T1.2 arrived after the restart`)
   problems.push(...happyEnd(c, s))
-  verify(problems)
+  verify(problems, c)
 })
 
 const EDIT = "The edited text of H9. "
@@ -543,7 +551,7 @@ check("H9", "stale on edit", 600_000 + SETUP_MS, async () => {
     problems.push("no new verifier round judged T1.1.c2 after the edit")
   for (const id of ["T1.1.c1", "T1.1.c3", "T1.1.c4", "T1.1.c5"])
     if (history(s, id, "stale").length > 0) problems.push(`${id} went stale`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H10", "builder cannot judge", 180_000 + SETUP_MS, async () => {
@@ -568,7 +576,7 @@ check("H10", "builder cannot judge", 180_000 + SETUP_MS, async () => {
   const firstVerifier = verifiers(c, "T1.1")[0]
   const c1 = history(s, "T1.1.c1", "trusted")[0]
   if (c1 && (!firstVerifier || c1.at < firstVerifier.at)) problems.push("T1.1.c1 was trusted before a verifier round")
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H11", "test tampering", 180_000 + SETUP_MS, async () => {
@@ -597,7 +605,7 @@ check("H11", "test tampering", 180_000 + SETUP_MS, async () => {
   }
   const trusted = s.history.filter((h) => h.unit.startsWith("T1.1.") && h.to === "trusted" && entry && h.at <= entry.at)
   if (trusted.length > 0) problems.push(`obligations trusted in attempt 1: ${trusted.map((h) => h.unit).join(", ")}`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H12", "stream stall", 180_000 + SETUP_MS, async () => {
@@ -635,6 +643,7 @@ check("H12", "stream stall", 180_000 + SETUP_MS, async () => {
     },
     { from: startAt },
   )
+  apparatus(c)
   if (s.tasks["T1.1"]?.attempts !== 1) throw new Error(`T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected 1`)
 })
 
@@ -660,7 +669,7 @@ check("H13", "hung proof", 180_000 + SETUP_MS, async () => {
   const ready1 = logged(c, "T1.1", 1, "task_ready")
   if (second && ready1 && second.at - ready1.at >= 30_000)
     problems.push(`the reopen came ${Math.round((second.at - ready1.at) / 1000)} s after task_ready, not under 30 s`)
-  verify(problems)
+  verify(problems, c)
 })
 
 check("H14", "provider errors", 2 * (180_000 + SETUP_MS), async () => {
@@ -671,6 +680,7 @@ check("H14", "provider errors", 2 * (180_000 + SETUP_MS), async () => {
       ended(s)
       return state(s, "T1.1") === "trusted" ? s : undefined
     })
+    apparatus(c)
     if (s.tasks["T1.1"]?.attempts !== 1) throw new Error(`(a) T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected 1`)
   }
   {
@@ -688,6 +698,7 @@ check("H14", "provider errors", 2 * (180_000 + SETUP_MS), async () => {
       { from: first.at },
     )
     await Bun.sleep(1_000)
+    apparatus(c)
     const count = builders(c, "T1.1").length
     if (count > 2) throw new Error(`(b) the scripted model received ${count} builder requests, at most 2 allowed`)
   }
@@ -715,6 +726,7 @@ check("H15", "repetition", 180_000 + SETUP_MS, async () => {
     { from: third.at },
   )
   await Bun.sleep(Math.max(0, third.at + 10_000 - Date.now()))
+  apparatus(c)
   const fourth = builders(c, "T1.1").filter((r) => r.attempt === 1 && r.step >= 3 && r.continues)
   if (fourth.length > 0) throw new Error("the builder turn went on after the 3rd identical read call")
   const named: Status.TaskState[] = ["trusted", "stalled", "needs_human", "budget_exhausted", "failed", "cancelled"]
@@ -749,6 +761,7 @@ check("H16", "cancel", 180_000 + SETUP_MS, async () => {
     { from: abortAt, detail: () => `sleep processes: ${Arms.pgrep(`sleep 999.${c.marker}`).length}` },
   )
   await Bun.sleep(Math.max(0, abortAt + 2_000 - Date.now()))
+  apparatus(c)
   const late = c.script.seen.filter((r) => r.role === "builder" && r.at > abortAt)
   if (late.length > 0) throw new Error(`${late.length} builder request(s) arrived after the abort`)
 })
