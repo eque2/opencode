@@ -15,7 +15,11 @@ const goldenSpec = path.join(formatDir, "provider-ordering-admin.spec")
 const goldenModel = path.join(formatDir, "golden/provider-ordering-admin.model.json")
 const goldenCheck = path.join(formatDir, "golden/provider-ordering-admin.check.txt")
 const negativeDir = path.join(formatDir, "golden/negative")
-const negativeCases = readdirSync(negativeDir).toSorted()
+// Case folders only: a stray file such as .DS_Store is not a case.
+const negativeCases = readdirSync(negativeDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .toSorted()
 
 const NegativeCase = Schema.fromJsonString(
   Schema.Struct({
