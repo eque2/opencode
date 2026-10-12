@@ -1,7 +1,7 @@
 export * as Tool from "./tool"
 
-import { ToolDefinition, ToolFailure, ToolOutput, type ToolCall } from "@opencode-ai/llm"
-import { Effect, JsonSchema, MutableHashMap, Option, Schema } from "effect"
+import { ProviderJsonSchema, ToolDefinition, ToolFailure, ToolOutput, type ToolCall } from "@opencode-ai/llm"
+import { Effect, MutableHashMap, Option, Schema } from "effect"
 import type { AgentV2 } from "../agent"
 import type { SessionMessage } from "../session/message"
 import type { SessionSchema } from "../session/schema"
@@ -93,8 +93,8 @@ export function make<
         const definition = new ToolDefinition({
           name,
           description: config.description,
-          inputSchema: toJsonSchema(config.input),
-          outputSchema: toJsonSchema(config.structured ?? config.output),
+          inputSchema: ProviderJsonSchema.fromSchema(config.input),
+          outputSchema: ProviderJsonSchema.fromSchema(config.structured ?? config.output),
         })
         MutableHashMap.set(definitions, name, definition)
         return definition
@@ -175,9 +175,3 @@ const runtimeOf = (tool: AnyTool) =>
     onNone: () => Effect.die(new InvalidToolError({ message: "Invalid Core Tool value" })),
     onSome: (runtime) => Effect.succeed(runtime),
   })
-
-function toJsonSchema(schema: Schema.Top): JsonSchema.JsonSchema {
-  const document = Schema.toJsonSchemaDocument(schema)
-  if (Object.keys(document.definitions).length === 0) return document.schema
-  return { ...document.schema, $defs: document.definitions }
-}
