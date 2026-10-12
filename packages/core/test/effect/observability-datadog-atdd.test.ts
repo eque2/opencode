@@ -14,7 +14,7 @@ import {
   References,
   Schema,
 } from "effect"
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/http"
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -57,8 +57,8 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
 function stub(statuses: Array<{ status: number; headers?: Record<string, string> }> = [], refuse = false) {
   const requests: Array<{ body: Array<Record<string, any>> }> = []
   const client = HttpClient.make((request) => {
-    const raw = (request.body as HttpBody.Uint8Array).body
-    requests.push({ body: JSON.parse(new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(raw)))) })
+    if (request.body._tag !== "Uint8Array") throw new Error(`Unexpected request body: ${request.body._tag}`)
+    requests.push({ body: JSON.parse(new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(request.body.body)))) })
     if (refuse)
       return Effect.fail(
         new HttpClientError.HttpClientError({

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { ConfigProvider, Effect, Exit, Logger, Option, Tracer } from "effect"
+import { ConfigProvider, Context, Effect, Exit, Logger, Option, Tracer } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { ID, type Payload } from "@opencode-ai/schema/event"
 import { domain, spanCategory } from "../../src/observability/category"
@@ -161,21 +161,31 @@ test("the span bridge never mutates the inner span, and a span ended outside a f
 
 test("a bridged span runs its methods on the inner span, so #private fields work", () => {
   // Like a tracer whose span keeps its state in #private fields, which reject any other `this`.
-  class Branded {
+  class Branded extends Tracer.NativeSpan {
     #attributes = new Map<string, unknown>()
-    attribute(key: string, value: unknown) {
+    override get attributes() {
+      return this.#attributes
+    }
+    override attribute(key: string, value: unknown) {
       this.#attributes.set(key, value)
     }
-    get size() {
-      return this.#attributes.size
-    }
   }
-  const inner = { span: () => new Branded() } as unknown as Tracer.Tracer
-  const span = Telemetry.bridge(inner).span({} as never)
+  const inner: Tracer.Tracer = { span: (options) => new Branded(options) }
+  const span = Telemetry.bridge(inner).span({
+    name: "Branded",
+    parent: Option.none(),
+    annotations: Context.empty(),
+    links: [],
+    startTime: 0n,
+    kind: "internal",
+    root: true,
+    sampled: true,
+  })
   span.attribute("tool", "read")
-  expect((span as unknown as Branded).size).toBe(1)
-  // Bound once per span, not on every access.
-  expect(span.attribute).toBe(span.attribute)
+  expect(span.attributes.size).toBe(1)
+  // Bound once per span, not on every access. The member is compared as a value and never called detached.
+  const members: { readonly attribute: unknown } = span
+  expect(members.attribute).toBe(members.attribute)
 })
 
 test("closing one sink leaves the other sinks open", async () => {
