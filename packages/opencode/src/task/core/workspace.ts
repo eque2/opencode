@@ -132,17 +132,17 @@ export const commitAll = Effect.fn("TaskWorkspace.commitAll")(function* (
   return yield* commit(worktree, limits, "HEAD")
 })
 
-/** Merges the branch into `main` in the root checkout; a failed merge is aborted and fails. */
+/** Merges a commit (a task's verified head) into `main` in the root checkout; a failed merge is aborted and fails. */
 export const merge = Effect.fn("TaskWorkspace.merge")(function* (
   root: string,
   limits: TaskLimits.Limits,
-  branch: string,
+  commit: string,
 ) {
-  const result = yield* call(root, limits, ["merge", "--no-ff", "--no-edit", "--no-verify", branch])
+  const result = yield* call(root, limits, ["merge", "--no-ff", "--no-edit", "--no-verify", commit])
   if (result.exitCode === 0) return yield* Effect.void
   yield* call(root, limits, ["merge", "--abort"]).pipe(Effect.ignore)
   return yield* new GitError({
-    message: `git merge ${branch}: exit ${result.exitCode}: ${tail(result.stderr || result.stdout)}`,
+    message: `git merge ${commit}: exit ${result.exitCode}: ${tail(result.stderr || result.stdout)}`,
   })
 })
 

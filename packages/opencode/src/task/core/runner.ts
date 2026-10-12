@@ -430,14 +430,15 @@ const prove = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
   return yield* proveOnMain(run, task)
 })
 
+// Merges the proved and verified `head`, never the branch tip: a commit added to the branch after `task.ready`
+// (a verifier can run git) must not reach `main` unproven.
 const mergeLeaf = Effect.fnUntraced(function* (run: Run, model: TaskModel) {
-  if (!model.head || !model.branch) return
+  if (!model.head) return
   const head = model.head
-  const branch = model.branch
   yield* run.main.withPermit(
     Effect.gen(function* () {
       if (yield* TaskWorkspace.merged(run.directory, run.limits, head)) return
-      yield* TaskWorkspace.merge(run.directory, run.limits, branch)
+      yield* TaskWorkspace.merge(run.directory, run.limits, head)
     }),
   ).pipe(Effect.retry({ times: 3, schedule: Schedule.spaced(Duration.millis(500)) }))
 })
