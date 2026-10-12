@@ -386,6 +386,24 @@ describe("TaskProof", () => {
     proveTimeout,
   )
 
+  groupIt("working tree: a proof refuses a tree that is not at head or has changes", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({ ...feature, "test/feature.test.ts": testsOf(passing("T1.1.c1")) })
+
+      const wrongCommit = yield* prove({ ...repo, head: repo.base }).pipe(Effect.flip)
+      expect(wrongCommit).toBeInstanceOf(TaskProof.ProofError)
+      expect(wrongCommit.message).toContain(`not at head ${repo.base}`)
+
+      yield* Effect.promise(() => write(repo.dir, { "notes.txt": "not committed\n" }))
+      const untracked = yield* prove(repo).pipe(Effect.flip)
+      expect(untracked.message).toContain("notes.txt")
+      const scenario = yield* TaskProof.proveScenario({ scenario: { id: "S1" }, cwd: repo.dir, head: repo.head, limits })
+        .pipe(Effect.flip)
+      expect(scenario.message).toContain("notes.txt")
+    }),
+    proveTimeout,
+  )
+
   groupIt("run: when the leader exits, the runner kills the processes that it left in its group", () =>
     Effect.gen(function* () {
       const result = yield* TaskProof.run("sh", ["-c", "sleep 600 & echo $!"], {
