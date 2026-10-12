@@ -126,10 +126,14 @@ export class ProofError extends Schema.TaggedError<ProofError>()("TaskProofError
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
-/** The margin of the test-run wall bound above the per-test timeout and the cancel deadline. */
-export const runMargin = Duration.seconds(3)
+/**
+ * The margin of a whole command's wall bound above the per-test timeout and the cancel deadline.
+ * ponytail: a constant, sized from the fixture: its own `bun test` gate takes about 5 s at load 14, the scripted
+ * proof timeout is 5 s. Scale it with the proof timeout if a slower fixture ever needs it.
+ */
+export const runMargin = Duration.seconds(10)
 
-/** The wall bound of one `bun test` run: the proof timeout, plus the cancel deadline, plus the margin. */
+/** The wall bound of one whole command (the `bun test` run, a gate): the proof timeout, plus the cancel deadline, plus the margin. */
 export const testRunBound = (limits: TaskLimits.Limits) =>
   Duration.sum(Duration.sum(limits.proofTimeout, limits.cancelDeadline), runMargin)
 
@@ -349,7 +353,12 @@ const runGate = Effect.fnUntraced(function* (input: TaskInput, gate: string) {
     // The gate never ran; 127 is the shell's "command not found".
     return { gate, exitCode: 127, timedOut: false, status: "failed", reason: `unknown gate ${gate}` } satisfies GateResult
   }
-  const result = yield* runCommand("sh", ["-c", definition.value.command], input.cwd, commandBounds(input.limits))
+  // A gate is a whole command, like the tagged-test run, so it gets the same wall bound; the proof timeout bounds
+  // each test inside it.
+  const result = yield* runCommand("sh", ["-c", definition.value.command], input.cwd, {
+    timeout: testRunBound(input.limits),
+    cancelDeadline: input.limits.cancelDeadline,
+  })
   const base = { gate, exitCode: result.exitCode, timedOut: result.timedOut }
   if (result.timedOut) return { ...base, status: "failed", reason: "timed out" } satisfies GateResult
   if (result.exitCode === 0) return { ...base, status: "passed" } satisfies GateResult
