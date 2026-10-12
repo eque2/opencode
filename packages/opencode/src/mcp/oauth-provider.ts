@@ -6,7 +6,8 @@ import type {
   OAuthClientInformationFull,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
 import { NodeCrypto } from "@effect/platform-node"
-import { Clock, Crypto, Effect, Encoding, Option, Predicate, Schema } from "effect"
+import { Clock, Crypto, Effect, Option, Predicate, Schema } from "effect"
+import { Hex } from "effect/encoding"
 import { McpAuth } from "./auth"
 
 const OAUTH_CALLBACK_PORT = 19876
@@ -33,7 +34,7 @@ const nowSeconds = Clock.currentTimeMillis.pipe(Effect.map((millis) => millis / 
 // The OAuth state guards against CSRF, so it needs cryptographically secure bytes.
 const randomState = Effect.gen(function* () {
   const cryptoService = yield* Crypto.Crypto
-  return Encoding.encodeHex(yield* cryptoService.randomBytes(32).pipe(Effect.orDie))
+  return Hex.encode(yield* cryptoService.randomBytes(32).pipe(Effect.orDie))
 }).pipe(Effect.provide(NodeCrypto.layer))
 
 // OAuthClientProvider from @modelcontextprotocol/sdk is a Promise-based interface. Each method
