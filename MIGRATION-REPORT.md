@@ -79,6 +79,7 @@ Four hazard lenses, an API-difference audit of every release from rc.118 to 4.0.
   - The 5 remaining `opencode` failures are the baseline Google Vertex tests.
 - Merged `dev` (merge commit `8a08694e13`, which adds 168 documentation and JSON Schema files outside `packages/`): `bun install --frozen-lockfile` changes nothing; typecheck 30 of 30; oxlint 0 warnings and 0 errors; Effect ESLint 0 problems; language service 0 findings in 18 projects; `opencode serve` exits with 143 after SIGTERM and 130 after SIGINT, both within 1 s.
 - Merged `dev` tests: the same 8 baseline failures plus one failure in the full run, "provider HttpApi > keeps provider.models hook input mutations out of provider state" (GET /provider returned 404). It passed 5 of 5 times alone, and the whole `test/server` folder passed (299 pass, 0 fail), so it is intermittent under full-suite load.
+- Flake investigation: the 404 did not recur in about 30 targeted runs (up to 8 concurrent copies of the file), in 6 concurrent `test/server` runs, or in 2 full suites, on merged `dev`. A throwaway rc.117 checkout ran the same loads side by side. Both versions fail the same load-sensitive tests: "serves OAuth authorize response shapes" timed out in 6 of 6 merged runs and 5 of 6 rc.117 runs. In the parallel full suites, 3 tests failed only on merged `dev` and 2 only on rc.117; the 3 pass on merged `dev` when rerun. No migration defect was found.
 
 ## Deferred decisions
 
