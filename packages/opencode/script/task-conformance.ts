@@ -14,6 +14,17 @@ import path from "node:path"
 import fs from "node:fs"
 import { CHECKS, compare, readChecks, round, stats, type Baseline, type CheckStatus } from "../test/task-harness/stats"
 
+// What a run measured with: the fixture trees, the seed, the reference solution and the suite itself.
+const FINGERPRINT = {
+  spec: "task-formats/blend/release-notes.spec",
+  t2: "task-formats/blend/provider-ordering-admin.spec",
+  seed: "packages/opencode/test/task-harness/release-notes-repo",
+  solution: "packages/opencode/test/task-harness/release-notes-solution",
+  suite: "packages/opencode/test/task-harness/conformance.test.ts",
+  scripts: "packages/opencode/test/task-harness/scripts.ts",
+  arms: "packages/opencode/test/task-harness/arms",
+}
+
 const ARMS = ["baseline", "o1", "o2", "o3"]
 const args = parseArgs(process.argv.slice(2))
 const arm = args.arm ?? "baseline"
@@ -101,6 +112,8 @@ const out: Record<string, unknown> = {
   selection,
   commit: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: packageDir }).stdout.toString().trim(),
   fixture: fixtureHashes(),
+  // Uncommitted changes under the fingerprinted paths: a non-empty list means the hashes do not describe the run.
+  dirty: dirtyFixture(),
   scores,
   ...summary,
   perCheck,
@@ -155,10 +168,13 @@ function parseArgs(argv: string[]) {
 function fixtureHashes() {
   const tree = (p: string) =>
     Bun.spawnSync(["git", "rev-parse", `HEAD:${p}`], { cwd: packageDir }).stdout.toString().trim() || "uncommitted"
-  return {
-    spec: tree("task-formats/blend/release-notes.spec"),
-    seed: tree("packages/opencode/test/task-harness/release-notes-repo"),
-  }
+  return Object.fromEntries(Object.entries(FINGERPRINT).map(([key, p]) => [key, tree(p)]))
+}
+
+function dirtyFixture() {
+  const root = path.resolve(packageDir, "../..")
+  const out = Bun.spawnSync(["git", "status", "--porcelain", "--", ...Object.values(FINGERPRINT)], { cwd: root })
+  return out.stdout.toString().split("\n").filter(Boolean)
 }
 
 // Other sessions run tests on this machine (D8). Wait for any foreign `bun test` to finish, at most 30 minutes.
