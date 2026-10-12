@@ -1209,8 +1209,16 @@ const layer = Layer.effect(
             continue
           }
 
-          // The task harness (O1, O2), when it runs: its agents get their own tools below.
+          // The task harness (O1, O2), when it runs: its agents get their own tools below, and a builder that
+          // repeats one call ends its turn here, without a model request.
           const harness = yield* TaskSelector.inCore
+          if (harness) {
+            const repetition = TaskHooks.checkRepetition(sessionID, completedCallsSince(msgs, lastUser.id))
+            if (repetition !== undefined) {
+              yield* Effect.logInfo("task harness repetition stop", { "session.id": sessionID, reason: repetition })
+              break
+            }
+          }
 
           const agent = (yield* agents.get(lastUser.agent)) ?? (yield* agentNotFound(lastUser.agent, sessionID))
           const maxSteps = agent.steps ?? Infinity
@@ -1725,6 +1733,22 @@ export function createTaskHarnessTools(agent: string, sessionID: SessionID): Rec
       }),
     }
   return {}
+}
+
+// The completed tool calls of the replies to user message `userID`, oldest first: what the repetition check
+// reads. Array position is not chronological after a compaction, so order by creation time, then id.
+function completedCallsSince(msgs: ReadonlyArray<SessionV1.WithParts>, userID: MessageID) {
+  return msgs
+    .filter((msg) => msg.info.role === "assistant" && msg.info.parentID === userID)
+    .toSorted(
+      (a, b) =>
+        a.info.time.created - b.info.time.created || (a.info.id < b.info.id ? -1 : a.info.id > b.info.id ? 1 : 0),
+    )
+    .flatMap((msg) =>
+      msg.parts.flatMap((part) =>
+        part.type === "tool" && part.state.status === "completed" ? [{ tool: part.tool, input: part.state.input }] : [],
+      ),
+    )
 }
 
 const bashRegex = /!`([^`]+)`/g
