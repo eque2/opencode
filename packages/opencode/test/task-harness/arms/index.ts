@@ -76,7 +76,8 @@ export async function open(input: {
     repo: input.workspace.repo,
     home: input.workspace.home,
     config: config(input.arm, input.model),
-    env: { ...env(input.arm), ...input.env },
+    // Scripted bounds for the scripted model only; L1 runs with the live bounds (contract section 1).
+    env: { ...env(input.arm), OPENCODE_TASK_LIMITS: input.model.kind === "live" ? "live" : "scripted", ...input.env },
   }
   let server = await Server.start(options)
   let client = createOpencodeClient({ baseUrl: server.url, directory: input.workspace.repo })
