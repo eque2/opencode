@@ -17,7 +17,8 @@ import { ProofProcess } from "./process"
 // the evidence that the spec policy asks for.
 //
 // The working tree must be the repository root: the touches, the `unchanged` paths and the paths that
-// git reports are all relative to it. The working tree must hold the `head` commit.
+// git reports are all relative to it. It must be checked out at `head` with no change, or the proof
+// fails with a ProofError.
 
 export { killGroup, run, SpawnError, timedOutExitCode } from "./process"
 export type { Bounds, Options, Result } from "./process"
@@ -120,7 +121,7 @@ export interface ScenarioInput {
   readonly limits: TaskLimits.Limits
 }
 
-/** A proof could not run: a commit did not resolve, git failed, or a command could not start. */
+/** A proof could not run: a commit did not resolve, the working tree is not clean at head, git failed, or a command could not start. */
 export class ProofError extends Schema.TaggedError<ProofError>()("TaskProofError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -176,6 +177,19 @@ const resolveCommit = Effect.fnUntraced(function* (cwd: string, bounds: ProofPro
   }
   const text = yield* gitText(cwd, bounds, "rev-parse", "--verify", "--quiet", `${revision}^{commit}`)
   return text.trim()
+})
+
+// The tests and gates run on the working tree as found, and the evidence names `head`, so the tree must be
+// exactly `head`: HEAD at that commit, and no change, staged, unstaged or untracked. Ignored files are allowed.
+const requireTreeAt = Effect.fnUntraced(function* (cwd: string, bounds: ProofProcess.Bounds, head: string) {
+  const current = (yield* gitText(cwd, bounds, "rev-parse", "--verify", "HEAD")).trim()
+  if (current !== head) {
+    return yield* new ProofError({ message: `the working tree is at ${current}, not at head ${head}` })
+  }
+  const status = yield* gitText(cwd, bounds, "status", "--porcelain", "--untracked-files=all")
+  if (status.trim() !== "") {
+    return yield* new ProofError({ message: `the working tree has changes that head does not hold: ${tail(status)}` })
+  }
 })
 
 // The first of `tags` that the file holds at the commit; none when it holds none or the commit lacks it.
@@ -404,6 +418,7 @@ export const proveTask = Effect.fn("TaskProof.proveTask")(function* (input: Task
   const bounds = commandBounds(input.limits)
   const base = yield* resolveCommit(input.cwd, bounds, input.base)
   const head = yield* resolveCommit(input.cwd, bounds, input.head)
+  yield* requireTreeAt(input.cwd, bounds, head)
   const obligations = input.spec.obligations.filter((obligation) => obligation.task === input.task.id)
   const run = yield* runTests(input.cwd, input.limits)
   const structural = yield* checkStructural(input, bounds, base, head)
@@ -457,7 +472,9 @@ export const proveTask = Effect.fn("TaskProof.proveTask")(function* (input: Task
 
 /** Runs `bun test` once at `head` and returns the result of the scenario's title tag `[S<n>]`. */
 export const proveScenario = Effect.fn("TaskProof.proveScenario")(function* (input: ScenarioInput) {
-  const head = yield* resolveCommit(input.cwd, commandBounds(input.limits), input.head)
+  const bounds = commandBounds(input.limits)
+  const head = yield* resolveCommit(input.cwd, bounds, input.head)
+  yield* requireTreeAt(input.cwd, bounds, head)
   const run = yield* runTests(input.cwd, input.limits)
   return {
     scenario: input.scenario.id,
