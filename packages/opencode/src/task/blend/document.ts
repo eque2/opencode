@@ -138,10 +138,7 @@ const step = (scan: Scan, line: string, number: number): Scan => {
 
 // `- key: value` opens a mapping whose keys sit at the column after the dash. Nested items (`- - a`) go deeper.
 // `dash` is the column of the innermost dash.
-const sequenceItem = (
-  text: string,
-  indent: number,
-): Option.Option<{ indent: number; dash: number; rest: string }> => {
+const sequenceItem = (text: string, indent: number): Option.Option<{ indent: number; dash: number; rest: string }> => {
   const dash = /^-(\s+|$)/.exec(text)
   if (!dash) return Option.none()
   const start = indent + dash[0].length
@@ -183,7 +180,12 @@ export const section = (body: string, name: string): Option.Option<string> => {
   const start = lines.findIndex((line, index) => !inFence[index] && /^##\s+(.+?)\s*$/.exec(line)?.[1] === name)
   if (start < 0) return Option.none()
   const end = lines.findIndex((line, index) => index > start && !inFence[index] && /^#{1,2}\s/.test(line))
-  return Option.some(lines.slice(start + 1, end < 0 ? lines.length : end).join("\n").trim())
+  return Option.some(
+    lines
+      .slice(start + 1, end < 0 ? lines.length : end)
+      .join("\n")
+      .trim(),
+  )
 }
 
 const FENCE_MARKER = /^\s*(`{3,}|~{3,})/

@@ -151,9 +151,16 @@ describe("BlendDocument.duplicateKeys", () => {
   const rows: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
     [
       "block scalar with repeated key-like lines",
-      ["text: |", "  note: one", "  note: two", "rejects:", "  c1:", "    - |", "      note: one", "      note: two"].join(
-        "\n",
-      ),
+      [
+        "text: |",
+        "  note: one",
+        "  note: two",
+        "rejects:",
+        "  c1:",
+        "    - |",
+        "      note: one",
+        "      note: two",
+      ].join("\n"),
       [],
     ],
     [
