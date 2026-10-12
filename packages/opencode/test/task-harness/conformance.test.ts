@@ -116,8 +116,9 @@ function check(id: string, behaviour: string, timeout: number, fn: () => Promise
 }
 
 async function open(check: string, prepare?: (repo: string) => void): Promise<Ctx> {
-  // Digits only: `sleep 999.<marker>` must stay a valid number.
-  const marker = `${process.pid}${Date.now() % 1_000_000}`
+  // Digits only, so `sleep 999.<marker>` stays a valid number; fixed width (7 + 6), so no check's marker is a prefix
+  // of another's and a match on `sleep 999.<marker>` reaches only this check's processes.
+  const marker = `${String(process.pid).padStart(7, "0")}${String(Date.now() % 1_000_000).padStart(6, "0")}`
   const ws = Workspace.create(runDir, check)
   prepare?.(ws.repo)
   const model = await Scripts.start({ check, marker })
