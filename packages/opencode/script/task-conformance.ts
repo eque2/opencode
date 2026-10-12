@@ -9,8 +9,7 @@
 import os from "node:os"
 import path from "node:path"
 import fs from "node:fs"
-
-const CHECKS = [...Array.from({ length: 16 }, (_, i) => `H${i + 1}`), "L1"] as const
+import { CHECKS, compare, readChecks, round, stats, type Baseline, type CheckStatus } from "../test/task-harness/stats"
 
 const args = parseArgs(process.argv.slice(2))
 const arm = args.arm ?? "baseline"
@@ -50,7 +49,7 @@ for (let run = 1; run <= runs; run++) {
     { cwd: packageDir, env, stdout: 2, stderr: "inherit" },
   )
   const exitCode = await child.exited
-  const checks = readChecks(junit)
+  const checks = readChecks(fs.existsSync(junit) ? fs.readFileSync(junit, "utf8") : undefined)
   // The baseline exposes no state, so L1 cannot pass for it: scored failed without a run (D8).
   if (arm === "baseline") checks.L1 = "not-runnable"
   const passed = CHECKS.filter((c) => checks[c] === "passed").length
@@ -89,26 +88,14 @@ const out: Record<string, unknown> = {
 }
 
 if (args.baseline) {
-  const base: { median: number; sd: number; cv: number | null; mean: number; fixture: unknown } = JSON.parse(
-    fs.readFileSync(args.baseline, "utf8"),
-  )
-  const noiseFloor = base.mean === 0 ? 2 * base.sd : 2 * (base.cv ?? 0) * base.mean
-  const change = round(summary.median - base.median)
-  out.vsBaseline = {
-    baselineMedian: base.median,
-    change,
-    noiseFloorPoints: round(noiseFloor),
-    smallestEffect: 50,
-    clearsSmallestEffect: change >= 50 && change > noiseFloor,
-    sameFixture: JSON.stringify(base.fixture) === JSON.stringify(out.fixture),
-  }
+  const base: Baseline = JSON.parse(fs.readFileSync(args.baseline, "utf8"))
+  out.vsBaseline = compare(summary, base, out.fixture)
 }
 
 const text = JSON.stringify(out, null, 2)
 if (args.out) fs.writeFileSync(args.out, text + "\n")
 console.log(text)
 
-type Status = "passed" | "failed" | "skipped" | "missing" | "not-runnable"
 type RunResult = {
   run: number
   runId: string
@@ -116,7 +103,7 @@ type RunResult = {
   loadAverage: number[]
   waitedForQuietMs: number
   durationMs: number
-  checks: Record<string, Status>
+  checks: Record<string, CheckStatus>
   score: number
 }
 
@@ -132,43 +119,6 @@ function parseArgs(argv: string[]) {
     }
   }
   return out
-}
-
-// A check's test is titled "<id> <behaviour>", e.g. "H3 happy path".
-function readChecks(junit: string): Record<string, Status> {
-  const out = CHECKS.reduce<Record<string, Status>>((acc, c) => ({ ...acc, [c]: "missing" }), {})
-  if (!fs.existsSync(junit)) return out
-  const xml = fs.readFileSync(junit, "utf8")
-  for (const m of xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    const name = /name="([^"]*)"/.exec(m[1])?.[1] ?? ""
-    const id = CHECKS.find((c) => c === /^(H\d+|L1)\b/.exec(name)?.[1])
-    if (!id) continue
-    const body = m[3] ?? ""
-    out[id] = /<failure|<error/.test(body) ? "failed" : /<skipped/.test(body) ? "skipped" : "passed"
-  }
-  return out
-}
-
-function stats(xs: number[]) {
-  const n = xs.length
-  const sorted = [...xs].sort((a, b) => a - b)
-  const mean = xs.reduce((a, b) => a + b, 0) / n
-  const median = n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2
-  const sd = n > 1 ? Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0
-  return {
-    median: round(median),
-    mean: round(mean),
-    sd: round(sd),
-    // Undefined when the mean is zero; the noise floor then uses 2 x sd in points (D6).
-    cv: mean === 0 ? null : round(sd / mean),
-    se: round(n > 0 ? sd / Math.sqrt(n) : 0),
-    min: sorted[0] ?? 0,
-    max: sorted[n - 1] ?? 0,
-  }
-}
-
-function round(x: number) {
-  return Math.round(x * 1000) / 1000
 }
 
 function fixtureHashes() {
