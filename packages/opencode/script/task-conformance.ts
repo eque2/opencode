@@ -23,6 +23,8 @@ const live = args.live === "true"
 const only = args.checks?.split(",").map((id) => id.trim())
 for (const id of only ?? [])
   if (!CHECKS.some((c) => c === id)) throw new Error(`unknown check ${id} in --checks; expected ${CHECKS.join(", ")}`)
+// The checks a run scores: all 17, or the --checks selection; the others skip and do not count.
+const selection: string[] = CHECKS.filter((c) => only === undefined || only.includes(c))
 const packageDir = path.resolve(import.meta.dir, "..")
 const runsRoot = path.resolve(packageDir, "../../.spike-runs")
 const stamp = new Date().toISOString().replace(/[:.]/g, "-")
@@ -59,7 +61,7 @@ for (let run = 1; run <= runs; run++) {
   const checks = readChecks(fs.existsSync(junit) ? fs.readFileSync(junit, "utf8") : undefined)
   // The baseline exposes no state, so L1 cannot pass for it: scored failed without a run (D8).
   if (arm === "baseline") checks.L1 = "not-runnable"
-  const passed = CHECKS.filter((c) => checks[c] === "passed").length
+  const passed = selection.filter((c) => checks[c] === "passed").length
   results.push({
     run,
     runId,
@@ -68,15 +70,15 @@ for (let run = 1; run <= runs; run++) {
     waitedForQuietMs: waited,
     durationMs: Date.now() - started,
     checks,
-    score: round((passed / CHECKS.length) * 100),
+    score: round((passed / selection.length) * 100),
   })
-  console.error(`[task-conformance] ${runId}: score ${results.at(-1)!.score} (${passed}/${CHECKS.length})`)
+  console.error(`[task-conformance] ${runId}: score ${results.at(-1)!.score} (${passed}/${selection.length})`)
 }
 
 const scores = results.map((r) => r.score)
 const summary = stats(scores)
 const perCheck = Object.fromEntries(
-  CHECKS.map((c) => {
+  selection.map((c) => {
     const passedRuns = results.filter((r) => r.checks[c] === "passed").length
     return [c, { passed: passedRuns, runs: results.length, passK: passedRuns === results.length ? 1 : 0 }]
   }),
@@ -86,6 +88,7 @@ const out: Record<string, unknown> = {
   arm,
   runs: results.length,
   live,
+  selection,
   commit: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: packageDir }).stdout.toString().trim(),
   fixture: fixtureHashes(),
   scores,
