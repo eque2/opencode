@@ -212,13 +212,18 @@ const judged = (judges: ReadonlyArray<string>) => judges.includes("verifier") ||
 /**
  * The proof results as facts: a failed proof is `failed` (a structural violation fails every test obligation and
  * names the path); a passed proof that a verifier or reviewer must judge, or a review, is `needs-judge`; a passed
- * proof the runner or engine alone judges is `passed`. A failed task gate decides only the obligations that name it
- * as their proof; the fact's reason notes it.
+ * proof the runner or engine alone judges is `passed`. A failed gate of the task (its VERIFY.md `gates`) fails every
+ * test obligation that did not fail on its own, as a structural violation does, so the task goes back to the builder.
  */
-const results = (spec: BlendModel.Spec, proof: TaskProof.TaskProof) => {
+const results = (spec: BlendModel.Spec, proof: TaskProof.TaskProof, taskGates: ReadonlyArray<string>) => {
+  const gates = proof.gates.flatMap((gate) =>
+    gate.status === "failed" && taskGates.includes(gate.gate) ? [`gate ${gate.gate} failed: ${gate.reason}`] : [],
+  )
+  const blocked = gates.join("; ")
   const mapped = proof.obligations.map((item): Proved => {
     const obligation = spec.obligations.find((candidate) => candidate.id === item.id)
     if (item.status === "failed") return { id: item.id, status: "failed", reason: item.reason }
+    if (gates.length > 0 && item.proof === "test") return { id: item.id, status: "failed", reason: blocked }
     if (item.status === "needs-review") return { id: item.id, status: "needs-judge" }
     return { id: item.id, status: judged(obligation?.judges ?? []) ? "needs-judge" : "passed" }
   })
@@ -226,7 +231,6 @@ const results = (spec: BlendModel.Spec, proof: TaskProof.TaskProof) => {
     proof.structural.status === "failed"
       ? [`structural: ${proof.structural.violations.map((violation) => violation.path).join(", ")}`]
       : []
-  const gates = proof.gates.flatMap((gate) => (gate.status === "failed" ? [`gate ${gate.gate}: ${gate.reason}`] : []))
   const reasons = [...structural, ...gates]
   return { results: mapped, reason: reasons.length > 0 ? Option.some(reasons.join("; ")) : Option.none<string>() }
 }
@@ -261,14 +265,14 @@ const proveLeaf = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task, 
     },
     task: { id: task.id, touches: task.touches, gates: [] },
   })
-  const first = results(spec, quick)
+  const first = results(spec, quick, [])
   if (failed(first.results)) return yield* proved(run, task.id, first)
   const full = yield* TaskProof.proveTask({
     ...input,
     spec: { gates: spec.gates, obligations: spec.obligations },
     task: { id: task.id, touches: task.touches, gates: task.gates },
   })
-  return yield* proved(run, task.id, results(spec, full))
+  return yield* proved(run, task.id, results(spec, full, task.gates))
 })
 
 /**
@@ -296,7 +300,7 @@ const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
         head,
         limits: run.limits,
       })
-      yield* proved(run, task.id, results(spec, proof))
+      yield* proved(run, task.id, results(spec, proof, []))
     }),
   )
 })
