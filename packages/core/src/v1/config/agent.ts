@@ -5,8 +5,9 @@ import { PositiveInt } from "../../schema"
 import { ConfigPermissionV1 } from "./permission"
 import { ConfigProviderV1 } from "./provider"
 
+// Effect exports an `isPattern` RegExp as a JSON Schema `pattern` only when it has the `u` flag.
 const Color = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
+  Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/u)),
   Schema.Literals(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
 ])
 
