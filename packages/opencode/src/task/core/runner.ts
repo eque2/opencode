@@ -166,6 +166,13 @@ const cancelChildren = (run: Run, children: ReadonlyArray<readonly [SessionID, s
     { concurrency: "unbounded", discard: true },
   )
 
+// A `task_ready` or verdicts left from a turn that ended otherwise (repetition, spend cap, stall, cancel) must not
+// count for the next turn: each turn starts with none.
+const clearHooks = (session: SessionID) => {
+  TaskHooks.takeReady(session)
+  TaskHooks.takeVerdicts(session)
+}
+
 /**
  * One judging round: a new session per try, its marker and `judge` lines, and the verdicts it recorded for the
  * judged ids. A round with no verdict is tried once more; none after that is `Option.none()`.
@@ -188,6 +195,7 @@ const round = Effect.fnUntraced(function* (
       title: `${input.unit} ${input.role}${attempt > 1 ? ` (again)` : ""}`,
       agent: TaskHooks.VERIFIER,
     })
+    clearHooks(session.id)
     yield* inflight(
       run,
       session.id,
@@ -370,6 +378,7 @@ const build = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
     : TaskSessions.continueMessage
   let nudges = 0
   while (true) {
+    clearHooks(session)
     const turn = yield* inflight(
       run,
       session,
