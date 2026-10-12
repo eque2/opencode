@@ -171,7 +171,7 @@ export namespace Share {
     const info: Info = {
       id: ID.make((isTest ? "test_" : "") + body.sessionID.slice(-8)),
       sessionID: body.sessionID,
-      secret: yield* random.randomUUIDv4,
+      secret: yield* random.randomUUIDv4(),
     }
     const exists = yield* get(info.id)
     if (Option.isSome(exists)) return yield* new AlreadyExistsError({ id: info.id })

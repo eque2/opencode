@@ -164,7 +164,7 @@ const layer = Layer.effect(
                 })
               } else {
                 const version = pending.value
-                const token = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
+                const token = yield* cryptoService.randomUUIDv4().pipe(Effect.orDie)
                 const staging = `${root}.tmp-${token}`
                 const backup = `${root}.old-${token}`
                 yield* Effect.gen(function* () {

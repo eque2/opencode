@@ -163,7 +163,7 @@ export const fileSystem = (
               yield* failIfUnsafe(name, findings)
               const target = yield* pathFor(name)
               yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.orDie)
-              const temporary = `${target}.${yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)}.tmp`
+              const temporary = `${target}.${yield* cryptoService.randomUUIDv4().pipe(Effect.orDie)}.tmp`
               yield* fs.writeFileString(temporary, formatCassette(cassette)).pipe(
                 Effect.flatMap(() => fs.rename(temporary, target)),
                 Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.catch(() => Effect.void))),

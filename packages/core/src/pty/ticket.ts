@@ -44,7 +44,7 @@ export const make = (ttl: Duration.Input = DEFAULT_TTL) =>
     const expiresIn = Math.max(1, Math.round(Duration.toSeconds(Duration.fromInputUnsafe(ttl))))
     return Service.of({
       issue: Effect.fn("PtyTicket.issue")(function* (input) {
-        const ticket = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
+        const ticket = yield* cryptoService.randomUUIDv4().pipe(Effect.orDie)
         yield* Cache.set(cache, ticket, input)
         return { ticket, expires_in: expiresIn }
       }),
