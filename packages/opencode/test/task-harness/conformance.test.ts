@@ -45,6 +45,7 @@ const ENDED: Status.RunState[] = ["refused", "cancelled", "needs_human", "budget
 const LIVE_ENDS: Status.RunState[] = ["done", "budget_exhausted", "needs_human", "failed"]
 const LIVE_WALL_MS = 30 * 60_000
 const LIVE_TOKENS = 1_500_000
+const LIVE_IDLE_MS = 60_000
 // The preload of this package's test run deletes provider keys from the environment; the runner hands the live
 // key over under this prefix so the server inherits it. The suite never reads, prints or logs its value.
 const LIVE_KEYS = ["OPENAI_API_KEY"]
@@ -430,7 +431,11 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
     c,
     "T1.1 and T1.2 trusted within 25 s of T1.3's first builder request",
     25_000,
-    (s) => (state(s, "T1.1") === "trusted" && state(s, "T1.2") === "trusted" ? s : undefined),
+    (s) => {
+      if (state(s, "T1.1") === "trusted" && state(s, "T1.2") === "trusted") return s
+      ended(s)
+      return undefined
+    },
     { from: first.at },
   )
   // At least 1 s after the request, as before, so the bash call has started when the server dies.
@@ -438,9 +443,11 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
   c.arm.kill()
   const restartAt = Date.now()
   await c.arm.restart()
-  const next = await until(c, "T1.3's next builder request after the restart", 600_000, () =>
-    builders(c, "T1.3").find((r) => r.at > restartAt),
-  )
+  const next = await until(c, "T1.3's next builder request after the restart", 600_000, (s) => {
+    const found = builders(c, "T1.3").find((r) => r.at > restartAt)
+    if (!found) ended(s)
+    return found
+  })
   const s = await until(
     c,
     "run done after the restart",
@@ -657,7 +664,9 @@ check("H12", "stream stall", 180_000 + SETUP_MS, async () => {
     (s) => {
       const again = builders(c, "T1.1").some((r) => r.at > hung.at)
       const named = s ? history(s, "T1.1").some((h) => /stall|idle/i.test(h.reason ?? "")) : false
-      return again || named ? true : undefined
+      if (again || named) return true
+      ended(s)
+      return undefined
     },
     { from: hung.at },
   )
@@ -751,7 +760,11 @@ check("H15", "repetition", 180_000 + SETUP_MS, async () => {
     c,
     "a T1.1 history entry naming the repetition",
     10_000,
-    (s) => (s && history(s, "T1.1").some((h) => /repet/i.test(h.reason ?? "")) ? true : undefined),
+    (s) => {
+      if (s && history(s, "T1.1").some((h) => /repet/i.test(h.reason ?? ""))) return true
+      ended(s)
+      return undefined
+    },
     { from: third.at },
   )
   await Bun.sleep(Math.max(0, third.at + 10_000 - Date.now()))
@@ -765,7 +778,9 @@ check("H15", "repetition", 180_000 + SETUP_MS, async () => {
     180_000,
     (s) => {
       const now = state(s, "T1.1")
-      return now && named.includes(now) ? s : undefined
+      if (now && named.includes(now)) return s
+      ended(s)
+      return undefined
     },
     { from: startAt },
   )
@@ -786,7 +801,11 @@ check("H16", "cancel", 180_000 + SETUP_MS, async () => {
     c,
     "T1.1, T1.2 and the run cancelled with no sleep left",
     2_000,
-    (s) => (cancelled(s) && Arms.pgrep(`sleep 999.${c.marker}`).length === 0 ? true : undefined),
+    (s) => {
+      if (cancelled(s) && Arms.pgrep(`sleep 999.${c.marker}`).length === 0) return true
+      ended(s, ["cancelled"])
+      return undefined
+    },
     { from: abortAt, detail: () => `sleep processes: ${Arms.pgrep(`sleep 999.${c.marker}`).length}` },
   )
   await Bun.sleep(Math.max(0, abortAt + 2_000 - Date.now()))
@@ -825,9 +844,18 @@ check(
       let tokens = await adapter.tokens()
       let tokensAt = Date.now()
       let breach: string | undefined
+      let idleSince: number | undefined
+      let idle = false
       for (;;) {
         s = adapter.status()
         if (s && (LIVE_ENDS.includes(s.run.state) || ENDED.includes(s.run.state))) break
+        // A run `waiting` with no task in progress cannot move by itself: after 60 s it counts as ended.
+        const busy = s ? Object.values(s.tasks).some((t) => ["building", "proving", "verifying"].includes(t.state)) : true
+        idleSince = s?.run.state === "waiting" && !busy ? (idleSince ?? Date.now()) : undefined
+        if (idleSince !== undefined && Date.now() - idleSince > LIVE_IDLE_MS) {
+          idle = true
+          break
+        }
         if (!s && Date.now() - (adapter.startedAt ?? startAt) > STATUS_APPEARS_MS)
           throw new Error(`no status file at ${Status.file(ws.repo)} ${STATUS_APPEARS_MS / 1000} s after /task`)
         if (Date.now() - tokensAt > 10_000) {
@@ -847,9 +875,13 @@ check(
       out.state = s?.run.state
       out.reason = s?.run.reason
       out.breach = breach
+      out.idle = idle
       const problems: string[] = []
       if (breach) problems.push(`cap breached: ${breach}`)
-      if (!s || !LIVE_ENDS.includes(s.run.state)) problems.push(`the run did not end by itself in a terminal state (${Status.summary(s)})`)
+      if (!s || !LIVE_ENDS.includes(s.run.state))
+        problems.push(
+          `the run did not end by itself in a terminal state${idle ? `; it stayed waiting with no task in progress for ${LIVE_IDLE_MS / 1000} s` : ""} (${Status.summary(s)})`,
+        )
       if (s) {
         for (const [task, ids] of obligations)
           if (state(s, task) === "trusted") {
