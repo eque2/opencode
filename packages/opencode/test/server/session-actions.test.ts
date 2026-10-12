@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
-import { HttpClientResponse } from "effect/unstable/http"
+import { Effect } from "effect"
+import { HttpClientResponse } from "effect/http"
 import { Session as SessionNs } from "@/session/session"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
 const decodeSession = HttpClientResponse.schemaBodyJson(SessionNs.Info)
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(SessionNs.node), httpApiLayer))
+const it = testEffect(httpApiLayerWith(LayerNode.compile(SessionNs.node)))
 
 afterEach(async () => {
   mock.restore()

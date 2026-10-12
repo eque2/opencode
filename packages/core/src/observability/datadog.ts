@@ -8,6 +8,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  Equal,
   Fiber,
   FileSystem,
   Formatter,
@@ -23,7 +24,7 @@ import {
   Schema,
 } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { createHash } from "node:crypto"
 import { gzipSync } from "node:zlib"
 import os from "os"
@@ -73,7 +74,9 @@ const decodeDuration = Schema.decodeUnknownOption(Schema.DurationFromString)
 // used here, because its UMD entry breaks a Node bundle of any module that reaches this sink. Under Node, which has
 // no Bun global, plain JSON still parses, and the warning names the runtime instead of blaming the file.
 const jsonc = typeof Bun !== "undefined"
-const parseJsonc = Option.liftThrowable((text: string): unknown => (jsonc ? Bun.JSONC.parse(text) : JSON.parse(text)))
+const parseJsonc: (text: string) => Option.Option<unknown> = jsonc
+  ? Option.liftThrowable((text: string): unknown => Bun.JSONC.parse(text))
+  : Schema.decodeOption(Schema.fromJsonString(Schema.Unknown))
 
 // Levels are case-insensitive, for example `DEBUG`, `debug` or `Debug`.
 const LEVEL_NAMES = LogLevel.values.flatMap((level) => [level, level.toLowerCase(), level.toUpperCase()])
@@ -417,7 +420,7 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
   // below is one synchronous step, so no fiber can interleave inside it.
   const buffer = MutableList.make<Fitted>()
   // The other loggers of the fiber that logged last. The breaker record goes to them, never to this sink.
-  const others = MutableRef.make<ReadonlySet<Logger.Logger<unknown, unknown>>>(yield* Logger.CurrentLoggers)
+  const others = MutableRef.make(yield* Logger.CurrentLoggers)
   const openUntil = MutableRef.make(0)
   const isOpen = Effect.map(Clock.currentTimeMillis, (now) => now < MutableRef.get(openUntil))
 
@@ -491,7 +494,8 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
     if (buffer.length > MAX_BUFFER) MutableList.take(buffer)
   })
 
-  const registered: OpenSink = { settings, logger: sink, final }
+  // MutableHashSet compares plain objects by structure, so the entry is marked to compare by reference.
+  const registered: OpenSink = Equal.byReferenceUnsafe({ settings, logger: sink, final })
   // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
   yield* Effect.addFinalizer(() =>
     Effect.andThen(

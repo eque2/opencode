@@ -6,7 +6,7 @@ import { Clock, Config, DateTime, Effect, MutableHashMap, Option, Schema } from 
 import { OAUTH_DUMMY_KEY } from "../auth"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 
 const AZURE_COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 const AZURE_FOUNDRY_SCOPE = "https://ai.azure.com/.default"

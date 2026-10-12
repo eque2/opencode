@@ -1,4 +1,5 @@
 import { Effect, JsonSchema, Schema } from "effect"
+import { ProviderJsonSchema } from "./provider-json-schema"
 import type {
   ToolCallPart,
   ToolContent,
@@ -200,8 +201,8 @@ export function make(config: TypedToolConfig | DynamicToolConfig): AnyTool {
     _definition: new ToolDefinition({
       name: "",
       description: config.description,
-      inputSchema: toJsonSchema(config.parameters),
-      outputSchema: toJsonSchema(config.success),
+      inputSchema: ProviderJsonSchema.fromSchema(config.parameters),
+      outputSchema: ProviderJsonSchema.fromSchema(config.success),
     }),
   }
 }
@@ -229,12 +230,6 @@ export const toDefinitions = (tools: Tools): ReadonlyArray<ToolDefinitionClass> 
         outputSchema: item._definition.outputSchema,
       }),
   )
-
-const toJsonSchema = (schema: Schema.Top): JsonSchema.JsonSchema => {
-  const document = Schema.toJsonSchemaDocument(schema)
-  if (Object.keys(document.definitions).length === 0) return document.schema
-  return { ...document.schema, $defs: document.definitions }
-}
 
 const project = (
   toModelOutput: ((input: ToolModelOutputInput<any, any>) => ReadonlyArray<ToolContent>) | undefined,

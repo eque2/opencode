@@ -5,7 +5,7 @@ import path from "path"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer, Schema } from "effect"
-import { HttpClientResponse } from "effect/unstable/http"
+import { HttpClientResponse } from "effect/http"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
 import { Snapshot } from "@/snapshot"
@@ -14,7 +14,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -23,11 +23,13 @@ afterEach(async () => {
 
 const noopBootstrap = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const testInstanceStore = AppNodeBuilder.build(InstanceStore.node, [[InstanceStore.bootstrapNode, noopBootstrap]])
+// The routes and the it.instance context share the noop-bootstrap InstanceStore built beneath the routes.
 const it = testEffect(
-  Layer.mergeAll(
-    AppNodeBuilder.build(LayerNode.group([FSUtil.node, Database.node, Snapshot.node])),
-    testInstanceStore,
-    httpApiLayer,
+  httpApiLayerWith(
+    Layer.mergeAll(
+      AppNodeBuilder.build(LayerNode.group([FSUtil.node, Database.node, Snapshot.node])),
+      testInstanceStore,
+    ),
   ),
 )
 

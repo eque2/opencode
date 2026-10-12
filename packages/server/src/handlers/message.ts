@@ -1,7 +1,8 @@
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Effect, Encoding, Option, Schema } from "effect"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { Effect, Option, Schema } from "effect"
+import { Base64Url } from "effect/encoding"
+import { HttpApiBuilder } from "effect/http-api"
 import { Api } from "../api"
 import { errorRef } from "./error-ref"
 import { InvalidCursorError, SessionNotFoundError, UnknownError } from "@opencode-ai/protocol/errors"
@@ -20,10 +21,10 @@ const decodeCursorJson = Schema.decodeUnknownEffect(CursorJson)
 
 const cursor = {
   encode(message: SessionMessage.Message, order: "asc" | "desc", direction: "previous" | "next") {
-    return Encoding.encodeBase64Url(encodeCursorJson({ id: message.id, order, direction }))
+    return Base64Url.encode(encodeCursorJson({ id: message.id, order, direction }))
   },
   decode(input: string) {
-    return Effect.fromResult(Encoding.decodeBase64UrlString(input)).pipe(
+    return Effect.fromResult(Base64Url.decodeString(input)).pipe(
       Effect.flatMap(decodeCursorJson),
       Effect.mapError(() => new InvalidCursorError({ message: "Invalid cursor" })),
     )

@@ -10,11 +10,11 @@ import * as Predicate from "effect/Predicate"
 import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
 import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError"
-import * as Statement from "effect/unstable/sql/Statement"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import * as Client from "effect/sql/SqlClient"
+import type { Connection } from "effect/sql/SqlConnection"
+import { classifySqliteError, SqlError } from "effect/sql/SqlError"
+import * as Statement from "effect/sql/Statement"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
 
@@ -176,7 +176,7 @@ export const make = (
     })
 
     return Object.assign(
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) effect/unstable/sql SqlClient.make returns a SqlClient whose updateValues the SQLite compiler cannot honour; SqliteClient hides it as never, and no value of type never exists
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) effect/sql SqlClient.make returns a SqlClient whose updateValues the SQLite compiler cannot honour; SqliteClient hides it as never, and no value of type never exists
       (yield* Client.make({
         acquirer,
         compiler,

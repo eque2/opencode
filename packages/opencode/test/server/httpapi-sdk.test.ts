@@ -3,8 +3,8 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Deferred, Effect, Layer, Schema } from "effect"
 import type * as Scope from "effect/Scope"
-import { HttpServer } from "effect/unstable/http"
-import { ChildProcessSpawner } from "effect/unstable/process"
+import { HttpServer } from "effect/http"
+import { ChildProcessSpawner } from "effect/process"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -27,7 +27,7 @@ import { testProviderConfig } from "../lib/test-provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Database } from "@opencode-ai/core/database/database"
-import { httpApiLayer } from "./httpapi-layer"
+import { httpApiLayerWith } from "./httpapi-layer"
 import { TestFailure } from "../fixture/test-failure"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
@@ -35,7 +35,7 @@ const appLayer = AppNodeBuilder.build(
   LayerNode.group([FSUtil.node, CrossSpawnSpawner.node, InstanceStore.node, Database.node, SessionNs.node]),
   [[InstanceStore.bootstrapNode, noopBootstrapLayer]],
 )
-const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
+const it = testEffect(httpApiLayerWith(appLayer))
 
 type ServerPath = "default" | "raw"
 type Sdk = ReturnType<typeof createOpencodeClient>

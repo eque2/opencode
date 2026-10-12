@@ -30,7 +30,7 @@ Effect `4.0.0-beta.74` has a known declaration error (`SchemaErrorTypeId` is mis
 ```ts
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { HttpRecorder } from "@opencode-ai/http-recorder"
 
 const User = Schema.Struct({
@@ -95,7 +95,7 @@ WebSocket cassettes preserve one ordered transcript of client and server text or
 import { assert, it } from "@effect/vitest"
 import { NodeSocket } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Socket } from "effect/unstable/socket"
+import { Socket } from "effect/socket"
 import { HttpRecorder } from "@opencode-ai/http-recorder"
 
 const echo = Effect.gen(function* () {

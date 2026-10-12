@@ -1,5 +1,94 @@
 # Effect v4 update report
 
+# Part 2: rc.117 to 4.0.3 (GA)
+
+## Scope
+
+- Branch: `worktree-effect-v4-ga`, from `origin/dev` at `861b210b77`
+- Starting Effect line: `4.0.0-rc.117`
+- Target Effect line: `4.0.3`, the npm `latest` dist-tag on 2026-10-12
+- TypeScript: stays at `5.9.3`; `opentui-spinner` requires `^5`, so TypeScript 7 stays blocked
+- Canonical lint bundle: v4, 54 rules, marker target `4.0.0`; the repository copy now matches it byte for byte
+- Route: migrate the fork in place. Upstream `anomalyco/opencode` made the same move in PR #50231 (rc.118) and PR #54198 (4.0.1); this branch uses them as a reference only.
+
+## Upstream provenance
+
+- Migration guide cache refreshed: 2026-10-12T10:13:22Z; the rename map changed since the previous sync.
+- The fresh map and the 4.0.3 export map agree: every `effect/unstable/<module>` path became `effect/<module>`, and `httpapi` also became `http-api`.
+- The `imports` verb returns an empty join when the target repository sits under `.claude/worktrees/`; the rewrite used the 4.0.3 export map instead.
+
+## Version decisions
+
+- Pin `effect`, `@effect/opentelemetry`, `@effect/platform-node`, `@effect/platform-node-shared`, and `@effect/sql-sqlite-bun` exactly to `4.0.3`. The repository imports 18 `@stability unstable` modules (`effect/http`, `effect/http-api`, `effect/sql`, `effect/process`, `effect/socket`, ...), which may break in a minor release, so an exact pin is the safe range.
+- Leave `@effect/language-service` at `0.87.2`; it never joined the unified version line.
+- No package needed consolidation, and no `overrides` or `resolutions` block pinned Effect.
+
+## Lint gate
+
+- Oxlint now fails on warnings (`--deny-warnings`). Effect ESLint already used `--max-warnings=0`, and the language service already ran `--strict`.
+- Oxlint no longer scans `.agents/skills/` and `.claude/skills/`. These folders hold skill bundles that bmad-method and eque2-code install, and they produced 3,158 of the 3,169 baseline warnings. The eque2-code anti-tamper policy forbids editing them here.
+- The repository copy of `effect-rules.mjs` is synced with the canonical 4.0.0 bundle (message text only).
+- The 11 repository warnings and 5 ESLint errors were fixed in the code. No rule, severity, or scope changed, and no inline disable was added. The `.opencode` TUI plugin warnings came from unresolved `@opentui` imports; the root now declares the three `@opentui` packages at their catalog version.
+
+## Baseline (rc.117, before any change)
+
+- `bun turbo typecheck --force`: passed, 30 of 30 tasks (`tsgo`).
+- `bun run lint`: failed. Oxlint 3,169 warnings and 0 errors (3,158 in the vendored skill bundles), Effect ESLint 5 errors, language service 0 findings in 18 projects.
+- Tests, per package (`bun run test`): 8 failures before any change.
+  - `codemode`: 1 (`signature.test.ts`, an Infinity/NaN enum render; also fails on rc.117).
+  - `llm`: 2 (`tool-runtime` "derives typed output schemas", Bedrock "drives a tool loop"; both expect `additionalProperties: false`).
+  - `opencode`: 5 (the Google Vertex endpoint tests; the host exports `GOOGLE_CLOUD_LOCATION`, see Part 1).
+  - `client`, `core`, `effect-drizzle-sqlite`, `http-recorder`, `httpapi-codegen`, `sdk-next`, `tui`, `session-ui`, `ui`: 0.
+  - `opencode`: 3,590 pass, 22 skip, 1 todo, 5 fail.
+
+## Migration results
+
+- Dependencies: one `effect` copy (4.0.3) in `node_modules`. `bun.lock` kept rc.117 for the optional `effect` peer of `@standard-community/standard-json` and `standard-openapi`; those stale entries were removed.
+- Fork patches: neither is in 4.0.3, and upstream carries neither. The SSE identifier patch moved to `dist/http-api` unchanged. The Bun upgrade-rejection patch now also respects `socket.destroyed`, which 4.0.3 added to that branch.
+- Imports: 361 `effect/unstable/*` specifiers in 270 files moved to `effect/<module>`; `httpapi` became `http-api`; `Arbitrary` now comes from the `effect` barrel.
+- Compiler trail after the bump: 57 unique errors in 7 packages, then 0. Root causes:
+  - `Schema.isStartsWith` became `Schema.isStartingWith` (16 sites).
+  - The barrel `Encoding` module became `effect/encoding` `Base64`, `Base64Url`, and `Hex` (6 files; wire-identical).
+  - `Crypto.randomUUIDv4` became a method (5 sites; same UUID format).
+  - `Effect.partition` and `Record.partition` now return `[passes, fails]` (2 sites; no other call exists).
+  - `Scope.close` now needs a `Scope.Closeable` (type only).
+- Runtime changes the compiler did not catch, all fixed:
+  - Schema `make` is now a prototype getter that caches as a non-configurable own property. `Object.assign(schema, { make })` threw at module load in `@opencode-ai/llm`; `withStatics` now defines the properties, and `SessionsCursor` builds its constructor with `SchemaParser.make`.
+  - `Schema.isInt` now exports a safe-integer range, so a caller's bound moved into `allOf`. Provider tool schemas (opencode, core, llm) and the published `config.json`/`tui.json` are restored to the rc.117 shape byte for byte.
+  - `Schema.isPattern` exports a JSON Schema `pattern` only for a RegExp with the `u` flag. Every `isPattern` in the source now has it.
+  - The public OpenAPI document renamed four error components to `<name>Encoded_1` and turned `SessionDurableEvent` into `anyOf`. The adapter now restores the rc.117 names, the legacy 400 mapping, and `oneOf`. The remaining differences from rc.117 are Effect's safe-integer bounds, one new description, and the SSE failure event name (see Deferred decisions).
+- Generated client: `bun run --cwd packages/client generate` leaves no diff.
+
+## Semantic audits
+
+Four hazard lenses, an API-difference audit of every release from rc.118 to 4.0.3, and two adversarial reviews ran against the branch.
+
+- Layer memoization: since rc.118 `HttpRouter.serve` builds in a forked memo map. Fourteen server tests merged their services beside the routes and shared them only by build timing; a probe with a 200 ms delay built two in-memory databases and returned 404. They now build their services beneath the routes. Production compositions already did.
+- Equality: the prompt timer set and the Datadog sink registry now key by reference (`Equal.byReferenceUnsafe`), so a false "by identity" comment is now true.
+- Fiber keep-alive and cause flattening: no change needed (33 and 214 sites reviewed).
+- CLI subprocess tests (`opencode run`, `acp`): they fail only under heavy machine load. The rc.117 main checkout failed the same tests side by side under the same load, and both pass at low load.
+
+## Verification (4.0.3)
+
+- `bun turbo typecheck --force`: passed, 30 of 30 tasks, none cached.
+- Oxlint `--deny-warnings`: 0 warnings, 0 errors (3,328 files). Effect ESLint: 0 problems (2,106 files). Language service `--strict`: 0 errors, 0 warnings, 0 messages in all 18 projects (2,821 files).
+- Real entry points: `opencode serve` answers `/config` and `/doc` with 200 and exits within 1 s on SIGTERM (code 143) and on SIGINT (code 130); the rc.117 main checkout gives the same codes and timing for both signals. The TUI starts, draws its home screen, and exits 0 on Ctrl+C. `opencode run` with an unknown model exits 1 in 5 s, as on rc.117.
+- Tests, per package, against the baseline: the same 8 failures and no new ones.
+  - `codemode` 262 pass / 1 fail, `llm` 306 pass / 2 fail (8 new tests), `opencode` 3,589 pass / 7 fail; every other package 0 failures.
+  - Two of the 7 `opencode` failures timed out during the full run ("concurrent loop callers all receive same error result", and the unknown-model `opencode run` case with its 15 s limit). Both pass when rerun: the first 3 of 3 times alone and 58 of 58 in its file, the second 3 of 3.
+  - The 5 remaining `opencode` failures are the baseline Google Vertex tests.
+
+## Deferred decisions
+
+- SSE wire name: Effect renamed the reserved stream-failure event from `effect/httpapi/stream/failure` to `effect/http-api/stream/failure`. In-repo clients read it from the spec, but a client and a server on different Effect lines (for example `opencode attach` across versions) will not recognise each other's typed stream failure. Note it in the release notes.
+- `packages/sdk/openapi.json` was last regenerated on 2026-09-02 and was already stale on `dev`; it still names the old event. Regenerating it (`bun run script/generate.ts`) also picks up unrelated fork changes, so it is left for a separate commit.
+- Safe-integer bounds in the public OpenAPI document (432 nodes) are Effect's own output and change no generated type. They stay.
+- No lint rule guards a future `isPattern` without the `u` flag; oxlint has no `require-unicode-regexp`. A schema-output test would catch it.
+- The upstream sync (about 4,500 upstream commits) remains a separate task.
+- The merged branches `effect-v4-update` and `effect-v4-lint` can be deleted.
+
+# Part 1: beta.83 to rc.117
+
 ## Scope
 
 - Branch: `effect-v4-update`

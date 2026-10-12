@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
-import type { Headers } from "effect/unstable/http"
+import type { Headers } from "effect/http"
 import * as CassetteService from "./cassette.js"
 import { canonicalizeJson, decodeJson, encodeJson, safeText } from "./matching.js"
 import { makeReplayState, resolveAutoMode } from "./recorder.js"

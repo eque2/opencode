@@ -294,9 +294,9 @@ export const noAsyncAwaitUseEffect = {
     },
     messages: {
       noAsyncFunction:
-        'Avoid async functions - use Effect.gen instead. Effect provides type-safe async operations with tracked error types. See: https://effect.website/docs/getting-started/the-effect-type/',
+        'Avoid async functions - use Effect.gen instead. Effect provides type-safe async operations with tracked error types. See: https://effect.website/docs/v4/getting-started/the-effect-type',
       noAwaitExpression:
-        'Avoid await expressions - use yield* within Effect.gen instead. See: https://effect.website/docs/getting-started/the-effect-type/',
+        'Avoid await expressions - use yield* within Effect.gen instead. See: https://effect.website/docs/v4/getting-started/the-effect-type',
     },
     schema: [],
   },
@@ -348,9 +348,9 @@ export const noPromiseConstructor = {
     },
     messages: {
       noPromiseConstructor:
-        'Avoid new Promise() - use Effect.gen, Effect.tryPromise, or Effect.promise instead. Effect provides stronger type safety with tracked error types. See: https://effect.website/docs/getting-started/the-effect-type/',
+        'Avoid new Promise() - use Effect.gen, Effect.tryPromise, or Effect.promise instead. Effect provides stronger type safety with tracked error types. See: https://effect.website/docs/v4/getting-started/the-effect-type',
       noPromiseMethod:
-        'Avoid Promise.{{method}}() - use Effect.all, Effect.race, or Effect combinators instead. See: https://effect.website/docs/getting-started/the-effect-type/',
+        'Avoid Promise.{{method}}() - use Effect.all, Effect.race, or Effect combinators instead. See: https://effect.website/docs/v4/getting-started/the-effect-type',
     },
     schema: [],
   },
@@ -399,9 +399,9 @@ export const noPromiseResolveReject = {
     },
     messages: {
       noPromiseResolve:
-        'Avoid Promise.resolve() - use Effect.succeed() for creating successful effects. See: https://effect.website/docs/getting-started/creating-effects/',
+        'Avoid Promise.resolve() - use Effect.succeed() for creating successful effects. See: https://effect.website/docs/v4/getting-started/creating-effects',
       noPromiseReject:
-        'Avoid Promise.reject() - use Effect.fail() for creating failed effects with typed errors. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid Promise.reject() - use Effect.fail() for creating failed effects with typed errors. See: https://effect.website/docs/v4/error-management/expected-errors',
       replaceWithEffectSucceed:
         'Replace this call with Effect.succeed(). Review the resulting Effect type.',
       replaceWithEffectFail:
@@ -471,11 +471,11 @@ export const noPromiseThenCatch = {
     },
     messages: {
       noThen:
-        'Avoid .then() chains on Promises - use Effect.map, Effect.flatMap, or Effect.pipe for composable async operations. See: https://effect.website/docs/getting-started/building-pipelines/',
+        'Avoid .then() chains on Promises - use Effect.map, Effect.flatMap, or Effect.pipe for composable async operations. See: https://effect.website/docs/v4/getting-started/building-pipelines',
       noCatch:
-        'Avoid .catch() on Promises - use Effect.catch or Effect.catchTag for type-safe error handling. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid .catch() on Promises - use Effect.catch or Effect.catchTag for type-safe error handling. See: https://effect.website/docs/v4/error-management/expected-errors',
       noFinally:
-        'Avoid .finally() on Promises - use Effect.ensuring or Effect.acquireRelease for cleanup. See: https://effect.website/docs/resource-management/scope/',
+        'Avoid .finally() on Promises - use Effect.ensuring or Effect.acquireRelease for cleanup. See: https://effect.website/docs/v4/resource-management/scope',
     },
     schema: [],
   },
@@ -551,7 +551,7 @@ export const noNullUseOption = {
     },
     messages: {
       noNull:
-        'Consider using Option instead of null for optional values. Option provides type-safe handling of absence. See: https://effect.website/docs/data-types/option/',
+        'Consider using Option instead of null for optional values. Option provides type-safe handling of absence. See: https://effect.website/docs/v4/data-types/option',
       replaceWithOptionNone:
         'Replace null with Option.none(). Review the resulting Option type.',
     },
@@ -595,7 +595,7 @@ export const noUndefinedUseOption = {
     },
     messages: {
       noUndefined:
-        'Consider using Option instead of undefined for optional values. Option provides type-safe handling of absence. See: https://effect.website/docs/data-types/option/',
+        'Consider using Option instead of undefined for optional values. Option provides type-safe handling of absence. See: https://effect.website/docs/v4/data-types/option',
       replaceWithOptionNone:
         'Replace undefined with Option.none(). Review the resulting Option type.',
     },
@@ -648,7 +648,7 @@ export const noThrowUseEffect = {
     },
     messages: {
       noThrow:
-        'Avoid throw statements - use Effect.fail for expected errors or Effect.die for defects. Typed errors in Effect are tracked in the type system. See: https://effect.website/docs/error-management/two-error-types/',
+        'Avoid throw statements - use Effect.fail for expected errors or Effect.die for defects. Typed errors in Effect are tracked in the type system. See: https://effect.website/docs/v4/error-management/two-error-types',
       replaceWithEffectFail:
         'Replace this throw with Effect.fail(). Use this for an expected error.',
       replaceWithEffectDie:
@@ -706,7 +706,7 @@ export const noTryCatchUseEffect = {
     },
     messages: {
       noTryCatch:
-        'Avoid try/catch - use Effect.catch, Effect.catchTag, or Effect.catchTags instead. Effect error handling is type-safe and composable. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid try/catch - use Effect.catch, Effect.catchTag, or Effect.catchTags instead. Effect error handling is type-safe and composable. See: https://effect.website/docs/v4/error-management/expected-errors',
     },
     schema: [],
   },
@@ -727,13 +727,13 @@ export const noErrorConstructorUseData = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Disallow new Error() - use Data.TaggedError for typed errors',
+      description: 'Disallow new Error() - use Schema.TaggedError or Data.TaggedError for typed errors',
       category: 'Best Practices',
       recommended: true,
     },
     messages: {
       noErrorConstructor:
-        'Avoid new Error() - use Data.TaggedError for typed, trackable errors in Effect. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid new Error() - use Schema.TaggedError (the upstream default) or Data.TaggedError for typed, trackable errors in Effect. See: https://effect.website/docs/v4/error-management/expected-errors',
     },
     schema: [],
   },
@@ -771,7 +771,7 @@ export const noNewDateUseDateTime = {
     },
     messages: {
       noNewDate:
-        'Avoid new Date() - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid new Date() - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/v4/data-types/datetime',
       replaceWithDateTimeNow:
         'Replace new Date() with DateTime.now. Review the resulting DateTime type.',
     },
@@ -820,11 +820,11 @@ export const noDateStaticUseDateTime = {
     },
     messages: {
       noDateNow:
-        'Avoid Date.now() - use DateTime.now from Effect for type-safe, immutable timestamps. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid Date.now() - use DateTime.now from Effect for type-safe, immutable timestamps. See: https://effect.website/docs/v4/data-types/datetime',
       noDateParse:
-        'Avoid Date.parse() - use DateTime.make from Effect for type-safe date parsing with proper error handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid Date.parse() - use DateTime.make from Effect for type-safe date parsing with proper error handling. See: https://effect.website/docs/v4/data-types/datetime',
       noDateUTC:
-        'Avoid Date.UTC() - use DateTime.make or DateTime.makeUnsafe from Effect. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid Date.UTC() - use DateTime.make or DateTime.makeUnsafe from Effect. See: https://effect.website/docs/v4/data-types/datetime',
       replaceWithDateTimeNow:
         'Replace Date.now() with DateTime.now. Review the resulting DateTime type.',
     },
@@ -884,7 +884,7 @@ export const noArrayMutationUseChunk = {
     },
     messages: {
       noArrayMutation:
-        'Consider using Chunk from Effect for immutable collection operations. Chunk.append, Chunk.prepend provide immutable alternatives. See: https://effect.website/docs/data-types/chunk/',
+        'Consider using Chunk from Effect for immutable collection operations. Chunk.append, Chunk.prepend provide immutable alternatives. See: https://effect.website/docs/v4/data-types/chunk',
     },
     schema: [],
   },
@@ -928,7 +928,7 @@ export const noSetUseHashSet = {
     },
     messages: {
       noSet:
-        'Consider using HashSet from Effect instead of Set for value-based equality. HashSet compares elements by structure, not reference. See: https://effect.website/docs/data-types/hash-set/',
+        'Consider using HashSet from Effect instead of Set for value-based equality. HashSet compares elements by structure, not reference. See: https://effect.website/docs/v4/data-types/hash-set',
       replaceWithHashSet:
         'Replace this Set with a HashSet constructor. Review collection equality and mutability.',
     },
@@ -979,7 +979,7 @@ export const noMapUseHashMap = {
     },
     messages: {
       noMap:
-        'Consider using HashMap from Effect instead of Map for value-based key equality. HashMap compares keys by structure, not reference. See: https://effect.website/docs/data-types/hash-map/',
+        'Consider using HashMap from Effect instead of Map for value-based key equality. HashMap compares keys by structure, not reference. See: https://effect.website/docs/v4/api/effect/HashMap',
       replaceWithHashMap:
         'Replace this Map with a HashMap constructor. Review collection equality and mutability.',
     },
@@ -1029,7 +1029,7 @@ export const noJsonParseUseSchema = {
     },
     messages: {
       noJsonParse:
-        'Avoid JSON.parse() - use Schema.decodeUnknownEffect or Schema.fromJsonString from Effect for type-safe JSON parsing with validation. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid JSON.parse() - use Schema.decodeUnknownEffect or Schema.fromJsonString from Effect for type-safe JSON parsing with validation. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1060,7 +1060,7 @@ export const noJsonStringifyUseSchema = {
     },
     messages: {
       noJsonStringify:
-        'Consider using Schema.encode from Effect for type-safe JSON serialization with validation. See: https://effect.website/docs/schema/basic-usage/',
+        'Consider using Schema.encode from Effect for type-safe JSON serialization with validation. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1092,7 +1092,7 @@ export const noManualTag = {
     },
     messages: {
       noManualTag:
-        'Avoid manually defining _tag. Use idiomatic Effect patterns: Data.TaggedError for errors, Data.TaggedClass for data types, or Schema.TaggedStruct for schemas. See: https://effect.website/docs/error-management/expected-errors/ and https://effect.website/docs/schema/basic-usage/#discriminated-unions',
+        'Avoid manually defining _tag. Use idiomatic Effect patterns: Schema.TaggedError or Data.TaggedError for errors, Data.TaggedClass for data types, or Schema.TaggedStruct for schemas. See: https://effect.website/docs/v4/error-management/expected-errors and https://effect.website/docs/v4/schema/basic-usage#discriminated-unions',
     },
     schema: [],
   },
@@ -1137,7 +1137,7 @@ export const noMathRandomUseRandom = {
     },
     messages: {
       noMathRandom:
-        'Avoid Math.random() - use the Random service from Effect for testable random number generation. See: https://effect.website/docs/guides/observability/testing/#testrandom',
+        'Avoid Math.random() - use the Random service from Effect for testable random number generation. See: https://effect.website/docs/v4/api/effect/Random',
       replaceWithRandomNext:
         'Replace Math.random() with Random.next inside Effect.gen.',
     },
@@ -1272,7 +1272,7 @@ export const noProcessEnvUseConfig = {
     },
     messages: {
       noProcessEnv:
-        'Avoid process.env - use Config from Effect for strongly-typed configuration management. See: https://effect.website/docs/configuration/',
+        'Avoid process.env - use Config from Effect for strongly-typed configuration management. See: https://effect.website/docs/v4/configuration',
       replaceWithConfigString:
         'Replace this environment read with Config.String(). Review required and optional configuration behavior.',
     },
@@ -1331,7 +1331,7 @@ export const noZodUseSchema = {
     },
     messages: {
       noZod:
-        'Zod is not allowed in this codebase. Use Effect Schema (@effect/schema or effect/Schema) for validation. Effect Schema integrates seamlessly with Effect runtime. See: https://effect.website/docs/schema/basic-usage/',
+        'Zod is not allowed in this codebase. Use Effect Schema (effect/Schema) for validation. Effect Schema integrates seamlessly with Effect runtime. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1374,7 +1374,7 @@ export const noYupUseSchema = {
     },
     messages: {
       noYup:
-        'Yup is not allowed in this codebase. Use Effect Schema (@effect/schema or effect/Schema) for validation. Effect Schema provides superior type inference. See: https://effect.website/docs/schema/basic-usage/',
+        'Yup is not allowed in this codebase. Use Effect Schema (effect/Schema) for validation. Effect Schema provides superior type inference. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1421,7 +1421,7 @@ export const noFsUseEffectFs = {
     },
     messages: {
       noFs:
-        'Avoid Node.js fs module - use FileSystem from effect/FileSystem for type-safe, testable file operations. In v4 the platform packages were consolidated into core. See: https://effect.website/docs/platform/file-system/',
+        'Avoid Node.js fs module - use FileSystem from effect/FileSystem for type-safe, testable file operations. In v4 the platform packages were consolidated into core. See: https://effect.website/docs/v4/platform/file-system',
     },
     schema: [],
   },
@@ -1461,7 +1461,7 @@ export const noAxiosUseHttpClient = {
     },
     messages: {
       noAxios:
-        'Avoid axios - use HttpClient from effect/unstable/http/HttpClient for type-safe HTTP requests with proper error handling and interruption support. That module is unstable: it is exempt from the normal stability guarantee until it graduates to top-level effect/*. See: https://effect.website/docs/platform/http-client/',
+        'Avoid axios - use HttpClient from effect/http for type-safe HTTP requests with proper error handling and interruption support. That module is marked @stability unstable: a minor release may break it. See: https://effect.website/docs/v4/api/effect/http/HttpClient',
     },
     schema: [],
   },
@@ -1487,7 +1487,7 @@ export const noNodeFetchUseHttpClient = {
     },
     messages: {
       noNodeFetch:
-        'Avoid node-fetch - use HttpClient from effect/unstable/http/HttpClient for type-safe HTTP requests. That module is unstable: it is exempt from the normal stability guarantee until it graduates to top-level effect/*. See: https://effect.website/docs/platform/http-client/',
+        'Avoid node-fetch - use HttpClient from effect/http for type-safe HTTP requests. That module is marked @stability unstable: a minor release may break it. See: https://effect.website/docs/v4/api/effect/http/HttpClient',
     },
     schema: [],
   },
@@ -1513,13 +1513,13 @@ export const noMomentUseDatetime = {
     },
     messages: {
       noMoment:
-        'Avoid moment.js - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid moment.js - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/v4/data-types/datetime',
       noDayjs:
-        'Avoid dayjs - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid dayjs - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/v4/data-types/datetime',
       noDateFns:
-        'Avoid date-fns - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid date-fns - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/v4/data-types/datetime',
       noLuxon:
-        'Avoid luxon - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid luxon - use DateTime from Effect for immutable, type-safe date/time handling. See: https://effect.website/docs/v4/data-types/datetime',
     },
     schema: [],
   },
@@ -1552,9 +1552,9 @@ export const noLodashDebounceUseSchedule = {
     },
     messages: {
       noDebounce:
-        'Avoid _.debounce() - use Schedule from Effect for structured timing control. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid _.debounce() - use Schedule from Effect for structured timing control. See: https://effect.website/docs/v4/scheduling/using-schedules',
       noThrottle:
-        'Avoid _.throttle() - use Schedule from Effect for structured timing control. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid _.throttle() - use Schedule from Effect for structured timing control. See: https://effect.website/docs/v4/scheduling/using-schedules',
     },
     schema: [],
   },
@@ -1587,7 +1587,7 @@ export const noEventEmitterUsePubSub = {
     },
     messages: {
       noEventEmitter:
-        'Avoid EventEmitter - use PubSub from Effect for type-safe, backpressure-aware pub/sub. See: https://effect.website/docs/concurrency/pubsub/',
+        'Avoid EventEmitter - use PubSub from Effect for type-safe, backpressure-aware pub/sub. See: https://effect.website/docs/v4/concurrency/pubsub',
     },
     schema: [],
   },
@@ -1618,7 +1618,7 @@ export const noRxjsUseStream = {
     },
     messages: {
       noRxjs:
-        'Avoid RxJS - use Stream from Effect for type-safe reactive streams with proper resource management. See: https://effect.website/docs/stream/introduction/',
+        'Avoid RxJS - use Stream from Effect for type-safe reactive streams with proper resource management. See: https://effect.website/docs/v4/stream/introduction',
     },
     schema: [],
   },
@@ -1644,7 +1644,7 @@ export const noCryptoRandomUseRandom = {
     },
     messages: {
       noCryptoRandom:
-        'Avoid crypto.randomBytes/randomUUID - use Random service from Effect for testable random generation. See: https://effect.website/docs/trait/random/',
+        'Avoid crypto.randomBytes/randomUUID - use Random service from Effect for testable random generation. See: https://effect.website/docs/v4/api/effect/Random',
     },
     schema: [],
   },
@@ -1677,7 +1677,7 @@ export const noAjvUseSchema = {
     },
     messages: {
       noAjv:
-        'Avoid Ajv - use Effect Schema for type-safe validation with automatic TypeScript inference. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid Ajv - use Effect Schema for type-safe validation with automatic TypeScript inference. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1703,7 +1703,7 @@ export const noJoiUseSchema = {
     },
     messages: {
       noJoi:
-        'Avoid Joi - use Effect Schema for type-safe validation with automatic TypeScript inference. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid Joi - use Effect Schema for type-safe validation with automatic TypeScript inference. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1729,7 +1729,7 @@ export const noClassValidatorUseSchema = {
     },
     messages: {
       noClassValidator:
-        'Avoid class-validator - use Effect Schema for type-safe validation. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid class-validator - use Effect Schema for type-safe validation. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1755,7 +1755,7 @@ export const noIoTsUseSchema = {
     },
     messages: {
       noIoTs:
-        'Avoid io-ts - use Effect Schema which provides better error messages and TypeScript integration. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid io-ts - use Effect Schema which provides better error messages and TypeScript integration. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1781,7 +1781,7 @@ export const noSuperstructUseSchema = {
     },
     messages: {
       noSuperstruct:
-        'Avoid superstruct - use Effect Schema for type-safe validation. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid superstruct - use Effect Schema for type-safe validation. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -1812,7 +1812,7 @@ export const preferRedactedForSecrets = {
     },
     messages: {
       useRedacted:
-        'Config value "{{name}}" appears to be a secret. Use Config.Redacted() instead of Config.String() to prevent accidental exposure in logs. See: https://effect.website/docs/configuration/',
+        'Config value "{{name}}" appears to be a secret. Use Config.Redacted() instead of Config.String() to prevent accidental exposure in logs. See: https://effect.website/docs/v4/configuration',
       replaceWithConfigRedacted:
         'Replace Config.String() with Config.Redacted(). Review the resulting Redacted value type.',
     },
@@ -1875,7 +1875,7 @@ export const preferDurationLiterals = {
     },
     messages: {
       useDuration:
-        'Use the duration string {{duration}} instead of raw milliseconds. See: https://effect.website/docs/data-types/duration/',
+        'Use the duration string {{duration}} instead of raw milliseconds. See: https://effect.website/docs/v4/data-types/duration',
     },
     schema: [],
   },
@@ -1986,7 +1986,7 @@ export const preferPipeMethod = {
     },
     messages: {
       usePipeMethod:
-        'Prefer value.pipe(...) over pipe(value, ...) for better readability. See: https://effect.website/docs/getting-started/building-pipelines/',
+        'Prefer value.pipe(...) over pipe(value, ...) for better readability. See: https://effect.website/docs/v4/getting-started/building-pipelines',
       replaceWithPipeMethod:
         'Replace the standalone pipe call with the value pipe method. Review method availability.',
     },
@@ -2056,7 +2056,7 @@ export const noAndThenWithAsync = {
     },
     messages: {
       noAsyncInAndThen:
-        'Avoid async functions in Effect.andThen - use Effect.tryPromise to wrap the async operation, or Effect.gen for the entire workflow. See: https://effect.website/docs/getting-started/using-generators/',
+        'Avoid async functions in Effect.andThen - use Effect.tryPromise to wrap the async operation, or Effect.gen for the entire workflow. See: https://effect.website/docs/v4/getting-started/using-generators',
     },
     schema: [],
   },
@@ -2119,7 +2119,7 @@ export const suggestBatchingOption = {
     },
     messages: {
       considerBatching:
-        'This Effect.forEach maps a Request/RequestResolver, so { batching: true } may help. Note: in effect 3.22 a FAILING Effect.forEach under batching never settles — only add it if every mapped effect is infallible, or handle failures outside the loop. See: https://effect.website/docs/caching-and-batching/batching/',
+        'This Effect.forEach maps a Request/RequestResolver, so { batching: true } may help. Note: in effect 3.22 a FAILING Effect.forEach under batching never settles — only add it if every mapped effect is infallible, or handle failures outside the loop. See: https://effect.website/docs/v4/batching',
     },
     schema: [],
   },
@@ -2193,7 +2193,7 @@ export const noProvideInLoop = {
     },
     messages: {
       noProvideInLoop:
-        'Avoid calling Effect.provide inside loops - it creates new contexts on each iteration. Provide the layer at the outer scope instead. See: https://effect.website/docs/requirements-management/layers/',
+        'Avoid calling Effect.provide inside loops - it creates new contexts on each iteration. Provide the layer at the outer scope instead. See: https://effect.website/docs/v4/requirements-management/layers',
     },
     schema: [],
   },
@@ -2241,7 +2241,7 @@ export const preferGenOverLongChains = {
     },
     messages: {
       preferGen:
-        'Consider using Effect.gen for better readability when chaining 4+ operations. See: https://effect.website/docs/getting-started/using-generators/',
+        'Consider using Effect.gen for better readability when chaining 4+ operations. See: https://effect.website/docs/v4/getting-started/using-generators',
     },
     schema: [],
   },
@@ -2285,13 +2285,13 @@ export const noClassExtendsError = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Disallow class extends Error - use Data.TaggedError instead',
+      description: 'Disallow class extends Error - use Schema.TaggedError or Data.TaggedError instead',
       category: 'Best Practices',
       recommended: true,
     },
     messages: {
       noExtendsError:
-        'Avoid "class X extends Error" - use Data.TaggedError for typed, trackable errors in Effect. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid "class X extends Error" - use Schema.TaggedError (the upstream default) or Data.TaggedError for typed, trackable errors in Effect. See: https://effect.website/docs/v4/error-management/expected-errors',
     },
     schema: [],
   },
@@ -2340,7 +2340,7 @@ export const noInterfaceWithTag = {
     },
     messages: {
       noTagInInterface:
-        'Avoid manually defining _tag in interfaces. Use Schema.TaggedStruct for schemas, Data.TaggedClass for data types, or Data.TaggedError for errors. See: https://effect.website/docs/schema/basic-usage/#discriminated-unions',
+        'Avoid manually defining _tag in interfaces. Use Schema.TaggedStruct for schemas, Data.TaggedClass for data types, or Schema.TaggedError for errors. See: https://effect.website/docs/v4/schema/basic-usage#discriminated-unions',
     },
     schema: [],
   },
@@ -2398,7 +2398,7 @@ export const preferContextService = {
     },
     messages: {
       preferContextService:
-        '{{ctor}} was removed in Effect v4. Define the service with Context.Service instead: `Context.Service<Self, Shape>()(\'id\')` for the class form, `Context.Service<T>(\'id\')` for the function form. Note the identifier moved from the leading call to a trailing one. See: https://effect.website/docs/requirements-management/services/',
+        '{{ctor}} was removed in Effect v4. Define the service with Context.Service instead: `Context.Service<Self, Shape>()(\'id\')` for the class form, `Context.Service<T>(\'id\')` for the function form. Note the identifier moved from the leading call to a trailing one. See: https://effect.website/docs/v4/requirements-management/services',
     },
     schema: [],
   },
@@ -2446,7 +2446,7 @@ export const requireServiceIdentifier = {
     },
     messages: {
       missingIdentifier:
-        'Context.Service needs a string identifier for debugging: `Context.Service<Self, Shape>()("ServiceName")` or `Context.Service<T>("@app/ServiceName")`. See: https://effect.website/docs/requirements-management/services/',
+        'Context.Service needs a string identifier for debugging: `Context.Service<Self, Shape>()("ServiceName")` or `Context.Service<T>("@app/ServiceName")`. See: https://effect.website/docs/v4/requirements-management/services',
     },
     schema: [],
   },
@@ -2511,7 +2511,7 @@ export const suggestManagedRuntime = {
     },
     messages: {
       useManagedRuntime:
-        'Consider using ManagedRuntime.make() for repeated Effect.runPromise calls with the same layers. See: https://effect.website/docs/runtime/',
+        'Consider using ManagedRuntime.make() for repeated Effect.runPromise calls with the same layers. See: https://effect.website/docs/v4/runtime',
     },
     schema: [],
   },
@@ -2561,7 +2561,7 @@ export const noLayerDuplicateService = {
     },
     messages: {
       potentialDuplicate:
-        'Layer.merge or Layer.mergeAll may create duplicate services - ensure layers provide distinct services. See: https://effect.website/docs/requirements-management/layers/',
+        'Layer.merge or Layer.mergeAll may create duplicate services - ensure layers provide distinct services. See: https://effect.website/docs/v4/requirements-management/layers',
       removeDuplicate:
         'Remove the exact duplicate Layer argument. Review the resulting Layer requirements.',
     },
@@ -2675,7 +2675,7 @@ export const preferSchemaAnnotations = {
     },
     messages: {
       addAnnotations:
-        'Consider adding .annotate({ identifier: "Name" }) to Schema for better error messages and debugging. See: https://effect.website/docs/schema/basic-usage/',
+        'Consider adding .annotate({ identifier: "Name" }) to Schema for better error messages and debugging. See: https://effect.website/docs/v4/schema/basic-usage',
       addIdentifierAnnotation:
         'Add the Schema identifier annotation "{{name}}". Review generated Schema metadata.',
     },
@@ -2741,9 +2741,9 @@ export const noSchemaAnyUnknown = {
     },
     messages: {
       noSchemaAny:
-        'Avoid Schema.Any - it provides no type safety. Use a specific schema type instead. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid Schema.Any - it provides no type safety. Use a specific schema type instead. See: https://effect.website/docs/v4/schema/basic-usage',
       noSchemaUnknown:
-        'Avoid Schema.Unknown in production code - use a specific schema for proper validation. See: https://effect.website/docs/schema/basic-usage/',
+        'Avoid Schema.Unknown in production code - use a specific schema for proper validation. See: https://effect.website/docs/v4/schema/basic-usage',
     },
     schema: [],
   },
@@ -2783,7 +2783,7 @@ export const preferSchemaBrand = {
     },
     messages: {
       useBrand:
-        'Consider using Schema.String.pipe(Schema.brand("{{name}}")) for type-safe IDs. Branded types prevent mixing different ID types. See: https://effect.website/docs/schema/basic-usage/',
+        'Consider using Schema.String.pipe(Schema.brand("{{name}}")) for type-safe IDs. Branded types prevent mixing different ID types. See: https://effect.website/docs/v4/schema/basic-usage',
       addSchemaBrand:
         'Add the Schema brand "{{name}}". Review the public field type.',
     },
@@ -2872,9 +2872,9 @@ export const noEffectRunSyncUnguarded = {
     },
     messages: {
       noRunSync:
-        'Effect.runSync should only be used at program boundaries (main entry points, CLI handlers, test setup). Consider Effect.runPromise for async contexts or proper Effect composition. See: https://effect.website/docs/getting-started/running-effects/',
+        'Effect.runSync should only be used at program boundaries (main entry points, CLI handlers, test setup). Consider Effect.runPromise for async contexts or proper Effect composition. See: https://effect.website/docs/v4/getting-started/running-effects',
       noRunSyncExit:
-        'Effect.runSyncExit should only be used at program boundaries. Consider Effect.runPromiseExit or proper Effect composition. See: https://effect.website/docs/getting-started/running-effects/',
+        'Effect.runSyncExit should only be used at program boundaries. Consider Effect.runPromiseExit or proper Effect composition. See: https://effect.website/docs/v4/getting-started/running-effects',
     },
     schema: [],
   },
@@ -2929,11 +2929,11 @@ export const noSetTimeoutUseSchedule = {
     },
     messages: {
       noSetTimeout:
-        'Avoid setTimeout - use Effect.sleep or Effect.delay instead. For repeated execution, use Effect.repeat with a Schedule. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid setTimeout - use Effect.sleep or Effect.delay instead. For repeated execution, use Effect.repeat with a Schedule. See: https://effect.website/docs/v4/scheduling/using-schedules',
       noSetInterval:
-        'Avoid setInterval - use Effect.repeat with Schedule.spaced instead for structured recurring tasks. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid setInterval - use Effect.repeat with Schedule.spaced instead for structured recurring tasks. See: https://effect.website/docs/v4/scheduling/using-schedules',
       noClearTimeout:
-        'Avoid clearTimeout - Effect handles cancellation via Fiber interruption. See: https://effect.website/docs/concurrency/fibers/',
+        'Avoid clearTimeout - Effect handles cancellation via Fiber interruption. See: https://effect.website/docs/v4/concurrency/fibers',
     },
     schema: [],
   },
@@ -2972,15 +2972,15 @@ export const noStringErrorInCatchAll = {
     type: 'problem',
     docs: {
       description:
-        'Disallow String(err) or template literal ${err} inside Effect.catch — Effect wraps errors in UnknownException whose toString() returns "An unknown error occurred in Effect.try" instead of the real message. Extract the nested cause instead.',
+        'Disallow String(err) or template literal ${err} inside Effect.catch — Effect.try and Effect.tryPromise wrap a thrown value in Cause.UnknownError, whose message is "An error occurred in Effect.try" instead of the real message. Read the original value from err.cause instead.',
       category: 'Possible Errors',
       recommended: true,
     },
     messages: {
       noStringErr:
-        'String({{name}}) inside Effect.catch loses the real error message. Effect wraps errors in UnknownException/FiberFailure — use a helper to extract the nested cause (e.g. err.error?.cause?.message).',
+        'String({{name}}) inside Effect.catch loses the real error message. Effect wraps a thrown value in Cause.UnknownError — read the original value from {{name}}.cause.',
       noTemplateLiteralErr:
-        '`${{{name}}}` inside Effect.catch loses the real error message. Effect wraps errors in UnknownException/FiberFailure — use a helper to extract the nested cause.',
+        '`${{{name}}}` inside Effect.catch loses the real error message. Effect wraps a thrown value in Cause.UnknownError — read the original value from {{name}}.cause.',
     },
     schema: [],
   },

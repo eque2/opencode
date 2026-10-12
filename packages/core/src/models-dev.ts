@@ -1,6 +1,6 @@
 import path from "path"
 import { Clock, Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
 import { FlagConfig } from "./flag/flag"
@@ -154,7 +154,7 @@ const isProviderEntry = Schema.is(ProviderEntry)
 const isModel = Schema.is(Model)
 
 const toCatalog = Effect.fnUntraced(function* (entries: Record<string, object>) {
-  const [skippedProviders, providers] = Record.partition(entries, (entry) =>
+  const [providers, skippedProviders] = Record.partition(entries, (entry) =>
     isProviderEntry(entry) ? Result.succeed(entry) : Result.fail(entry),
   )
   const decoded = Record.map(providers, (provider) =>
@@ -162,13 +162,13 @@ const toCatalog = Effect.fnUntraced(function* (entries: Record<string, object>) 
   )
   const skipped = [
     ...Record.keys(skippedProviders),
-    ...Record.toEntries(decoded).flatMap(([providerID, [skippedModels]]) =>
+    ...Record.toEntries(decoded).flatMap(([providerID, [, skippedModels]]) =>
       Record.keys(skippedModels).map((modelID) => `${providerID}/${modelID}`),
     ),
   ]
   if (skipped.length > 0)
     yield* Effect.logWarning("Skipped models.dev entries that do not match the schema", { skipped })
-  return Record.map(providers, (provider, providerID): Provider => ({ ...provider, models: decoded[providerID][1] }))
+  return Record.map(providers, (provider, providerID): Provider => ({ ...provider, models: decoded[providerID][0] }))
 })
 
 export interface Interface {

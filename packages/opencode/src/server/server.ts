@@ -3,8 +3,8 @@ import "./init-projectors"
 import { NodeHttpServer } from "@effect/platform-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
-import { HttpRouter, HttpServer } from "effect/unstable/http"
-import { OpenApi } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServer } from "effect/http"
+import { OpenApi } from "effect/http-api"
 import { createServer } from "node:http"
 import { MDNS } from "./mdns"
 import { HttpApiApp } from "./routes/instance/httpapi/server"
@@ -37,7 +37,7 @@ type ListenOptions = CorsOptions & {
   mdnsDomain?: string
 }
 type ListenerState = {
-  scope: Scope.Scope
+  scope: Scope.Closeable
   server: Context.Service.Shape<typeof HttpServer.HttpServer>
   http: ListenerServer
   websockets: WebSocketTracker.Interface

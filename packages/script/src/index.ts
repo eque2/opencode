@@ -2,7 +2,7 @@ import { $ } from "bun"
 import semver from "semver"
 import path from "path"
 import { Config, DateTime, Effect, Option, Schema, String as Str } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http"
 
 /** Reads an optional environment variable; an empty value counts as absent. */
 const optionalEnv = (name: string) => Config.String(name).pipe(Config.option, Config.map(Option.filter(Str.isNonEmpty)))

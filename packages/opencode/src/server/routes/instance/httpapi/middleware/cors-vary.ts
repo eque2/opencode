@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerResponse } from "effect/http"
 
 // effect-smol's HttpMiddleware.cors builds OPTIONS preflight responses by
 // spreading allowOrigin() and allowHeaders() into the same record. Both set
@@ -9,7 +9,7 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
 // origin against a different origin.
 //
 // TODO: upstream a fix that merges Vary values in headersFromRequestOptions
-// (packages/effect/src/unstable/http/HttpMiddleware.ts ~line 332).
+// (packages/effect/src/http/HttpMiddleware.ts ~line 446).
 export const corsVaryFix = HttpRouter.middleware(
   (effect) =>
     Effect.gen(function* () {

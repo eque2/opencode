@@ -9,7 +9,7 @@ export const runID: Effect.Effect<string> = SynchronizedRef.modifyEffect(current
   Option.match(stored, {
     onSome: (id) => Effect.succeed([id, stored] as const),
     onNone: () =>
-      Effect.flatMap(Crypto.Crypto, (cryptoService) => cryptoService.randomUUIDv4).pipe(
+      Effect.flatMap(Crypto.Crypto, (cryptoService) => cryptoService.randomUUIDv4()).pipe(
         Effect.map((uuid) => {
           const id = uuid.slice(0, 8)
           return [id, Option.some(id)] as const

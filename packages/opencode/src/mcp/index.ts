@@ -32,7 +32,6 @@ import {
   Crypto,
   Duration,
   Effect,
-  Encoding,
   Exit,
   Layer,
   MutableHashMap,
@@ -41,10 +40,11 @@ import {
   Schema,
   Stream,
 } from "effect"
+import { Hex } from "effect/encoding"
 import { NodeCrypto } from "@effect/platform-node"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { McpCatalog } from "./catalog"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
@@ -882,7 +882,7 @@ const layer = Layer.effect(
       yield* Effect.promise(() => McpOAuthCallback.ensureRunning(effectiveRedirectUri))
 
       // The OAuth state guards against CSRF, so it needs cryptographically secure bytes.
-      const oauthState = Encoding.encodeHex(yield* cryptoService.randomBytes(32).pipe(Effect.orDie))
+      const oauthState = Hex.encode(yield* cryptoService.randomBytes(32).pipe(Effect.orDie))
       yield* auth.updateOAuthState(mcpName, oauthState)
       let capturedUrl: URL | undefined
       const authProvider = new McpOAuthPendingProvider(

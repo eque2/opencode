@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaParser } from "effect"
 import { ToolContent, ToolFileContent, ToolTextContent } from "@opencode-ai/schema/llm"
+import { withStatics } from "@opencode-ai/schema/schema"
 import { JsonSchema, MessageRole, ProviderMetadata, ToolCallID } from "./ids"
 import { CacheHint, CachePolicy, GenerationOptions, HttpOptions, ModelSchema, ProviderOptions } from "./options"
 import { isRecord } from "../utils/record"
@@ -16,7 +17,7 @@ export type SystemPartInput = Schema.Struct.MakeIn<typeof systemPartSchema.field
 
 const makeSystemPart = (text: string): SystemPart => ({ type: "text", text })
 
-export const SystemPart = Object.assign(systemPartSchema, {
+export const SystemPart = withStatics(systemPartSchema, {
   make: makeSystemPart,
   content: (input?: string | SystemPartInput | ReadonlyArray<SystemPartInput>) => {
     if (input === undefined) return []
@@ -95,7 +96,7 @@ const toToolResultValue = (shape: {
     shape.type === "json" || shape.type === "text" ? { type: shape.type, value: toWireJson(shape.value) } : shape,
   )
 
-export const ToolResultValue = Object.assign(toolResultValueSchema, {
+export const ToolResultValue = withStatics(toolResultValueSchema, {
   is: Schema.is(toolResultValueSchema),
   /** Wrap a raw value as a tool result of `type`, or keep a value already shaped as one; validated as JSON here. */
   make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue =>
@@ -113,7 +114,7 @@ export interface ToolOutput {
   readonly content: ReadonlyArray<ToolContent>
 }
 
-export const ToolOutput = Object.assign(
+export const ToolOutput = withStatics(
   Schema.Struct({
     // eslint-disable-next-line effect/no-schema-any-unknown -- (b) structured holds each tool's own encoded output (Date, bigint, instances, undefined keys); toResultValue validates it as wire JSON when projected
     structured: Schema.Unknown,
@@ -158,7 +159,7 @@ const toolCallPartSchema = Schema.Struct({
 export type ToolCallPart = Schema.Schema.Type<typeof toolCallPartSchema>
 const makeToolCallPart = SchemaParser.make(toolCallPartSchema)
 
-export const ToolCallPart = Object.assign(toolCallPartSchema, {
+export const ToolCallPart = withStatics(toolCallPartSchema, {
   /**
    * Build a tool-call part from a plain string id. The input becomes the JSON that a provider receives, and the
    * JSON fields are validated here.
@@ -169,7 +170,7 @@ export const ToolCallPart = Object.assign(toolCallPartSchema, {
     makeToolCallPart({ type: "tool-call", ...input, id: ToolCallID.make(input.id), input: toWireJson(input.input) }),
 })
 
-export const ToolResultPart = Object.assign(
+export const ToolResultPart = withStatics(
   Schema.Struct({
     type: Schema.Literal("tool-result"),
     id: ToolCallID,

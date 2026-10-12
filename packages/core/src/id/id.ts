@@ -30,7 +30,7 @@ function generateID(prefix: keyof typeof prefixes, direction: "descending" | "as
   // ascending and descending are synchronous, so decodeSync rejects a foreign ID by throwing the schema error.
   return Schema.decodeSync(
     Schema.String.check(
-      Schema.isStartsWith(prefixes[prefix], { message: `ID ${given} does not start with ${prefixes[prefix]}` }),
+      Schema.isStartingWith(prefixes[prefix], { message: `ID ${given} does not start with ${prefixes[prefix]}` }),
     ),
   )(given)
 }

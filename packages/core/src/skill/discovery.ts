@@ -3,7 +3,7 @@ export * as SkillDiscovery from "./discovery"
 import path from "path"
 import { NodeCrypto } from "@effect/platform-node"
 import { Context, Crypto, Effect, Layer, Option, Schedule, Schema } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { makeGlobalNode } from "../effect/app-node"
@@ -164,7 +164,7 @@ const layer = Layer.effect(
                 })
               } else {
                 const version = pending.value
-                const token = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
+                const token = yield* cryptoService.randomUUIDv4().pipe(Effect.orDie)
                 const staging = `${root}.tmp-${token}`
                 const backup = `${root}.old-${token}`
                 yield* Effect.gen(function* () {

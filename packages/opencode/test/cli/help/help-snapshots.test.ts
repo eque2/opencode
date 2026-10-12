@@ -111,8 +111,9 @@ describe("opencode CLI help-text snapshots", () => {
         // Spawn in parallel, then assert in argv order so snapshot output is
         // deterministic and per-command failures don't abort the rest of
         // the sweep. `Effect.partition` is the canonical "run all, separate
-        // failures from successes" primitive — no mutable accumulator needed.
-        const [failures, results] = yield* Effect.partition(
+        // successes from failures" primitive — no mutable accumulator needed.
+        // It returns `[passes, fails]`.
+        const [results, failures] = yield* Effect.partition(
           argvs,
           (argv) =>
             Effect.gen(function* () {

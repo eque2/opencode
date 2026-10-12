@@ -53,11 +53,11 @@ const Server = Schema.Union([
   }),
 ])
 const Selection = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^[^/#]+\/[^#]+(?:#[^#]+)?$/)),
+  Schema.String.check(Schema.isPattern(/^[^/#]+\/[^#]+(?:#[^#]+)?$/u)),
   Schema.Struct({
-    providerID: Schema.String.check(Schema.isPattern(/^[^/#]+$/)),
-    model: Schema.String.check(Schema.isPattern(/^[^#]+$/)),
-    variant: Schema.optional(Schema.String.check(Schema.isPattern(/^[^#]+$/))),
+    providerID: Schema.String.check(Schema.isPattern(/^[^/#]+$/u)),
+    model: Schema.String.check(Schema.isPattern(/^[^#]+$/u)),
+    variant: Schema.optional(Schema.String.check(Schema.isPattern(/^[^#]+$/u))),
   }),
 ])
 const Agent = Schema.Struct({
@@ -72,7 +72,7 @@ const Agent = Schema.Struct({
   description: Schema.optional(Schema.String),
   mode: Schema.optional(Schema.Literals(["subagent", "primary", "all"])),
   hidden: Schema.optional(Schema.Boolean),
-  color: Schema.optional(Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/))),
+  color: Schema.optional(Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/u))),
   steps: Schema.optional(PositiveInt),
   disabled: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "ConfigV2CompatAgent" })

@@ -10,6 +10,7 @@ export type {
 } from "./route/client"
 export * from "./schema"
 export { Tool, ToolFailure, toDefinitions } from "./tool"
+export { ProviderJsonSchema } from "./provider-json-schema"
 export { ToolRuntime } from "./tool-runtime"
 export type { DispatchResult as ToolDispatchResult, ToolSettlement } from "./tool-runtime"
 export type {

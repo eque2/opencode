@@ -10,8 +10,9 @@ import { PositiveInt, statics } from "./schema"
 export const ID = Schema.String.pipe(Schema.brand("AgentV2.ID"))
 export type ID = typeof ID.Type
 
+// Effect exports an `isPattern` RegExp as a JSON Schema `pattern` only when it has the `u` flag.
 export const Color = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
+  Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/u)),
   Schema.Literals(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
 ]).annotate({ identifier: "Agent.Color" })
 export type Color = typeof Color.Type

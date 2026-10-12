@@ -1,7 +1,7 @@
 export * as Ripgrep from "./ripgrep"
 
 import { Context, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { Entry, Match } from "@opencode-ai/schema/filesystem"
 import { makeGlobalNode } from "./effect/app-node"
 import { AppProcess, collectStream, waitForAbort } from "./process"

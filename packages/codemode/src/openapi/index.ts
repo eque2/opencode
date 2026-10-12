@@ -1,5 +1,5 @@
 import { HashSet, Option } from "effect"
-import { HttpClient, HttpMethod } from "effect/unstable/http"
+import { HttpClient, HttpMethod } from "effect/http"
 import { isDefinition, make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
 import {

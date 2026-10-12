@@ -1,5 +1,5 @@
 import { Effect, Predicate, Random } from "effect"
-import type { SqlError } from "effect/unstable/sql/SqlError"
+import type { SqlError } from "effect/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import type { MutationOption } from "drizzle-orm/cache/core/cache"
 import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"

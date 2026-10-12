@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { ConfigProvider, Effect, Logger, Option } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { Datadog } from "../../src/observability/datadog"
 
 const settings = (env: Record<string, string>) =>

@@ -1,5 +1,5 @@
 import { Config, Duration, Effect, Option, Redacted, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 
 const EXA_BASE_URL = "https://mcp.exa.ai/mcp"
 

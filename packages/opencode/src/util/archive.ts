@@ -1,6 +1,6 @@
 import path from "path"
 import { Effect } from "effect"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { AppProcess } from "@opencode-ai/core/process"
 
 // The platform command that extracts a zip archive into a directory.

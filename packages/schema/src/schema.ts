@@ -17,10 +17,24 @@ export const optional = <S extends Schema.Top>(schema: S) =>
     }),
   )
 
+// Effect schemas expose `make` through prototype getters, so `Object.assign` cannot override it.
+// Defining the properties replaces it as long as the schema's own `make` has not been read.
+function defineStatics<S extends object, M extends Record<string, unknown>>(
+  schema: S,
+  methods: M,
+): asserts schema is S & M {
+  Object.defineProperties(schema, Object.getOwnPropertyDescriptors(methods))
+}
+
+export const withStatics = <S extends object, M extends Record<string, unknown>>(schema: S, methods: M): S & M => {
+  defineStatics(schema, methods)
+  return schema
+}
+
 export const statics =
   <S extends object, M extends Record<string, unknown>>(methods: (schema: S) => M) =>
   (schema: S): S & M =>
-    Object.assign(schema, methods(schema))
+    withStatics(schema, methods(schema))
 
 export const DateTimeUtcFromMillis = Schema.Finite.pipe(
   Schema.decodeTo(Schema.DateTimeUtc, {

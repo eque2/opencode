@@ -9,7 +9,7 @@ import { Array as Arr, Config, Effect, Option } from "effect"
 import path from "path"
 import os from "os"
 import { AppProcess } from "@opencode-ai/core/process"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { makeRuntime } from "@/effect/run-service"
 import * as Prompt from "../effect/prompt"
 

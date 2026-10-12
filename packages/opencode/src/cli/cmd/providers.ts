@@ -14,7 +14,7 @@ import { Plugin } from "../../plugin"
 import type { Hooks } from "@opencode-ai/plugin"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { errorMessage } from "@/util/error"
 import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Order, Schema } from "effect"
 

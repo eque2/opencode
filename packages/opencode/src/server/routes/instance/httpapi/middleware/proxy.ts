@@ -7,8 +7,8 @@ import {
   type HttpClientResponse,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http"
-import * as Socket from "effect/unstable/socket/Socket"
+} from "effect/http"
+import * as Socket from "effect/socket/Socket"
 import { WebSocketTracker } from "../websocket-tracker"
 
 function requestBody(request: HttpServerRequest.HttpServerRequest) {

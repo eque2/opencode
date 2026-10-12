@@ -1,5 +1,5 @@
-import { Cause, Clock, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
-import { HttpServerRequest, type HttpMiddleware } from "effect/unstable/http"
+import { Cause, Clock, Effect, Exit, Fiber, LogLevel, MutableHashMap, Option, Predicate, Tracer } from "effect"
+import { HttpServerRequest, type HttpMiddleware } from "effect/http"
 import type { Payload } from "@opencode-ai/schema/event"
 import { eventCategory, spanCategory } from "./category"
 import { Datadog } from "./datadog"
@@ -22,16 +22,18 @@ export function bridge(inner: Tracer.Tracer): Tracer.Tracer {
       // from the inner span with the inner span as `this`, so its own getters and methods behave unchanged.
       // Each method is bound once per span, keyed by the method itself, so a hot `span.attribute` call does not
       // allocate a new function every time.
-      const bound = new Map<Function, Function>()
+      const bound = MutableHashMap.empty<Function, Function>()
       return new Proxy(span, {
         get: (target, key) => {
           if (key === "end") return end
           const value = Reflect.get(target, key, target)
           // A method called through the proxy would get the proxy as `this`, which breaks `#private` fields.
           if (typeof value !== "function") return value
-          const cached = bound.get(value) ?? value.bind(target)
-          bound.set(value, cached)
-          return cached
+          const cached = MutableHashMap.get(bound, value)
+          if (Option.isSome(cached)) return cached.value
+          const method = value.bind(target)
+          MutableHashMap.set(bound, value, method)
+          return method
         },
       })
     },

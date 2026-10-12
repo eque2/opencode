@@ -8,7 +8,7 @@ import { pathToFileURL } from "url"
 import { tmpdir } from "../fixture/fixture"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 
 const { PluginMeta } = await import("../../src/plugin/meta")
 const root = path.join(import.meta.dir, "../..")

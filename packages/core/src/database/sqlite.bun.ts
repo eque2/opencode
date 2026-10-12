@@ -8,11 +8,11 @@ import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
 import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError"
-import * as Statement from "effect/unstable/sql/Statement"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import * as Client from "effect/sql/SqlClient"
+import type { Connection } from "effect/sql/SqlConnection"
+import { classifySqliteError, SqlError } from "effect/sql/SqlError"
+import * as Statement from "effect/sql/Statement"
 import { Sqlite } from "./sqlite"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
@@ -44,11 +44,11 @@ const nativeDatabase = Effect.gen(function* () {
 })
 
 /**
- * effect/unstable/sql passes statement parameters as ReadonlyArray<unknown>. bun:sqlite checks each binding at
+ * effect/sql passes statement parameters as ReadonlyArray<unknown>. bun:sqlite checks each binding at
  * run time and accepts more than SQLQueryBindings declares (it binds undefined as NULL), so the values pass as is.
  */
 const bindings = (params: ReadonlyArray<unknown>) =>
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) effect/unstable/sql gives params as ReadonlyArray<unknown>; bun:sqlite all/values declare SQLQueryBindings[] and check each value at run time
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) effect/sql gives params as ReadonlyArray<unknown>; bun:sqlite all/values declare SQLQueryBindings[] and check each value at run time
   params as SQLQueryBindings[]
 
 const executeError = (cause: unknown) =>

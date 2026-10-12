@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ToolError, toolError } from "../tool-error.js"
 import { isJsonMediaType, isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"

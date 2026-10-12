@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { HttpClient, type HttpMethod } from "effect/unstable/http"
+import { HttpClient, type HttpMethod } from "effect/http"
 import type { Definition, JsonSchema } from "../tool.js"
 
 /** A parsed OpenAPI 3.x document. YAML must be parsed by the host. */

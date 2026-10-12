@@ -1,8 +1,8 @@
 import { afterEach, describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer, Schema } from "effect"
-import { HttpClientResponse } from "effect/unstable/http"
+import { Effect, Schema } from "effect"
+import { HttpClientResponse } from "effect/http"
 import { Session as SessionNs } from "@/session/session"
 
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
@@ -10,9 +10,9 @@ import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(SessionNs.node), httpApiLayer))
+const it = testEffect(httpApiLayerWith(LayerNode.compile(SessionNs.node)))
 
 const model = {
   providerID: ProviderV2.ID.make("test"),

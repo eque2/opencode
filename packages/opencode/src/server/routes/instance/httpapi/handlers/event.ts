@@ -4,9 +4,9 @@ import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
-import { HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
-import * as Sse from "effect/unstable/encoding/Sse"
+import { HttpServerResponse } from "effect/http"
+import { HttpApiBuilder } from "effect/http-api"
+import * as Sse from "effect/encoding/Sse"
 import { EventApi } from "../groups/event"
 
 // Each SSE message carries one JSON value as its `data` line, with the default `message` event.

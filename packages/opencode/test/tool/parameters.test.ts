@@ -70,9 +70,10 @@ describe("tool parameters", () => {
     })
 
     test("keeps repeated allOf constraints instead of dropping duplicates", () => {
+      // Effect exports an `isPattern` RegExp as a JSON Schema `pattern` only when it has the `u` flag.
       expect(
         toJsonSchema(
-          Schema.Struct({ value: Schema.String.check(Schema.isPattern(/^a/)).check(Schema.isPattern(/z$/)) }),
+          Schema.Struct({ value: Schema.String.check(Schema.isPattern(/^a/u)).check(Schema.isPattern(/z$/u)) }),
         ),
       ).toMatchObject({ properties: { value: { pattern: "^a", allOf: [{ pattern: "z$" }] } } })
     })
@@ -80,6 +81,20 @@ describe("tool parameters", () => {
     test("bounds bare integer fields to safe integer range", () => {
       expect(toJsonSchema(Schema.Struct({ value: Schema.Int }))).toMatchObject({
         properties: { value: { minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER } },
+      })
+    })
+
+    test("keeps a caller's integer bound in place of Effect's safe-integer range", () => {
+      expect(
+        toJsonSchema(
+          Schema.Struct({
+            count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+            capped: Schema.Int.check(Schema.isLessThanOrEqualTo(100)),
+          }),
+        ).properties,
+      ).toEqual({
+        count: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        capped: { type: "integer", maximum: 100 },
       })
     })
 

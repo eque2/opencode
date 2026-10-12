@@ -47,5 +47,16 @@
   "options": {
     "typeAware": true
   },
-  "ignorePatterns": ["**/node_modules", "**/dist", "**/.build", "**/.sst", "**/*.d.ts", "**/sdk.gen.ts"]
+  // .agents/skills/ and .claude/skills/ hold skill bundles installed by bmad-method and eque2-code;
+  // their source lives upstream and the eque2-code anti-tamper policy forbids editing them here
+  "ignorePatterns": [
+    "**/node_modules",
+    "**/dist",
+    "**/.build",
+    "**/.sst",
+    "**/*.d.ts",
+    "**/sdk.gen.ts",
+    ".agents/skills/**",
+    ".claude/skills/**"
+  ]
 }
