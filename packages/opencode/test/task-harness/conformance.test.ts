@@ -161,17 +161,19 @@ async function until<T>(
   const deadline = (options.from ?? Date.now()) + ms
   for (;;) {
     apparatus(c)
-    const s = c.arm.status()
+    // A status of another path (from `/task trust` or a killed run) reads as none; see Adapter.reading().
+    const reading = c.arm.reading()
+    const s = "status" in reading ? reading.status : undefined
     const value = await probe(s)
     if (value !== undefined) return value
     const started = c.arm.startedAt
-    if (!s && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+    if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
       throw new Error(
-        `${what}: no status file at ${Status.file(c.ws.repo)} ${STATUS_APPEARS_MS / 1000} s after /task; the arm exposes no task state`,
+        `${what}: ${reading.problem}, ${STATUS_APPEARS_MS / 1000} s after /task${reading.absent ? "; the arm exposes no task state" : ""}`,
       )
     if (Date.now() > deadline)
       throw new Error(
-        `${what}: not reached within ${Math.round(ms / 1000)} s; ${Status.summary(s)}${options.detail ? `; ${options.detail()}` : ""}`,
+        `${what}: not reached within ${Math.round(ms / 1000)} s; ${"problem" in reading ? reading.problem : Status.summary(s)}${options.detail ? `; ${options.detail()}` : ""}`,
       )
     await Bun.sleep(POLL_MS)
   }

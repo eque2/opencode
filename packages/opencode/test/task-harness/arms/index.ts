@@ -57,6 +57,8 @@ export type Adapter = {
   readonly startedAt: number | undefined
   readonly server: Server.Server
   start(target: string): Promise<void>
+  // The status of the latest `/task <path>`, or why there is none; status() is its status alone.
+  reading(): Status.Reading
   status(): Status.Status | undefined
   abort(): Promise<void>
   kill(): void
@@ -103,6 +105,21 @@ export async function open(input: {
     turns.push(client.session.command({ sessionID: root, command: "task", arguments: path }).catch((error: unknown) => error))
   }
 
+  // A status written for another path (left by `/task trust` or by an earlier run) is not this run's status.
+  const reading = (): Status.Reading => {
+    const read = Status.inspect(input.workspace.repo)
+    if (!("status" in read)) return read
+    const repo = input.workspace.repo
+    // Typed as a string, but written by the arm: check it.
+    const own: unknown = read.status.run.path
+    const ownPath = typeof own === "string" ? own : undefined
+    if (target !== undefined && ownPath !== undefined && path.resolve(repo, ownPath) === path.resolve(repo, target)) return read
+    return {
+      problem: `the status file at ${Status.file(repo)} is for /task ${ownPath ?? "(no run.path)"}, not ${target ?? "(no /task yet)"}`,
+      absent: true,
+    }
+  }
+
   return {
     arm: input.arm,
     repo: input.workspace.repo,
@@ -113,7 +130,11 @@ export async function open(input: {
       return server
     },
     start,
-    status: () => Status.read(input.workspace.repo),
+    reading,
+    status: () => {
+      const read = reading()
+      return "status" in read ? read.status : undefined
+    },
     abort: async () => {
       if (!root) throw new Error("abort before start")
       await client.session.abort({ sessionID: root })
