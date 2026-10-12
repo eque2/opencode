@@ -38,11 +38,14 @@ export function isolatedEnv(home: string): Record<string, string> {
   }
 }
 
-// The parent's environment without the arm selector and the forwarded live key: the adapter sets the selector from
-// the arm, and only L1's server gets the key.
+// The parent's environment without the arm selector, the forwarded live key and the test preload's in-memory
+// database: the adapter sets the selector from the arm, only L1's server gets the key, and the server keeps its
+// database under the isolated XDG data folder, so a restart (H8) finds what the killed server stored.
 function inherited() {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key !== "OPENCODE_TASK_HARNESS" && !key.startsWith("TASK_HARNESS_LIVE_")),
+    Object.entries(process.env).filter(
+      ([key]) => key !== "OPENCODE_TASK_HARNESS" && key !== "OPENCODE_DB" && !key.startsWith("TASK_HARNESS_LIVE_"),
+    ),
   )
 }
 
