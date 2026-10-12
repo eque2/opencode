@@ -290,11 +290,22 @@ const layer = Layer.effect(
             native: true,
             hidden: true,
             prompt: PROMPT_TASK_BUILDER,
+            // Deny by default: every allowed tool's definition rides on every request, and a live run is capped
+            // in tokens (D11). The builder needs files, search and the shell; `invalid` answers a call to a tool it
+            // does not have (a builder's `verdict` call fails there).
             permission: Permission.fromConfig({
-              "*": "allow",
-              verdict: "deny",
-              question: "deny",
-              task: "deny",
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              edit: "allow",
+              write: "allow",
+              apply_patch: "allow",
+              bash: "allow",
+              invalid: "allow",
+              external_directory: "allow",
+              task_ready: "allow",
               // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
               // turn with an error instead.
               doom_loop: "allow",
@@ -309,14 +320,17 @@ const layer = Layer.effect(
             native: true,
             hidden: true,
             prompt: PROMPT_TASK_VERIFIER,
+            // Deny by default, as for the builder: the verifier reads, searches and runs the tests.
             permission: Permission.fromConfig({
-              "*": "allow",
-              task_ready: "deny",
-              edit: "deny",
-              write: "deny",
-              apply_patch: "deny",
-              question: "deny",
-              task: "deny",
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              bash: "allow",
+              invalid: "allow",
+              external_directory: "allow",
+              verdict: "allow",
               doom_loop: "allow",
             }),
             options: {},
