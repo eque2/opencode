@@ -485,4 +485,18 @@ export const proveScenario = Effect.fn("TaskProof.proveScenario")(function* (inp
   } satisfies ScenarioProof
 })
 
+/** Several scenarios from one `bun test` run: every scenario that becomes ready at once costs one run, not one each. */
+export const proveScenarios = Effect.fn("TaskProof.proveScenarios")(function* (
+  input: Omit<ScenarioInput, "scenario"> & { readonly scenarios: ReadonlyArray<Scenario> },
+) {
+  const bounds = commandBounds(input.limits)
+  const head = yield* resolveCommit(input.cwd, bounds, input.head)
+  yield* requireTreeAt(input.cwd, bounds, head)
+  const run = yield* runTests(input.cwd, input.limits)
+  const evidence = yield* evidenceOf(run, head)
+  return input.scenarios.map(
+    (scenario) => ({ scenario: scenario.id, result: tagResult(scenario.id, run), evidence }) satisfies ScenarioProof,
+  )
+})
+
 export * as TaskProof from "."

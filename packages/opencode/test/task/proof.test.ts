@@ -165,6 +165,13 @@ describe("TaskProof", () => {
       const scenario = yield* TaskProof.proveScenario({ scenario: { id: "S1" }, cwd: repo.dir, head: repo.head, limits })
       expect(scenario.result).toEqual({ status: "passed" })
       expect(scenario.evidence.commit).toBe(repo.head)
+
+      // One run for a batch: a proved scenario and one with no test.
+      const batch = yield* TaskProof.proveScenarios({ scenarios: [{ id: "S1" }, { id: "S2" }], cwd: repo.dir, head: repo.head, limits })
+      expect(batch.map((each) => [each.scenario, each.result])).toEqual([
+        ["S1", { status: "passed" }],
+        ["S2", { status: "failed", reason: "no test titled [S2]" }],
+      ])
     }),
     proveTimeout,
   )
