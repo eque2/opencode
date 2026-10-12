@@ -42,7 +42,8 @@ for (let run = 1; run <= runs; run++) {
   if (only) env.TASK_HARNESS_CHECKS = only.join(",")
   const child = Bun.spawn(
     ["bun", "test", "test/task-harness/conformance.test.ts", "--timeout", "2400000", "--reporter=junit", `--reporter-outfile=${junit}`],
-    { cwd: packageDir, env, stdout: "inherit", stderr: "inherit" },
+    // The child's stdout goes to stderr (fd 2), so the runner's own stdout carries only the JSON.
+    { cwd: packageDir, env, stdout: 2, stderr: "inherit" },
   )
   const exitCode = await child.exited
   const checks = readChecks(junit)
