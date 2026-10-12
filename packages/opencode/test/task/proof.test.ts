@@ -309,6 +309,25 @@ describe("TaskProof", () => {
       expect(result.groupCleared).toBe(true)
     }),
   )
+
+  groupIt("run: a group member that ignores SIGTERM dies by SIGKILL after the cancel deadline", () =>
+    Effect.gen(function* () {
+      // `trap '' TERM` makes the shell ignore SIGTERM, and the backgrounded `sleep` inherits that.
+      const started = yield* Clock.currentTimeMillis
+      const result = yield* TaskProof.run("sh", ["-c", "trap '' TERM; sleep 600 & echo $!; wait"], {
+        cwd: process.cwd(),
+        timeout: "300 millis",
+        cancelDeadline: limits.cancelDeadline,
+      })
+      const elapsed = (yield* Clock.currentTimeMillis) - started
+      expect(result.timedOut).toBe(true)
+      expect(result.groupCleared).toBe(true)
+      expect(elapsed).toBeGreaterThanOrEqual(Duration.toMillis(limits.cancelDeadline))
+      const pid = Number(result.stdout.trim())
+      expect(pid).toBeGreaterThan(1)
+      expect(isAlive(pid)).toBe(false)
+    }),
+  )
 })
 
 // True when a process with this pid exists. Signal 0 checks without sending anything.
