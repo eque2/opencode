@@ -697,7 +697,18 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         hits = [...hits, current]
         yield* notify()
         const fn = responder
-        const computed = fn ? yield* Effect.promise(async () => fn(current)) : undefined
+        // A responder that throws or rejects answers HTTP 500 instead of failing the handler.
+        const computed = fn
+          ? yield* Effect.tryPromise(async () => fn(current)).pipe(
+              Effect.catch((error) =>
+                Effect.succeed(
+                  httpError(500, {
+                    error: { message: `responder failed: ${error.cause instanceof Error ? error.cause.message : error.message}` },
+                  }),
+                ),
+              ),
+            )
+          : undefined
         const pulled = computed === undefined ? pull(current) : Option.some(item(computed))
         if (Option.isNone(pulled)) {
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("ok"), finishLine("stop")] }
