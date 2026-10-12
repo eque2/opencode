@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 // Conformance runner for the task-harness spike.
 //
-//   bun run script/task-conformance.ts --arm <baseline|o1|o2|o3> --runs 5 [--live] [--baseline <json>] [--out <json>]
+//   bun run script/task-conformance.ts --arm <baseline|o1|o2|o3> --runs 5 [--live] [--checks H1,H3]
+//     [--baseline <json>] [--out <json>]
+//
+// Options take `--name value` or `--name=value`; `--live` is bare or `true`.
 //
 // Each run executes test/task-harness/conformance.test.ts once for the arm and scores it: the share of the
 // 17 checks (H1-H16 scripted, L1 live) that passed, in percent. The runner prints the statistics as JSON so no
@@ -11,16 +14,20 @@ import path from "node:path"
 import fs from "node:fs"
 import { CHECKS, compare, readChecks, round, stats, type Baseline, type CheckStatus } from "../test/task-harness/stats"
 
+const ARMS = ["baseline", "o1", "o2", "o3"]
 const args = parseArgs(process.argv.slice(2))
 const arm = args.arm ?? "baseline"
+if (!/^[1-9]\d*$/.test(args.runs ?? "5")) throw new Error(`--runs must be a positive integer, got ${args.runs}`)
 const runs = Number(args.runs ?? "5")
 const live = args.live === "true"
-const only = args.checks?.split(",")
+const only = args.checks?.split(",").map((id) => id.trim())
+for (const id of only ?? [])
+  if (!CHECKS.some((c) => c === id)) throw new Error(`unknown check ${id} in --checks; expected ${CHECKS.join(", ")}`)
 const packageDir = path.resolve(import.meta.dir, "..")
 const runsRoot = path.resolve(packageDir, "../../.spike-runs")
 const stamp = new Date().toISOString().replace(/[:.]/g, "-")
 
-if (!["baseline", "o1", "o2", "o3"].includes(arm)) throw new Error(`unknown arm ${arm}`)
+if (!ARMS.includes(arm)) throw new Error(`unknown arm ${arm}; expected one of ${ARMS.join(", ")}`)
 
 const results: RunResult[] = []
 for (let run = 1; run <= runs; run++) {
@@ -108,15 +115,27 @@ type RunResult = {
 }
 
 function parseArgs(argv: string[]) {
+  const known = ["arm", "runs", "live", "checks", "baseline", "out"]
   const out: Record<string, string> = {}
   for (let i = 0; i < argv.length; i++) {
-    const key = argv[i].replace(/^--/, "")
+    const arg = argv[i]
+    if (!arg.startsWith("--")) throw new Error(`unexpected argument ${arg}`)
+    const eq = arg.indexOf("=")
+    const key = eq < 0 ? arg.slice(2) : arg.slice(2, eq)
+    if (!known.includes(key)) throw new Error(`unknown option --${key}; expected ${known.map((k) => `--${k}`).join(", ")}`)
     const next = argv[i + 1]
-    if (next === undefined || next.startsWith("--")) out[key] = "true"
-    else {
+    if (key === "live") {
+      const value = eq >= 0 ? arg.slice(eq + 1) : next === "true" ? next : "true"
+      if (eq < 0 && next === "true") i++
+      if (value !== "true") throw new Error(`--live takes no value or true, got ${value}`)
+      out[key] = value
+      continue
+    }
+    if (eq >= 0) out[key] = arg.slice(eq + 1)
+    else if (next !== undefined && !next.startsWith("--")) {
       out[key] = next
       i++
-    }
+    } else throw new Error(`--${key} needs a value`)
   }
   return out
 }
