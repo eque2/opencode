@@ -409,6 +409,15 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
     ended(s)
     return builders(c, "T1.3")[0]
   })
+  // Kill only once T1.1 and T1.2 are trusted, so the restart cannot catch them mid-flight; T1.3's `sleep 30` still runs.
+  await until(
+    c,
+    "T1.1 and T1.2 trusted within 25 s of T1.3's first builder request",
+    25_000,
+    (s) => (state(s, "T1.1") === "trusted" && state(s, "T1.2") === "trusted" ? s : undefined),
+    { from: first.at },
+  )
+  // At least 1 s after the request, as before, so the bash call has started when the server dies.
   await Bun.sleep(Math.max(0, first.at + 1_000 - Date.now()))
   c.arm.kill()
   const restartAt = Date.now()
