@@ -3,8 +3,8 @@
 // Every reply is computed from the request alone: the role and unit from the protocol marker in the conversation,
 // the attempt from the latest `task-harness attempt=` line, the step from the number of tool results after that
 // line. Concurrency, provider retries and server restarts therefore cannot desynchronise the script. Only the
-// behaviours the contract defines as "the first request" (H4 hold, H12 hang, H14a 529) keep a one-shot flag per
-// unit, because a retried request is byte-for-byte the first one again.
+// behaviours the contract defines as "the first" request or round (H4 hold, H6 rejection, H12 hang, H14a 529) keep
+// a one-shot flag, because a retried request is byte-for-byte the first one again.
 import { Effect, ManagedRuntime } from "effect"
 import { httpError, reply, TestLLMServer, type Hit, type Item, type Reply } from "../lib/llm-server"
 import { solutionFile, solutionTasks } from "./arms/workspace"
@@ -310,12 +310,14 @@ export class Script {
       note("text")
       return reply().text("Verdicts recorded.").stop()
     }
+    // H6: only the first verifier round that judges T1.1.c3 with its siblings rejects it; later rounds trust it.
     const rejectC3 =
       this.options.check === "H6" &&
       request.role === "verifier" &&
       request.unit === "T1.1" &&
       request.judges.includes("T1.1.c3") &&
-      request.judges.some((id) => id !== "T1.1.c3" && id.startsWith("T1.1."))
+      request.judges.some((id) => id !== "T1.1.c3" && id.startsWith("T1.1.")) &&
+      this.first("reject T1.1.c3")
     const verdicts = request.judges.map((id) =>
       rejectC3 && id === "T1.1.c3" ? { id, verdict: "rejected", reason: REJECT_REASON } : { id, verdict: "trusted" },
     )
