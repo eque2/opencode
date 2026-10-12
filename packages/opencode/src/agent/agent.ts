@@ -295,7 +295,9 @@ const layer = Layer.effect(
               verdict: "deny",
               question: "deny",
               task: "deny",
-              doom_loop: "deny",
+              // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
+              // turn with an error instead.
+              doom_loop: "allow",
             }),
             options: {},
             ...model,
@@ -315,7 +317,7 @@ const layer = Layer.effect(
               apply_patch: "deny",
               question: "deny",
               task: "deny",
-              doom_loop: "deny",
+              doom_loop: "allow",
             }),
             options: {},
             ...model,

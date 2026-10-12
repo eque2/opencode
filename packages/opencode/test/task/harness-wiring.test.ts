@@ -106,13 +106,13 @@ describe("the task command and agents", () => {
       expect(verifier).toMatchObject({ mode: "primary", hidden: true, native: true })
       const action = (agent: Agent.Info, permission: string) =>
         Permission.evaluate(permission, "*", agent.permission).action
-      for (const permission of ["verdict", "question", "task", "doom_loop"])
-        expect(action(builder, permission)).toBe("deny")
-      for (const permission of ["bash", "edit", "read", "external_directory"])
+      for (const permission of ["verdict", "question", "task"]) expect(action(builder, permission)).toBe("deny")
+      for (const permission of ["bash", "edit", "read", "external_directory", "doom_loop"])
         expect(action(builder, permission)).toBe("allow")
-      for (const permission of ["task_ready", "edit", "write", "apply_patch", "question", "task", "doom_loop"])
+      for (const permission of ["task_ready", "edit", "write", "apply_patch", "question", "task"])
         expect(action(verifier, permission)).toBe("deny")
-      expect(action(verifier, "bash")).toBe("allow")
+      // The harness stops a repetition itself (TaskHooks.checkRepetition); doom_loop must not end the turn first.
+      for (const permission of ["bash", "doom_loop"]) expect(action(verifier, permission)).toBe("allow")
       // A builder or verifier that would ask would hang a headless run.
       expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
     }),
