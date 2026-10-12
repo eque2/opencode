@@ -245,7 +245,13 @@ export const gherkin = (body: string, id: string): Result.Result<Gherkin, Readon
     .map((line) => line.trim())
     .filter((line) => line !== "")
   const problems = [
-    ...(head.every((line) => line.trim().startsWith("@"))
+    // A tag line holds tags only: every token is `@` and a name.
+    ...(head.every((line) =>
+      line
+        .trim()
+        .split(/\s+/)
+        .every((token) => /^@\S+$/.test(token)),
+    )
       ? []
       : ["a line before the `Scenario:` line is not a tag line"]),
     ...(named === id ? [] : [`the Scenario line names ${named === "" ? "no id" : named}, the file is ${id}`]),
