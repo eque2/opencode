@@ -1,8 +1,22 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Config, Layer } from "effect"
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http"
 import { layerWebSocketConstructorGlobal } from "effect/socket/Socket"
+import { createServer } from "node:http"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
+
+// NodeHttpServer.layerTest, bound to the loopback address. layerTest listens on the wildcard
+// address and its client sends requests to 127.0.0.1. On macOS another process can then bind
+// 127.0.0.1 on the same ephemeral port and receive those requests, which answer 404. A server
+// bound to 127.0.0.1 itself makes that second bind fail instead.
+const loopbackTestServer = HttpServer.layerTestClient.pipe(
+  Layer.provide(
+    Layer.fresh(FetchHttpClient.layer).pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
+    ),
+  ),
+  Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
+)
 
 const servedRoutes: Layer.Layer<never, Config.ConfigError, HttpServer.HttpServer> = HttpRouter.serve(
   HttpApiApp.routes,
@@ -14,7 +28,7 @@ const servedRoutes: Layer.Layer<never, Config.ConfigError, HttpServer.HttpServer
 
 export const httpApiLayer = servedRoutes.pipe(
   Layer.provide(layerWebSocketConstructorGlobal),
-  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(loopbackTestServer),
   Layer.provideMerge(NodeServices.layer),
 )
 
