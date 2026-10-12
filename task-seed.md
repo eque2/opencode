@@ -14,9 +14,9 @@ And so we have some mechanism to induce the execution of a task and its verifica
 
 Research edge cases, what happens in the event of a verification failure, etc. Look at the eque2-code repo. Are the states for tasks in there adequate? (Answered below: no.)
 
-## Decisions (2026-10-02)
+## Decisions (2026-10-02; decision 1 revised 2026-10-12)
 
-1. Port eque2-code's effect-xstate (`src/packages/effect-xstate`, ~3.9k lines, a reimplementation of the XState v5 API on Effect 3.19, no xstate dependency, no eque2 imports) into opencode on Effect v4. `effect@4.0.0` has been stable on npm since 2026-10-01; opencode pins `4.0.0-rc.117`. Moving the catalog to 4.0.0 is a separate, earlier step.
+1. Depend on `@jambudipa/xstate-effect` from npm (0.1.0, published 2026-10-09, MIT): an Effect-native port of XState 5.33.2 on Effect 4, checked against the 74 upstream test files, with no runtime dependencies. This replaces the plan to port eque2-code's effect-xstate (`src/packages/effect-xstate`, ~3.9k lines on Effect 3.19) by hand. Its peer range is `effect@^4.0.0`, which opencode's pin `4.0.0-rc.117` does not satisfy, so moving the catalog to `effect@4.0.0` (stable on npm since 2026-10-01) must land first.
 2. v1 shows the task tree in the TUI: parent, children, each task's state, and each obligation's verdict.
 3. `/task` is a new server-side command kind with an Effect handler. Today an opencode command is a prompt template only (`packages/opencode/src/command/index.ts`: name, description, agent, model, subtask, template), so it cannot run validation code before a model turn. Server-side means the TUI and the SDK both reach it.
 4. Agents report to the harness through harness-only tools, built like `StructuredOutput` (`packages/opencode/src/session/prompt.ts:1265-1315`: a tool added for one turn, its arguments captured by a callback, the loop ended). The builder gets `task_ready`; the verifier gets `verdict`. The builder's agent never sees `verdict`.
@@ -32,7 +32,7 @@ Pin down the format and various representations of the task. (Done: `task-format
 2. Harness validates the task structurally in terms of format, dependencies etc. using imperative code: parse the front matter, validate it against the schemas, run R1–R13. Port the reference checker (`check_blend.py`, in the session scratchpad) to TypeScript, with Effect Schema as the one source and the JSON Schemas generated from it.
 3. Using a similar mechanism to eque2-code [DS], the task is executed then validated, all by this new engine in opencode. For a parent such as T2: run the children in `after` order (in parallel where the order and the touch sets allow), then the parent's own obligations (T2.e1: one review of the combined diff).
 4. Similar to [DS], the state is maintained, but by the harness. The executing agent notifies the harness that the task is ready (`task_ready`), the harness runs the proofs, and the verification agent reports its verdict per obligation (`verdict`)
-5. Thus state management of tasks becomes a first-class citizen in opencode, much like a plan mode but rather more sophisticated, with nested dependencies, different states, etc. Use the ported effect-xstate (decision 1)
+5. Thus state management of tasks becomes a first-class citizen in opencode, much like a plan mode but rather more sophisticated, with nested dependencies, different states, etc. Use `@jambudipa/xstate-effect` (decision 1)
 6. For tasks, we have a strict set of states ('not_done', 'verified', etc.), but this is a special instance and we should support any set of states: the lifecycle is a machine definition (data), and the task lifecycle is its first instance
 
 ## Are eque2-code's task states adequate?
