@@ -38,6 +38,14 @@ export function isolatedEnv(home: string): Record<string, string> {
   }
 }
 
+// The parent's environment without the arm selector and the forwarded live key: the adapter sets the selector from
+// the arm, and only L1's server gets the key.
+function inherited() {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key !== "OPENCODE_TASK_HARNESS" && !key.startsWith("TASK_HARNESS_LIVE_")),
+  )
+}
+
 export async function start(opts: ServerOptions, readyMs = 60_000): Promise<Server> {
   fs.mkdirSync(opts.home, { recursive: true })
   const log = path.join(opts.home, `server-${Date.now()}.log`)
@@ -45,7 +53,7 @@ export async function start(opts: ServerOptions, readyMs = 60_000): Promise<Serv
   const proc = Bun.spawn(["bun", "run", entry, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
     cwd: opts.repo,
     env: {
-      ...process.env,
+      ...inherited(),
       ...isolatedEnv(opts.home),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(opts.config),
       ...opts.env,
