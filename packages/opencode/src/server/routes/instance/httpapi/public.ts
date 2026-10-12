@@ -267,8 +267,14 @@ function nextAvailableComponentName(schemas: Record<string, OpenApiSchema>, base
   return `${base}${suffix}`
 }
 
+// Effect names the encoded side of an identified schema `<identifier>Encoded`. Schemas that share
+// an identifier, such as the v1 and v2 copies of an error class, become `XEncoded` and
+// `XEncoded_1`. Effect keeps one of them when their JSON Schemas are equal, and the survivor
+// can carry the `_1` suffix, so strip that suffix with the `Encoded` marker.
+const EncodedSuffix = /Encoded(?:_\d+)?$/
+
 function componentTypeName(name: string) {
-  const decoded = name.endsWith("Encoded") ? name.slice(0, -"Encoded".length) : name
+  const decoded = name.replace(EncodedSuffix, "")
   if (!decoded.includes(".")) return decoded
   return decoded
     .split(".")
@@ -331,6 +337,14 @@ function applyLegacySchemaOverrides(spec: OpenApiSpec) {
   if (variants && typeof variants === "object") variants.additionalProperties = {}
   const syncInfo = schemas.SyncEventSessionUpdated?.properties?.data?.properties?.info
   if (syncInfo?.properties) makePropertiesNullable(syncInfo.properties)
+  // Effect exports a `oneOf` union as `anyOf` when a branch holds an opaque schema, and every
+  // durable event has a `Schema.JsonObject` metadata field. The `type` literal still keeps the
+  // branches disjoint, so `oneOf` stays accurate.
+  const durableEvent = schemas.SessionDurableEvent
+  if (durableEvent?.anyOf) {
+    durableEvent.oneOf = durableEvent.anyOf
+    delete durableEvent.anyOf
+  }
 }
 
 function normalizeComponentDescriptions(spec: OpenApiSpec) {
