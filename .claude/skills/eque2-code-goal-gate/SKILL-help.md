@@ -21,8 +21,9 @@ conversation owns it.
 
 ## The mechanism, in four sentences
 
-1. `prepare-goal` produces an `X.goal/` folder holding a charter and an
-   `ACs.md` acceptance contract.
+1. `plan-goal` writes the `ACs.md` acceptance contract and the user
+   approves it; `prepare-goal` turns the approved `X.goal/` folder into an
+   executable one by adding the charter (`goal.md`).
 2. `pursue-goal <folder>` writes loop state binding that folder, then stops.
 3. The gate runs at every turn end. While any criterion is outstanding it
    **refuses the stop**, so the session keeps working.

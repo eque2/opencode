@@ -74,7 +74,8 @@ Dispatched from Stage 2 based on the `action` field returned by `node {STATE_CLI
 - **ALWAYS** call `node {STATE_CLI} $SPEC_FOLDER next` before deciding what to do next.
 - **ALWAYS** call `node {STATE_CLI} $SPEC_FOLDER update ...` after completing work (this happens inside each subagent).
 - **ALWAYS** respect the max iterations cap. Default: 100.
-- **A non-zero exit code is a HARD ERROR** — every CLI call prints one JSON object to stdout and exits 0 on success; a non-zero exit with a stderr message means stop immediately, never retry blindly.
+- **A non-zero exit code is never ignored** — every CLI call prints one JSON object to stdout and exits 0 on success; on a non-zero exit, read the stderr message and triage it per "Command errors" in `references/guardrails.md`. Never retry blindly; exit 2 (integrity failure) stops the affected actor.
+- **One failure does not stop the goal** — record it, then continue with the work it does not block (see "Failure handling" in `references/guardrails.md`).
 
 ## References
 
@@ -88,6 +89,8 @@ Dispatched from Stage 2 based on the `action` field returned by `node {STATE_CLI
 ## Completion outcomes
 
 - **Done**: All tasks and verifications complete. Feature ready for PR.
-- **Stalled**: A blocker failed (max attempts reached), blocking downstream work. Manual intervention required.
-- **Blocked**: All remaining work is blocked. No recommendation available.
+- **Stalled**: A failed actor blocks all remaining work. The report names the obstacle in plain English and what would unblock it.
+- **Blocked**: All remaining work is blocked. No recommendation available. The report names the obstacle.
+
+Every outcome lists the unresolved defects and the checks that did not run or did not pass.
 - **Max Iterations**: Reached iteration cap. Pausing for review.

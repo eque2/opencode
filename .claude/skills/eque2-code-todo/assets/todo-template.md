@@ -6,14 +6,15 @@ slug: {{SLUG}}
 
 # {{TITLE}}
 
-> **Next step.** This file is a prepare-goal input. From a fresh context run:
+> **Next step.** This file is a plan-goal input. From a fresh context run:
 >
 > ```
-> /eque2-code-prepare-goal @{{PATH}}
+> /eque2-code-plan-goal @{{PATH}}
 > ```
 >
-> That emits `{{SLUG}}.goal/` beside this file — charter, ACs, and the real
-> SPEC. Do not implement straight from this brief.
+> That plans the work into `_bmad-output/goals/{{SLUG}}.goal/` — decisions,
+> acceptance criteria, and a plan for you to approve. Do not implement
+> straight from this brief.
 
 ## Success criterion
 

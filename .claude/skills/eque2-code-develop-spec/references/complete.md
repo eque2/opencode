@@ -30,16 +30,20 @@ existing Xray definition), then [PR] to review, confirm green, and open the PR.
 
 **exit_reason = "stalled":**
 ```
-STALLED: {blocker_id} failed (max attempts reached), blocks {downstream_ids}
+STALLED: {blocker_id} failed, and no other useful work can proceed.
 
-Review journal/{blocker_id}.md for failure details.
-Manual intervention required to unblock.
+Obstacle: {plain English — what failed, what it prevents, what was tried}
+Waiting on it: {downstream_ids}
+To unblock: {the decision or fix that would let work continue}
+Details: journal/defects.md D{n}, journal/{blocker_id}.md
 ```
 
 **exit_reason = "blocked":**
 ```
-BLOCKED: All remaining work is blocked. No recommendation available.
+BLOCKED: No recommendation available, and no other useful work can proceed.
 
+Obstacle: {plain English — why every remaining actor is waiting}
+To unblock: {the decision or fix that would let work continue}
 Inspect current state:
   node {STATE_CLI} {SPEC_FOLDER} status
 ```
@@ -50,6 +54,19 @@ MAX_ITERATIONS: Reached iteration cap ({max_iterations}). Pausing for review.
 
 To resume, run DS again with the same spec slug.
 ```
+
+### 2b. Unresolved defects and unrun checks — every exit reason
+
+Read `journal/defects.md` and the `status` result. Append to the report, whatever the exit reason:
+
+```
+UNRESOLVED DEFECTS: {count}
+  D{n} {actor}: {summary} — {open | accepted-for-review}. Impact: {impact}
+UNRUN OR NOT PASSING CHECKS: {count}
+  {actor or check}: {failed | skipped | not run} — {reason}
+```
+
+Write `none` when a list is empty. An accepted or skipped item is reported as failed or skipped — never as passed. "DONE" with open defects means the state machine finished, not that every check passed; say so.
 
 ### 3. Worktree status
 

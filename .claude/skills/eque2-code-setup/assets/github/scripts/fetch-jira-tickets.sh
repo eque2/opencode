@@ -92,3 +92,9 @@ echo "jira_context<<$DELIMITER" >> "$GITHUB_OUTPUT"
 printf '%s' "$JIRA_INFO" >> "$GITHUB_OUTPUT"
 echo "" >> "$GITHUB_OUTPUT"
 echo "$DELIMITER" >> "$GITHUB_OUTPUT"
+
+# A failed fetch fails the step, so the Jira verification job cannot pass without its tickets.
+if [ "$HAS_ERROR" = true ]; then
+  echo "Error: one or more Jira tickets could not be fetched"
+  exit 1
+fi

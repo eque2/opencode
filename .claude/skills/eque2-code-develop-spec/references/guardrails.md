@@ -1,6 +1,6 @@
 # Guardrails
 
-Hard limits — not suggestions. Read in full before acting.
+Hard limits — not suggestions. Read in full before acting. The limits bound effort on one issue; "Failure handling" below decides what happens to the rest of the goal.
 
 Two audiences are bound by this file:
 
@@ -35,6 +35,43 @@ switched off and replaced with an agent with more integrity.
 
 ## Execution limits (every subagent doing iterative work)
 
-- Maximum 3 fix-and-retry iterations for any single issue. After 3 failed attempts, stop and report results.
+- Maximum 3 fix-and-retry attempts for any single issue. The limit applies to that one issue, not to the goal. When you reach it, stop working on the issue, record it (see "Failure handling"), and reassess: try a different approach only when new evidence supports one; otherwise move on to other useful, authorised work.
 - Never set bash timeout above 180000ms (3 minutes) for any single command.
 - If a command produces zero output for >120 seconds, kill it and report as failed.
+
+## Failure handling (orchestrator AND every subagent)
+
+Respond to a failure in proportion to what it actually prevents. One failed check does not stop the goal.
+
+**Classify the failure first.**
+
+- **Contained** — a minor UI defect, an accessibility failure, or one isolated failing test that leaves the rest of the work usable. Record it, then continue with other useful, authorised work.
+- **Blocking** — the failure prevents work that depends on it: a broken build, a failing typecheck, an interface that later tasks call, a security defect. Record it. Work that needs it waits; work that does not need it continues.
+- **Integrity** — the state CLI exits 2 (integrity failure), or evidence or a signature does not verify. Stop the affected actor and report it. Never work around it.
+
+**Record every unresolved failure** in `{SPEC_FOLDER}/journal/defects.md`, one entry each, appended:
+
+```
+## D{n} — {actor id}: {one-line summary}
+- Check: {the command or check that failed}
+- Actual failure: {exact error text or assertion output}
+- Impact: {what this prevents, and what it does not prevent}
+- Attempts: {each fix tried, and its result}
+- Remaining validation: {checks not run, or not passing, because of this}
+- Status: open | accepted-for-review ({cite the owner instruction})
+```
+
+**Owner acceptance.** When an owner instruction — the invoking prompt, the goal charter, or the spec — accepts a class of failure for final review, mark each matching entry `accepted-for-review`, cite the instruction, and continue. Do not ask for the same permission again.
+
+**An accepted failure is still a failure.** Report it as failed. Never weaken or delete an assertion, disable a test (`.skip`, `.only`, `xfail`, commenting out), fabricate a pass or evidence, edit protected state, or modify signing or enforcement programs to get green. Change state only through the state CLI's lifecycle verbs. Where the owner accepted the failure and the CLI allows it (`skip` on a build check or scenario that needs intervention), skip with a `--reason` that cites the defect entry; a skipped actor stays reported as skipped, never as passed.
+
+**Command errors.** Read stderr before acting, and never repeat a failing command unchanged.
+
+- State CLI exit 1 (error): the message names the problem — a wrong id, an illegal transition, a missing argument. Correct the call when the evidence supports it; check the legal verbs with `--help` and the actor's status with `query`.
+- State CLI exit 3 (lock timeout): another process holds the lock. Wait, then retry once.
+- State CLI exit 2 (integrity failure): an Integrity failure, above. Do not retry.
+- Any other command: diagnose from its output, then try a different approach when the evidence supports one. Never probe privileged verbs (`verdict`, `force-reset`, `verification-reset`) to recover — discovery is `--help` only.
+
+**Stop the whole goal only when no useful, authorised work can proceed.** Then name the concrete obstacle in plain English: what failed, what it prevents, what was tried, and what decision or fix would unblock it.
+
+**The final review lists every open and accepted defect and every check that did not run.**

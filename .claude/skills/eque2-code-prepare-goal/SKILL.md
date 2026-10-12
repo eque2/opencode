@@ -57,7 +57,10 @@ anything:
    approval, and neither is this skill being invoked.
 3. **`--force` is the only override.** An explicit
    `prepare-goal <slug> --force` writes the marker itself with
-   `approved-by: OVERRIDE` (plus `plan-hash` and `at`), then proceeds.
+   `approved-by: OVERRIDE`, plus `plan-hash`, `decisions-hash`,
+   `acs-hash` (each from `git hash-object` on the documents as they stand)
+   and `at`, then proceeds — so the stale-approval check below passes
+   against exactly the documents the override covered.
    It never suppresses the marker — the override is recorded, reported
    by the status scan as `approved (OVERRIDE — plan not reviewed)`, and
    journalled. Never reach for `--force` yourself; it is the user's

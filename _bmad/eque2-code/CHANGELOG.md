@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.65.0 — 2026-10-03
+
+- feat: new agent **Spike** (`/eque2-code-agent-spike`) runs technical spikes — an open question settled by experiment, such as "can we make this MCP server faster by changing its queries?". He designs the experiment, has it run under the goal stop gate, and brings back a verdict — adopt, reject, or inconclusive — with numbers. Every stage reuses Hannibal's plan-goal, approval, prepare-goal, and pursue-goal unchanged.
+- feat: `[PS]` plan spike (`eque2-code-plan-spike`) reads the journal first, researches only the gaps, and writes an experiment brief: hypothesis, options, metric, a noise floor fixed before any result, a verdict rule, budgets, a non-production environment, and a ledger of every ephemeral resource. Acceptance criteria prove that an answer exists, never what it is, so an honest "no" still finishes. `check-spike-acs.py` refuses a criterion that states a target.
+- feat: `[ES]` execute spike (`eque2-code-execute-spike`) re-checks the approved plan, has prepare-goal build the spike goal, and hands it to a fresh context with one launch line.
+- feat: `[AS]` adopt spike (`eque2-code-adopt-spike`) turns an adopted result into a promotion brief — the winning diff, main-line drift, the criteria agreed in advance, and a same-run regression guard — then a promotion plan and goal.
+- feat: on every activation Spike sweeps earlier spikes: it tears down resources a cancelled or blocked loop left behind and brings rejected spikes' journal entries home. A delete runs unattended only when it is a known delete verb aimed at that resource's own name or tag; `rm`, `find`, and anything else ask you first.
+- fix: goal worktrees now receive `eque2-code-handover-goal`, so a goal running in its worktree can hand itself over (`[HO]`).
+- fix: `prepare-goal --force` writes a marker with all three hashes, so a deliberate override is no longer refused one step later.
+- fix: the emitted charter matches the stage-1 layout; a light-lane goal no longer claims a SPEC it never had.
+- fix: TODO briefs hand off to `plan-goal`; the documented `prepare-goal` hand-off always failed.
+- fix: `develop-spec` handles failure in proportion. A CLI error is triaged instead of ending the run, the failure review measures what dependants need before blocking, build-task retries are bounded per issue, and the completion report lists unresolved defects and checks that did not run.
+- fix: the goal-gate header gives the real stall defaults (warn at 8, end at 16).
+
+## v0.64.0 — 2026-10-02
+
+- feat: new skill `eque2-code-slidedeck` ([SD]). It interviews you about a talk and builds a clickable, self-contained HTML slidedeck. Decks support a cover page, bullet-by-bullet reveal, slide transitions, section / content / two-column / full-bleed layouts, highlighted code with spotlight steps and animated git-style diffs, Mermaid diagrams, images with required alt text, speaker notes with a presenter view (P), slide numbers, a progress bar, `#/<slide>/<step>` deep links, and Print / Save as PDF with one page per slide.
+- feat: the deck source is a `deck.json` checked against a closed schema (`assets/deck.schema.json`). The bundled `scripts/slidedeck.mjs` validates and compiles it (`schema`, `validate`, `build`) and needs only Node 18+. Validation also catches diffs that do not apply, spotlight ranges past the last line, unknown languages, missing images, and duplicate slide ids, each reported with its JSON path.
+- Decks are written to `_bmad-output/slidedecks/<slug>/`. Mermaid loads from a CDN only when a deck contains a diagram; everything else is inlined.
+
+## v0.63.0 — 2026-10-01
+
+- change: the PR-review workflows now enforce a trust boundary. `pr-review.yml` runs on `pull_request_target`, so the workflow, its reusable workflows, scripts, prompts, and local actions always load from the base branch, never from the PR. The PR's code is checked out read-only into `pr-source/`, without credentials, and is never executed; Claude reads it as untrusted data. A PR can no longer change the code that holds `CLAUDE_CODE_OAUTH_TOKEN`. **Breaking:** edits to these workflows take effect only after they are merged, and the PR that first adds them is not reviewed. Reviews run for same-repository PRs, and for fork PRs only when the author is an owner, member, or collaborator.
+- fix: `anthropics/claude-code-action` is pinned to the commit behind `v1` (`12dd8d74`), not the moving tag.
+- fix: the review workflows request `contents: read`; comments and thread resolution keep `pull-requests` and `issues` write.
+- fix: comment lookups read every page — the review scripts (`github.paginate`) and all three review-comment reads in the prompts (`gh api --paginate`) — so a busy PR no longer loses older comments, stale summaries, or summary links.
+- fix: Jira verification fails when a ticket cannot be fetched, instead of passing without it.
+- Re-run `/eque2-code-setup` to pick these up. Files you had already fixed by hand to the same bytes are recognised as up to date; any other edited file is kept and listed — delete it and re-run setup to take the shipped version.
+
+## v0.62.5 — 2026-10-01
+
+- fix: the PR-review workflows that `/eque2-code-setup` installs no longer run on the deprecated Node 20 runtime, so runs stop warning "Node.js 20 is deprecated". Action pins move to `actions/checkout@v5`, `actions/github-script@v8`, `actions/upload-artifact@v5` and `actions/download-artifact@v5`. Re-run `/eque2-code-setup` to pick them up. If you already bumped these pins by hand to the same versions, setup recognises the files as up to date; files with other team edits are kept and listed, so bump those yourself.
+
 ## v0.62.4 — 2026-09-30
 
 - fix: Codex agents no longer raise the Stop hook as a problem. `pursue-goal` now gives the real reason it skips the hook check under Codex: cloud Codex can write `.codex/hooks.json` but has no way to trust the hook, so the hook never fires. It calls this a known Codex limit, not a defect to diagnose or report. The v0.62.3 note that said the configuration directory is read-only was wrong.

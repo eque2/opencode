@@ -1,7 +1,7 @@
 ---
 name: eque2-code-todo
 description: >
-  Capture a TODO as a grounded, prepare-goal-ready brief — interview the
+  Capture a TODO as a grounded, plan-goal-ready brief — interview the
   requester, probe the codebase for real file paths and current
   behaviour, and write `_bmad-output/todos/<slug>.md` so a fresh context
   can pick it up cold. Also lists the open backlog and marks TODOs done.
@@ -9,37 +9,40 @@ description: >
   "make a TODO for X", "park this", "add to the backlog", "what's on the
   TODO list", "show the backlog", "mark that TODO done",
   "/eque2-code-todo". Use whenever something worth doing surfaces
-  mid-session and should be captured for a later prepare-goal run rather
+  mid-session and should be captured for a later plan-goal run rather
   than done now. Do NOT use for work being done right now (just do it),
   for stable facts (that's memory), or for run outcomes (that's the
   journal skill).
 ---
 
-# TODO Skill — capture work as a prepare-goal input
+# TODO Skill — capture work as a plan-goal input
 
 A TODO here is **not a one-liner**. It is a brief written so that an agent
 opening it months later, with zero session context, knows what to build,
 why, where the code is, and what "done" means. That is the whole point:
-`eque2-code-prepare-goal` consumes the file as its idea document and emits
-`<slug>.goal/` beside it.
+`eque2-code-plan-goal` (Hannibal stage 1) takes the file as its input,
+copies it into `_bmad-output/goals/<slug>.goal/`, and plans from it — the
+decisions, the acceptance criteria, and the plan the user then approves.
 
 **This skill writes the brief. It never implements it and never runs
-prepare-goal.** If you find yourself editing product code, back out.
+plan-goal.** If you find yourself editing product code, back out.
 
 ## Storage
 
 ```
 _bmad-output/todos/
 ├── TODOS.md                  # index — one line per TODO, newest first
-├── <slug>.md                 # the brief (prepare-goal input)
-├── <slug>.goal/              # created LATER by prepare-goal — never by this skill
+├── <slug>.md                 # the brief (plan-goal input)
 └── done/<slug>.md            # archived after the goal is pursued
 ```
 
+The goal folder lives elsewhere: plan-goal creates
+`_bmad-output/goals/<slug>.goal/` later — never this skill.
+
 `<slug>` is kebab-case, verb-led, and specific: `fix-verifier-stall`, not
-`verifier`. It must end `.md` and must not end `.goal.md` — the goal-folder
-resolver (`{skills-root}/eque2-code-goal-gate/goal-folder-path.sh`) rejects
-those, and it is the thing that will consume this file.
+`verifier`. It must end `.md` and must not end `.goal.md`. plan-goal
+usually reuses it for the goal folder (`_bmad-output/goals/<slug>.goal/`),
+so pick one that reads well there too.
 
 ## Verbs
 
@@ -68,7 +71,8 @@ Ask only what you cannot derive. Usually three questions, in one message:
    the probe)
 
 Do **not** ask "what's out of scope?". Everything the request implies is in
-scope — this mirrors prepare-goal's exhaustive-by-default rule, and asking
+scope — this mirrors plan-goal's rule that the input is the contract and
+the plan covers everything it implies — and asking
 invites the requester to shrink the work before it is understood.
 
 If the session already answered any of these, skip the question and say
@@ -86,10 +90,10 @@ spend a few tool calls establishing ground truth in the area named:
   without naming the file has not done its job.
 - **Find the quality gate.** Discover the repo's real lint / type-check /
   test commands (`package.json` scripts, `Makefile`, CI workflow) and name
-  them — do not assume `npm test`. prepare-goal requires a quality-gate
-  criterion and will otherwise have to rediscover this.
-- **Check for duplicates.** Scan `_bmad-output/todos/*.md` and open
-  `.goal/` folders. If this overlaps an existing TODO, say so and offer to
+  them — do not assume `npm test`. plan-goal's `ACs.md` requires a
+  quality-gate criterion and will otherwise have to rediscover this.
+- **Check for duplicates.** Scan `_bmad-output/todos/*.md` and the
+  goal folders in `_bmad-output/goals/`. If this overlaps an existing TODO, say so and offer to
   extend that file instead of creating a rival.
 
 Probe timebox: if ~10 tool calls have not located the area, write what you
@@ -105,12 +109,13 @@ Copy `assets/todo-template.md` and fill every placeholder. Section rules:
   does not exist yet, say "does not exist" and cite where it would go.
 - **Desired behaviour** — the end state, in the present tense.
 - **Done when** — 3–7 checkboxes, each demonstrable in a conversation
-  ("running `X` prints Y"), not aspirational ("code is clean"). These
-  become prepare-goal's Done-when checklist, so a vague one here poisons
-  the whole downstream run. Always include the discovered quality-gate
+  ("running `X` prints Y"), not aspirational ("code is clean"). plan-goal
+  turns them into its acceptance criteria (`ACs.md`), so a vague one here
+  poisons the whole downstream run. Always include the discovered quality-gate
   line.
-- **Observability** — what the change should log or expose. prepare-goal
-  designs this in before feature work; seed it here. "None beyond existing
+- **Observability** — what the change should log or expose. The brief is
+  plan-goal's contract, so whatever you write here becomes a decision or a
+  criterion; seed it here. "None beyond existing
   logging" is a valid answer, written explicitly.
 - **Scope** — leave the carve-out list empty unless the requester named a
   hard external blocker (missing creds, embargoed dep, unavailable env).
@@ -132,7 +137,7 @@ Create `TODOS.md` with an `# eque2-code TODO backlog` heading if absent.
 Print the path written and the exact hand-off command:
 
 ```
-/eque2-code-prepare-goal @_bmad-output/todos/<slug>.md
+/eque2-code-plan-goal @_bmad-output/todos/<slug>.md
 ```
 
 Say plainly that it should be run from a **fresh context** — the brief was
@@ -143,8 +148,10 @@ written so the session that produced it is not needed. Do not run it.
 ## list
 
 Read `TODOS.md`. Print open entries (unchecked) with title, one-line
-criterion, and age. Note any that already have a sibling `<slug>.goal/` —
-those are prepared and awaiting `pursue-goal`, not awaiting preparation.
+criterion, and age. Note any whose slug already has a goal folder
+(`_bmad-output/goals/<slug>.goal/`, or a `<slug>.moved` stub there) — those
+are already planned; Hannibal's `[ST]` reports their stage. Do not offer to
+plan them again.
 If `TODOS.md` is missing or empty, say the backlog is empty.
 
 ## done
@@ -155,15 +162,14 @@ If `TODOS.md` is missing or empty, say the backlog is empty.
 3. Set `status: done` in its frontmatter and add `completed: <YYYY-MM-DD>`.
 4. Tick the `TODOS.md` line and move it under a `## Done` heading.
 
-Leave any `<slug>.goal/` folder where it is — it belongs to prepare-goal
-and moving it breaks the relative links inside it. Note in the report that
-the goal folder stayed put.
+Never touch the goal folder in `_bmad-output/goals/` — it belongs to
+Hannibal's stages, and moving it breaks the relative links inside it.
 
 ## Anti-patterns
 
 - Writing a one-line TODO because the requester gave one line — the brief
   is the deliverable; elaborate it.
 - Implementing the TODO "while you're in there".
-- Creating `<slug>.goal/` — that is prepare-goal's output, not yours.
+- Creating a goal folder — that is plan-goal's output, not yours.
 - Inventing Done-when criteria that cannot be demonstrated.
 - Volunteering out-of-scope carve-outs to make the TODO look tidy.

@@ -30,7 +30,9 @@ ACTION MAPPING:
 
 STATE UPDATES — via the state CLI ONLY, never edit state.md or state files directly:
   Run: `node {STATE_CLI} $SPEC_FOLDER <verb> [args]` — one JSON object on stdout, exit 0 on
-  success; a non-zero exit with a stderr message is a HARD ERROR, stop and report it.
+  success; on a non-zero exit, read the stderr message and triage it per
+  "Command errors" in references/guardrails.md — never repeat the call
+  unchanged, and report an exit 2 (integrity failure) without retrying.
 
   Before work:
     1. `node {STATE_CLI} $SPEC_FOLDER query {task_id}` — extract `.status`.
@@ -44,8 +46,9 @@ STATE UPDATES — via the state CLI ONLY, never edit state.md or state files dir
     response has success: false (look for a side effect of type
     completion-verification-failed and read its reason), the task is NOT
     complete: fix the gap it names — usually a missing or failing test — and
-    call complete again. Do NOT fall back to fail for this.
-  On failure (genuine, unrecoverable work failure — not a failed verification):
+    call complete again. Do NOT fall back to fail for this — unless the
+    same reason persists after 3 attempts (the per-issue limit).
+  On failure (genuine, unrecoverable work failure — cite its defects.md entry):
     `node {STATE_CLI} $SPEC_FOLDER update {task_id} fail --reason "<what went wrong>"`
 
   NOTE: For scenario actors, completion is driven by the vitest reporter and the verify subagent
@@ -102,8 +105,9 @@ into a deliberate, named policy violation — and a verdict from an unregistered
 cryptographically rejected (Ed25519 verify-at-read); a same-machine agent is deterred by this
 policy, not prevented by an unbypassable structure. Agents caught forging evidence or state may be
 switched off and replaced with an agent with more integrity. The
-execution limits (3 retries, 3-minute timeout,
-zero-output kill) also bind you.
+execution limits (3 attempts per issue, 3-minute timeout,
+zero-output kill) and the failure-handling rules also bind
+you: record each unresolved failure in journal/defects.md.
 
 SELF-HELP: Consult {project-root}/docs/CLAUDE/ before
 failing. Fix infrastructure issues yourself.

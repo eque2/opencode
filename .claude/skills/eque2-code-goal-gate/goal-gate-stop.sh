@@ -249,8 +249,9 @@
 #                             120 — see the timing note below)
 #   GOAL_GATE_LIVENESS_WINDOW seconds a claim survives without a heartbeat
 #                             before it may be reclaimed (default 900)
-#   GOAL_GATE_STALL_MAX       consecutive identical evaluations before a stall
-#                             is declared (default 5)
+#   GOAL_GATE_STALL_MAX       turns without measurable progress before the
+#                             stall warning (default 8); the loop ends as
+#                             stalled at twice this value
 #   GOAL_GATE_HASH_TOOL       explicit hashing command, overriding the
 #                             shasum/sha256sum search (tests use it to prove
 #                             an unavailable tool refuses)

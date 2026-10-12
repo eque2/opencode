@@ -694,7 +694,7 @@ install_migrate() {
 # The skills that make up the two user-facing commands, plus the machinery they
 # both call. Named explicitly rather than globbed: a glob over the skills
 # directory would place every unrelated skill in the checkout.
-GG_SKILLS="eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal"
+GG_SKILLS="eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal eque2-code-handover-goal"
 
 # install_skills_source — the checkout directory the skills are copied FROM.
 install_skills_source() {

@@ -54,7 +54,7 @@ g) Check `journal/task/{task_id}.md` for prior attempt context if `attemptNumber
 - Implement the minimum code to pass the tests.
 - Apply Figma token dedup and CSS architecture rules if Figma context was loaded.
 - Run tests after each change. Continue until all pass.
-- If stuck after 3 attempts: run `node {STATE_CLI} $SPEC_FOLDER update task/{task_id} fail --reason "<blocker>"` and EXIT.
+- If one issue still fails after 3 attempts, stop attempting it. Record it in `journal/defects.md` (see "Failure handling" in `references/guardrails.md`) and reassess: try a different approach only when the evidence supports one. If no approach remains, run `node {STATE_CLI} $SPEC_FOLDER update task/{task_id} fail --reason "<blocker> — see defects.md D{n}"` and EXIT. The orchestrator continues with other work.
 
 **REFACTOR phase:**
 - Improve code quality (remove duplication, improve naming, simplify). Run tests after each refactor.
@@ -64,7 +64,7 @@ Final test run to confirm all green.
 
 ### 3. Validate and complete
 
-a) Run lint, full test suite, and typecheck. Fix any failures. Re-run until clean. Treat warnings as errors.
+a) Run lint, full test suite, and typecheck. Treat warnings as errors. Fix every failure your change causes, within the per-issue limit. A failure outside this task's scope — it also fails without your change — does not block this task: record it in `journal/defects.md` with its impact and continue.
 
 b) Mark task `[x]` in spec file.
 
@@ -72,11 +72,11 @@ c) Commit using the discovered commit convention.
 
 d) Write journal entry to `{SPEC_FOLDER}/journal/task/{task_id}.md`.
 
-e) Run `node {STATE_CLI} $SPEC_FOLDER update task/{task_id} complete --reason "<outcome summary>"`. This triggers structural verification — the task only advances if it passes. If the response has `success: false` (a side effect of type `completion-verification-failed` carries the reason), the task is NOT complete: fix what the reason names (usually a missing/failing test), then call `complete` again. Do NOT fall back to `fail` for a failed verification.
+e) Run `node {STATE_CLI} $SPEC_FOLDER update task/{task_id} complete --reason "<outcome summary>"`. This triggers structural verification — the task only advances if it passes. If the response has `success: false` (a side effect of type `completion-verification-failed` carries the reason), the task is NOT complete: fix what the reason names (usually a missing/failing test), then call `complete` again. Do NOT fall back to `fail` for a failed verification — unless the same reason persists after 3 attempts, which is the per-issue limit above.
 
 f) Write transcript to `{SPEC_FOLDER}/journal/transcripts/{task_id}-build-{timestamp}.md`.
 
 ## Exit states
 
-- Completed: `update ... complete` called and structural verification passed (response `success: true`).
-- Failed: `update ... fail` called with reason — only for a genuine, unrecoverable work failure, never for a failed verification (retry `complete` after fixing instead).
+- Completed: `update ... complete` called and structural verification passed (response `success: true`). Out-of-scope failures, if any, are recorded in `journal/defects.md`.
+- Failed: `update ... fail` called with a reason that cites the defect entry — only for a genuine, unrecoverable work failure, or a verification failure that persists past the per-issue limit (otherwise retry `complete` after fixing).

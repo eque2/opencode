@@ -9,7 +9,8 @@ Run the main execution loop: query state for the next action, spawn Task subagen
 - **NEVER** edit state files directly — all state changes via the state CLI (`node {STATE_CLI} $SPEC_FOLDER <verb> [args]`, JSON on stdout).
 - **ALWAYS** respect the max iterations cap (default 100).
 - **NEVER** ask the user questions — run autonomously.
-- Every CLI call prints ONE JSON object to stdout on success and exits 0; on failure it prints an error to stderr and exits non-zero. Treat a non-zero exit as a HARD ERROR and stop.
+- Every CLI call prints ONE JSON object to stdout on success and exits 0; on failure it prints an error to stderr and exits non-zero. Never ignore a non-zero exit and never repeat the call unchanged — triage it per "Command errors" in `references/guardrails.md`. Exit 2 (integrity failure) stops the affected actor.
+- **A failed actor does not end the loop.** Review it (`03-review.md`), then keep taking the work `next` recommends. End the loop early only when no useful, authorised work can proceed.
 - All `update` calls require a `--reason "..."` string for the journal audit trail.
 - **CIRCUIT BREAKER** — every background Task MUST be polled every 10 minutes. See `references/circuit-breaker.md`.
 - **VERIFY IS SPECIAL** — a `verify`/`verify-scenario-trust` recommendation is NEVER dispatched via the generic subagent template. The orchestrator spawns a fresh SIBLING verify subagent using `references/verify-subagent-prompt.md` (never nested inside the builder that produced the work). See step 2d.
@@ -43,7 +44,8 @@ WHILE iteration < max_iterations:
             RUN quality checks per references/quality-checks.md
             IF checks fail:
                 LOG: "QUALITY_GATE: lint/typecheck failed at completion"
-                Fix issues. Treat warnings as errors. Re-run until clean.
+                Fix issues. Treat warnings as errors. Re-run, within the per-issue limit.
+                Record any issue still failing in journal/defects.md — the final review lists it.
             → Route to 04-complete.md with exit_reason="done"
         IF done_check.stalled == true:
             LOG: "STALLED: {blocker detail from done_check}"
@@ -161,6 +163,8 @@ If the loop exits because `iteration >= max_iterations`:
 
 Before spawning each subagent, show the `next` recommendation and ask:
 - Approve, choose an alternate, skip, or abort.
+
+Never ask again for a permission the owner already gave — for example, an instruction accepting a class of failure for final review (see "Owner acceptance" in `references/guardrails.md`).
 
 ## Progression
 

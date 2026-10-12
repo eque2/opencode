@@ -11,9 +11,15 @@ folder moves as a unit).
 
 ## 1. Derivation
 
-For an idea document `X.md`, the goal folder is `X.goal/`, created **as a sibling
-of `X.md`** — the same filesystem directory, never a subdirectory of it and never
-a parallel tree elsewhere.
+**Where a goal folder is created.** Stage 1 (`plan-goal`) creates it as
+`_bmad-output/goals/<slug>.goal/` in the main checkout, named from the task's slug,
+and copies the input prompt *into* it — the folder does not sit beside an idea
+document. Stage 2 later moves it into its worktree (§1a).
+
+**The sibling rule** below is how a goal folder is found from an idea document,
+which stage 3's starter still accepts as an input form. For an idea document
+`X.md`, the goal folder is `X.goal/`, **a sibling of `X.md`** — the same filesystem
+directory, never a subdirectory of it and never a parallel tree elsewhere.
 
 ```
 ideas/
@@ -40,8 +46,10 @@ extension** removed, plus the literal suffix `.goal`.
 ## 1a. The worktree
 
 The goal folder lives inside a **git worktree of its own**, on branch `goal/<slug>`,
-created by prepare-goal's pre-flight. The idea document is brought into the worktree
-and the goal folder is derived from that copy.
+created by prepare-goal (stage 2). Stage 2 moves the stage-1 folder into the worktree
+at the identical relative path, commits it on the branch, and leaves a
+`_bmad-output/goals/<slug>.moved` stub in the main checkout (`SKILL.md`, "The
+worktree"). There is never more than one live copy of a goal folder.
 
 **The invariant is that the main working tree is not disturbed** — nothing is written
 into it and its branch, index, and working state are left exactly as found.

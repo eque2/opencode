@@ -30,7 +30,7 @@ runs:
 
     - name: Find comment
       id: find
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         github-token: ${{ inputs.github_token }}
         script: |

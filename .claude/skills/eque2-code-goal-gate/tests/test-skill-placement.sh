@@ -59,7 +59,7 @@ WORK_DIR="$(cd -- "$WORK_DIR" && pwd -P)"
 # bytes, so drift is provoked deliberately rather than by whatever happens to
 # be in the repo.
 SRC="$WORK_DIR/src"
-for skill in eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal; do
+for skill in eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal eque2-code-handover-goal; do
 	mkdir -p -- "$SRC/$skill/references"
 	printf -- '---\nname: %s\n---\n\nbody\n' "$skill" >"$SRC/$skill/SKILL.md"
 	printf 'reference\n' >"$SRC/$skill/references/notes.md"
@@ -116,7 +116,7 @@ for agent in claude codex; do
 	fi
 	D="$(skills_dir "$agent" "$H")"
 	MISSING=""
-	for skill in eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal; do
+	for skill in eque2-code-prepare-goal eque2-code-pursue-goal eque2-code-goal-gate eque2-code-plan-goal eque2-code-agent-hannibal eque2-code-handover-goal; do
 		[ -f "$D/$skill/SKILL.md" ] || MISSING="$MISSING $skill"
 	done
 	if [ -n "$MISSING" ]; then

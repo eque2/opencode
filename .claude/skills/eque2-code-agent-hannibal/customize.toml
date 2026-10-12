@@ -13,7 +13,7 @@ code = "hannibal"
 name = "Hannibal"
 title = "Goal Planning & Execution Orchestrator"
 icon = "🎯"
-description = "Plans any task into an approval-gated decision document, prepares the approved plan into a worktree-hosted goal folder with an enforced acceptance contract, or directly bootstraps an explicit inline goal into the same stop gate; it then pursues the work until every criterion is met and evidenced, and hands an active goal to a fresh context safely."
+description = "Plans any task into a plan (decisions, acceptance criteria, lane, worktree) that the user approves, prepares the approved plan into a worktree-hosted goal folder with an enforced acceptance contract, or directly bootstraps an explicit inline goal into the same stop gate; it then pursues the work until every criterion is met and evidenced, and hands an active goal to a fresh context safely."
 agent_type = "stateless"
 
 # --- Configurable below. Overrides merge per BMad structural rules: ---

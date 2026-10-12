@@ -9,6 +9,21 @@ reopened) runs `pr-review.yml`, which:
 3. Optionally checks the PR against its Jira ticket (`ENABLE_JIRA_INTEGRATION`,
    private repos only).
 
+## Trust boundary
+
+The workflow runs on `pull_request_target`, so GitHub loads `pr-review.yml`,
+the reusable workflows, the scripts, the prompts and the local actions from the
+**base branch**, never from the PR. The PR's own code is checked out into
+`pr-source/` without credentials and is only read, never run. A PR therefore
+cannot change the code that holds `CLAUDE_CODE_OAUTH_TOKEN`.
+
+Two consequences:
+
+- A change to these files takes effect only after it is merged. The PR that
+  first adds them is not reviewed.
+- Reviews run for PRs from branches in this repository, and for fork PRs only
+  when the author is an owner, member or collaborator.
+
 ## Review rules
 
 The review applies every rule file in `.github/review-rules/`. Generate them

@@ -591,7 +591,7 @@ pg_provision_worktree() {
 	esac
 	[ -n "$main" ] && [ -d "$main" ] && [ "$main" != "$anchor" ] || return 0
 
-	for name in eque2-code-goal-gate eque2-code-pursue-goal eque2-code-prepare-goal eque2-code-plan-goal eque2-code-agent-hannibal; do
+	for name in eque2-code-goal-gate eque2-code-pursue-goal eque2-code-prepare-goal eque2-code-plan-goal eque2-code-agent-hannibal eque2-code-handover-goal; do
 		src="$main/.claude/skills/$name"
 		dst="$anchor/.claude/skills/$name"
 		[ -d "$src" ] || continue

@@ -1,9 +1,9 @@
 code: eque2-code
 name: eque2-code
 description: Feature development orchestration from a Jira ticket or a prose brief to a tested, PR-ready change — spec-driven, evidence-obsessed.
-module_version: 0.62.4
+module_version: 0.65.0
 module_greeting: |
-  eque2-code installed. Run `/eque2-code-agent-linus` to talk to Linus (feature development), `/eque2-code-agent-grace` to talk to Grace (test automation), or `/eque2-code-agent-hannibal` to talk to Hannibal (goal planning & execution). Invoke a capability directly with `/eque2-code-agent-linus JF <TICKET>`, `/eque2-code-agent-grace BK <folder>`, or `/eque2-code-agent-hannibal PL <task>`.
+  eque2-code installed. Run `/eque2-code-agent-linus` to talk to Linus (feature development), `/eque2-code-agent-grace` to talk to Grace (test automation), `/eque2-code-agent-hannibal` to talk to Hannibal (goal planning & execution), or `/eque2-code-agent-spike` to talk to Spike (technical spikes). Invoke a capability directly with `/eque2-code-agent-linus JF <TICKET>`, `/eque2-code-agent-grace BK <folder>`, `/eque2-code-agent-hannibal PL <task>`, or `/eque2-code-agent-spike PS <question>`.
 
 agents:
   - code: linus
@@ -21,6 +21,11 @@ agents:
     title: Goal Planning & Execution Orchestrator
     icon: 🎯
     description: Plans any task into an approval-gated decision document, prepares the approved plan into a worktree-hosted goal folder with an enforced acceptance contract, pursues it under the stop gate until every criterion is met and evidenced, and hands an active goal to a fresh context safely.
+  - code: spike
+    name: Spike
+    title: Technical Spike Lead
+    icon: 🔬
+    description: Settles an open technical question by experiment — designs the spike, has it run under the goal stop gate with every ephemeral resource torn down, and promotes an adopted result through the goal pipeline.
 
 feature_artifacts:
   prompt: Where should feature artifacts (specs, scenarios, state) be written?

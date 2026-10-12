@@ -1,6 +1,6 @@
 # Phase E — the stamp blocks (verbatim shapes)
 
-These are the directives and templates Phase E folds into the input file.
+These are the directives and templates Phase E writes into `goal.md`.
 They are the *deliverable's* wording, so they must survive being read by a
 downstream agent that was never in this conversation — and possibly a
 different agent from the one that prepared the charter. Everything here is
@@ -11,18 +11,17 @@ Pull the exact headless invocation strings from the eque2-code Linus skill
 at authoring time (its `references/pulse.md` task table) rather than
 trusting this file, in case they have moved.
 
-**The full edit** the charter receives: the auto-start banner (§0) at the
-very top, the status header (§1), the
-Build-via directive at the very top (§1a) with the enforcement block when
-eque2-code, the YOLO directive directly under it (§1b), a frontmatter link
-block (SPEC path — a real produced file now — journal dir, `STATE.md`,
-adopted companions, refreshed project docs), original prose preserved
-(strike through only what contradicts a resolved decision), a
-Resolved-decisions section, the story list (Phase 5) and test sketch
-(Phase 6) as bullets, the observability-to-wire list (Phase 3), a
-Ready-to-execute commands section (per-epic `[DS]` chain when eque2-code,
+**The full charter**, `goal.md`, in this order: the auto-start banner (§0)
+at the very top, the status header (§1), the Build-via directive (§1a)
+with the enforcement block when eque2-code builds a heavy-lane goal, the
+YOLO directive directly under it (§1b), a frontmatter link block (the
+copied input prompt, `./plan.md`, `./decisions.md`, the SPEC path on the
+heavy lane — a real produced file — the journal dir, `STATE.md`, refreshed
+project docs), the story/task list from the plan, a Ready-to-execute
+commands section (per-epic `[DS]` chain on the heavy lane when eque2-code,
 each with the agent note), a Contract-review note (Phase R), a "What this
-skill did NOT do" footer, and the Done-when checklist (§10).
+skill did NOT do" footer, and the Done-when pointer to `./ACs.md` (§10).
+The approved decisions are linked, never restated — two copies drift.
 
 **Phase E also writes two files that are not the charter:** the goal
 folder's `CLAUDE.md` and `AGENTS.md` auto-start instructions (body in
@@ -79,19 +78,35 @@ block — there is nothing to switch into.
 
 ## §1. Status header
 
+Stamp the variant for the plan's lane. A light-lane goal has no SPEC, so it
+never claims one.
+
+Heavy lane:
+
 ```
-> **GOAL-READY YYYY-MM-DD** — <workstream slug>, spec-backed,
+> **GOAL-READY YYYY-MM-DD** — <workstream slug>, heavy lane, spec-backed,
 > adversarially reviewed; SPEC produced this run. Drive with your agent's
 > completion loop (`pursue-goal`, which binds the stop gate). See SPEC + journal
 > below for full contract.
 ```
 
+Light lane:
+
+```
+> **GOAL-READY YYYY-MM-DD** — <workstream slug>, light lane, adversarially
+> reviewed; no spec pipeline — the approved `ACs.md` is the whole contract.
+> Drive with your agent's completion loop (`pursue-goal`, which binds the
+> stop gate). See `./decisions.md` + journal below for full contract.
+```
+
 ## §1a. Build-via directive — MANDATORY, at the very top
 
-Stamp the mechanism **Phase 0.5 resolved** — not a fixed string. Because
-this skill RUNS create-spec (`[CS]`) during its own run, the SPEC already
-exists (linked in the frontmatter block). So the directive points
+Stamp the mechanism **Phase 0.5 resolved** — not a fixed string. On the
+**heavy lane** this skill runs create-spec (`[CS]`) in Phase B, so the SPEC
+already exists (linked in the frontmatter block). So the directive points
 downstream at **build** (`[DS]`), and reserves `[CS]` for *re-spec* only.
+On the **light lane** there is no SPEC: stamp the light-lane variant at the
+end of this section instead.
 
 ### When eque2-code is the resolved mechanism (PREFERRED)
 
@@ -169,6 +184,20 @@ countermeasure.)
 > `references/agent-mapping.md`._
 ```
 
+### Light lane — no SPEC
+
+```
+> **Build via `bmad-build`, against the approved contract.** This is a
+> light-lane goal: there is no SPEC and no `[DS]` pipeline. `ACs.md` is
+> the whole contract and `decisions.md` holds the approved technical
+> choices — build to them, do not re-decide them. Build with `bmad-build`,
+> then evidence each criterion in `ACs.md` with real command output. If
+> the work turns out to meet a heavy-lane trigger (more files, a
+> dependency, a schema, a public interface, a user-visible change, a
+> security path), stop and report it: the lane is a stage-1 decision, and
+> changing it means re-planning.
+```
+
 ## §1b. Run-autonomously (YOLO) directive — MANDATORY, at the very top
 
 Stamp on EVERY file this skill edits, verbatim — adapt only the
@@ -210,9 +239,14 @@ parenthetical compute scope to the workstream:
 
 ## §10. Done-when checklist — MANDATORY
 
-The acceptance contract. It is emitted to its **own file, `X.goal/ACs.md`**,
-and `goal.md` links it as `./ACs.md` — a relative link, so the folder still
-moves as a unit.
+The acceptance contract lives in its **own file, `X.goal/ACs.md`**, and
+`goal.md` links it as `./ACs.md` — a relative link, so the folder still
+moves as a unit. **Stage 1 (`plan-goal`) writes `ACs.md` and the user
+approves it.** Phase E only prepends the auto-start banner (§0) and appends
+criteria that Phase B surfaced — the add-only rule in `SKILL.md`. The shape
+below is the one stage 1 authors (`eque2-code-plan-goal`
+`references/plan-format.md`); Phase E uses it to check the approved file,
+never to rewrite it.
 
 **Why a separate file:** the gate reads and re-reads this checklist on every
 turn end, and each tick has to carry its evidence. A checklist buried in the
@@ -241,7 +275,8 @@ refused by the gate as `ticked-without-evidence` — a self-certified tick
 costs a turn and gains nothing. The full lexical rules are
 `references/acs-format.md`.
 
-Mandatory items: the codebase's FULL quality gate (discovered via
+Mandatory items — stage 1 writes them; Phase E confirms the quality gate is
+present and appends one only if it is missing: the codebase's FULL quality gate (discovered via
 `scripts/detect-quality-gate.py`, not assumed — lint, type-check, tests,
 plus any format/CI/Makefile gate, each shown passing via real output, tests
 covering success + boundary/empty + failure modes); the binding verdict
@@ -249,7 +284,8 @@ covering success + boundary/empty + failure modes); the binding verdict
 run); the canary gate (if it fans out); and one item per CAP success
 condition where possible.
 
-Template for **`X.goal/ACs.md`** (adapt the items — MARKDOWN, not YAML):
+Shape of an approved **`X.goal/ACs.md`** (stage 1 adapts the items —
+MARKDOWN, not YAML):
 
 ```markdown
 # Done when (verification checklist — completion contract)

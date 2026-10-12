@@ -1,0 +1,77 @@
+{
+  "$schema": "./deck.schema.json",
+  "version": 1,
+  "cover": {
+    "title": "Shipping with Effect",
+    "subtitle": "From a script to a typed pipeline",
+    "presenter": "Ada Lovelace",
+    "date": "1 October 2026",
+    "logo": { "src": "example-logo.svg", "alt": "eque2 logo" }
+  },
+  "theme": { "mode": "auto", "accent": "#2563eb" },
+  "transition": "fade",
+  "slides": [
+    {
+      "layout": "content",
+      "id": "why",
+      "title": "Why change anything?",
+      "blocks": [
+        {
+          "type": "bullets",
+          "items": [
+            "Scripts **fail late** and fail quietly",
+            { "text": "No error types in the signature", "level": 1 },
+            "Retries and timeouts are copy-pasted",
+            "Effect makes failure *part of the type*"
+          ]
+        },
+        { "type": "text", "text": "Docs: [effect.website](https://effect.website)", "onClick": true }
+      ],
+      "notes": "Ask the room who was paged last month. Keep this under two minutes."
+    },
+    { "layout": "section", "title": "The refactor", "subtitle": "Three small steps", "transition": "zoom" },
+    {
+      "layout": "full-bleed",
+      "title": "Step by step",
+      "transition": "slide",
+      "block": {
+        "type": "code",
+        "language": "typescript",
+        "filename": "fetch-user.ts",
+        "code": "async function fetchUser(id: string) {\n  const res = await fetch(`/users/${id}`)\n  return res.json()\n}\n",
+        "steps": [
+          { "highlight": "2-3" },
+          {
+            "diff": "@@ -1,4 +1,7 @@\n-async function fetchUser(id: string) {\n-  const res = await fetch(`/users/${id}`)\n-  return res.json()\n-}\n+const fetchUser = (id: string) =>\n+  Effect.tryPromise({\n+    try: () => fetch(`/users/${id}`).then(r => r.json()),\n+    catch: cause => new FetchError({ id, cause }),\n+  })"
+          },
+          {
+            "diff": "@@ -5,1 +5,3 @@\n   })\n+    .pipe(Effect.timeout('2 seconds'))\n+    .pipe(Effect.retry({ times: 3 }))",
+            "highlight": "6-7"
+          }
+        ]
+      },
+      "notes": "Pause on the spotlight. The diff steps animate; let them land before talking."
+    },
+    {
+      "layout": "two-column",
+      "title": "Before and after",
+      "left": [
+        { "type": "bullets", "reveal": "all", "items": ["Promise<any>", "try/catch at every call site", "Hand-rolled retry"] }
+      ],
+      "right": [
+        {
+          "type": "diagram",
+          "mermaid": "flowchart LR\n  A[fetch] --> B{ok?}\n  B -- yes --> C[decode]\n  B -- no --> D[retry x3]\n  D --> A",
+          "alt": "Flow: fetch, check ok, decode on success, retry up to three times on failure",
+          "onClick": true
+        }
+      ]
+    },
+    {
+      "layout": "two-column",
+      "title": "Image and text",
+      "left": [{ "type": "image", "src": "example-logo.svg", "alt": "eque2 logo", "caption": "Local images are inlined." }],
+      "right": [{ "type": "text", "text": "Use a two-column slide with an image block for **image + text**." }]
+    }
+  ]
+}

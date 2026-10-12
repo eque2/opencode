@@ -29,10 +29,12 @@ jobs:
   verify-jira:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # pull_request_target: the default checkout is the base revision, so every
+      # control file (scripts, prompts, local actions) comes from trusted code.
+      - name: Checkout trusted base revision
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Jira verification
         uses: ./.github/actions/jira-integration

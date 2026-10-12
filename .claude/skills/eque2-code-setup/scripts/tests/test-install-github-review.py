@@ -13,6 +13,7 @@ Run:  uv run pytest scripts/tests/test-install-github-review.py
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -130,3 +131,86 @@ def test_failure_comment_names_the_job_and_blames_the_token_only_when_it_is_the_
     assert "secret is not set" in handler_comment(tmp_path, esm_log, "false")
     auth_log = "2026-09-30T08:00:00.0Z ##[error]API Error: 401 authentication_error: OAuth token has expired\n"
     assert "authentication error" in handler_comment(tmp_path, auth_log, "true")
+
+
+def test_shipped_assets_use_no_node20_action_majors():
+    # GitHub deprecated the Node 20 runtime; these majors still run on it and
+    # make every PR-review run warn "Node.js 20 is deprecated".
+    last_node20_major = {"checkout": 4, "github-script": 7, "upload-artifact": 4, "download-artifact": 4}
+    pin = re.compile(r"uses:\s*actions/(checkout|github-script|upload-artifact|download-artifact)@v(\d+)")
+    offenders = [
+        f"{path.relative_to(ASSETS)}: actions/{m[1]}@v{m[2]}"
+        for path in sorted(ASSETS.rglob("*.yml"))
+        for m in pin.finditer(path.read_text())
+        if int(m[2]) <= last_node20_major[m[1]]
+    ]
+    assert not offenders, "Node 20 action majors still shipped:\n" + "\n".join(offenders)
+
+
+def _shipped(*globs):
+    return sorted(p for g in globs for p in ASSETS.rglob(g))
+
+
+def _logical_lines(text):
+    """Join shell continuations (`\\` at line end) so a split command reads as one line."""
+    return re.sub(r"\\\n\s*", " ", text).splitlines()
+
+
+def test_third_party_actions_are_pinned_to_a_commit_sha():
+    # A moving tag lets whoever controls it change code that runs with the
+    # review's secrets. First-party actions/* stay on major tags.
+    offenders = [
+        f"{p.relative_to(ASSETS)}: {m[1]}@{m[2]}"
+        for p in _shipped("*.yml")
+        for m in re.finditer(r"uses:\s*([\w.-]+/[\w./-]+)@(\S+)", p.read_text())
+        if not m[1].startswith("actions/") and not re.fullmatch(r"[0-9a-f]{40}", m[2])
+    ]
+    assert not offenders, "Third-party actions not pinned to a commit SHA:\n" + "\n".join(offenders)
+
+
+def test_review_workflows_never_grant_contents_write():
+    offenders = [
+        f"{p.relative_to(ASSETS)}:{n}"
+        for p in _shipped("*.yml")
+        for n, line in enumerate(p.read_text().splitlines(), 1)
+        if re.match(r"\s*contents:\s*write\b", line)
+    ]
+    assert not offenders, "contents: write in a review workflow:\n" + "\n".join(offenders)
+
+
+def test_comment_lists_are_read_with_pagination():
+    # One page holds 30 comments (100 at most); a busy PR loses the rest.
+    offenders = []
+    for p in _shipped("*.js"):
+        for n, line in enumerate(p.read_text().splitlines(), 1):
+            if re.search(r"\.(listComments|listReviewComments|listCommentsForReview)\(", line):
+                offenders.append(f"{p.relative_to(ASSETS)}:{n}: direct call, use github.paginate")
+    for p in _shipped("*.yml", "*.md", "*.sh"):
+        text = p.read_text()
+        if p.suffix == ".md":  # prose names the endpoints too; only fenced commands run
+            text = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", text, re.S))
+        for line in _logical_lines(text):
+            is_read = "gh api" in line and re.search(r"/comments\b", line) \
+                and not re.search(r"\s(-X|--method|--input|-f|-F|--field|--raw-field)\s", line)
+            if is_read and "--paginate" not in line:
+                offenders.append(f"{p.relative_to(ASSETS)}: {line.strip()[:120]}")
+    assert not offenders, "Unpaginated comment reads:\n" + "\n".join(offenders)
+
+
+def test_secret_bearing_runs_load_control_files_from_the_base_revision():
+    # Own judgment, not in the issue list: the trust boundary is the costliest
+    # regression. pull_request_target loads every control file from the base
+    # branch; the PR's code may only land in its own folder, without credentials.
+    pr_review = (ASSETS / "workflows/pr-review.yml").read_text()
+    assert re.search(r"^  pull_request_target:", pr_review, re.M)
+    assert not re.search(r"^  pull_request:", pr_review, re.M)
+    offenders = []
+    for p in _shipped("*.yml"):
+        for step in re.split(r"\n\s*- (?=name:|uses:)", p.read_text()):
+            if "actions/checkout@" not in step:
+                continue
+            if "persist-credentials: false" not in step:
+                offenders.append(f"{p.relative_to(ASSETS)}: checkout keeps credentials")
+            if "pull_request.head" in step and "path:" not in step:
+                offenders.append(f"{p.relative_to(ASSETS)}: PR code checked out over the trusted workspace")
+    assert not offenders, "\n".join(offenders)
