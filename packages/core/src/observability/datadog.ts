@@ -8,6 +8,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  Equal,
   Fiber,
   FileSystem,
   Formatter,
@@ -493,7 +494,8 @@ export const logger = Effect.fn("Datadog.logger")(function* (settings: Settings,
     if (buffer.length > MAX_BUFFER) MutableList.take(buffer)
   })
 
-  const registered: OpenSink = { settings, logger: sink, final }
+  // MutableHashSet compares plain objects by structure, so the entry is marked to compare by reference.
+  const registered: OpenSink = Equal.byReferenceUnsafe({ settings, logger: sink, final })
   // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
   yield* Effect.addFinalizer(() =>
     Effect.andThen(
