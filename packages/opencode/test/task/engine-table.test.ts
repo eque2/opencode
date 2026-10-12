@@ -379,6 +379,31 @@ describe("TableEngine", () => {
     expect(pending).toEqual(engine.initial(plan))
   })
 
+  test("a failed result reopens a trusted obligation with its reason; a needs-judge result leaves it trusted", () => {
+    const rejected = fold([
+      started("T1.1"),
+      ready("T1.1"),
+      happyProof(),
+      verified("T1.1", [trust("T1.1.c1"), trust("T1.1.c2"), reject("T1.1.c3", "too weak")]),
+    ])
+    expect(rejected.obligations["T1.1.c1"].state).toBe("trusted")
+    const reproved = fold(
+      [
+        ready("T1.1", "head2"),
+        proved("T1.1", [fail("T1.1.c1", "the parser broke"), judge("T1.1.c2"), judge("T1.1.c3"), pass("T1.1.p1")]),
+      ],
+      rejected,
+    )
+    expect(reproved.obligations["T1.1.c1"]).toMatchObject({ state: "failed", reason: "the parser broke" })
+    expect(reproved.obligations["T1.1.c2"].state).toBe("trusted")
+    expect(entriesOf(reproved, "T1.1.c1").at(-1)).toMatchObject({
+      from: "trusted",
+      to: "failed",
+      reason: "the parser broke",
+    })
+    expect(reproved.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 3 })
+  })
+
   test("a parent is reviewed once: trusted with attempts 1, or failed and never rebuilt", () => {
     const verifying = fold([proved("T1", [])])
     expect(verifying.tasks["T1"]).toMatchObject({ state: "verifying", attempts: 0 })
