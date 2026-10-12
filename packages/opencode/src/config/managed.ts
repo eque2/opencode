@@ -7,7 +7,7 @@ import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
 

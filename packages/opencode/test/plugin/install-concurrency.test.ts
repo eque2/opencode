@@ -5,7 +5,7 @@ import path from "path"
 import { Effect } from "effect"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { tmpdir } from "../fixture/fixture"
 
 const root = path.join(import.meta.dir, "../..")

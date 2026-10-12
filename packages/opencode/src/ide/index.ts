@@ -1,7 +1,7 @@
 import { Config, ConfigProvider, Effect, Option, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { AppProcess } from "@opencode-ai/core/process"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { IdeEvent } from "@opencode-ai/schema/ide-event"
 
 const SUPPORTED_IDES = [

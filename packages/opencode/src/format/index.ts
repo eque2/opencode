@@ -1,7 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Array as Arr, Effect, Layer, Context, MutableHashMap, Option, Schema } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 import { AppProcess } from "@opencode-ai/core/process"
 import { InstanceState } from "@/effect/instance-state"
 import path from "path"

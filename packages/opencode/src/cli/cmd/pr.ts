@@ -5,7 +5,7 @@ import { Git } from "@/git"
 import { InstanceRef } from "@/effect/instance-ref"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ChildProcess } from "effect/unstable/process"
+import { ChildProcess } from "effect/process"
 
 // The fields that `gh pr view --json ...` returns. gh writes null for the head repository of a deleted fork.
 const PrInfo = Schema.Struct({
