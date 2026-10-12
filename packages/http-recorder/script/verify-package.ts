@@ -23,7 +23,7 @@ export const verifyPackage = async (archive: string) => {
 import { NodeSocket } from "@effect/platform-node"
 import { Layer } from "effect"
 import { HttpClient } from "effect/http"
-import { Socket } from "effect/unstable/socket"
+import { Socket } from "effect/socket"
 
 const options: HttpRecorder.RecorderOptions = { redact: { jsonFields: ["access_token"] } }
 HttpRecorder.http("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
