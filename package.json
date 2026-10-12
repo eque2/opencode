@@ -13,7 +13,7 @@
     "dev:stats": "bun sst shell --stage=production -- bun run --cwd packages/stats/app dev",
     "dev:storybook": "bun --cwd packages/storybook storybook",
     "lint": "bun script/lint.ts",
-    "lint:oxlint": "oxlint",
+    "lint:oxlint": "oxlint --deny-warnings",
     "lint:effect-eslint": "eslint packages/*/src --max-warnings=0",
     "lint:effect-language": "bun script/lint-effect-language.ts",
     "typecheck": "bun turbo typecheck",
