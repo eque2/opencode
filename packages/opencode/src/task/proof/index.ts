@@ -376,6 +376,8 @@ const runGate = Effect.fnUntraced(function* (input: TaskInput, gate: string) {
   } satisfies GateResult
 })
 
+// No commit in base..head changes the path, even one that a later commit reverts. The path is literal,
+// never a glob. `--full-history` keeps a commit on a merged side branch that the merge undid.
 const checkUnchanged = Effect.fnUntraced(function* (
   input: TaskInput,
   bounds: ProofProcess.Bounds,
@@ -383,11 +385,14 @@ const checkUnchanged = Effect.fnUntraced(function* (
   head: string,
   path: string,
 ) {
-  const result = yield* git(input.cwd, bounds, "diff", "--quiet", base, head, "--", path)
+  const range = `${base}..${head}`
+  const result = yield* git(input.cwd, bounds, "log", "--full-history", "--format=%H", range, "--", `:(literal)${path}`)
   if (result.timedOut) return { status: "failed", reason: "timed out" } as const
-  if (result.exitCode === 0) return { status: "passed" } as const
-  if (result.exitCode === 1) return { status: "failed", reason: `changed between base and head: ${path}` } as const
-  return { status: "failed", reason: `git diff exit ${result.exitCode}: ${tail(result.stderr)}` } as const
+  if (result.exitCode !== 0) {
+    return { status: "failed", reason: `git log exit ${result.exitCode}: ${tail(result.stderr)}` } as const
+  }
+  if (result.stdout.trim() === "") return { status: "passed" } as const
+  return { status: "failed", reason: `changed between base and head: ${path}` } as const
 })
 
 /**
