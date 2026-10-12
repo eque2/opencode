@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { nextVersion } from "./bump"
 import { parseCommit, type InvalidCommit, type ParsedCommit } from "./commit"
+import { makeLinkify, parseLinkConfig, plainLinkify } from "./links"
 import { renderNotes } from "./render"
+
+const CONFIG_FILE = "release-notes.config.json"
 
 const USAGE = `Usage: release-notes [--from <ref>] [--to <ref>] [--current <version>]
 
@@ -80,8 +85,35 @@ function isTag(ref: string): boolean {
   return git(["show-ref", "--verify", "--quiet", `refs/tags/${ref}`]).code === 0
 }
 
-function printNotes(commits: (ParsedCommit | InvalidCommit)[], next: string, bump: string): void {
-  process.stdout.write(`${renderNotes(commits)}\nNext version: ${next} (${bump})\n`)
+/** Issue links from `<top level>/release-notes.config.json`; plain keys when it is missing, unreadable or invalid. */
+function loadLinkify(): (key: string) => string {
+  const top = git(["rev-parse", "--show-toplevel"])
+  if (top.code !== 0) return plainLinkify
+  const file = path.join(top.stdout.trim(), CONFIG_FILE)
+  let text: string
+  try {
+    text = readFileSync(file, "utf8")
+  } catch (cause) {
+    const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined
+    if (code === "ENOENT") return plainLinkify
+    warn(`cannot read ${CONFIG_FILE} (${String(code ?? cause)}), so issue keys stay plain text`)
+    return plainLinkify
+  }
+  const config = parseLinkConfig(text)
+  if ("error" in config) {
+    warn(`${CONFIG_FILE} is invalid: ${config.error}, so issue keys stay plain text`)
+    return plainLinkify
+  }
+  return makeLinkify(config)
+}
+
+function printNotes(
+  commits: (ParsedCommit | InvalidCommit)[],
+  next: string,
+  bump: string,
+  linkify: (key: string) => string,
+): void {
+  process.stdout.write(`${renderNotes(commits, { linkify })}\nNext version: ${next} (${bump})\n`)
 }
 
 function main(argv: string[]): number {
@@ -126,11 +158,13 @@ function main(argv: string[]): number {
     if ("error" in checked) return fail(checked.error, EXIT_BAD_ARGUMENTS)
   }
 
+  const linkify = loadLinkify()
+
   // 5. A repository with no commits yet has no changes.
   const head = git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
   if (head.code !== 0 && options.from === undefined && options.to === undefined) {
     const current = explicitCurrent ?? "0.0.0"
-    printNotes([], current, "none")
+    printNotes([], current, "none", linkify)
     return EXIT_OK
   }
 
@@ -186,7 +220,7 @@ function main(argv: string[]): number {
       warn(`commit ${commit.hash} has a BREAKING CHANGE footer but is not a conventional commit, so it does not count`)
     }
   }
-  printNotes(commits, result.next, result.bump)
+  printNotes(commits, result.next, result.bump, linkify)
   return EXIT_OK
 }
 
