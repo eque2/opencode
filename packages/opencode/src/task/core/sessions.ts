@@ -119,6 +119,14 @@ export const judgeMessage = (input: {
     '({ id, verdict: "trusted" | "rejected", reason }), give a reason for each rejection, then stop.',
   ].join("\n")
 
+/** Asks the same judge once more for the ids it gave no verdict: their `judge` lines only, no marker. */
+export const judgeMissingMessage = (judge: ReadonlyArray<{ readonly id: string; readonly text: string }>) =>
+  [
+    ...judge.map((item) => `judge ${item.id}: ${oneLine(item.text)}`),
+    "",
+    "You gave no verdict for the ids above. Call `verdict` once with one entry for each of them, then stop.",
+  ].join("\n")
+
 // --- child sessions -----------------------------------------------------------------------------------------------
 
 /** Creates a child session of the root session in the instance of `directory`. */

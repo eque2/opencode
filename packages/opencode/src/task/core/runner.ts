@@ -195,20 +195,32 @@ const round = Effect.fnUntraced(function* (
       title: `${input.unit} ${input.role}${attempt > 1 ? ` (again)` : ""}`,
       agent: TaskHooks.VERIFIER,
     })
-    clearHooks(session.id)
-    yield* inflight(
-      run,
-      session.id,
-      input.directory,
-      TaskSessions.prompt(run.env, input.directory, {
-        session: session.id,
-        agent: TaskHooks.VERIFIER,
-        model: run.model,
-        text: TaskSessions.judgeMessage(input),
-      }),
+    const ask = (text: string, wanted: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        clearHooks(session.id)
+        yield* inflight(
+          run,
+          session.id,
+          input.directory,
+          TaskSessions.prompt(run.env, input.directory, {
+            session: session.id,
+            agent: TaskHooks.VERIFIER,
+            model: run.model,
+            text,
+          }),
+        )
+        return (TaskHooks.takeVerdicts(session.id) ?? []).filter((verdict) => wanted.includes(verdict.id))
+      })
+    const verdicts = yield* ask(TaskSessions.judgeMessage(input), ids)
+    if (verdicts.length === 0) continue
+    // A judge that skipped some ids is asked once more, in the same session, for exactly those.
+    const missing = input.judge.filter((item) => !verdicts.some((verdict) => verdict.id === item.id))
+    if (missing.length === 0) return Option.some(verdicts)
+    const more = yield* ask(
+      TaskSessions.judgeMissingMessage(missing),
+      missing.map((item) => item.id),
     )
-    const verdicts = (TaskHooks.takeVerdicts(session.id) ?? []).filter((verdict) => ids.includes(verdict.id))
-    if (verdicts.length > 0) return Option.some(verdicts)
+    return Option.some([...verdicts, ...more])
   }
   return Option.none<ReadonlyArray<Verdict>>()
 })
