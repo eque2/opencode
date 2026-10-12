@@ -40,8 +40,13 @@ export function create(runDir: string, name: string): Workspace {
   git(repo, "init", "-q", "-b", "main")
   git(repo, "add", "-A")
   git(repo, "commit", "-q", "-m", "seed")
-  const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: repo })
-  if (install.exitCode !== 0) throw new Error(`bun install failed in ${repo}: ${install.stderr.toString()}`)
+  // Bounded: a stuck install (a cache miss going to the network) must not hold the check. A null exit code means
+  // the bound killed it.
+  const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: repo, timeout: 120_000 })
+  if (install.exitCode !== 0)
+    throw new Error(
+      `bun install failed in ${repo}: ${install.exitCode === null ? "not finished within 120 s" : install.stderr.toString()}`,
+    )
   return { dir, repo, home }
 }
 
