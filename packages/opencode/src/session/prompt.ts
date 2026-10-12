@@ -56,7 +56,9 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { TaskCommand } from "@/task/core/command"
 import { TaskHooks } from "@/task/core/hooks"
+import type { TaskOps } from "@/task/core/ops"
 import { TaskSelector } from "@/task/core/selector"
 
 // @ts-ignore
@@ -1390,6 +1392,25 @@ const layer = Layer.effect(
       return yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input, ready), ready)
     })
 
+    // What the task harness needs from this service. Passed in: the harness prompts sessions itself, so it
+    // cannot import this module without a cycle.
+    const taskOps: TaskOps.Ops = {
+      prompt: (input) =>
+        prompt({
+          sessionID: input.sessionID,
+          agent: input.agent,
+          model: {
+            providerID: ProviderV2.ID.make(input.model.providerID),
+            modelID: ModelV2.ID.make(input.model.modelID),
+          },
+          parts: input.parts,
+          noReply: input.noReply,
+        }).pipe(Effect.catch(Effect.die)),
+      cancel: (sessionID) => cancel(sessionID),
+      currentModel: (sessionID) =>
+        currentModel(sessionID).pipe(Effect.map((model) => ({ providerID: model.providerID, modelID: model.modelID }))),
+    }
+
     const command = Effect.fn("SessionPrompt.command")(function* (input: CommandInput) {
       yield* Effect.logInfo("command", {
         "session.id": input.sessionID,
@@ -1404,6 +1425,9 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         return yield* Effect.die(error)
       }
+      // The task harness (O1, O2) runs `/task` in code: no template, no model turn in this session.
+      if (input.command === Command.Default.TASK && (yield* TaskSelector.inCore))
+        return yield* TaskCommand.run(input, taskOps)
       const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
