@@ -80,15 +80,20 @@ const commit = async (dir: string, message: string) => {
   return (await $`git rev-parse HEAD`.cwd(dir).quiet().text()).trim()
 }
 
-// A repository with the base commit and the task's commit, removed when the test's scope closes.
-const taskRepo = (head: Record<string, string | null>) =>
+// A repository with the base commit and the task's commits (one for each file set; the last is head),
+// removed when the test's scope closes.
+const taskRepo = (...commits: ReadonlyArray<Record<string, string | null>>) =>
   Effect.acquireRelease(
     Effect.promise(async () => {
       const tmp = await tmpdir({ git: true })
       await write(tmp.path, baseFiles)
       const base = await commit(tmp.path, "base")
-      await write(tmp.path, head)
-      return { tmp, dir: tmp.path, base, head: await commit(tmp.path, "task") }
+      let head = base
+      for (const [index, files] of commits.entries()) {
+        await write(tmp.path, files)
+        head = await commit(tmp.path, `task ${index + 1}`)
+      }
+      return { tmp, dir: tmp.path, base, head }
     }),
     (repo) => Effect.promise(() => repo.tmp[Symbol.asyncDispose]()),
   )
@@ -356,6 +361,27 @@ describe("TaskProof", () => {
       expect(reasonOf(proof, "T1.1.c2")).toContain("group > [T1.1.c2] breaks")
       expect(reasonOf(proof, "T1.1.c2")).toContain("grouped failure 5151")
       expect(statusOf(proof, "T1.1.c1")).toBe("passed")
+    }),
+    proveTimeout,
+  )
+
+  groupIt("unchanged reverted: a change that a later commit reverts still fails the unchanged obligation", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo(
+        {
+          ...feature,
+          "test/feature.test.ts": testsOf(passing("T1.1.c1"), passing("T1.1.c2")),
+          "docs/frozen.md": "# Frozen\n\nEdited by the task.\n",
+        },
+        { "docs/frozen.md": baseFiles["docs/frozen.md"] },
+      )
+      const proof = yield* prove(repo)
+      expect(resultOf(proof, "T1.1.f1")).toEqual({
+        id: "T1.1.f1",
+        proof: "unchanged",
+        status: "failed",
+        reason: "changed between base and head: docs/frozen.md",
+      })
     }),
     proveTimeout,
   )
