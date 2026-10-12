@@ -236,7 +236,11 @@ const judged = (judges: ReadonlyArray<string>) => judges.includes("verifier") ||
  * proof the runner or engine alone judges is `passed`. A failed gate of the task (its VERIFY.md `gates`) fails every
  * test obligation that did not fail on its own, as a structural violation does, so the task goes back to the builder.
  */
-const results = (spec: BlendModel.Spec, proof: TaskProof.TaskProof, taskGates: ReadonlyArray<string>) => {
+export const results = (
+  spec: Pick<BlendModel.Spec, "obligations">,
+  proof: TaskProof.TaskProof,
+  taskGates: ReadonlyArray<string>,
+) => {
   const gates = proof.gates.flatMap((gate) =>
     gate.status === "failed" && taskGates.includes(gate.gate) ? [`gate ${gate.gate} failed: ${gate.reason}`] : [],
   )
@@ -540,6 +544,16 @@ const begin = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 
 // --- scenarios -------------------------------------------------------------------------------------------------------------
 
+/** A scenario's tag result as a fact: passed stays passed; failed, and skipped (no test ran), are failed. */
+export const scenarioOutcome = (
+  proof: TaskProof.ScenarioProof,
+): { readonly status: "passed" } | { readonly status: "failed"; readonly reason: string } => {
+  const result = proof.result
+  if (result.status === "passed") return { status: "passed" }
+  if (result.status === "failed") return { status: "failed", reason: result.reason }
+  return { status: "failed", reason: `skipped: every test titled [${proof.scenario}] was skipped` }
+}
+
 /** The scenarios whose needs became trusted together: one `bun test` run on `main` for the batch. */
 const proveScenarios = Effect.fnUntraced(function* (run: Run, batch: ReadonlyArray<BlendModel.Scenario>) {
   yield* run.main.withPermit(
@@ -552,18 +566,7 @@ const proveScenarios = Effect.fnUntraced(function* (run: Run, batch: ReadonlyArr
         limits: run.limits,
       })
       for (const proof of proofs) {
-        const result = proof.result
-        yield* record(run, {
-          type: "scenario.proved",
-          at: yield* now,
-          id: proof.scenario,
-          ...(result.status === "passed"
-            ? { status: "passed" as const }
-            : {
-                status: "failed" as const,
-                reason: result.status === "failed" ? result.reason : `skipped: every test titled [${proof.scenario}] was skipped`,
-              }),
-        })
+        yield* record(run, { type: "scenario.proved", at: yield* now, id: proof.scenario, ...scenarioOutcome(proof) })
       }
     }),
   )
