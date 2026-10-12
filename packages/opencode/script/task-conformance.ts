@@ -50,7 +50,9 @@ const base: (Baseline & { arm?: unknown; live?: unknown; selection?: unknown }) 
   ? JSON.parse(fs.readFileSync(args.baseline, "utf8"))
   : undefined
 if (base && base.arm !== "baseline") throw new Error(`--baseline ${args.baseline} is a run of arm ${String(base.arm)}, not baseline`)
-if (base && base.live !== live) throw new Error(`--baseline ${args.baseline} has live ${String(base.live)}, this run has ${live}`)
+// The baseline arm never runs L1 (it is scored `not-runnable`, D8), whatever its live flag; an option's live run is
+// compared with it as planned. A live baseline file would be a different measurement, so that is still refused.
+if (base && base.live === true) throw new Error(`--baseline ${args.baseline} was measured live; the baseline never runs L1`)
 if (base && JSON.stringify(base.selection) !== JSON.stringify(selection))
   throw new Error(`--baseline ${args.baseline} scored checks ${JSON.stringify(base.selection)}, this run scores ${JSON.stringify(selection)}`)
 
