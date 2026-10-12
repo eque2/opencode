@@ -13,7 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
-import { Clock, Effect, Fiber, HashMap, MutableHashSet, Option, Predicate, Random, Result, Schedule } from "effect"
+import { Clock, Effect, Equal, Fiber, HashMap, MutableHashSet, Option, Predicate, Random, Result, Schedule } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -258,7 +258,8 @@ export function Prompt(props: PromptProps) {
   const timers = MutableHashSet.empty<Fiber.Fiber<void>>()
   function runTimer(effect: Effect.Effect<void>) {
     const fiber = Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
-    MutableHashSet.add(timers, fiber)
+    // A fiber has no Equal or Hash, and hashing one by structure can throw, so the set keys it by reference.
+    MutableHashSet.add(timers, Equal.byReferenceUnsafe(fiber))
     fiber.addObserver(() => MutableHashSet.remove(timers, fiber))
   }
   // Run a handler program to completion even if the prompt unmounts, as the old promises did.
