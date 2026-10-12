@@ -175,3 +175,18 @@ describe("the scenario results", () => {
     })
   })
 })
+
+describe("the verdicts of a round", () => {
+  test("keep only the last verdict per id", () => {
+    expect(
+      TaskRunner.latestVerdicts([
+        { id: "T1.1.c1", verdict: "rejected", reason: "first look" },
+        { id: "T1.1.c2", verdict: "trusted" },
+        { id: "T1.1.c1", verdict: "trusted" },
+      ]),
+    ).toEqual([
+      { id: "T1.1.c2", verdict: "trusted" },
+      { id: "T1.1.c1", verdict: "trusted" },
+    ])
+  })
+})

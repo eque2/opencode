@@ -167,6 +167,13 @@ const cancelChildren = (run: Run, children: ReadonlyArray<readonly [SessionID, s
     { concurrency: "unbounded", discard: true },
   )
 
+/**
+ * One verdict per id: the last one the judge recorded. A judge that records an id twice (rejected, then trusted)
+ * must not let the merge decision and the engine read different verdicts.
+ */
+export const latestVerdicts = (verdicts: ReadonlyArray<Verdict>) =>
+  verdicts.filter((verdict, index) => verdicts.findLastIndex((other) => other.id === verdict.id) === index)
+
 // A `task_ready` or verdicts left from a turn that ended otherwise (repetition, spend cap, stall, cancel) must not
 // count for the next turn: each turn starts with none.
 const clearHooks = (session: SessionID) => {
@@ -212,7 +219,7 @@ const round = Effect.fnUntraced(function* (
         )
         return (TaskHooks.takeVerdicts(session.id) ?? []).filter((verdict) => wanted.includes(verdict.id))
       })
-    const verdicts = yield* ask(TaskSessions.judgeMessage(input), ids)
+    const verdicts = latestVerdicts(yield* ask(TaskSessions.judgeMessage(input), ids))
     if (verdicts.length === 0) continue
     // A judge that skipped some ids is asked once more, in the same session, for exactly those.
     const missing = input.judge.filter((item) => !verdicts.some((verdict) => verdict.id === item.id))
@@ -221,7 +228,7 @@ const round = Effect.fnUntraced(function* (
       TaskSessions.judgeMissingMessage(missing),
       missing.map((item) => item.id),
     )
-    return Option.some([...verdicts, ...more])
+    return Option.some(latestVerdicts([...verdicts, ...more]))
   }
   return Option.none<ReadonlyArray<Verdict>>()
 })
