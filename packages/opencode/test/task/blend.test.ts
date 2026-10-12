@@ -49,6 +49,15 @@ const copyGolden = Effect.fnUntraced(function* () {
   return target
 })
 
+// Replaces `from` with `to` in one file of a copied spec. `from` must be in the file.
+const edit = Effect.fnUntraced(function* (target: string, rel: string, from: string, to: string) {
+  const fs = yield* FileSystem.FileSystem
+  const file = path.join(target, rel)
+  const text = yield* fs.readFileString(file)
+  expect(text).toContain(from)
+  yield* fs.writeFileString(file, text.replace(from, to))
+})
+
 // golden/README.md: copy the spec, delete each `delete` path, then copy `files/` over it.
 const rebuild = Effect.fnUntraced(function* (caseDir: string) {
   const fs = yield* FileSystem.FileSystem
@@ -114,22 +123,16 @@ describe("Blend.load", () => {
 
   it.live("refuses leaves that are after each other and names the cycle", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
       const target = yield* copyGolden()
       // T2.2 is already after T2.1; T2.1 after T2.3 and T2.3 after T2.2 close the ring.
-      const edit = (rel: string, from: string, to: string) =>
-        Effect.gen(function* () {
-          const file = path.join(target, rel)
-          const text = yield* fs.readFileString(file)
-          expect(text).toContain(from)
-          yield* fs.writeFileString(file, text.replace(from, to))
-        })
       yield* edit(
+        target,
         "T2-services.task/T2.1-database-source.task/TASK.md",
         "after: [T1.2, T1.3]",
         "after: [T1.2, T1.3, T2.3]",
       )
       yield* edit(
+        target,
         "T2-services.task/T2.3-serve-nothing-routing.task/TASK.md",
         "after: [T1.3, T1.6]",
         "after: [T1.3, T1.6, T2.2]",
@@ -142,6 +145,23 @@ describe("Blend.load", () => {
         message: "order has a cycle: T2.1 → T2.3 → T2.2 → T2.1",
       })
       expect(result.spec).toBeUndefined()
+    }),
+  )
+
+  it.live("applies a task's lower budget to its effective policy", () =>
+    Effect.gen(function* () {
+      const target = yield* copyGolden()
+      yield* edit(
+        target,
+        "T2-services.task/T2.4-gateway-dry-run.task/VERIFY.md",
+        "    test: [runner, verifier, human]\n",
+        "    test: [runner, verifier, human]\n  budgets: {taskAttempts: 2}\n",
+      )
+      const result = yield* Blend.load(target)
+      expect(result.failures).toEqual([])
+      const task = result.spec?.tasks.find((each) => each.id === "T2.4")
+      expect(task?.policy.budgets).toStrictEqual({ taskAttempts: 2, retries: 3 })
+      expect(task?.policyOverride?.budgets).toStrictEqual({ taskAttempts: 2 })
     }),
   )
 
