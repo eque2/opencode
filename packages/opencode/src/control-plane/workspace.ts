@@ -16,7 +16,7 @@ import {
   Stream,
 } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Database } from "@opencode-ai/core/database/database"
 import { asc } from "drizzle-orm"
 import { eq } from "drizzle-orm"

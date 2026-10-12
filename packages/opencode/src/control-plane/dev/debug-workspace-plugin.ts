@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, FileSystem, Layer, Schedule, Schema } from "effect"
-import { FetchHttpClient, HttpClient } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient } from "effect/http"
 import { randomInt } from "node:crypto"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 

@@ -6,7 +6,7 @@ import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { createEmbeddedRoutes } from "@opencode-ai/server/routes"
 import { Context, Effect, Layer, Scope } from "effect"
 import { constVoid } from "effect/Function"
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http"
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http"
 
 export const create = Effect.fn("OpenCode.create")(function* () {
   const scope = yield* Scope.Scope

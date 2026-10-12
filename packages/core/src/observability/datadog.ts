@@ -23,7 +23,7 @@ import {
   Schema,
 } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { createHash } from "node:crypto"
 import { gzipSync } from "node:zlib"
 import os from "os"

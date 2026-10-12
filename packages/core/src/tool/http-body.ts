@@ -1,5 +1,5 @@
 import { Effect, Option, Stream } from "effect"
-import { HttpClientResponse } from "effect/unstable/http"
+import { HttpClientResponse } from "effect/http"
 
 export const collectBoundedResponseBody = <E>(
   response: HttpClientResponse.HttpClientResponse,

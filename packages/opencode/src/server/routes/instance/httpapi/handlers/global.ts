@@ -9,7 +9,7 @@ import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecy
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Schema } from "effect"
 import * as Stream from "effect/Stream"
-import { HttpServerResponse } from "effect/unstable/http"
+import { HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"

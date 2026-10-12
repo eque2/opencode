@@ -6,7 +6,7 @@ import { Auth } from "@/auth"
 
 import { mapValues } from "remeda"
 import { Effect, HashSet, Option, Schema } from "effect"
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
 import { InstanceHttpApi } from "../api"
 import { ProviderAuthApiError } from "../groups/provider"

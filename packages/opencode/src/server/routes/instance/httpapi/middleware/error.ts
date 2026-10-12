@@ -1,7 +1,7 @@
 import { NamedError } from "@opencode-ai/core/util/error"
 import { ConfigErrorV1 } from "@opencode-ai/core/v1/config/error"
 import { Cause, Effect, Random } from "effect"
-import { HttpRouter, HttpServerError, HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerError, HttpServerRespondable, HttpServerResponse } from "effect/http"
 
 // Eight hex digits that tie the client error to its server log line, as the former UUID prefix did.
 const errorRef = Random.nextIntBetween(0, 0xffffffff).pipe(Effect.map((n) => `err_${n.toString(16).padStart(8, "0")}`))

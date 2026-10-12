@@ -14,7 +14,7 @@ import {
   References,
   Tracer,
 } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { OtlpExporter, OtlpSerialization } from "effect/unstable/observability"
 import { Global } from "./global"
 import { Datadog } from "./observability/datadog"

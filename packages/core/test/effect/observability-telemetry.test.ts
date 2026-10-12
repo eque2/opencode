@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { ConfigProvider, Effect, Exit, Logger, Option, Tracer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { ID, type Payload } from "@opencode-ai/schema/event"
 import { domain, spanCategory } from "../../src/observability/category"
 import { Datadog } from "../../src/observability/datadog"

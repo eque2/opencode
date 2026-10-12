@@ -1,7 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Exit, Layer } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http"
 import { Socket } from "effect/unstable/socket"
 import * as fs from "node:fs"
 import * as os from "node:os"

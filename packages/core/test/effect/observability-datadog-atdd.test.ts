@@ -14,7 +14,7 @@ import {
   References,
   Schema,
 } from "effect"
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/http"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"

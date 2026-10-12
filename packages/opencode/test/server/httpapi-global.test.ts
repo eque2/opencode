@@ -1,7 +1,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
 import { Auth } from "../../src/auth"
 import { Config } from "../../src/config/config"

@@ -1,5 +1,5 @@
 import { Config, ConfigProvider, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient } from "effect/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
 import DESCRIPTION from "./websearch.txt"

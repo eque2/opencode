@@ -1,7 +1,7 @@
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { InstanceStore } from "@/project/instance-store"
 import { Effect, Layer, Option } from "effect"
-import { HttpServerResponse } from "effect/unstable/http"
+import { HttpServerResponse } from "effect/http"
 import { HttpApiMiddleware } from "effect/http-api"
 import { WorkspaceRouteContext } from "./workspace-routing"
 

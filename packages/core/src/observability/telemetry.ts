@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Exit, Fiber, LogLevel, Predicate, Tracer } from "effect"
-import { HttpServerRequest, type HttpMiddleware } from "effect/unstable/http"
+import { HttpServerRequest, type HttpMiddleware } from "effect/http"
 import type { Payload } from "@opencode-ai/schema/event"
 import { eventCategory, spanCategory } from "./category"
 import { Datadog } from "./datadog"

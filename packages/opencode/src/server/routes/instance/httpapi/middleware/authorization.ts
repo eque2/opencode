@@ -1,6 +1,6 @@
 import { ServerAuth } from "@/server/auth"
 import { Effect, Encoding, Layer, Option, Redacted } from "effect"
-import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiError, HttpApiMiddleware } from "effect/http-api"
 import { hasPtyConnectTicketURL } from "@/server/shared/pty-ticket"
 import { isPublicUIPath } from "@/server/shared/public-ui"

@@ -1,7 +1,7 @@
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Database } from "@opencode-ai/core/database/database"
 import { Effect, HashSet, Option, Schema } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import * as Fence from "@/server/shared/fence"
 
 const ignoredMethods = HashSet.fromIterable<string>(["GET", "HEAD", "OPTIONS"])

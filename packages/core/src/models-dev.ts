@@ -1,6 +1,6 @@
 import path from "path"
 import { Clock, Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
 import { FlagConfig } from "./flag/flag"
