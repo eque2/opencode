@@ -295,6 +295,20 @@ describe("TaskProof", () => {
       expect(isAlive(Number(result.stdout.trim()))).toBe(false)
     }),
   )
+
+  groupIt("run: a command that passes its timeout reports exit 124 and leaves no process", () =>
+    Effect.gen(function* () {
+      const result = yield* TaskProof.run("sh", ["-c", "sleep 600"], {
+        cwd: process.cwd(),
+        timeout: "300 millis",
+        cancelDeadline: limits.cancelDeadline,
+      })
+      expect(result.timedOut).toBe(true)
+      expect(result.exitCode).toBe(TaskProof.timedOutExitCode)
+      expect(result.exitCode).toBe(124)
+      expect(result.groupCleared).toBe(true)
+    }),
+  )
 })
 
 // True when a process with this pid exists. Signal 0 checks without sending anything.
