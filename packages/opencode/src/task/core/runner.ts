@@ -662,7 +662,11 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
 
 const JUDGED = ["trusted", "rejected", "failed"]
 
-/** Records `run.ended` done once every plan task is trusted and every scenario is judged or waits only on `outside`. */
+/**
+ * Ends the run once every plan task is trusted and every scenario is judged or waits only on `outside`: `done` when
+ * every judged scenario is trusted, `failed` (naming them) when any acceptance proof failed or was rejected — the run
+ * is trusted only when every proof passed.
+ */
 const checkDone = Effect.fnUntraced(function* (run: Run) {
   const input = yield* view(run)
   const { state } = input
@@ -673,7 +677,14 @@ const checkDone = Effect.fnUntraced(function* (run: Run) {
     const open = TaskStatus.waitingOn(input, scenario.needs)
     return current === "waiting" && open.length > 0 && open.every((id) => id in run.plan.spec.outside)
   })
-  if (tasks && scenarios) yield* record(run, { type: "run.ended", at: yield* now, state: "done" })
+  if (!tasks || !scenarios) return
+  const unproved = run.plan.scenarios.filter((scenario) => {
+    const current = state.scenarios[scenario.id]?.state
+    return current === "failed" || current === "rejected"
+  })
+  if (unproved.length === 0) return yield* record(run, { type: "run.ended", at: yield* now, state: "done" })
+  const reason = `acceptance not proved: ${unproved.map((scenario) => `${scenario.id} ${state.scenarios[scenario.id]?.state}`).join(", ")}`
+  yield* record(run, { type: "run.ended", at: yield* now, state: "failed", reason })
 })
 
 // --- scheduling ------------------------------------------------------------------------------------------------------------
