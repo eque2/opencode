@@ -84,6 +84,8 @@ export async function open(input: {
   let root: string | undefined
   let target: string | undefined
   let startedAt: number | undefined
+  // True from kill() until a restart succeeds: the dead server's pid may be reused, so close() must not signal it.
+  let killed = false
   const turns: Promise<unknown>[] = []
   const left: Proc[] = []
 
@@ -119,10 +121,12 @@ export async function open(input: {
     kill: () => {
       left.push(...tree(server.pid))
       Server.kill(server.pid, "SIGKILL")
+      killed = true
     },
     restart: async () => {
       if (!target) throw new Error("restart before start")
       server = await Server.start(options)
+      killed = false
       client = createOpencodeClient({ baseUrl: server.url, directory: input.workspace.repo })
       await start(target)
     },
@@ -149,8 +153,10 @@ export async function open(input: {
       return out
     },
     close: async () => {
-      left.push(...tree(server.pid))
-      await Server.stop(server)
+      if (!killed) {
+        left.push(...tree(server.pid))
+        await Server.stop(server)
+      }
       killLeft(left)
       await Promise.race([Promise.allSettled(turns), Bun.sleep(5_000)])
     },
