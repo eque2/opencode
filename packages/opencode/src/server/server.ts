@@ -37,7 +37,7 @@ type ListenOptions = CorsOptions & {
   mdnsDomain?: string
 }
 type ListenerState = {
-  scope: Scope.Scope
+  scope: Scope.Closeable
   server: Context.Service.Shape<typeof HttpServer.HttpServer>
   http: ListenerServer
   websockets: WebSocketTracker.Interface
