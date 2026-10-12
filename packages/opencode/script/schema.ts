@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
+import { ProviderJsonSchema } from "@opencode-ai/llm"
 import { TuiConfig } from "@opencode-ai/tui/config"
 import { Schema } from "effect"
 
@@ -9,11 +10,15 @@ const MODEL_REF = "https://models.dev/model-schema.json#/$defs/Model"
 
 function generateEffect(schema: Schema.Top) {
   const document = Schema.toJsonSchemaDocument(schema)
-  const normalized = normalize({
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...document.schema,
-    $defs: document.definitions,
-  })
+  // Remove the safe-integer range that Effect 4.0 adds for `Schema.isInt` first, so that a
+  // caller's own bound (for example a port's 1-65535) is not lost when `allOf` is flattened.
+  const normalized = normalize(
+    ProviderJsonSchema.withoutSafeIntegerRange({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      ...document.schema,
+      $defs: document.definitions,
+    }),
+  )
   if (!isRecord(normalized)) throw new Error("schema generator produced a non-object schema")
   const restored = restoreModelRefs(normalized)
   if (!isRecord(restored)) throw new Error("schema generator produced a non-object schema")
