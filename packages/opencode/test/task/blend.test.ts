@@ -88,7 +88,8 @@ describe("Blend.load", () => {
 
       // The whole parse target, unit hashes included, equals the reference checker's output.
       const golden = yield* Schema.decodeUnknownEffect(GoldenModel)(yield* fs.readFileString(goldenModel))
-      expect(golden).toEqual(spec)
+      // `unknown` lets the decoded JSON stand as the expected value; toStrictEqual also refuses undefined keys.
+      expect<unknown>(spec).toStrictEqual(golden)
     }),
   )
 
