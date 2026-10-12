@@ -72,7 +72,7 @@ Four hazard lenses, an API-difference audit of every release from rc.118 to 4.0.
 
 - `bun turbo typecheck --force`: passed, 30 of 30 tasks, none cached.
 - Oxlint `--deny-warnings`: 0 warnings, 0 errors (3,328 files). Effect ESLint: 0 problems (2,106 files). Language service `--strict`: 0 errors, 0 warnings, 0 messages in all 18 projects (2,821 files).
-- Real entry points: `opencode serve` answers `/config` and `/doc` with 200 and exits within 1 s on SIGTERM and on SIGINT. The TUI starts, draws its home screen, and exits 0 on Ctrl+C. `opencode run` with an unknown model exits 1 in 5 s, as on rc.117.
+- Real entry points: `opencode serve` answers `/config` and `/doc` with 200 and exits within 1 s on SIGTERM (code 143) and on SIGINT (code 130); the rc.117 main checkout gives the same codes and timing for both signals. The TUI starts, draws its home screen, and exits 0 on Ctrl+C. `opencode run` with an unknown model exits 1 in 5 s, as on rc.117.
 - Tests, per package, against the baseline: the same 8 failures and no new ones.
   - `codemode` 262 pass / 1 fail, `llm` 306 pass / 2 fail (8 new tests), `opencode` 3,589 pass / 7 fail; every other package 0 failures.
   - Two of the 7 `opencode` failures timed out during the full run ("concurrent loop callers all receive same error result", and the unknown-model `opencode run` case with its 15 s limit). Both pass when rerun: the first 3 of 3 times alone and 58 of 58 in its file, the second 3 of 3.
