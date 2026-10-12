@@ -1,0 +1,2 @@
+ok: 7 tasks, 61 obligations, 26 scenarios — R1–R13 hold
+R12 note: `outside` names 12 tasks — each is a precondition the state store must record as trusted before anything that depends on it starts

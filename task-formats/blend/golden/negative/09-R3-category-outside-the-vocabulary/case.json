@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "category outside the vocabulary",
+  "exit": 1,
+  "delete": []
+}

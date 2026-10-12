@@ -1,0 +1,6 @@
+{
+  "rule": "R8",
+  "name": "a leaf ensures without a category",
+  "exit": 1,
+  "delete": []
+}

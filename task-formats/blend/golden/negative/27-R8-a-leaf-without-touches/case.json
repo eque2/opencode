@@ -1,0 +1,6 @@
+{
+  "rule": "R8",
+  "name": "a leaf without touches",
+  "exit": 1,
+  "delete": []
+}

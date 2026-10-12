@@ -1,0 +1,6 @@
+{
+  "rule": "R4",
+  "name": "prose after the gherkin block",
+  "exit": 1,
+  "delete": []
+}

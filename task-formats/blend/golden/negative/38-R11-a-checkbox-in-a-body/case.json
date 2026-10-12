@@ -1,0 +1,6 @@
+{
+  "rule": "R11",
+  "name": "a checkbox in a body",
+  "exit": 1,
+  "delete": []
+}

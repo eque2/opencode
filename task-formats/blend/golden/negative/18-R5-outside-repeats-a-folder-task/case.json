@@ -1,0 +1,6 @@
+{
+  "rule": "R5",
+  "name": "outside repeats a folder task",
+  "exit": 1,
+  "delete": []
+}

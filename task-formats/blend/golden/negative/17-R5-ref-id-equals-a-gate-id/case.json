@@ -1,0 +1,6 @@
+{
+  "rule": "R5",
+  "name": "ref id equals a gate id",
+  "exit": 1,
+  "delete": []
+}

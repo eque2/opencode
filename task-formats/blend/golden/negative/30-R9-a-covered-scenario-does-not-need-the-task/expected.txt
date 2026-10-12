@@ -1,0 +1,1 @@
+R9 T2-services.task/T2.6-routing-decision-record.task/VERIFY.md: T2.6.c3 covers S58, but S58 does not need T2.6

@@ -1,0 +1,6 @@
+{
+  "rule": "R13",
+  "name": "an override drops a spec judge",
+  "exit": 1,
+  "delete": []
+}

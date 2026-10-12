@@ -1,0 +1,6 @@
+{
+  "rule": "R13",
+  "name": "an override raises a budget",
+  "exit": 1,
+  "delete": []
+}

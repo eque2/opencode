@@ -1,0 +1,2194 @@
+{
+  "id": "provider-ordering-admin",
+  "title": "Admin-configurable provider ordering per model",
+  "policy": {
+    "redFirst": true,
+    "proofBinding": "title-tag",
+    "structural": "touches-plus-tests",
+    "review": "parent-diff",
+    "trust": "independent-verifier",
+    "acceptance": "after-all-needs-trusted",
+    "evidence": [
+      "exit-code",
+      "counts",
+      "run-id",
+      "commit",
+      "signed-reporter"
+    ],
+    "budgets": {
+      "taskAttempts": 10,
+      "retries": 3
+    },
+    "judges": {
+      "test": [
+        "runner",
+        "verifier"
+      ],
+      "gate": [
+        "runner"
+      ],
+      "unchanged": [
+        "engine"
+      ],
+      "review": [
+        "reviewer"
+      ]
+    }
+  },
+  "gates": {
+    "BUILD-2": {
+      "title": "Type check passes",
+      "command": "pnpm nx run-many -t typecheck -p ui,api,media,media-mcp,contracts,db",
+      "requires": "Node 22"
+    },
+    "BUILD-4": {
+      "title": "Tests pass",
+      "command": "pnpm nx run-many -t test-ci -p ui,api,media,media-mcp,contracts,db",
+      "requires": "Node 22; `test-ci`, not `test`, because `nx test` hangs locally"
+    }
+  },
+  "refs": {
+    "POA-D3": "A `Database` variant of `RoutingPolicySourceSpec`, added alongside `None`/`Inline`/`File`/`Gcs`, not replacing them.",
+    "POA-D4": "An unconfigured `(model, feature)` has no projected entry and routes by the existing default precedence, reported as `'default-precedence'`.",
+    "POA-D7": "Apply is a whole-document, single-transaction, optimistically-concurrent write keyed on the stored configuration's revision. Zero enabled providers is a legal \"do not serve\" state that fails the pair with a typed error.",
+    "POA-D8": "Generic `dryRun: 'succeed' | 'fail'`, short-circuiting before any provider HTTP call and any wallet debit.",
+    "POA-D9": "Attribution (provider + `RoutingSource` + `policyHash` + dry-run flag) is persisted, logged, metered and returned, including over MCP.",
+    "POA-R1": "The serve-nothing set travels inside the policy document: the router sees only the `PolicySnapshot`'s document, and `routingPolicyHash` covers only the document.",
+    "POA-R2": "The Apply path and the background poller are two independent writers of `RoutingPolicyService`; the swap must refuse a document whose revision is older than the one in force.",
+    "POA-R4": "`generation_history.asset_id` references `assets`, so a dry run, which has no asset, records its attribution in a separate `routing_decisions` table.",
+    "POA-A3.b": "The dry-run short-circuit sits in `candidate-execution.ts`, so the attempt record is produced exactly as a live call produces it.",
+    "EFF-10": "Domain failures are typed errors in the error channel (`Data.TaggedError`), never thrown, never `Effect.die` for an expected refusal.",
+    "EFF-32": "No read-then-write across a `yield*` where an invariant spans it; the existing `Ref.modify` compare-and-swap is the reference."
+  },
+  "outside": {
+    "T1.1": "Create the routing-configuration and attribution migration",
+    "T1.2": "Implement `RoutingConfigExt` — transactional read and replace",
+    "T1.3": "Implement the rows → policy-document projection",
+    "T1.4": "Create the generic dry-run vocabulary",
+    "T1.5": "Add the admin configuration wire contract",
+    "T1.6": "Add the serve-nothing set to the policy document and its identity",
+    "T3.2": "Implement the apply-configuration endpoint",
+    "T3.5": "Expose dry-run over MCP and return the attribution",
+    "T3.8": "Update readiness with source identity, last read and coverage",
+    "T4.1": "Add the typed configuration client and error copy",
+    "T4.5": "Build the reorderable, toggleable provider list",
+    "T5.3": "Validate that the deployed service reads the store"
+  },
+  "tasks": [
+    {
+      "id": "T2",
+      "slug": "services",
+      "title": "Implement services — source, routing semantics, dry run, attribution",
+      "children": [
+        "T2.1",
+        "T2.2",
+        "T2.3",
+        "T2.4",
+        "T2.5",
+        "T2.6"
+      ],
+      "after": [],
+      "goal": "Phase 2. The behaviour changes. Each subtask preserves a named property of the `provider-routing` workstream.",
+      "touches": [],
+      "refs": [],
+      "notHere": [],
+      "gates": [],
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [],
+      "supports": [],
+      "hash": "sha256:a0d70d551a0066f13b7b5c341312710dc18f0903c1888074dac2072c0ee025ec"
+    },
+    {
+      "id": "T2.1",
+      "slug": "database-source",
+      "title": "Add the `Database` routing-policy source variant",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T1.2",
+        "T1.3"
+      ],
+      "goal": "Let the live policy come from the table without teaching the policy service anything new.",
+      "approach": "Extend **every** `$match` — the exhaustive matcher failing to compile is the intended safety net, not an obstacle. The source offers documents through the existing `load`, so the \"a rejected replacement never removes the working policy\" property is inherited rather than re-implemented.",
+      "touches": [
+        {
+          "path": "libs/media/src/routing-policy-source.ts",
+          "change": "update",
+          "what": "a `Database` case on `RoutingPolicySourceSpec`; `specUri` renders it as `db://routing-config`"
+        }
+      ],
+      "refs": [
+        "POA-D3"
+      ],
+      "notHere": [],
+      "gates": [
+        "BUILD-2"
+      ],
+      "hint": "libs/media/src/tests/verify-provider-ordering-admin-S25.spec.ts",
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T1.2",
+        "T1.3"
+      ],
+      "supports": [
+        "S21",
+        "S25",
+        "S36",
+        "S41"
+      ],
+      "hash": "sha256:b13ef0bd926efe25e3f66c8e98b4e2676b6a8b33cc5940be771bf6d05273bb44"
+    },
+    {
+      "id": "T2.2",
+      "slug": "source-selection",
+      "title": "Wire source selection, polling and load semantics",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T2.1"
+      ],
+      "goal": "Make the database the selectable source, and prove the existing load properties still hold when reached through it.",
+      "approach": "**Finding POA-R2:** the Apply path and the background poller are two independent writers of `RoutingPolicyService`. Without a revision comparison in the swap, a poll in flight across an Apply silently reverts the administrator's change for up to one poll interval — after they were told it succeeded. The swap must therefore refuse an older revision, not merely a matching hash.",
+      "touches": [
+        {
+          "path": "libs/media/src/routing-policy-source.ts",
+          "change": "update",
+          "what": "extend `routingPolicySourceSpecConfig` so the source is selected by configuration"
+        },
+        {
+          "path": "apps/api/src/main.ts",
+          "change": "update",
+          "what": "wire the database-backed source"
+        },
+        {
+          "path": "libs/media/src/routing-policy.ts",
+          "change": "update",
+          "what": "the compare-and-swap refuses a document whose revision is older than the one in force (POA-R2)"
+        }
+      ],
+      "refs": [
+        "POA-R2",
+        "POA-D7",
+        "EFF-32"
+      ],
+      "notHere": [],
+      "gates": [],
+      "hint": "libs/media/src/tests/verify-provider-ordering-admin-S39.spec.ts",
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T2.1"
+      ],
+      "supports": [
+        "S18",
+        "S19",
+        "S21",
+        "S25",
+        "S39",
+        "S40",
+        "S41",
+        "S51",
+        "S57",
+        "S59"
+      ],
+      "hash": "sha256:3323ab1fd5d77b12a89be960efa153b82ef7ba75c17bc6dc62202a815f2da173"
+    },
+    {
+      "id": "T2.3",
+      "slug": "serve-nothing-routing",
+      "title": "Update the router so a pair configured to serve nothing is not treated as unconfigured",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T1.3",
+        "T1.6"
+      ],
+      "goal": "Make a deliberately-emptied pair fail loudly instead of silently reverting to the built-in default.",
+      "approach": "This is the one genuine semantic change to `provider-router.ts`. Today an absent entry and a serve-nothing entry are indistinguishable; after this they must not be. Add a tagged failure alongside the existing `NoCandidateSatisfiesConstraints` rather than reusing it — the operator response differs completely (\"your constraints excluded everything\" versus \"you switched everything off\").",
+      "touches": [
+        {
+          "path": "libs/media/src/provider-router.ts",
+          "change": "update",
+          "what": "a pair configured with zero enabled providers fails with a new typed error instead of falling through to default precedence"
+        }
+      ],
+      "refs": [
+        "POA-R1",
+        "POA-D4",
+        "POA-D7",
+        "EFF-10"
+      ],
+      "notHere": [],
+      "gates": [],
+      "hint": "libs/media/src/tests/verify-provider-ordering-admin-S7.spec.ts",
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T1.3",
+        "T1.6"
+      ],
+      "supports": [
+        "S3",
+        "S6",
+        "S7",
+        "S22",
+        "S44",
+        "S56"
+      ],
+      "hash": "sha256:1dcea0bcb3df28da189e9f77ae622e8d1addda3bb2d9239c2ab86196ebe96004"
+    },
+    {
+      "id": "T2.4",
+      "slug": "gateway-dry-run",
+      "title": "Add the dry-run mode to the gateway",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T1.4"
+      ],
+      "goal": "Let a caller ask \"who would serve this?\" and get a truthful answer without a provider call or a charge.",
+      "approach": "Extend the input of `deriveIdempotencyKey` so the mode is part of the key: a dry run must neither collide with nor poison a live call's idempotency key.",
+      "touches": [
+        {
+          "path": "libs/media/src/media-gateway.ts",
+          "change": "update",
+          "what": "`GatewayRoutingContext` gains an optional dry-run field"
+        }
+      ],
+      "refs": [
+        "POA-D8"
+      ],
+      "notHere": [
+        {
+          "what": "the short-circuit itself — this task supplies the mode and the money guarantee",
+          "owner": "T2.5"
+        }
+      ],
+      "gates": [],
+      "hint": "libs/media/src/tests/verify-provider-ordering-admin-S8.spec.ts",
+      "policyOverride": {
+        "judges": {
+          "test": [
+            "runner",
+            "verifier",
+            "human"
+          ]
+        }
+      },
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier",
+            "human"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T1.4"
+      ],
+      "supports": [
+        "S8",
+        "S9",
+        "S10",
+        "S42",
+        "S53"
+      ],
+      "hash": "sha256:49743ec37aa2ee9547b28c50c89c8a5d194e2e97ea1956deb295b78b51ef7db2"
+    },
+    {
+      "id": "T2.5",
+      "slug": "attempt-boundary-short-circuit",
+      "title": "Move the dry-run short-circuit to the attempt boundary so attribution is shape-identical",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T1.4",
+        "T2.4"
+      ],
+      "goal": "Make a dry run produce the *same* attribution record a live call produces — which is the entire reason a dry run can be used as proof.",
+      "approach": "Placing the short-circuit here rather than higher in the gateway is what buys the shape-identity (POA-A3.b); the \"no adapter entered\" property is preserved and separately asserted.",
+      "touches": [
+        {
+          "path": "libs/media/src/candidate-execution.ts",
+          "change": "update",
+          "what": "the short-circuit sits after the candidate is chosen and before the provider adapter is entered, where the attempt record is still produced"
+        }
+      ],
+      "refs": [
+        "POA-A3.b",
+        "POA-D9"
+      ],
+      "notHere": [],
+      "gates": [
+        "BUILD-4"
+      ],
+      "hint": "libs/media/src/tests/verify-provider-ordering-admin-S55.spec.ts",
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T1.4",
+        "T2.4"
+      ],
+      "supports": [
+        "S10",
+        "S55"
+      ],
+      "hash": "sha256:cbd9b79d6c42c5a4c5207c1c5dfeff00d92f04dce525121774bb19c22fa823ff"
+    },
+    {
+      "id": "T2.6",
+      "slug": "routing-decision-record",
+      "title": "Write the routing-decision record and the generation attribution",
+      "parent": "T2",
+      "children": [],
+      "after": [
+        "T1.1",
+        "T2.4"
+      ],
+      "goal": "Make it impossible for a generation to exist without a record of why the provider that served it was chosen.",
+      "approach": "Extend the existing `recordGeneration` input rather than adding a second write path for the generation half — the atomicity guarantee in the `0015` migration docblock depends on there being exactly one. The routing-decision record is a separate, additional write that every call makes, live or dry (POA-R4). Regenerate the DB types after T1.1 with `pnpm nx run db:codegen`.",
+      "touches": [
+        {
+          "path": "libs/db/src/lib/extensions/versions.extensions.ts",
+          "change": "update",
+          "what": "extend the existing `recordGeneration` input, and add the routing-decision write that every call makes, live or dry"
+        }
+      ],
+      "refs": [
+        "POA-R4",
+        "POA-D9"
+      ],
+      "notHere": [],
+      "gates": [],
+      "hint": "libs/db/src/lib/extensions/tests/verify-provider-ordering-admin-S27.spec.ts",
+      "policy": {
+        "redFirst": true,
+        "proofBinding": "title-tag",
+        "structural": "touches-plus-tests",
+        "review": "parent-diff",
+        "trust": "independent-verifier",
+        "acceptance": "after-all-needs-trusted",
+        "evidence": [
+          "exit-code",
+          "counts",
+          "run-id",
+          "commit",
+          "signed-reporter"
+        ],
+        "budgets": {
+          "taskAttempts": 10,
+          "retries": 3
+        },
+        "judges": {
+          "test": [
+            "runner",
+            "verifier"
+          ],
+          "gate": [
+            "runner"
+          ],
+          "unchanged": [
+            "engine"
+          ],
+          "review": [
+            "reviewer"
+          ]
+        }
+      },
+      "afterEffective": [
+        "T1.1",
+        "T2.4"
+      ],
+      "supports": [
+        "S27",
+        "S43",
+        "S58"
+      ],
+      "hash": "sha256:f89dde0378243579f6bf04637557919ce12293305bbe1f1f7d88d0684a45e079"
+    }
+  ],
+  "obligations": [
+    {
+      "id": "T2.e1",
+      "task": "T2",
+      "kind": "ensures",
+      "text": "The combined T2 diff passes one independent review once the last child is trusted. Fixes land in their own commits, and the children they touch are judged again.",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:df0850d1ae1f02da38f1e61d6a137eef723dd2f42b36f2f6a2a9f920d34fe10e"
+    },
+    {
+      "id": "T2.1.c1",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "the source reads rows, projects, and the policy service accepts the document.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:1a6aaa3766fdcd410bad2f404eca120ae11a2040fd0ad409136eaad0c7c0f39f"
+    },
+    {
+      "id": "T2.1.c2",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "empty",
+      "text": "an empty table yields the empty policy and the service serves it — a fresh deployment with nothing configured boots and routes by default precedence.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:92958fc53838ae8aa8c16f69eca5c22c64fd94ab5dadde4ab7a85aef9626b202"
+    },
+    {
+      "id": "T2.1.c3",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "the full catalogue projects and loads in one read.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:34e8ead9d7c16007aa2b35e6970d4a96bed28040237c763bf9b4cb2779d378ba"
+    },
+    {
+      "id": "T2.1.c4",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "the database is unreachable → the source reports the existing `unreachable` poll outcome; the policy in force is untouched.",
+      "covers": [
+        "S21",
+        "S25"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "asserting only that an error was reported. Compare the serving snapshot's identity before and after the failed read."
+      ],
+      "hash": "sha256:ebe2f08fb3b340d82be4213bc3278108db13172fa419a56e6408e2a22ccb7ae3"
+    },
+    {
+      "id": "T2.1.c5",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "invalid-input",
+      "text": "rows that project to a document naming an unregistered provider are refused by the existing load-time registry check, and the previous snapshot keeps serving.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c5"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "a refusal raised by new code in the source. The case is that the existing load-time registry check refuses it."
+      ],
+      "hash": "sha256:4cda9b67af97936656849868c34074f1cf1c36901b362ff259329504dddfed49"
+    },
+    {
+      "id": "T2.1.c6",
+      "task": "T2.1",
+      "kind": "ensures",
+      "category": "compatibility",
+      "text": "`Gcs`, `File`, `Inline` and `None` behave exactly as before.",
+      "covers": [
+        "S41"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.1.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "exercising one source. Each of `Gcs`, `File`, `Inline` and `None` needs its own assertion."
+      ],
+      "hash": "sha256:741cec2cfc1fabe73cc726386999d427b5a435f7e0f8177870b310bdf89706ef"
+    },
+    {
+      "id": "T2.1.p1",
+      "task": "T2.1",
+      "kind": "preserves",
+      "text": "every `$match` stays exhaustive: a case missing from a matcher is a type error",
+      "covers": [],
+      "proof": {
+        "kind": "gate",
+        "gate": "BUILD-2"
+      },
+      "judges": [
+        "runner"
+      ],
+      "hash": "sha256:b2c429ca21fabd19c71fdd289933ff4aeea7b701181ec93b9e1fa27575a9c220"
+    },
+    {
+      "id": "T2.1.p2",
+      "task": "T2.1",
+      "kind": "preserves",
+      "text": "the poll interval, the retry count and the `unreachable` outcome semantics are untouched",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:eaf319f3b5f5ba265f453a30da85bb0e5b493fba493e300d83e46dd05db39ea7"
+    },
+    {
+      "id": "T2.1.f1",
+      "task": "T2.1",
+      "kind": "forbids",
+      "text": "modify `libs/media/src/routing-policy.ts` — the source offers documents through the existing `load`",
+      "covers": [],
+      "proof": {
+        "kind": "unchanged",
+        "path": "libs/media/src/routing-policy.ts"
+      },
+      "judges": [
+        "engine"
+      ],
+      "hash": "sha256:677084a0a814abd2bbba2af2c7cd919f0215077da96557926b0072665c2806fa"
+    },
+    {
+      "id": "T2.2.c1",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "configuration selects the database source; the poller loads it on the existing interval.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:d979f3d2ed48af1e014b348c22533e34263a13813057ceefe1b0a554abf2b203"
+    },
+    {
+      "id": "T2.2.c2",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "re-reading an unchanged configuration reports `unchanged` and does not advance the generation counter.",
+      "covers": [
+        "S40"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "asserting only that the outcome says `unchanged`. Assert that the generation counter did not advance."
+      ],
+      "hash": "sha256:27321674429600980597014dbee91f655e6ff22f3a0d83734b0f144105f0c78a"
+    },
+    {
+      "id": "T2.2.c3",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "a policy replacement landing mid-request does not change the decision that request already resolved; a request begun afterwards sees the replacement.",
+      "covers": [
+        "S39"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "swapping the policy before the request starts. The replacement must land after the request has resolved its decision and before it completes."
+      ],
+      "hash": "sha256:5fca507d96a11a4b56324d53791bfc15d58b3de87df5a5caab6f52bd1d229071"
+    },
+    {
+      "id": "T2.2.c4",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "a malformed projection is refused and the readiness surface reports `serving-stale`.",
+      "covers": [
+        "S18"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:8024fe16d6083571aa5d1bbd0c26fb55d8e196dea31c1022b9f3095ae54a614d"
+    },
+    {
+      "id": "T2.2.c5",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "the store is unreachable for several consecutive polls; the policy in force keeps serving throughout.",
+      "covers": [
+        "S21"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c5"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:c2cac1b01b81587a41b291d47f65d2009641467a5b87f48201c245c5d4bb6036"
+    },
+    {
+      "id": "T2.2.c6",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "concurrency",
+      "text": "a poll that began before an Apply and completes after it does not reinstate the pre-Apply configuration — the swap refuses a document whose revision is older than the one in force.",
+      "covers": [
+        "S57",
+        "POA-R2"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "running the poll and the Apply one after the other. The poll must begin before the Apply and complete after it, or the test cannot fail."
+      ],
+      "hash": "sha256:872ab2a7630b5efd4b5b8ea15bac7b0e0984a6aea3fe4fb1d711fe71691597da"
+    },
+    {
+      "id": "T2.2.c7",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "invalid-input",
+      "text": "a document refused by the catalogue-binding check leaves the previous policy serving and is reported.",
+      "covers": [
+        "S59"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c7"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:b17a8e104507adc0246c9e0a601bbe3a80abf725ed72e35651fc3e75ad81ee97"
+    },
+    {
+      "id": "T2.2.c8",
+      "task": "T2.2",
+      "kind": "ensures",
+      "category": "compatibility",
+      "text": "the GCS-configured deployment path is untouched.",
+      "covers": [
+        "S41"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c8"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:a89921fed4dcaf356dd371b4b3c68620f91f1f049ae9ff1b042430980b72f95e"
+    },
+    {
+      "id": "T2.2.p1",
+      "task": "T2.2",
+      "kind": "preserves",
+      "text": "the existing environment variables keep selecting the source they select today",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c8"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:2288dbc19f00b7f1e07a944f14c1caaadb74526aa825215cf7628a0b5aa3bf6d"
+    },
+    {
+      "id": "T2.2.p2",
+      "task": "T2.2",
+      "kind": "preserves",
+      "text": "`ROUTING_POLICY_DEFAULT_POLL_INTERVAL` and the bounded retry count — this task adds a source, it does not retune the poller",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:4eda006cdba084f99e28a4963c5ec58750985088f736e0357de379d4b91ff6c6"
+    },
+    {
+      "id": "T2.2.p3",
+      "task": "T2.2",
+      "kind": "preserves",
+      "text": "the `RoutingPolicyLive` composition and `provideMerge` structure in `main.ts`",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:8bea416cfff56d7a7794d904b88523eb0a1fe4799bf7db03d8180a683e1f0cf0"
+    },
+    {
+      "id": "T2.2.p4",
+      "task": "T2.2",
+      "kind": "preserves",
+      "text": "a request sees one snapshot for its lifetime",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:ef954cbf069c5207370b07f2408a2283cb04270a73444129d60e11ec3a706565"
+    },
+    {
+      "id": "T2.2.p5",
+      "task": "T2.2",
+      "kind": "preserves",
+      "text": "a rejected replacement never disturbs the serving snapshot",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.2.c7"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:23b638ba47f583e32f76994ccac53dafde3f2715d62046c6af03309d4c8c3874"
+    },
+    {
+      "id": "T2.3.c1",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "a configured pair routes to its first enabled candidate in stored order, reported as `'policy'`.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:be3889f66c81e38b4a7376a66fcd27131a24d11a179b89f7ac41493d1e89d8f5"
+    },
+    {
+      "id": "T2.3.c2",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "empty",
+      "text": "an absent pair routes by `orderedCandidatesFor`, reported as `'default-precedence'`.",
+      "covers": [
+        "S6",
+        "S44"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:5783fd2339c02ba14e8ba25e0372448cfb155bf55e8acc5a84812880ba9be074"
+    },
+    {
+      "id": "T2.3.c3",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "a pair configured with every provider disabled fails with a typed error naming the pair, distinguishable from the absent case.",
+      "covers": [
+        "S7"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "asserting only that an error occurred. Assert the error's tag and the pair it names; only that separates serve-nothing from absent."
+      ],
+      "hash": "sha256:766dffcef3497812a3bc2e3d68c819d75207105e75a9050810de5f080c50fbff"
+    },
+    {
+      "id": "T2.3.c4",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "a disabled provider is never a candidate, even when every enabled candidate has failed.",
+      "covers": [
+        "S3",
+        "S22"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "a single failing candidate. Fail every enabled candidate, then assert the disabled provider was never called."
+      ],
+      "hash": "sha256:94c265df2360ea64be77c604cd11c7ec38b236496cd3237a059926d4563cd4cc"
+    },
+    {
+      "id": "T2.3.c5",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "invalid-input",
+      "text": "an override naming a disabled provider is refused by the existing `OverrideNotACandidate`, not silently honoured.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c5"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:1c41f7a1e19453791cb597225a6aeb11865a81298dd70726c98bace68df85d6b"
+    },
+    {
+      "id": "T2.3.c6",
+      "task": "T2.3",
+      "kind": "ensures",
+      "category": "regression",
+      "text": "candidate order is verbatim and never re-sorted; a policy for a pair remains strictly additive over default precedence for every pair that is merely absent.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:73e36c820114b5aca3d84a8779e1fc3b89ff2834b5ba3953a78e09e0dc924e84"
+    },
+    {
+      "id": "T2.3.p1",
+      "task": "T2.3",
+      "kind": "preserves",
+      "text": "candidate order is verbatim and never re-sorted",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:ea4be853ba61d7d588ec2d023f5d81b30dbd2abc89b6afb9aba8e948a18e9b37"
+    },
+    {
+      "id": "T2.3.p2",
+      "task": "T2.3",
+      "kind": "preserves",
+      "text": "a policy stays strictly additive over default precedence for every pair that is merely absent",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.3.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:83f0e1cfc1041f7c2c69b29cb69eadde6111807b960f8c634948cf161ab78898"
+    },
+    {
+      "id": "T2.3.p3",
+      "task": "T2.3",
+      "kind": "preserves",
+      "text": "the failover gating",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:a001dca7b240193e9a3aae7b373ea1188bf6a338c49a87d209060b067ab92b65"
+    },
+    {
+      "id": "T2.3.f1",
+      "task": "T2.3",
+      "kind": "forbids",
+      "text": "read the serve-nothing set from anywhere but the `PolicySnapshot`'s document (T1.6) — any other channel reintroduces POA-R1",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:33b862f748ca928091163edc216bb721f71e10dbf1cb9bc9629209e86e430b93"
+    },
+    {
+      "id": "T2.3.f2",
+      "task": "T2.3",
+      "kind": "forbids",
+      "text": "reuse `NoCandidateSatisfiesConstraints` for the serve-nothing case",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:fd5dca494f55c847232a5852c12ce4b80375a1991ae8566f548cf6486708f0e7"
+    },
+    {
+      "id": "T2.3.f3",
+      "task": "T2.3",
+      "kind": "forbids",
+      "text": "touch `routingPolicyHash`",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:9dfdc8e52caf39c9c4c3df5adef03ed305ea2b1e8e42e0f3f00756010e67175a"
+    },
+    {
+      "id": "T2.4.c1",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "`'succeed'` resolves routing, records attribution, returns a synthetic success naming the provider.",
+      "covers": [
+        "S8"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "hash": "sha256:15920e3ae9bd841cfaf41c7ad458fcb3179c4253cb62f1a8430f40ac169effbe"
+    },
+    {
+      "id": "T2.4.c2",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "`'fail'` returns the synthetic typed failure, attribution still recorded.",
+      "covers": [
+        "S9"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "hash": "sha256:0f27a6c9459de1497f8746f2a52b8a252ff0970e85d53fe97c6310e58bd1bc48"
+    },
+    {
+      "id": "T2.4.c3",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "empty",
+      "text": "no dry-run mode supplied → the call behaves exactly as before, including being charged.",
+      "covers": [
+        "S42"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "hash": "sha256:30f7dfc810166bb8cc2b539802f1ad95f16b04183dd40adec105e664994f1828"
+    },
+    {
+      "id": "T2.4.c4",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "a dry run on a pair with one candidate, and on a pair configured to serve nothing (the routing failure surfaces; the dry run does not mask it).",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "hash": "sha256:a0ac3bfcfac4f9629ad1f9f0b470dabdba281591599efbdf341f1730ad83c69d"
+    },
+    {
+      "id": "T2.4.c5",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "no provider is contacted under either mode.",
+      "covers": [
+        "S10"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c5"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "rejects": [
+        "asserting the returned value only. Use a provider stub that fails the test if it is entered."
+      ],
+      "hash": "sha256:0156a360efcf1bf8611e764a4dee4697bb826f9305d1f221e5e1ac398dc36711"
+    },
+    {
+      "id": "T2.4.c6",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "money",
+      "text": "the wallet balance is unchanged and no charge row is created.",
+      "covers": [
+        "S53"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "rejects": [
+        "checking the response. Read the wallet balance and the charge rows before and after."
+      ],
+      "hash": "sha256:8d30eb634e4918de0fbd44ff7e208abcd06c2b9ceb12e4484205ebbdc4089de8"
+    },
+    {
+      "id": "T2.4.c7",
+      "task": "T2.4",
+      "kind": "ensures",
+      "category": "security",
+      "text": "the dry-run idempotency key cannot collide with a live call's, so a dry run can never satisfy or poison a real request's idempotency.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c7"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "rejects": [
+        "checking that a key exists. Derive both keys for the same request and assert they differ."
+      ],
+      "hash": "sha256:b073296bbf635c60aff1627852d2faa87c9d912422838dcd3c9632d18c1e2d6f"
+    },
+    {
+      "id": "T2.4.p1",
+      "task": "T2.4",
+      "kind": "preserves",
+      "text": "the estimate-drift / re-confirmation gate",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:2c787f09b638564d47ae43183d44bfa29d534f23f00f4c8660477150a6210644"
+    },
+    {
+      "id": "T2.4.p2",
+      "task": "T2.4",
+      "kind": "preserves",
+      "text": "`deriveIdempotencyKey` — extended, not replaced",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.4.c7"
+      },
+      "judges": [
+        "runner",
+        "verifier",
+        "human"
+      ],
+      "hash": "sha256:8107a37236ef8311d2a9325aec3a5a4278f0cd32881b540bc8f5928e7ac9bde8"
+    },
+    {
+      "id": "T2.4.p3",
+      "task": "T2.4",
+      "kind": "preserves",
+      "text": "`admitPinnedProviderId`",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:a3116415b903b120ee74a330f539c938cef11c943d4d17a4bd4149236d16b0f0"
+    },
+    {
+      "id": "T2.5.c1",
+      "task": "T2.5",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "the attempt record produced under dry run carries the same fields, in the same shape, as a live attempt record, differing only by the dry-run marker.",
+      "covers": [
+        "S55"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "comparing a few chosen fields. Compare the dry-run and live attempt records field by field."
+      ],
+      "hash": "sha256:4eb4d37d693e8ea9b6d29b395067e3a7bd4ae7113a947d7de37e3de05ac612fc"
+    },
+    {
+      "id": "T2.5.c2",
+      "task": "T2.5",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "the short-circuit happens after the candidate is chosen and before the provider adapter is entered — assert with a provider stub that fails the test if entered at all.",
+      "covers": [
+        "S10"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:24944f8a7332366975519feda2856fda7fa501177ca4468bf3bc36e6cf2c4dff"
+    },
+    {
+      "id": "T2.5.c3",
+      "task": "T2.5",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "`'fail'` produces an attempt record marked failed, and the failover machinery is *not* triggered by it (a synthetic failure is not evidence that a provider is unavailable).",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "asserting the failure only. Assert that the failover machinery made no further attempt."
+      ],
+      "hash": "sha256:dcc2f32b553f4a06558d4a73eb0ba500aea4c0161dcd55fd30bb7709358b8d7f"
+    },
+    {
+      "id": "T2.5.c4",
+      "task": "T2.5",
+      "kind": "ensures",
+      "category": "regression",
+      "text": "`AllProvidersExhausted` and `IncompatibleRequestSchema` semantics are unchanged for live calls.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:a13b3133d207de8944f21882997917e51e9e41fe770af7e9fbe7095299161392"
+    },
+    {
+      "id": "T2.5.p1",
+      "task": "T2.5",
+      "kind": "preserves",
+      "text": "`AllProvidersExhausted` and `IncompatibleRequestSchema` semantics for live calls",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:0da0b7ed9c1f4e3f07d41e8429754f57cfeb2f693e7e3ce243588ec03a03eb6d"
+    },
+    {
+      "id": "T2.5.p2",
+      "task": "T2.5",
+      "kind": "preserves",
+      "text": "no provider adapter is entered on a dry run",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:e79a79ad9d15e0f1cc054ab19e7ed1d9325a9b6b9dc1390177ca0acee60320f5"
+    },
+    {
+      "id": "T2.5.f1",
+      "task": "T2.5",
+      "kind": "forbids",
+      "text": "let a synthetic failure trigger failover — otherwise `dryRun: 'fail'` would silently exercise the whole chain and report the wrong provider",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.5.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:81bec49c14f70e0f6ba13b85f3ad3ebc26a56fd48b36dc9e04dcab3803c25317"
+    },
+    {
+      "id": "T2.6.c1",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "happy-path",
+      "text": "a recorded generation carries provider, routing source and policy hash, written in the same atomic step as the asset insert and wallet decrement.",
+      "covers": [
+        "S27"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c1"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:1a2c3ff1cfaad2548449837482849486385936c3bbc936b1c5086abb2890fbb8"
+    },
+    {
+      "id": "T2.6.c2",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "empty",
+      "text": "a caller that supplies none of the new fields still records successfully, and the absent fields are stored as absent, not invented.",
+      "covers": [
+        "S43"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c2"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:2c53defb9872c7b350e3b7ae66f5711db591f04f38c82a595771ff772fe283d4"
+    },
+    {
+      "id": "T2.6.c3",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "a dry-run call writes a routing-decision record carrying the attribution and the dry-run marker, performs **no** wallet decrement, and writes **no** generation-history row — it has no asset to reference.",
+      "covers": [
+        "S58",
+        "POA-R4"
+      ],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c3"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "asserting that a routing-decision row exists. Also assert there is no generation-history row and no wallet decrement."
+      ],
+      "hash": "sha256:130497e2ed9159cf45a51d8215de4ba6e56c93186eed4a18d0cd8e4b225dcec0"
+    },
+    {
+      "id": "T2.6.c4",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "boundary",
+      "text": "the routing-decision record is readable afterwards without reference to any artefact, which is what makes a dry run usable as proof of what a live request would do.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c4"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:21d2a9fa584630f2bc409b9c3636ba0a97425aab278f72ba9db0cdbe3992e93f"
+    },
+    {
+      "id": "T2.6.c5",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "failure",
+      "text": "if the attribution write fails, the whole record fails — there is no partial state in which the generation exists without it.",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c5"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "rejects": [
+        "a happy-path write. Make the attribution write fail and assert that no generation, asset or wallet change remains."
+      ],
+      "hash": "sha256:6f207101505940c416dc29afe846ff9bcb8fd842a970a0079f7a84740dba6ff0"
+    },
+    {
+      "id": "T2.6.c6",
+      "task": "T2.6",
+      "kind": "ensures",
+      "category": "regression",
+      "text": "existing callers compile unchanged (the new fields are optional).",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:578f410e6f2ca0f5b0d21bdc88e2683e818d2f6c2589105667893c40ad1a2451"
+    },
+    {
+      "id": "T2.6.p1",
+      "task": "T2.6",
+      "kind": "preserves",
+      "text": "exactly one write path for the generation half",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:e825aef91777fc0660374566ec4a4d25f6c6f6d5270e384f1bc36495f792bcaf"
+    },
+    {
+      "id": "T2.6.p2",
+      "task": "T2.6",
+      "kind": "preserves",
+      "text": "existing `recordGeneration` callers compile unchanged",
+      "covers": [],
+      "proof": {
+        "kind": "test",
+        "tag": "T2.6.c6"
+      },
+      "judges": [
+        "runner",
+        "verifier"
+      ],
+      "hash": "sha256:7f037db325450b54040ae82ef269d289775da892edd9a04c9840d2a0103c665e"
+    },
+    {
+      "id": "T2.6.f1",
+      "task": "T2.6",
+      "kind": "forbids",
+      "text": "hand-edit the generated `libs/db/src/lib/{types.ts,schemas/,repositories/}`",
+      "covers": [],
+      "proof": {
+        "kind": "review"
+      },
+      "judges": [
+        "reviewer"
+      ],
+      "hash": "sha256:23f605f51ba6b4ae9dd3c0bc1361a8199b46a0fca6f97adde81b52c6a90313ed"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S3",
+      "title": "Switching a provider off removes it from consideration entirely",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model whose ordering names two enabled providers",
+        "When an administrator switches the first provider off and applies the change",
+        "And a request for that model is then made",
+        "Then the remaining enabled provider serves the request",
+        "And the switched-off provider is not asked at all, even when the remaining provider fails"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T1.3",
+        "T2.3",
+        "T4.5"
+      ],
+      "hash": "sha256:b8e20bd52a70fc3ed3c2901c4b6411c7a2a1eb2a710c84570a2dd0a17c823914"
+    },
+    {
+      "id": "S6",
+      "title": "A model with no stored ordering routes by the built-in default",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model with no stored provider ordering",
+        "When a request for that model is made",
+        "Then it is served by the built-in default preference",
+        "And the recorded decision states that the built-in default was the source of the choice"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T1.3",
+        "T2.3"
+      ],
+      "hash": "sha256:9847110f1ff10d43c5363d6f47cf85b7d9567b664b367a8fd11a130881fddd17"
+    },
+    {
+      "id": "S7",
+      "title": "A model whose providers are all switched off refuses to serve, distinguishably",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model whose ordering exists but has every provider switched off",
+        "When a request for that model is made",
+        "Then the request fails with a reason that names the model and says it is configured to serve nothing",
+        "And that failure is distinguishable from the case where the model has no stored ordering at all"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T1.3",
+        "T1.6",
+        "T2.3"
+      ],
+      "hash": "sha256:41f99d6d5b729c41ea6989840c087b5791a5cc32090adccc581a85c01704c69c"
+    },
+    {
+      "id": "S8",
+      "title": "A dry run that is asked to succeed reports the provider it would have used",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model with a stored provider ordering",
+        "When a caller makes a request in dry-run mode asking for a successful outcome",
+        "Then the response is a success",
+        "And it names the provider that a real request would have gone to",
+        "And the result is unambiguously marked as not being a real generation"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T1.4",
+        "T2.4"
+      ],
+      "hash": "sha256:4a4e1ff5ab3d80e8090649ea384183e3bbdb2939a44d72a039e187d43397b1bc"
+    },
+    {
+      "id": "S9",
+      "title": "A dry run that is asked to fail produces a failure without contacting anyone",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model with a stored provider ordering",
+        "When a caller makes a request in dry-run mode asking for a failing outcome",
+        "Then the request fails in the same way a real provider failure would present",
+        "And the provider that would have been used is still recorded"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T1.4",
+        "T2.4"
+      ],
+      "hash": "sha256:ee0b78a2d3dfa5cc5a1d6ed481759df1953b7390351aab95f38fb4f5f06af548"
+    },
+    {
+      "id": "S10",
+      "title": "A dry run contacts no provider",
+      "tags": [
+        "@core"
+      ],
+      "steps": [
+        "Given a model with a stored provider ordering",
+        "When a caller makes a request in dry-run mode",
+        "Then no provider is contacted",
+        "And no external call is made on the caller's behalf"
+      ],
+      "category": "Core Business Outcomes",
+      "needs": [
+        "T2.4",
+        "T2.5"
+      ],
+      "hash": "sha256:148a2ec0369fbba89cc75e68c9d658aa8f8390a8f368281a9fecd244d5368c5f"
+    },
+    {
+      "id": "S18",
+      "title": "A malformed submission is refused and the previous configuration keeps serving",
+      "tags": [
+        "@negative"
+      ],
+      "steps": [
+        "Given a stored provider ordering that is currently in force",
+        "When an administrator submits a configuration that cannot be understood",
+        "Then the submission is refused with a reason",
+        "And the previously-stored ordering is still the one in force"
+      ],
+      "category": "Negative Paths & Error Handling",
+      "needs": [
+        "T1.5",
+        "T2.2",
+        "T3.2",
+        "T4.1"
+      ],
+      "hash": "sha256:c8024453c13114464d488e49dc8bfee541c092653f00c9941c54d0efd6603c9a"
+    },
+    {
+      "id": "S19",
+      "title": "A submission naming an unknown provider is refused, naming every unknown one",
+      "tags": [
+        "@negative"
+      ],
+      "steps": [
+        "Given a submission that names providers the system has nothing registered for",
+        "When it is applied",
+        "Then it is refused",
+        "And the refusal names every unrecognised provider, not merely the first"
+      ],
+      "category": "Negative Paths & Error Handling",
+      "needs": [
+        "T1.5",
+        "T2.2",
+        "T3.2",
+        "T4.1"
+      ],
+      "hash": "sha256:dddec4a35084791c557eb56cd48622961ea3cc312db2fcc1bf8caf2d675eff54"
+    },
+    {
+      "id": "S21",
+      "title": "When the configuration store cannot be reached the last good configuration keeps serving",
+      "tags": [
+        "@negative"
+      ],
+      "steps": [
+        "Given a configuration that has been loaded and is in force",
+        "When the configuration store becomes unreachable",
+        "Then requests continue to be routed by the configuration already in force",
+        "And the operational surface reports that the newest read did not succeed"
+      ],
+      "category": "Negative Paths & Error Handling",
+      "needs": [
+        "T2.1",
+        "T2.2",
+        "T3.8"
+      ],
+      "hash": "sha256:ea37da5936a263982b8fe2bd66e9c3d5288bc8b96c71052647e5e8b9d9941bf1"
+    },
+    {
+      "id": "S22",
+      "title": "A failing first provider hands over to the next switched-on provider",
+      "tags": [
+        "@negative"
+      ],
+      "steps": [
+        "Given a model whose ordering names three providers, the second of which is switched off",
+        "And the first provider fails in a way that permits another to be tried",
+        "When a request for that model is made",
+        "Then the third provider serves it",
+        "And the switched-off second provider was never asked"
+      ],
+      "category": "Negative Paths & Error Handling",
+      "needs": [
+        "T2.3"
+      ],
+      "hash": "sha256:f8a6519d0dfc15effd6c5bbb7c818eed07465922a5bb9c2030f0c6243e61ad27"
+    },
+    {
+      "id": "S25",
+      "title": "A refused configuration never disturbs the one that is serving",
+      "tags": [
+        "@integrity"
+      ],
+      "steps": [
+        "Given a configuration in force",
+        "When a replacement is offered and refused for any reason",
+        "Then the configuration in force is byte-for-byte the one that was serving before",
+        "And its identity is unchanged"
+      ],
+      "category": "Data Integrity & Consistency",
+      "needs": [
+        "T2.1",
+        "T2.2"
+      ],
+      "hash": "sha256:6924cbeac52268482e39556415a93b80c002ff1789ba9efeb1c9cabb278b870b"
+    },
+    {
+      "id": "S27",
+      "title": "What served a request is recorded together with the request's outcome",
+      "tags": [
+        "@integrity"
+      ],
+      "steps": [
+        "Given a request that results in a generation",
+        "Then the provider that served it, the reason that provider was chosen, and the identity of the configuration in force are recorded as part of the same indivisible record as the generation itself",
+        "And there is no state in which the generation exists without them",
+        "And the same facts are also recorded as a routing decision in their own right, so a request that produces no artefact is still accounted for"
+      ],
+      "category": "Data Integrity & Consistency",
+      "needs": [
+        "T2.6"
+      ],
+      "hash": "sha256:f0d2c52c23b859faa71557d1ff6850ff4479a6a52ca06deebb63ff131419d862"
+    },
+    {
+      "id": "S36",
+      "title": "An operator can see where the live configuration came from and whether the latest read worked",
+      "tags": [
+        "@observability"
+      ],
+      "steps": [
+        "Given a running service reading its configuration from the store",
+        "When an operator inspects the operational surface",
+        "Then it states which source the configuration in force came from",
+        "And whether the most recent read of that source succeeded or was refused"
+      ],
+      "category": "Operational Monitoring & Alertability",
+      "needs": [
+        "T2.1",
+        "T3.8"
+      ],
+      "hash": "sha256:7e466e25c7cc8bcbb535c89c4731abd2acf0db980b11f3fbc2702712d5db6513"
+    },
+    {
+      "id": "S39",
+      "title": "A configuration change landing mid-request does not change that request",
+      "tags": [
+        "@concurrency"
+      ],
+      "steps": [
+        "Given a request that has begun and has already resolved which provider to use",
+        "When the configuration is replaced while that request is still running",
+        "Then the request completes against the provider it originally resolved",
+        "And a request begun afterwards uses the replacement"
+      ],
+      "category": "Concurrency",
+      "needs": [
+        "T2.2"
+      ],
+      "hash": "sha256:4aafb0506383e41dabf951a578cc04b06d338a913dfaadd90cafbf47e3153b35"
+    },
+    {
+      "id": "S40",
+      "title": "Re-applying an identical configuration is not treated as a change",
+      "tags": [
+        "@concurrency"
+      ],
+      "steps": [
+        "Given a stored configuration",
+        "When an administrator applies a configuration that is equivalent to the one already in force",
+        "Then it is accepted",
+        "And it is reported as unchanged rather than as a new configuration"
+      ],
+      "category": "Concurrency",
+      "needs": [
+        "T2.2"
+      ],
+      "hash": "sha256:89d2dafd9729184c6aa58edee62b47e837ac8d51cb0355a479616661400ba005"
+    },
+    {
+      "id": "S41",
+      "title": "The previously-supported configuration sources continue to work",
+      "tags": [
+        "@compat"
+      ],
+      "steps": [
+        "Given a deployment configured to read its routing configuration from its existing external source",
+        "When the service starts and polls that source",
+        "Then it loads and serves that configuration exactly as it did before this feature existed"
+      ],
+      "category": "Backwards Compatibility & Change Safety",
+      "needs": [
+        "T2.1",
+        "T2.2"
+      ],
+      "hash": "sha256:966afa24e48d6688c5038a94cd9bb9d5b642aae5c4a8b398c014b82d44c0ca14"
+    },
+    {
+      "id": "S42",
+      "title": "A caller who says nothing about dry runs is unaffected",
+      "tags": [
+        "@compat"
+      ],
+      "steps": [
+        "Given a caller that makes a request without mentioning dry runs",
+        "When the request is made",
+        "Then it behaves exactly as it did before dry runs existed, including being charged"
+      ],
+      "category": "Backwards Compatibility & Change Safety",
+      "needs": [
+        "T2.4"
+      ],
+      "hash": "sha256:34c373cee27e771af6dd7d639a8e5e06d7ee3bd6a2334672f2fa6e25007f20bd"
+    },
+    {
+      "id": "S43",
+      "title": "A caller that records a generation without the new detail still succeeds",
+      "tags": [
+        "@compat"
+      ],
+      "steps": [
+        "Given a caller that records a generation without stating the provider, the reason, or the configuration identity",
+        "When the generation is recorded",
+        "Then it is recorded successfully",
+        "And the absent details are stored as absent rather than as invented values"
+      ],
+      "category": "Backwards Compatibility & Change Safety",
+      "needs": [
+        "T2.6"
+      ],
+      "hash": "sha256:021e4c4faa5ac23c30ce30adb72444603283d8fe52b50e6226f58d10bfaacdab"
+    },
+    {
+      "id": "S44",
+      "title": "Models nobody has configured behave exactly as before",
+      "tags": [
+        "@compat"
+      ],
+      "steps": [
+        "Given a deployment upgraded to this feature with no configuration stored at all",
+        "When requests are made across the catalogue",
+        "Then every model is served exactly as it was before the upgrade"
+      ],
+      "category": "Backwards Compatibility & Change Safety",
+      "needs": [
+        "T1.3",
+        "T2.3"
+      ],
+      "hash": "sha256:480b2d099b4c60498d920969362e11844aba5beb6e9f92b2f7783d9cbb24491b"
+    },
+    {
+      "id": "S51",
+      "title": "The deployed service reads its configuration from the store",
+      "tags": [
+        "@delivery"
+      ],
+      "steps": [
+        "Given the service deployed to its hosting environment with the configuration store selected as its source",
+        "When it starts",
+        "Then it loads the stored configuration",
+        "And routes requests by it"
+      ],
+      "category": "Delivery & Environment Promotion",
+      "needs": [
+        "T2.2",
+        "T5.3"
+      ],
+      "environment": {
+        "kind": "deployed",
+        "setup": "the service deployed to its hosting environment, with the configuration store selected"
+      },
+      "hash": "sha256:4b2806c34bd3772976664ef8937858fa327cb84f5449ededee52d191a32bb70e"
+    },
+    {
+      "id": "S53",
+      "title": "A dry run costs nothing",
+      "tags": [
+        "@money"
+      ],
+      "steps": [
+        "Given a caller with a known balance",
+        "When they make a dry-run request, whether asked to succeed or to fail",
+        "Then their balance is unchanged",
+        "And no charge is created"
+      ],
+      "category": "Payments / Money",
+      "needs": [
+        "T2.4"
+      ],
+      "hash": "sha256:779ed80172816df7f72933f028104c6a13ecc0482793a78c7bad4674d2483776"
+    },
+    {
+      "id": "S55",
+      "title": "A dry run is recorded in the same shape as a real request",
+      "tags": [
+        "@ASSUMPTION:A3.b"
+      ],
+      "steps": [
+        "Given a real request and a dry-run request for the same model",
+        "Then the record of what served each is the same shape, carrying the same fields",
+        "And the only difference is that one is marked as a dry run",
+        "And that sameness is what makes a dry run usable as proof of what a real request would do"
+      ],
+      "category": "Dry-run attribution shape",
+      "needs": [
+        "T1.4",
+        "T2.5",
+        "T3.5"
+      ],
+      "hash": "sha256:5adf24c123e1ec848ef48aa9bf512b6a5e940276c75a97313fef2965f947eae3"
+    },
+    {
+      "id": "S56",
+      "title": "A model configured to serve nothing is part of the configuration's identity",
+      "tags": [
+        "@integrity"
+      ],
+      "steps": [
+        "Given two configurations that are identical except that one has a model configured to serve nothing",
+        "Then they are not treated as the same configuration",
+        "And the routing layer can tell, for any model, whether it is configured to serve nothing",
+        "And that fact reaches the routing layer by the same route as the ordering itself, not by a separate channel"
+      ],
+      "category": "Contract-review additions",
+      "needs": [
+        "T1.3",
+        "T1.6",
+        "T2.3"
+      ],
+      "hash": "sha256:d07c8b39f490219d84cabcda5fac3d23486e30a7a69de1e36d81a6f8d4353c97"
+    },
+    {
+      "id": "S57",
+      "title": "A slow read cannot undo a change that has already been applied",
+      "tags": [
+        "@concurrency"
+      ],
+      "steps": [
+        "Given a periodic read of the stored configuration that began before an administrator applied a change",
+        "When that read completes after the change has taken effect",
+        "Then it does not replace the newer configuration with the older one",
+        "And the administrator's change is still the one in force"
+      ],
+      "category": "Contract-review additions",
+      "needs": [
+        "T1.2",
+        "T2.2",
+        "T3.2"
+      ],
+      "hash": "sha256:107237daca7dc5d93e202f33e6839b02a946bfeab145ab8d2bb6affc10313c1d"
+    },
+    {
+      "id": "S58",
+      "title": "A request that produces nothing still records which provider it would have used",
+      "tags": [
+        "@integrity"
+      ],
+      "steps": [
+        "Given a dry-run request, which creates no artefact and no charge",
+        "Then the provider it resolved to, the reason, and the identity of the configuration in force are recorded",
+        "And that record is readable afterwards without reference to any artefact",
+        "And it is marked as a dry run so it can never be mistaken for real work"
+      ],
+      "category": "Contract-review additions",
+      "needs": [
+        "T1.1",
+        "T2.6"
+      ],
+      "hash": "sha256:90dc786fcf3545db960b3263ba33c5af73164e18a445555a8eb8c94ff093fc45"
+    },
+    {
+      "id": "S59",
+      "title": "A stored configuration naming a provider that cannot serve the model is refused",
+      "tags": [
+        "@negative"
+      ],
+      "steps": [
+        "Given a stored configuration naming a provider that is known to the system but cannot serve the model in question",
+        "When that configuration is read",
+        "Then it is refused",
+        "And the refusal names every such provider, not merely the first",
+        "And the configuration already in force keeps serving"
+      ],
+      "category": "Contract-review additions",
+      "needs": [
+        "T1.3",
+        "T2.2"
+      ],
+      "hash": "sha256:a5ae0617d480a571cbda4c30cb38b8ab583237a15d19b214367bc276b79c90bb"
+    }
+  ]
+}

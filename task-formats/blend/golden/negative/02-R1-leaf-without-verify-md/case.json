@@ -1,0 +1,8 @@
+{
+  "rule": "R1",
+  "name": "leaf without VERIFY.md",
+  "exit": 1,
+  "delete": [
+    "T2-services.task/T2.4-gateway-dry-run.task/VERIFY.md"
+  ]
+}

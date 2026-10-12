@@ -1,0 +1,6 @@
+{
+  "rule": "R6",
+  "name": "proof names a missing case",
+  "exit": 1,
+  "delete": []
+}

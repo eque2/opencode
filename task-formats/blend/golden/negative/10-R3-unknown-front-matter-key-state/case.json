@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "unknown front matter key (state)",
+  "exit": 1,
+  "delete": []
+}

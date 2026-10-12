@@ -1,0 +1,6 @@
+{
+  "rule": "R10",
+  "name": "forbids an unchanged path the task touches",
+  "exit": 1,
+  "delete": []
+}

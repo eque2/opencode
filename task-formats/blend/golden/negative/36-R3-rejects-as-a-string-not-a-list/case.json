@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "rejects as a string, not a list",
+  "exit": 1,
+  "delete": []
+}

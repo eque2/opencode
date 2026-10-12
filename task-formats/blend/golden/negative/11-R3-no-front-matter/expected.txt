@@ -1,0 +1,2 @@
+R3 acceptance/S25.md: does not start with a `---` front matter block
+R4 acceptance/S25.md: body is not exactly one ```gherkin block

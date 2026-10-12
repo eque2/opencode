@@ -1,0 +1,6 @@
+{
+  "rule": "R6",
+  "name": "covers an unknown scenario",
+  "exit": 1,
+  "delete": []
+}

@@ -1,0 +1,6 @@
+{
+  "rule": "R1",
+  "name": "stray file in acceptance/",
+  "exit": 1,
+  "delete": []
+}

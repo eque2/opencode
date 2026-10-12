@@ -1,0 +1,1 @@
+R1 T2-services.task/NOTES.md: a `.task` folder holds only TASK.md, VERIFY.md and child `.task` folders

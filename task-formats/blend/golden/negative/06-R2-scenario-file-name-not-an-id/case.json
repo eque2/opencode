@@ -1,0 +1,8 @@
+{
+  "rule": "R2",
+  "name": "scenario file name not an id",
+  "exit": 1,
+  "delete": [
+    "acceptance/S7.md"
+  ]
+}

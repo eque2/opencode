@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "no front matter",
+  "exit": 1,
+  "delete": []
+}

@@ -1,0 +1,6 @@
+{
+  "rule": "R4",
+  "name": "no H1",
+  "exit": 1,
+  "delete": []
+}
