@@ -56,6 +56,8 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { TaskHooks } from "@/task/core/hooks"
+import { TaskSelector } from "@/task/core/selector"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1207,6 +1209,9 @@ const layer = Layer.effect(
             continue
           }
 
+          // The task harness (O1, O2), when it runs: its agents get their own tools below.
+          const harness = yield* TaskSelector.inCore
+
           const agent = (yield* agents.get(lastUser.agent)) ?? (yield* agentNotFound(lastUser.agent, sessionID))
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
@@ -1270,6 +1275,8 @@ const layer = Layer.effect(
                 },
               })
             }
+
+            if (harness) Object.assign(tools, createTaskHarnessTools(agent.name, sessionID))
 
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -1616,6 +1623,110 @@ export function createStructuredOutputTool(input: {
     },
   })
 }
+
+const TASK_READY_DESCRIPTION = `Tell the task harness that the task is built. The harness then runs the proofs.
+
+Call it once, after the tests and gates pass, then end your turn.`
+
+const VERDICT_DESCRIPTION = `Record your verdicts for the task harness: one per \`judge <id>\` line of your message.
+
+Call it once with all of them, then end your turn.`
+
+const TaskReadyInput = Schema.Struct({ summary: Schema.optional(Schema.String) }).annotate({
+  identifier: "SessionPrompt.TaskReadyInput",
+})
+const TaskVerdictsInput = Schema.Struct({
+  verdicts: Schema.Array(
+    Schema.Struct({
+      id: Schema.String.pipe(Schema.brand("TaskObligationID")),
+      verdict: Schema.Literals(["trusted", "rejected"]),
+      reason: Schema.optional(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "SessionPrompt.TaskVerdictsInput" })
+const decodeTaskReady = Schema.decodeUnknownExit(TaskReadyInput)
+const decodeTaskVerdicts = Schema.decodeUnknownExit(TaskVerdictsInput)
+
+const TASK_READY_SCHEMA: JSONSchema7 = {
+  type: "object",
+  properties: { summary: { type: "string", description: "What you built, in one or two sentences" } },
+  additionalProperties: false,
+}
+
+const VERDICT_SCHEMA: JSONSchema7 = {
+  type: "object",
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "The id of a `judge <id>` line" },
+          verdict: { type: "string", enum: ["trusted", "rejected"] },
+          reason: { type: "string", description: "Why, when rejected" },
+        },
+        required: ["id", "verdict"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["verdicts"],
+  additionalProperties: false,
+}
+
+const harnessResult = (title: string, output: string, valid: boolean) => ({ output, title, metadata: { valid } })
+
+/**
+ * @internal Exported for testing. The task harness's own tools for one turn of `agent`: the builder gets
+ * `task_ready`, the verifier gets `verdict`, and every other agent gets neither. Each records what it receives
+ * in `TaskHooks`; the harness reads it after the turn.
+ */
+export function createTaskHarnessTools(agent: string, sessionID: SessionID): Record<string, AITool> {
+  if (agent === TaskHooks.BUILDER)
+    return {
+      task_ready: tool({
+        description: TASK_READY_DESCRIPTION,
+        inputSchema: jsonSchema(TASK_READY_SCHEMA),
+        execute(args) {
+          const input = decodeTaskReady(args)
+          if (Exit.isFailure(input))
+            return harnessResult(
+              "Task ready",
+              "Invalid input: expected { summary?: string }. Nothing was recorded.",
+              false,
+            )
+          TaskHooks.recordReady(sessionID, input.value)
+          return harnessResult("Task ready", "Ready recorded. End your turn now: the harness runs the proofs.", true)
+        },
+        toModelOutput({ output }) {
+          return { type: "text", value: output.output }
+        },
+      }),
+    }
+  if (agent === TaskHooks.VERIFIER)
+    return {
+      verdict: tool({
+        description: VERDICT_DESCRIPTION,
+        inputSchema: jsonSchema(VERDICT_SCHEMA),
+        execute(args) {
+          const input = decodeTaskVerdicts(args)
+          if (Exit.isFailure(input))
+            return harnessResult(
+              "Verdict",
+              'Invalid input: expected { verdicts: { id: string, verdict: "trusted" | "rejected", reason?: string }[] }. Nothing was recorded.',
+              false,
+            )
+          TaskHooks.recordVerdicts(sessionID, input.value.verdicts)
+          return harnessResult("Verdict", `Recorded ${input.value.verdicts.length} verdicts.`, true)
+        },
+        toModelOutput({ output }) {
+          return { type: "text", value: output.output }
+        },
+      }),
+    }
+  return {}
+}
+
 const bashRegex = /!`([^`]+)`/g
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
