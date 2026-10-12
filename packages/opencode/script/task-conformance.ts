@@ -31,6 +31,15 @@ const stamp = new Date().toISOString().replace(/[:.]/g, "-")
 
 if (!ARMS.includes(arm)) throw new Error(`unknown arm ${arm}; expected one of ${ARMS.join(", ")}`)
 
+// A comparison is only valid against a baseline measured the same way; refuse it before any run.
+const base: (Baseline & { arm?: unknown; live?: unknown; selection?: unknown }) | undefined = args.baseline
+  ? JSON.parse(fs.readFileSync(args.baseline, "utf8"))
+  : undefined
+if (base && base.arm !== "baseline") throw new Error(`--baseline ${args.baseline} is a run of arm ${String(base.arm)}, not baseline`)
+if (base && base.live !== live) throw new Error(`--baseline ${args.baseline} has live ${String(base.live)}, this run has ${live}`)
+if (base && JSON.stringify(base.selection) !== JSON.stringify(selection))
+  throw new Error(`--baseline ${args.baseline} scored checks ${JSON.stringify(base.selection)}, this run scores ${JSON.stringify(selection)}`)
+
 const results: RunResult[] = []
 for (let run = 1; run <= runs; run++) {
   const waited = await waitForQuietMachine()
@@ -97,10 +106,7 @@ const out: Record<string, unknown> = {
   results,
 }
 
-if (args.baseline) {
-  const base: Baseline = JSON.parse(fs.readFileSync(args.baseline, "utf8"))
-  out.vsBaseline = compare(summary, base, out.fixture)
-}
+if (base) out.vsBaseline = compare(summary, base, out.fixture)
 
 const text = JSON.stringify(out, null, 2)
 if (args.out) fs.writeFileSync(args.out, text + "\n")
