@@ -132,6 +132,15 @@ export const commitAll = Effect.fn("TaskWorkspace.commitAll")(function* (
   return yield* commit(worktree, limits, "HEAD")
 })
 
+/**
+ * Puts a checkout back at its HEAD after a judge worked in it: every change and every untracked file goes, ignored
+ * files stay, and so does the harness's own `.opencode/` folder even where it is not ignored.
+ */
+export const restore = Effect.fn("TaskWorkspace.restore")(function* (cwd: string, limits: TaskLimits.Limits) {
+  yield* git(cwd, limits, "reset", "--hard", "-q", "HEAD")
+  yield* git(cwd, limits, "clean", "-fd", "-q", "-e", ".opencode/")
+})
+
 /** Merges a commit (a task's verified head) into `main` in the root checkout; a failed merge is aborted and fails. */
 export const merge = Effect.fn("TaskWorkspace.merge")(function* (
   root: string,

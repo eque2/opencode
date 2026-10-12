@@ -46,6 +46,28 @@ describe("the harness workspace", () => {
     }),
   )
 
+  it.live("restores a checkout to its HEAD after a judge: changes and new files go, ignored files stay", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* repository()
+      yield* fs.writeFileString(path.join(root, ".gitignore"), "changed by a judge\n")
+      yield* fs.makeDirectory(path.join(root, "out"))
+      yield* fs.writeFileString(path.join(root, "out", "report.txt"), "left behind\n")
+      yield* fs.makeDirectory(path.join(root, "node_modules"))
+      yield* fs.writeFileString(path.join(root, "node_modules", "kept.js"), "ignored\n")
+      yield* fs.makeDirectory(path.join(root, ".opencode", "task"), { recursive: true })
+      yield* fs.writeFileString(path.join(root, ".opencode", "task", "status.json"), "{}\n")
+
+      yield* TaskWorkspace.restore(root, limits)
+
+      expect(yield* git(root, "status", "--porcelain", "--untracked-files=all")).toBe("")
+      expect(yield* fs.readFileString(path.join(root, ".gitignore"))).toBe("node_modules\n.opencode/\n")
+      expect(yield* fs.exists(path.join(root, "out"))).toBe(false)
+      expect(yield* fs.exists(path.join(root, "node_modules", "kept.js"))).toBe(true)
+      expect(yield* fs.exists(path.join(root, ".opencode", "task", "status.json"))).toBe(true)
+    }),
+  )
+
   it.live("reuses the worktree and its base on a later attempt", () =>
     Effect.gen(function* () {
       const root = yield* repository()

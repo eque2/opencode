@@ -167,6 +167,12 @@ const cancelChildren = (run: Run, children: ReadonlyArray<readonly [SessionID, s
     { concurrency: "unbounded", discard: true },
   )
 
+// Restores a judge's directory to its HEAD; the root checkout only under the `main` semaphore, as it holds `main`.
+const restore = (run: Run, directory: string) => {
+  const reset = TaskWorkspace.restore(directory, run.limits)
+  return directory === run.directory ? run.main.withPermit(reset) : reset
+}
+
 /**
  * One verdict per id: the last one the judge recorded. A judge that records an id twice (rejected, then trusted)
  * must not let the merge decision and the engine read different verdicts.
@@ -220,15 +226,19 @@ const round = Effect.fnUntraced(function* (
         return (TaskHooks.takeVerdicts(session.id) ?? []).filter((verdict) => wanted.includes(verdict.id))
       })
     const verdicts = latestVerdicts(yield* ask(TaskSessions.judgeMessage(input), ids))
-    if (verdicts.length === 0) continue
     // A judge that skipped some ids is asked once more, in the same session, for exactly those.
-    const missing = input.judge.filter((item) => !verdicts.some((verdict) => verdict.id === item.id))
-    if (missing.length === 0) return Option.some(verdicts)
-    const more = yield* ask(
-      TaskSessions.judgeMissingMessage(missing),
-      missing.map((item) => item.id),
-    )
-    return Option.some(latestVerdicts([...verdicts, ...more]))
+    const missing =
+      verdicts.length === 0 ? [] : input.judge.filter((item) => !verdicts.some((verdict) => verdict.id === item.id))
+    const more =
+      missing.length === 0
+        ? []
+        : yield* ask(
+            TaskSessions.judgeMissingMessage(missing),
+            missing.map((item) => item.id),
+          )
+    // Whatever the judge left in its directory goes, so it reaches neither a proof nor a builder commit.
+    yield* restore(run, input.directory)
+    if (verdicts.length > 0) return Option.some(latestVerdicts([...verdicts, ...more]))
   }
   return Option.none<ReadonlyArray<Verdict>>()
 })
