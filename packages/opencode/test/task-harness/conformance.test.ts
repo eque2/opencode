@@ -22,6 +22,8 @@ import * as Scripts from "./scripts"
 
 const packageDir = path.resolve(import.meta.dir, "../..")
 const worktree = path.resolve(packageDir, "../..")
+// The package's default test run discovers this file too; without an arm every check registers as skipped.
+const armed = process.env.TASK_HARNESS_ARM !== undefined
 const arm = Arms.parseArm(process.env.TASK_HARNESS_ARM)
 const runDir = process.env.TASK_HARNESS_RUN_DIR || path.join(worktree, ".spike-runs", "conformance", "dev")
 const selected = (process.env.TASK_HARNESS_CHECKS ?? "")
@@ -108,7 +110,7 @@ type Ctx = {
 } & AsyncDisposable
 
 function check(id: string, behaviour: string, timeout: number, fn: () => Promise<void>, skip = false) {
-  const on = !skip && (selected.length === 0 || selected.includes(id))
+  const on = armed && !skip && (selected.length === 0 || selected.includes(id))
   if (on) test(`${id} ${behaviour}`, fn, timeout)
   else test.skip(`${id} ${behaviour}`, fn)
 }
