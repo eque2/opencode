@@ -40,14 +40,33 @@ export function create(runDir: string, name: string): Workspace {
   git(repo, "init", "-q", "-b", "main")
   git(repo, "add", "-A")
   git(repo, "commit", "-q", "-m", "seed")
-  // Bounded: a stuck install (a cache miss going to the network) must not hold the check. A null exit code means
-  // the bound killed it.
-  const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: repo, timeout: 120_000 })
-  if (install.exitCode !== 0)
-    throw new Error(
-      `bun install failed in ${repo}: ${install.exitCode === null ? "not finished within 120 s" : install.stderr.toString()}`,
-    )
+  // One install of the seed's frozen lockfile per lockfile, linked into every check's repository: a fresh install
+  // per check left about 2,000 files per check behind, and indexing them loaded the machine. `node_modules` is in
+  // the seed's .gitignore, so the link is never committed.
+  fs.symlinkSync(sharedModules(path.dirname(runDir)), path.join(repo, "node_modules"))
   return { dir, repo, home }
+}
+
+// `<runs folder>/seed-modules/<lockfile hash>/node_modules`, installed once; a marker file says it is complete.
+function sharedModules(runsDir: string) {
+  const lock = fs.readFileSync(path.join(seedDir, "bun.lock"))
+  const hash = new Bun.CryptoHasher("sha256").update(lock).digest("hex").slice(0, 16)
+  const dir = path.join(runsDir, "seed-modules", hash)
+  const done = path.join(dir, ".installed")
+  if (!fs.existsSync(done)) {
+    fs.rmSync(dir, { recursive: true, force: true })
+    fs.mkdirSync(dir, { recursive: true })
+    for (const file of ["package.json", "bun.lock"]) fs.copyFileSync(path.join(seedDir, file), path.join(dir, file))
+    // Bounded: a stuck install (a cache miss going to the network) must not hold the check. A null exit code means
+    // the bound killed it.
+    const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: dir, timeout: 120_000 })
+    if (install.exitCode !== 0)
+      throw new Error(
+        `bun install failed in ${dir}: ${install.exitCode === null ? "not finished within 120 s" : install.stderr.toString()}`,
+      )
+    fs.writeFileSync(done, new Date().toISOString())
+  }
+  return path.join(dir, "node_modules")
 }
 
 // Edit a file in the target repository and commit it on the current branch (H9 edits a trusted leaf's VERIFY.md).
