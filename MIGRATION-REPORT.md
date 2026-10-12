@@ -77,6 +77,8 @@ Four hazard lenses, an API-difference audit of every release from rc.118 to 4.0.
   - `codemode` 262 pass / 1 fail, `llm` 306 pass / 2 fail (8 new tests), `opencode` 3,589 pass / 7 fail; every other package 0 failures.
   - Two of the 7 `opencode` failures timed out during the full run ("concurrent loop callers all receive same error result", and the unknown-model `opencode run` case with its 15 s limit). Both pass when rerun: the first 3 of 3 times alone and 58 of 58 in its file, the second 3 of 3.
   - The 5 remaining `opencode` failures are the baseline Google Vertex tests.
+- Merged `dev` (merge commit `8a08694e13`, which adds 168 documentation and JSON Schema files outside `packages/`): `bun install --frozen-lockfile` changes nothing; typecheck 30 of 30; oxlint 0 warnings and 0 errors; Effect ESLint 0 problems; language service 0 findings in 18 projects; `opencode serve` exits with 143 after SIGTERM and 130 after SIGINT, both within 1 s.
+- Merged `dev` tests: the same 8 baseline failures plus one failure in the full run, "provider HttpApi > keeps provider.models hook input mutations out of provider state" (GET /provider returned 404). It passed 5 of 5 times alone, and the whole `test/server` folder passed (299 pass, 0 fail), so it is intermittent under full-suite load.
 
 ## Deferred decisions
 
