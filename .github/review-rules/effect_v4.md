@@ -1,12 +1,12 @@
 ---
 Name: Effect v4 (TypeScript)
 Source: https://github.com/Effect-TS/effect-smol (LLMS.md, MIGRATION.md, migration/*.md)
-Last Updated: 2026-09-30
+Last Updated: 2026-10-12
 ---
 
 # Effect v4 Review Rules
 
-> Target: `effect` 4.0.0-rc.117. The Effect ESLint bundle (v4, 54 rules), oxlint, and the
+> Target: `effect` 4.0.3. The Effect ESLint bundle (v4, 54 rules), oxlint, and the
 > `@effect/language-service` diagnostics already block the mechanical violations: Promise
 > control flow, throw, try/catch, `new Error`, null, `JSON.parse`, native timers and
 > collections, `process.env`, `console`, `Date`, `fs`, legacy `Context.Tag`/`Effect.Service`,
@@ -233,18 +233,18 @@ class Mailer extends Context.Service<Mailer, { readonly send: (mail: Mail) => Ef
 ### EFX-16: Domain error without a schema
 
 **Reference:** https://github.com/Effect-TS/effect-smol/blob/main/LLMS.md#error-handling
-**Do:** Define errors that cross HTTP, RPC, or persistence with `Schema.TaggedErrorClass`, with the fields a handler needs.
+**Do:** Define errors that cross HTTP, RPC, or persistence with `Schema.TaggedError`, with the fields a handler needs.
 **Avoid:** An error with no context fields, or an error that carries only a message string.
 **Why?** A schema error serialises across boundaries and gives handlers typed fields. An error with only a message forces handlers to parse text, and it drops the identifiers that support needs.
 
 **(AVOID) Example:**
 ```ts
-export class Failed extends Schema.TaggedErrorClass<Failed>()("Failed", { message: Schema.String }) {}
+export class Failed extends Schema.TaggedError<Failed>()("Failed", { message: Schema.String }) {}
 ```
 
 **Correct Example:**
 ```ts
-export class UpstreamFailed extends Schema.TaggedErrorClass<UpstreamFailed>()("UpstreamFailed", {
+export class UpstreamFailed extends Schema.TaggedError<UpstreamFailed>()("UpstreamFailed", {
   service: Schema.String,
   cause: Schema.Defect(),
 }) {}

@@ -1,8 +1,8 @@
 ---
 Tech: Effect (TypeScript)
-Version: 4.0.0-rc.117
+Version: 4.0.3
 Source: https://github.com/Effect-TS/effect-smol (LLMS.md, MIGRATION.md, migration/*.md)
-Last Updated: 2026-09-30
+Last Updated: 2026-10-12
 ---
 
 # Effect v4 Development Standards
@@ -11,7 +11,7 @@ Last Updated: 2026-09-30
 > ESLint bundle (v4, 54 rules), oxlint, and `@effect/language-service` already enforce the
 > mechanical rules (Promise flow, throw, try/catch, `new Error`, null, `JSON.parse`, timers,
 > `process.env`, `console`, `Date`, `fs`, legacy `Context.Tag`); they are not restated.
-> Verify an unfamiliar API against the effect-smol source. Effect v3 examples are wrong here.
+> Verify an unfamiliar API against the installed source in `node_modules/effect/src`. Effect v3 examples are wrong here.
 
 ## Naming Conventions
 
@@ -53,17 +53,17 @@ export class Clock extends Context.Service<Clock, ClockShape>()("app/time/Clock"
 **Example:**
 ```ts
 export class Profiles extends Context.Service<Profiles, ProfilesShape>()("app/profile/Profiles") {}
-export class ProfileNotFound extends Schema.TaggedErrorClass<ProfileNotFound>()("ProfileNotFound", { id: ProfileId }) {}
+export class ProfileNotFound extends Schema.TaggedError<ProfileNotFound>()("ProfileNotFound", { id: ProfileId }) {}
 export type ProfilesService = Profiles["Service"]
 ```
 
-### EFX-05: Import stable modules from `effect` and unstable modules by path [RECOMMENDED]
-**Do:** Import core modules from the `effect` barrel; import HTTP, CLI, process, and AI modules from `effect/unstable/*`.
-**Why:** v4 merged the platform packages into `effect`; the `unstable` path marks APIs that can still change.
+### EFX-05: Import stable modules from `effect` and unstable modules by sub-path [RECOMMENDED]
+**Do:** Import core modules from the `effect` barrel; import HTTP, HttpApi, CLI, process, SQL, socket, and AI modules from their lower-case sub-path (`effect/http`, `effect/http-api`, `effect/cli`, `effect/process`, `effect/sql`, `effect/socket`, `effect/ai`). Effect 4.0 has no `effect/unstable/*` paths.
+**Why:** v4 merged the platform packages into `effect`. Every lower-case sub-path is `@stability unstable` and can break in a minor release, which is why the repository pins Effect exactly.
 **Example:**
 ```ts
 import { Context, Effect, Layer, Schema } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient } from "effect/http"
 ```
 
 ## Effects and Functions
@@ -182,12 +182,12 @@ class Mailer extends Context.Service<Mailer, { readonly send: (mail: Mail) => Ef
 
 ## Errors
 
-### EFX-16: Model expected failures with `Schema.TaggedErrorClass` [IMPORTANT]
-**Do:** Define domain errors with `Schema.TaggedErrorClass`, with the fields a handler needs; use `Schema.Defect()` for a wrapped cause.
+### EFX-16: Model expected failures with `Schema.TaggedError` [IMPORTANT]
+**Do:** Define domain errors with `Schema.TaggedError`, with the fields a handler needs; use `Schema.Defect()` for a wrapped cause.
 **Why:** Schema errors are serialisable across HTTP and RPC boundaries and carry typed, inspectable context.
 **Example:**
 ```ts
-export class UpstreamFailed extends Schema.TaggedErrorClass<UpstreamFailed>()("UpstreamFailed", {
+export class UpstreamFailed extends Schema.TaggedError<UpstreamFailed>()("UpstreamFailed", {
   service: Schema.String,
   cause: Schema.Defect(),
 }) {}
