@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApiSchema, OpenApi } from "effect/http-api"
 
 export const NoContentPayload = Schema.Undefined.pipe(Schema.decodeTo(HttpApiSchema.NoContent))
 

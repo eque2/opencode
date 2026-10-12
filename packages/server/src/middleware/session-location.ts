@@ -8,7 +8,7 @@ import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { eq } from "drizzle-orm"
 import { Effect, Layer, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
-import { HttpApiMiddleware } from "effect/unstable/httpapi"
+import { HttpApiMiddleware } from "effect/http-api"
 import { InvalidRequestError, SessionNotFoundError } from "@opencode-ai/protocol/errors"
 import type { LocationServices } from "../location"
 

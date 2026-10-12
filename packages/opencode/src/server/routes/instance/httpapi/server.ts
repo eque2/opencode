@@ -1,6 +1,6 @@
 import { Config as EffectConfig, Context, Effect, Layer } from "effect"
 import { Telemetry } from "@opencode-ai/core/observability/telemetry"
-import { HttpApiBuilder, OpenApi } from "effect/unstable/httpapi"
+import { HttpApiBuilder, OpenApi } from "effect/http-api"
 import { HttpClient, HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
