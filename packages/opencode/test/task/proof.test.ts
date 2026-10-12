@@ -15,6 +15,12 @@ import { pollWithTimeout, testEffect } from "../lib/effect"
 const it = testEffect(NodeFileSystem.layer)
 const limits = TaskLimits.scripted
 
+// The runner signals a process group with kill(-pgid), which Windows does not have.
+const groupIt = process.platform === "win32" ? it.live.skip : it.live
+
+// The bun test timeout of a test that runs a proof: far above the scripted bounds of one proof.
+const proveTimeout = 30_000
+
 const spec: TaskProof.Spec = {
   gates: {
     "BUILD-1": { title: "Always passes", command: "exit 0" },
@@ -108,7 +114,7 @@ describe("TaskLimits", () => {
 })
 
 describe("TaskProof", () => {
-  it.live("all green: test, gate and unchanged obligations pass, a review obligation needs review", () =>
+  groupIt("all green: test, gate and unchanged obligations pass, a review obligation needs review", () =>
     Effect.gen(function* () {
       const repo = yield* taskRepo({
         ...feature,
@@ -137,9 +143,10 @@ describe("TaskProof", () => {
       expect(scenario.result).toEqual({ status: "passed" })
       expect(scenario.evidence.commit).toBe(repo.head)
     }),
+    proveTimeout,
   )
 
-  it.live("failing tag: that obligation fails with the message, the others keep their result", () =>
+  groupIt("failing tag: that obligation fails with the message, the others keep their result", () =>
     Effect.gen(function* () {
       const repo = yield* taskRepo({
         ...feature,
@@ -159,9 +166,10 @@ describe("TaskProof", () => {
       expect(proof.evidence.exitCode).not.toBe(0)
       expect(proof.evidence.counts).toEqual({ pass: 2, fail: 1, skip: 0 })
     }),
+    proveTimeout,
   )
 
-  it.live("missing tag: an obligation with no test fails with 'no test titled [id]'", () =>
+  groupIt("missing tag: an obligation with no test fails with 'no test titled [id]'", () =>
     Effect.gen(function* () {
       const repo = yield* taskRepo({ ...feature, "test/feature.test.ts": testsOf(passing("T1.1.c1")) })
       const proof = yield* prove(repo)
@@ -176,9 +184,10 @@ describe("TaskProof", () => {
       const scenario = yield* TaskProof.proveScenario({ scenario: { id: "S1" }, cwd: repo.dir, head: repo.head, limits })
       expect(scenario.result).toEqual({ status: "failed", reason: "no test titled [S1]" })
     }),
+    proveTimeout,
   )
 
-  it.live("hung test: the tag fails as timed out within the bound, and no process of the group survives", () =>
+  groupIt("hung test: the tag fails as timed out within the bound, and no process of the group survives", () =>
     Effect.gen(function* () {
       // A unique duration names this test's grandchild for pgrep. Bun kills the `sh` that it spawned
       // when the test times out; the backgrounded `sleep` stays in the group until the runner kills it.
@@ -213,10 +222,10 @@ describe("TaskProof", () => {
       )
       expect(yield* Effect.sync(() => isAlive(pid))).toBe(false)
     }),
-    30_000,
+    proveTimeout,
   )
 
-  it.live("tampering: a test file holding another task's tag is a structural violation", () =>
+  groupIt("tampering: a test file holding another task's tag is a structural violation", () =>
     Effect.gen(function* () {
       const repo = yield* taskRepo({
         ...feature,
@@ -238,9 +247,10 @@ describe("TaskProof", () => {
       expect(statusOf(proof, "T1.1.p2")).toBe("passed")
       expect(statusOf(proof, "T1.1.f1")).toBe("passed")
     }),
+    proveTimeout,
   )
 
-  it.live("unchanged broken: a change to a forbidden path fails the unchanged obligation", () =>
+  groupIt("unchanged broken: a change to a forbidden path fails the unchanged obligation", () =>
     Effect.gen(function* () {
       const repo = yield* taskRepo({
         ...feature,
@@ -256,9 +266,10 @@ describe("TaskProof", () => {
       })
       expect(proof.structural.violations.map((violation) => violation.path)).toEqual(["docs/frozen.md"])
     }),
+    proveTimeout,
   )
 
-  it.live("run: when the leader exits, the runner kills the processes that it left in its group", () =>
+  groupIt("run: when the leader exits, the runner kills the processes that it left in its group", () =>
     Effect.gen(function* () {
       const result = yield* TaskProof.run("sh", ["-c", "sleep 600 & echo $!"], {
         cwd: process.cwd(),
