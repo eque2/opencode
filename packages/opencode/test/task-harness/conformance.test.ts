@@ -841,8 +841,10 @@ check(
       await adapter.recordOutside("T9")
       await adapter.start(SPEC)
       let s: Status.Status | undefined
-      let tokens = await adapter.tokens()
-      let tokensAt = Date.now()
+      let tokens: Arms.Tokens = { total: 0, input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+      let tokensAt = 0
+      // The cap needs a working count: 3 failed counts in a row are a breach.
+      let tokenFailures = 0
       let breach: string | undefined
       let idleSince: number | undefined
       let idle = false
@@ -859,8 +861,15 @@ check(
         if (!s && Date.now() - (adapter.startedAt ?? startAt) > STATUS_APPEARS_MS)
           throw new Error(`no status file at ${Status.file(ws.repo)} ${STATUS_APPEARS_MS / 1000} s after /task`)
         if (Date.now() - tokensAt > 10_000) {
-          tokens = await adapter.tokens()
           tokensAt = Date.now()
+          try {
+            tokens = await adapter.tokens()
+            tokenFailures = 0
+          } catch (error) {
+            tokenFailures++
+            if (tokenFailures >= 3)
+              breach = `the token count failed ${tokenFailures} times in a row: ${error instanceof Error ? error.message : String(error)}`
+          }
         }
         if (tokens.total > LIVE_TOKENS) breach = `tokens ${tokens.total} > ${LIVE_TOKENS}`
         if (Date.now() - startAt > LIVE_WALL_MS) breach = `wall clock over ${LIVE_WALL_MS / 60_000} min`
@@ -871,7 +880,10 @@ check(
         await Bun.sleep(POLL_MS)
       }
       out.wallClockMs = Date.now() - startAt
-      out.tokens = await adapter.tokens()
+      out.tokens = await adapter.tokens().catch((error: unknown) => ({
+        error: error instanceof Error ? error.message : String(error),
+        last: tokens,
+      }))
       out.state = s?.run.state
       out.reason = s?.run.reason
       out.breach = breach

@@ -158,10 +158,12 @@ export async function open(input: {
       if (!result) throw new Error(`/task trust ${id} did not return within 120 s`)
       if (result.error) throw new Error(`/task trust ${id} failed: ${JSON.stringify(result.error)}`)
     },
+    // Throws when the sessions cannot be listed: a silent 0 would disable L1's token cap.
     tokens: async () => {
       const listed = await client.session.list({ scope: "project", limit: 100_000 })
+      if (!listed.data) throw new Error(`session.list failed: ${JSON.stringify(listed.error ?? "no data")}`)
       const out: Tokens = { total: 0, input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
-      for (const item of listed.data ?? []) {
+      for (const item of listed.data) {
         const t = item.tokens
         if (!t) continue
         out.input += t.input
