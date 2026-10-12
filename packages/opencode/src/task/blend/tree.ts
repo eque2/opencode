@@ -19,7 +19,8 @@ export interface Folder {
   readonly entries: Result.Result<ReadonlyArray<Node>, string>
 }
 
-// Anything that is neither a regular file nor a folder: a socket, a device, a dangling link.
+// Anything that is neither a regular file nor a folder: a socket, a device, a FIFO. `stat` follows symbolic links,
+// so a link counts as what it points to, and a dangling link becomes a `File` whose text is the stat error.
 export interface Other {
   readonly kind: "other"
   readonly name: string
