@@ -1,0 +1,56 @@
+{
+  "T1.1": {
+    "files": {
+      "src/commit.ts": "src/commit.ts",
+      "test/verify-release-notes-S2.spec.ts": "test/verify-release-notes-S2.spec.ts"
+    },
+    "tags": ["T1.1.c1", "T1.1.c2", "T1.1.c3", "T1.1.c4", "T1.1.c5", "S2", "S7"]
+  },
+  "T1.2": {
+    "files": {
+      "src/bump.ts": "src/bump.ts",
+      "test/verify-release-notes-S3.spec.ts": "test/verify-release-notes-S3.spec.ts"
+    },
+    "tags": ["T1.2.c1", "T1.2.c2", "T1.2.c3", "T1.2.c4", "S3"]
+  },
+  "T1.3": {
+    "files": {
+      "src/render.ts": "src/render.ts",
+      "test/verify-release-notes-S4.spec.ts": "test/verify-release-notes-S4.spec.ts"
+    },
+    "tags": ["T1.3.c1", "T1.3.c2", "T1.3.c3", "T1.3.c4", "T1.3.c5", "S4", "S12"]
+  },
+  "T1.4": {
+    "files": {
+      "src/cli.ts": "stages/T1.4/cli.ts.txt",
+      "package.json": "package.json",
+      "test/verify-release-notes-S1.spec.ts": "test/verify-release-notes-S1.spec.ts",
+      "test/expected/release-notes.md": "test/expected/release-notes.md"
+    },
+    "tags": [
+      "T1.4.c1",
+      "T1.4.c2",
+      "T1.4.c3",
+      "T1.4.c4",
+      "T1.4.c5",
+      "T1.4.c6",
+      "T1.4.c7",
+      "T1.4.c8",
+      "S1",
+      "S6",
+      "S8",
+      "S9",
+      "S10",
+      "S11"
+    ],
+    "skipped": ["S13"]
+  },
+  "T1.5": {
+    "files": {
+      "src/links.ts": "src/links.ts",
+      "src/cli.ts": "src/cli.ts",
+      "test/verify-release-notes-S5.spec.ts": "test/verify-release-notes-S5.spec.ts"
+    },
+    "tags": ["T1.5.c1", "T1.5.c2", "T1.5.c3", "T1.5.c4", "S5"]
+  }
+}
