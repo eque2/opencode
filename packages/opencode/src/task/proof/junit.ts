@@ -37,10 +37,14 @@ export const timedOut = (test: TestCase) =>
 const ENTITY = /&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|amp|quot|apos);/g
 const NAMED: Readonly<Record<string, string>> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" }
 
+// A numeric entity outside the Unicode range keeps its text: String.fromCodePoint would throw on it.
+const codePoint = (code: number, entity: string) =>
+  Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : `&${entity};`
+
 const decode = (text: string) =>
   text.replace(ENTITY, (_, entity: string) => {
-    if (entity.startsWith("#x")) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16))
-    if (entity.startsWith("#")) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10))
+    if (entity.startsWith("#x")) return codePoint(Number.parseInt(entity.slice(2), 16), entity)
+    if (entity.startsWith("#")) return codePoint(Number.parseInt(entity.slice(1), 10), entity)
     return NAMED[entity] ?? `&${entity};`
   })
 
