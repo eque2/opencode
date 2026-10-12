@@ -40,6 +40,10 @@ for (let run = 1; run <= runs; run++) {
     TASK_HARNESS_LIVE: live && arm !== "baseline" ? "1" : "0",
   }
   if (only) env.TASK_HARNESS_CHECKS = only.join(",")
+  // The test preload deletes provider keys from the environment, so the live key travels under a prefixed name to
+  // the L1 server. Nothing reads, prints or logs its value.
+  if (live && arm !== "baseline")
+    for (const name of ["OPENAI_API_KEY"]) if (process.env[name]) env[`TASK_HARNESS_LIVE_${name}`] = process.env[name]
   const child = Bun.spawn(
     ["bun", "test", "test/task-harness/conformance.test.ts", "--timeout", "2400000", "--reporter=junit", `--reporter-outfile=${junit}`],
     // The child's stdout goes to stderr (fd 2), so the runner's own stdout carries only the JSON.
