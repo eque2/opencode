@@ -181,6 +181,7 @@ const resolveCommit = Effect.fnUntraced(function* (cwd: string, bounds: ProofPro
 
 // The tests and gates run on the working tree as found, and the evidence names `head`, so the tree must be
 // exactly `head`: HEAD at that commit, and no change, staged, unstaged or untracked. Ignored files are allowed.
+// It succeeds with `head`.
 const requireTreeAt = Effect.fnUntraced(function* (cwd: string, bounds: ProofProcess.Bounds, head: string) {
   const current = (yield* gitText(cwd, bounds, "rev-parse", "--verify", "HEAD")).trim()
   if (current !== head) {
@@ -190,6 +191,7 @@ const requireTreeAt = Effect.fnUntraced(function* (cwd: string, bounds: ProofPro
   if (status.trim() !== "") {
     return yield* new ProofError({ message: `the working tree has changes that head does not hold: ${tail(status)}` })
   }
+  return head
 })
 
 // The first of `tags` that the file holds at the commit; none when it holds none or the commit lacks it.
