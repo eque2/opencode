@@ -355,8 +355,11 @@ check("H5", "ready is a request", 180_000 + SETUP_MS, async () => {
   if (!second) problems.push("no attempt-2 builder message arrived")
   else if (!second.reopen.some((r) => r.id === "T1.1.c1")) problems.push("the attempt-2 builder message has no `reopen T1.1.c1` line")
   const ready2 = logged(c, "T1.1", 2, "task_ready")
-  const early = verifiers(c, "T1.1").filter((r) => ready2 === undefined || r.at < ready2.at)
-  if (early.length > 0) problems.push(`${early.length} verifier request(s) arrived before attempt 2's proofs`)
+  if (!ready2) problems.push("no attempt-2 task_ready call was made, so attempt 2's proofs have no start to compare with")
+  else {
+    const early = verifiers(c, "T1.1").filter((r) => r.at < ready2.at)
+    if (early.length > 0) problems.push(`${early.length} verifier request(s) arrived before attempt 2's proofs`)
+  }
   if (second) {
     const trusted = s.history.filter((h) => h.unit.startsWith("T1.1.") && h.to === "trusted" && h.at < second.at)
     if (trusted.length > 0) problems.push(`obligations trusted before attempt 2: ${trusted.map((h) => h.unit).join(", ")}`)
@@ -692,6 +695,7 @@ check("H13", "hung proof", 180_000 + SETUP_MS, async () => {
   else if (!/timed out/i.test(reopened.reason)) problems.push(`the reopen reason "${reopened.reason}" does not say "timed out"`)
   if (atReopen && atReopen.length > 0) problems.push(`sleep 999.${c.marker} was still running at the reopen (${atReopen.join(", ")})`)
   const ready1 = logged(c, "T1.1", 1, "task_ready")
+  if (!ready1) problems.push("no attempt-1 task_ready call was made, so the time to the reopen has no start")
   if (second && ready1 && second.at - ready1.at >= 30_000)
     problems.push(`the reopen came ${Math.round((second.at - ready1.at) / 1000)} s after task_ready, not under 30 s`)
   verify(problems, c)
