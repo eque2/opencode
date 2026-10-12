@@ -47,6 +47,7 @@ const rules = (task: BlendModel.Task, spec: BlendModel.Spec) => [
   "- Work only in the current directory: it is this task's own git worktree. Do not commit; the harness commits.",
   `- Title every test with the id of the obligation it proves, in brackets, for example \`[${task.id}.c1] …\`. Never use another task's id.`,
   "- Change only the files under Touches, plus test files (under `test/`, or named `*.test.*` or `*.spec.*`).",
+  "- For each scenario under Scenarios, write one test titled with its id in brackets, for example `[S1] …`, that checks it end to end.",
   ...task.gates.map((gate) => `- The gate ${gate} must pass: \`${spec.gates[gate]?.command ?? gate}\`.`),
   "- Run the tests and the gates. When the task is done, call `task_ready` once and end your turn: the harness then runs the proofs.",
 ]
@@ -61,9 +62,16 @@ export const builderMessage = (input: {
   readonly reopen: ReadonlyArray<Reopen>
   readonly task: BlendModel.Task
   readonly spec: BlendModel.Spec
+  /** Whether a task or `outside` id the scenarios need is trusted when the attempt starts. */
+  readonly trusted: (id: string) => boolean
 }) => {
   const { task, spec } = input
   const obligations = spec.obligations.filter((obligation) => obligation.task === task.id)
+  // The scenarios this task completes: it supports them and every other task they need is already trusted. Their
+  // `[S<n>]` tests are this builder's to write; nobody else would, and a scenario is proved only by its tests.
+  const scenarios = spec.scenarios.filter(
+    (scenario) => scenario.needs.includes(task.id) && scenario.needs.every((id) => id === task.id || input.trusted(id)),
+  )
   return [
     ...(input.first ? [`task-harness role=builder task=${task.id}`] : []),
     `task-harness attempt=${input.attempt}`,
@@ -88,6 +96,10 @@ export const builderMessage = (input: {
     ...section(
       "Obligations",
       obligations.map((obligation) => `- ${obligation.id}: ${oneLine(obligation.text)}`),
+    ),
+    ...section(
+      "Scenarios",
+      scenarios.flatMap((scenario) => [`- ${scenario.id}: ${oneLine(scenario.title)}`, ...scenario.steps.map((step) => `  ${oneLine(step)}`)]),
     ),
     ...rules(task, spec),
   ].join("\n")

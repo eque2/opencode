@@ -408,6 +408,7 @@ const build = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
         reopen: reopened(spec, state, model),
         task,
         spec,
+        trusted: TaskStatus.trusted(yield* view(run)),
       })
     : TaskSessions.continueMessage
   let nudges = 0

@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { NodeServices } from "@effect/platform-node"
+import { Effect } from "effect"
+import path from "node:path"
+import { Blend } from "@/task/blend"
 import { TaskSessions } from "@/task/core/sessions"
 
 // The protocol messages of the harness's child sessions (harness contract, section 4). The scripted model reads
@@ -30,5 +34,27 @@ describe("the judge messages", () => {
     const text = TaskSessions.judgeMissingMessage([{ id: "T1.1.c3", text: "third" }])
     expect(MARKER.test(text)).toBe(false)
     expect(judged(text)).toEqual(["T1.1.c3"])
+  })
+})
+
+describe("the builder message", () => {
+  // The release-notes fixture: each builder writes the [S<n>] tests of the scenarios it completes.
+  const fixture = path.resolve(import.meta.dir, "../../../../task-formats/blend/release-notes.spec")
+  const scenariosOf = (text: string) => [...text.matchAll(/^- (S\d+): /gm)].map((match) => match[1])
+
+  test("names the scenarios the task completes, and only those", async () => {
+    const { spec } = await Effect.runPromise(Blend.load(fixture).pipe(Effect.provide(NodeServices.layer)))
+    if (!spec) throw new Error("the fixture does not load")
+    const message = (id: string, trusted: string[]) => {
+      const task = spec.tasks.find((each) => each.id === id)
+      if (!task) throw new Error(`no task ${id}`)
+      return TaskSessions.builderMessage({ first: true, attempt: 1, reopen: [], task, spec, trusted: (unit) => trusted.includes(unit) })
+    }
+    expect(scenariosOf(message("T1.1", []))).toEqual(["S2", "S7"])
+    // T1.4 completes every scenario that needs it once T1.1-T1.3 are trusted; S13 also needs T8.
+    expect(scenariosOf(message("T1.4", ["T1.1", "T1.2", "T1.3"])).toSorted()).toEqual(
+      ["S1", "S10", "S11", "S6", "S8", "S9"].toSorted(),
+    )
+    expect(scenariosOf(message("T1.4", ["T1.1", "T1.2", "T1.3", "T8"]))).toContain("S13")
   })
 })
