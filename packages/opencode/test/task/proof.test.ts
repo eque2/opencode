@@ -108,9 +108,22 @@ describe("TaskLimits", () => {
       expect(TaskLimits.select("")).toBe(TaskLimits.live)
       expect(Duration.toSeconds(TaskLimits.scripted.proofTimeout)).toBe(5)
       expect(Duration.toSeconds(TaskLimits.live.proofTimeout)).toBe(600)
-      expect(yield* TaskLimits.load).toBe(TaskLimits.select(process.env[TaskLimits.variable] ?? ""))
     }),
   )
+
+  it.live("load reads OPENCODE_TASK_LIMITS from the environment", () => {
+    const previous = process.env[TaskLimits.variable]
+    const restore = Effect.sync(() => {
+      if (previous === undefined) delete process.env[TaskLimits.variable]
+      else process.env[TaskLimits.variable] = previous
+    })
+    return Effect.gen(function* () {
+      process.env[TaskLimits.variable] = "scripted"
+      expect(yield* TaskLimits.load).toBe(TaskLimits.scripted)
+      process.env[TaskLimits.variable] = "anything else"
+      expect(yield* TaskLimits.load).toBe(TaskLimits.live)
+    }).pipe(Effect.ensuring(restore))
+  })
 })
 
 describe("TaskProof", () => {
