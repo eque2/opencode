@@ -282,6 +282,21 @@ describe("TaskProof", () => {
     proveTimeout,
   )
 
+  groupIt("failing gate: a gate that exits non-zero fails its gate obligation with the exit code", () =>
+    Effect.gen(function* () {
+      // No src/feature.ts at head, so BUILD-2 (`test -f src/feature.ts`) exits 1.
+      const repo = yield* taskRepo({
+        "test/feature.test.ts": [`import { test } from "bun:test"`, `test("[T1.1.c1] holds", () => {})`, ""].join("\n"),
+      })
+      const proof = yield* prove(repo)
+      expect(proof.gates.find((gate) => gate.gate === "BUILD-2")).toMatchObject({ status: "failed", exitCode: 1 })
+      expect(statusOf(proof, "T1.1.p2")).toBe("failed")
+      expect(reasonOf(proof, "T1.1.p2")).toStartWith("BUILD-2: exit 1:")
+      expect(proof.gates.find((gate) => gate.gate === "BUILD-1")?.status).toBe("passed")
+    }),
+    proveTimeout,
+  )
+
   groupIt("run: when the leader exits, the runner kills the processes that it left in its group", () =>
     Effect.gen(function* () {
       const result = yield* TaskProof.run("sh", ["-c", "sleep 600 & echo $!"], {
