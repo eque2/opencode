@@ -34,6 +34,15 @@ const MERGEABLE_CHECK_KEYWORDS: ReadonlyArray<string> = [
 // These keywords hold JSON data, not subschemas, so the walk leaves them as they are.
 const DATA_KEYWORDS: ReadonlyArray<string> = ["const", "default", "enum", "examples"]
 
+// These keywords map names to subschemas. A name such as `default` is a property, not a keyword.
+const SCHEMA_MAP_KEYWORDS: ReadonlyArray<string> = [
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+]
+
 /**
  * Converts an Effect schema to the JSON Schema that a provider receives for a tool.
  *
@@ -66,16 +75,16 @@ const restore = (value: unknown): unknown => {
 }
 
 const restoreObject = (value: JsonObject): JsonObject => {
-  const schema = Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, DATA_KEYWORDS.includes(key) ? item : restore(item)]),
-  )
+  const schema = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, restoreKeyword(key, item)]))
   if (schema.type !== "integer") return schema
 
   if (schema.minimum === Number.MIN_SAFE_INTEGER && schema.maximum === Number.MAX_SAFE_INTEGER) {
     // Keep the key order: each check that Effect moved into `allOf` returns to the place of `allOf`.
+    // A repeated `Schema.isInt` puts the range into `allOf` as well, and that copy goes too.
     return Object.entries(schema).reduce<JsonObject>((out, [key, item]) => {
       if (key === "minimum" || key === "maximum") return out
-      if (key === "allOf" && Array.isArray(item)) return item.reduce(mergeCheck, out)
+      if (key === "allOf" && Array.isArray(item))
+        return item.filter((member) => !isSafeIntegerRange(member)).reduce(mergeCheck, out)
       // A later key that a merged check already set collides, as it did on rc.117.
       return Object.hasOwn(out, key) ? mergeCheck(out, { [key]: item }) : { ...out, [key]: item }
     }, {})
@@ -90,6 +99,13 @@ const restoreObject = (value: JsonObject): JsonObject => {
   }
 
   return schema
+}
+
+const restoreKeyword = (key: string, item: unknown): unknown => {
+  if (DATA_KEYWORDS.includes(key)) return item
+  if (SCHEMA_MAP_KEYWORDS.includes(key) && isRecord(item))
+    return Object.fromEntries(Object.entries(item).map(([name, schema]) => [name, restore(schema)]))
+  return restore(item)
 }
 
 const mergeCheck = (out: JsonObject, check: unknown): JsonObject =>

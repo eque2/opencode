@@ -33,6 +33,17 @@ describe("ProviderJsonSchema", () => {
     })
   })
 
+  test("restores a property whose name is a JSON Schema data keyword", () => {
+    expect(
+      ProviderJsonSchema.fromSchema(Schema.Struct({ default: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
+        .properties,
+    ).toEqual({ default: { type: "integer", minimum: 0 } })
+  })
+
+  test("drops the range that a repeated Schema.isInt adds", () => {
+    expect(property(Schema.Int.check(Schema.isInt()))).toEqual({ value: { type: "integer" } })
+  })
+
   test("keeps a second bound on the same keyword in allOf", () => {
     expect(
       property(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).check(Schema.isGreaterThanOrEqualTo(5))),
