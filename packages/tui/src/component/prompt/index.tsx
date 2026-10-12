@@ -258,7 +258,7 @@ export function Prompt(props: PromptProps) {
   const timers = MutableHashSet.empty<Fiber.Fiber<void>>()
   function runTimer(effect: Effect.Effect<void>) {
     const fiber = Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
-    // A fiber has no Equal or Hash, and hashing one by structure can throw, so the set keys it by reference.
+    // A fiber has no Equal or Hash, so the set keys it by reference instead of walking its object graph.
     MutableHashSet.add(timers, Equal.byReferenceUnsafe(fiber))
     fiber.addObserver(() => MutableHashSet.remove(timers, fiber))
   }
