@@ -1,4 +1,5 @@
 import type { JSONSchema7 } from "@ai-sdk/provider"
+import { ProviderJsonSchema } from "@opencode-ai/llm"
 import { HashSet, JsonSchema, Option, Predicate, Schema } from "effect"
 import type * as Tool from "./tool"
 
@@ -11,12 +12,15 @@ export function fromSchema(schema: Schema.Top): JSONSchema7 {
 
   const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "ignore" })
   // The document is an object, and each step below maps an object to an object, so the
-  // result is always a JSON Schema object.
-  const result = normalizeObject({
-    $schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
-    ...document.schema,
-    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
-  })
+  // result is always a JSON Schema object. The safe-integer range that Effect 4.0 adds for
+  // `Schema.isInt` goes first, so the normalisation below sees the rc.117 shape.
+  const result = normalizeObject(
+    ProviderJsonSchema.withoutSafeIntegerRange({
+      $schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
+      ...document.schema,
+      ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
+    }),
+  )
   const inlined = dropDefinitionsIfResolved(inlineObjectReferences(result))
   cache.set(schema, inlined)
   return inlined
