@@ -1,3 +1,4 @@
+import { MutableHashMap, Option, Schema } from "effect"
 import type { Verdict } from "./model"
 
 // The harness's in-session hooks. `SessionPrompt` consults them while a child session runs: it injects the
@@ -12,40 +13,47 @@ export const VERIFIER = "task-verifier"
 
 type Call = { readonly tool: string; readonly input: unknown }
 
-const ready = new Map<string, { readonly summary?: string }>()
-const verdicts = new Map<string, ReadonlyArray<Verdict>>()
-const repeated = new Map<string, string>()
-const limits = new Map<string, number>()
+const ready = MutableHashMap.empty<string, { readonly summary?: string }>()
+const verdicts = MutableHashMap.empty<string, ReadonlyArray<Verdict>>()
+const repeated = MutableHashMap.empty<string, string>()
+const limits = MutableHashMap.empty<string, number>()
+
+// The same encoding the doom-loop check in `SessionProcessor` compares inputs with.
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+const take = <V>(map: MutableHashMap.MutableHashMap<string, V>, key: string) => {
+  const value = Option.getOrUndefined(MutableHashMap.get(map, key))
+  MutableHashMap.remove(map, key)
+  return value
+}
 
 /** Watch a builder session for repeated calls; `limit` identical calls in a row end the turn. */
 export function watch(sessionID: string, limit: number) {
-  limits.set(sessionID, limit)
-  repeated.delete(sessionID)
+  MutableHashMap.set(limits, sessionID, limit)
+  MutableHashMap.remove(repeated, sessionID)
 }
 
 export function unwatch(sessionID: string) {
-  limits.delete(sessionID)
+  MutableHashMap.remove(limits, sessionID)
 }
 
 export function recordReady(sessionID: string, input: { readonly summary?: string }) {
-  ready.set(sessionID, input)
+  MutableHashMap.set(ready, sessionID, input)
 }
 
 /** The builder's `task_ready` of the turn that just ended, cleared on read. */
 export function takeReady(sessionID: string) {
-  const value = ready.get(sessionID)
-  ready.delete(sessionID)
-  return value
+  return take(ready, sessionID)
 }
 
 export function recordVerdicts(sessionID: string, input: ReadonlyArray<Verdict>) {
-  verdicts.set(sessionID, [...(verdicts.get(sessionID) ?? []), ...input])
+  const before = Option.getOrElse(MutableHashMap.get(verdicts, sessionID), () => [])
+  MutableHashMap.set(verdicts, sessionID, [...before, ...input])
 }
 
+/** The verdicts of the round that just ended, cleared on read. */
 export function takeVerdicts(sessionID: string) {
-  const value = verdicts.get(sessionID)
-  verdicts.delete(sessionID)
-  return value
+  return take(verdicts, sessionID)
 }
 
 /**
@@ -53,21 +61,20 @@ export function takeVerdicts(sessionID: string) {
  * oldest first. Returns the reason when the last `limit` calls are one tool with one input, and remembers it.
  */
 export function checkRepetition(sessionID: string, calls: ReadonlyArray<Call>): string | undefined {
-  const limit = limits.get(sessionID)
+  const limit = Option.getOrUndefined(MutableHashMap.get(limits, sessionID))
   if (limit === undefined || calls.length < limit) return undefined
   const last = calls.slice(-limit)
-  const key = (call: Call) => `${call.tool}\u0000${JSON.stringify(call.input)}`
-  if (!last.every((call) => key(call) === key(last[0]!))) return undefined
-  const reason = `repetition: ${limit} identical ${last[0]!.tool} calls in a row`
-  repeated.set(sessionID, reason)
+  const key = (call: Call) => `${call.tool}\u0000${Option.getOrElse(encodeJson(call.input), () => "")}`
+  const first = key(last[0])
+  if (!last.every((call) => key(call) === first)) return undefined
+  const reason = `repetition: ${limit} identical ${last[0].tool} calls in a row`
+  MutableHashMap.set(repeated, sessionID, reason)
   return reason
 }
 
 /** The repetition that ended the builder's turn, cleared on read. */
 export function takeRepeated(sessionID: string) {
-  const value = repeated.get(sessionID)
-  repeated.delete(sessionID)
-  return value
+  return take(repeated, sessionID)
 }
 
 export * as TaskHooks from "./hooks"
