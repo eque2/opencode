@@ -57,6 +57,7 @@ export interface Start {
 
 interface Run extends Start {
   readonly id: string
+  /** The time of the latest `run.started` or `run.resumed`: the run wall clock starts here. */
   readonly startedAt: number
   readonly state: Ref.Ref<State>
   readonly outside: Ref.Ref<ReadonlyArray<string>>
@@ -602,6 +603,19 @@ const checkStale = Effect.fnUntraced(function* (run: Run) {
 
 const ACTIVE = ["building", "proving", "verifying"]
 
+/**
+ * When a task's wall clock started: its latest `building` entry after its latest `trusted` entry, so a trusted task
+ * reopened later starts afresh; never before `runStart` (the latest start or resume), so downtime does not count.
+ * None for a task with no such entry.
+ */
+export const taskClockStart = (history: State["history"], task: string, runStart: number): Option.Option<number> => {
+  const own = history.filter((entry) => entry.unit === task)
+  const after = own.slice(own.findLastIndex((entry) => entry.to === "trusted") + 1)
+  return Option.map(Option.fromNullishOr(after.findLast((entry) => entry.to === "building")), (entry) =>
+    Math.max(entry.at, runStart),
+  )
+}
+
 const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers) {
   const at = yield* now
   if (Option.isSome(run.limits.runWallClock) && at - run.startedAt > Duration.toMillis(run.limits.runWallClock.value)) {
@@ -614,8 +628,8 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
   const state = yield* Ref.get(run.state)
   for (const task of Object.values(state.tasks)) {
     if (!ACTIVE.includes(task.state)) continue
-    const started = state.history.find((entry) => entry.unit === task.id && entry.to === "building")
-    if (!started || at - started.at <= limit) continue
+    const started = taskClockStart(state.history, task.id, run.startedAt)
+    if (Option.isNone(started) || at - started.value <= limit) continue
     yield* FiberMap.remove(workers, task.id)
     if (task.session && task.worktree) {
       yield* TaskSessions.cancel(run.env, task.worktree, SessionID.make(task.session)).pipe(Effect.ignore)
@@ -763,7 +777,8 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
   const self: Run = {
     ...start,
     id,
-    startedAt: Option.match(Option.fromNullishOr(facts[0]), { onNone: () => at, onSome: (fact) => fact.at }),
+    // The `run.started` or `run.resumed` this call records: the run clock does not count downtime.
+    startedAt: at,
     state: yield* Ref.make(TaskEvents.fold(start.engine, start.plan, facts)),
     outside: yield* Ref.make(TaskEvents.trustedOutside(facts)),
     spec: yield* Ref.make(start.plan.spec),
