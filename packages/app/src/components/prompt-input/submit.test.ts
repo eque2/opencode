@@ -161,26 +161,26 @@ beforeAll(() =>
       // Bun keeps a module mock for the rest of the process. Each mock keeps the real exports, so a later test file
       // that imports another name from the same module still finds it.
       const actual: Record<string, Record<string, unknown>> = Object.fromEntries(
-        yield* Effect.promise(() =>
-          Promise.all(
-            [
-              "@solidjs/router",
-              "@opencode-ai/sdk/v2/client",
-              "@opencode-ai/ui/toast",
-              "@opencode-ai/core/util/encode",
-              "@/context/server",
-              "@/context/local",
-              "@/context/permission",
-              "@/context/tabs",
-              "@/context/prompt",
-              "@/context/layout",
-              "@/context/sdk",
-              "@/context/sync",
-              "@/context/server-sync",
-              "@/context/platform",
-              "@/context/language",
-            ].map(async (path) => [path, { ...(await import(path)) }] as const),
-          ),
+        yield* Effect.forEach(
+          [
+            "@solidjs/router",
+            "@opencode-ai/sdk/v2/client",
+            "@opencode-ai/ui/toast",
+            "@opencode-ai/core/util/encode",
+            "@/context/server",
+            "@/context/local",
+            "@/context/permission",
+            "@/context/tabs",
+            "@/context/prompt",
+            "@/context/layout",
+            "@/context/sdk",
+            "@/context/sync",
+            "@/context/server-sync",
+            "@/context/platform",
+            "@/context/language",
+          ],
+          (path) => Effect.map(Effect.promise(() => import(path)), (module) => [path, { ...module }] as const),
+          { concurrency: "unbounded" },
         ),
       )
       // Every overridden function answers with the fake while this file's tests run, and with the real export after
