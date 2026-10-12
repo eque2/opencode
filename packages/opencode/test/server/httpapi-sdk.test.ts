@@ -27,7 +27,7 @@ import { testProviderConfig } from "../lib/test-provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Database } from "@opencode-ai/core/database/database"
-import { httpApiLayer } from "./httpapi-layer"
+import { httpApiLayerWith } from "./httpapi-layer"
 import { TestFailure } from "../fixture/test-failure"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
@@ -35,7 +35,7 @@ const appLayer = AppNodeBuilder.build(
   LayerNode.group([FSUtil.node, CrossSpawnSpawner.node, InstanceStore.node, Database.node, SessionNs.node]),
   [[InstanceStore.bootstrapNode, noopBootstrapLayer]],
 )
-const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
+const it = testEffect(httpApiLayerWith(appLayer))
 
 type ServerPath = "default" | "raw"
 type Sdk = ReturnType<typeof createOpencodeClient>

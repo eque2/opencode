@@ -1,6 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect } from "effect"
 import { HttpClientResponse } from "effect/http"
 import { eq, sql } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
@@ -15,9 +15,9 @@ import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Database.node])), httpApiLayer))
+const it = testEffect(httpApiLayerWith(LayerNode.compile(LayerNode.group([Session.node, Database.node]))))
 
 const text = (response: HttpClientResponse.HttpClientResponse) => response.text
 

@@ -14,7 +14,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { collectGlobalBusEvents } from "./global-bus"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -24,8 +24,11 @@ afterEach(async () => {
 const noopBootstrap = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const testInstanceStore = AppNodeBuilder.build(InstanceStore.node, [[InstanceStore.bootstrapNode, noopBootstrap]])
 
+// The routes and the it.instance context share the noop-bootstrap InstanceStore built beneath the routes.
 const it = testEffect(
-  Layer.mergeAll(AppNodeBuilder.build(LayerNode.group([FSUtil.node, Snapshot.node])), testInstanceStore, httpApiLayer),
+  httpApiLayerWith(
+    Layer.mergeAll(AppNodeBuilder.build(LayerNode.group([FSUtil.node, Snapshot.node])), testInstanceStore),
+  ),
 )
 
 function request(directory: string, url: string, init: RequestInit = {}) {

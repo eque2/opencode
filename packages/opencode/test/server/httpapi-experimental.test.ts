@@ -1,6 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Fiber, Layer, Schema } from "effect"
+import { Effect, Fiber, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
@@ -15,10 +15,10 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { takeGlobalBusEvent } from "./global-bus"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 import { TestFailure } from "../fixture/test-failure"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Database.node])), httpApiLayer))
+const it = testEffect(httpApiLayerWith(LayerNode.compile(LayerNode.group([Session.node, Database.node]))))
 const testWorktreeMutations = process.platform === "win32" ? it.instance.skip : it.instance
 
 function request(path: string, directory: string, init: RequestInit = {}) {

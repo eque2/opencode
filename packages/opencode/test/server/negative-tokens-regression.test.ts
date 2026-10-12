@@ -7,7 +7,7 @@
 // fail to encode, killing Desktop boot for every user with such a row.
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect } from "effect"
 import { eq, sql } from "drizzle-orm"
 
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
@@ -20,9 +20,9 @@ import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Database.node])), httpApiLayer))
+const it = testEffect(httpApiLayerWith(LayerNode.compile(LayerNode.group([Session.node, Database.node]))))
 
 function seedNegativeTokenSession() {
   return Effect.gen(function* () {

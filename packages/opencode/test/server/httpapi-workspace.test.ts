@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
-import { Effect, Layer, Schema, Stream } from "effect"
+import { Effect, Schema, Stream } from "effect"
 import { HttpClientResponse } from "effect/http"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -22,13 +22,13 @@ import { InstanceStore } from "../../src/project/instance-store"
 import { Project } from "../../src/project/project"
 import { InstancePaths } from "../../src/server/routes/instance/httpapi/groups/instance"
 import { testEffect } from "../lib/effect"
-import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { httpApiLayerWith, requestInDirectory } from "./httpapi-layer"
 
 const appLayer = AppNodeBuilder.build(
   LayerNode.group([Project.node, Session.node, Workspace.node, InstanceStore.node, Database.node, Ripgrep.node]),
   [[InstanceStore.bootstrapNode, InstanceBootstrap.node]],
 )
-const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
+const it = testEffect(httpApiLayerWith(appLayer))
 
 const decodeWorkspace = HttpClientResponse.schemaBodyJson(Workspace.Info)
 const decodeSession = HttpClientResponse.schemaBodyJson(Session.Info)

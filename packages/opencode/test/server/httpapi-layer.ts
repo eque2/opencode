@@ -18,6 +18,15 @@ export const httpApiLayer = servedRoutes.pipe(
   Layer.provideMerge(NodeServices.layer),
 )
 
+// Serves the routes on top of a test's own services, so the routes reuse the test's instances.
+// HttpRouter.serve builds the routes in a fork of the memo map: the fork reads its parent's
+// entries but never writes back. Layer.mergeAll builds its layers concurrently, so a service
+// merged beside the routes is shared only when the sibling reaches the memo map first. Under
+// OPENCODE_DB=":memory:" a second Database is a separate, empty database. Building the services
+// beneath the routes puts them in the parent memo map before the fork reads it.
+export const httpApiLayerWith = <A, E, R>(services: Layer.Layer<A, E, R>) =>
+  httpApiLayer.pipe(Layer.provideMerge(services))
+
 export function request(path: string, init?: RequestInit) {
   const url = new URL(path, "http://localhost")
   return HttpClientRequest.fromWeb(new Request(url, init)).pipe(
