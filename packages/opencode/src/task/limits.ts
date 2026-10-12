@@ -12,7 +12,11 @@ export interface Limits {
   readonly mode: Mode
   /** A model stream that sends nothing for this long is stalled. */
   readonly streamIdle: Duration.Duration
-  /** One proof command (a test run, a gate, a git call) may run this long. */
+  /**
+   * One test of a proof run may run this long (`bun test --timeout`), and so may one git call. A whole
+   * command (the `bun test` run, a gate) gets this plus the cancel deadline plus a margin:
+   * `TaskProof.testRunBound`.
+   */
   readonly proofTimeout: Duration.Duration
   /** After SIGTERM to a process group, wait this long, then send SIGKILL. */
   readonly cancelDeadline: Duration.Duration

@@ -137,6 +137,8 @@ export const runMargin = Duration.seconds(10)
 export const testRunBound = (limits: TaskLimits.Limits) =>
   Duration.sum(Duration.sum(limits.proofTimeout, limits.cancelDeadline), runMargin)
 
+// The bounds of one git call: the proof timeout. A whole command (the `bun test` run, a gate) gets
+// `testRunBound` instead, because the proof timeout bounds each test inside it.
 const commandBounds = (limits: TaskLimits.Limits): ProofProcess.Bounds => ({
   timeout: limits.proofTimeout,
   cancelDeadline: limits.cancelDeadline,
