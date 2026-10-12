@@ -31,6 +31,13 @@ const NegativeCase = Schema.fromJsonString(
 )
 const GoldenModel = Schema.fromJsonString(Schema.Unknown)
 
+// R3 cases whose message comes from the schema library, not the reference checker's JSON Schema validator: only
+// the rule and the file path must match. The message text need not.
+const SCHEMA_MESSAGE_CASES = ["08", "09", "10", "12", "36", "37"]
+
+// `R<n> <path>`: a failure line up to its first ": ".
+const ruleAndPath = (line: string) => line.slice(0, line.indexOf(": "))
+
 const ruleIds = (failures: ReadonlyArray<Blend.Failure>): string[] =>
   [...new Set(failures.map((failure) => failure.rule))].toSorted()
 
@@ -86,7 +93,7 @@ describe("Blend.load", () => {
   )
 
   for (const name of negativeCases) {
-    it.live(`refuses negative case ${name} with the expected rules`, () =>
+    it.live(`refuses negative case ${name} with the expected failures`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const caseDir = path.join(negativeDir, name)
@@ -94,8 +101,11 @@ describe("Blend.load", () => {
         const expected = (yield* fs.readFileString(path.join(caseDir, "expected.txt")))
           .split("\n")
           .filter((line) => line.trim() !== "")
-          .map((line) => line.split(" ")[0])
-        expect(ruleIds(result.failures)).toEqual([...new Set(expected)].toSorted())
+        const actual = result.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`)
+        // One failure for each expected line, in the same order, with the same rule and file path.
+        expect(actual).toHaveLength(expected.length)
+        expect(actual.map(ruleAndPath)).toEqual(expected.map(ruleAndPath))
+        if (!SCHEMA_MESSAGE_CASES.includes(name.slice(0, 2))) expect(actual).toEqual(expected)
         expect(result.spec).toBeUndefined()
       }),
     )
