@@ -659,8 +659,14 @@ const checkDone = Effect.fnUntraced(function* (run: Run) {
 
 const MAX_FAILURES = 3
 
-// A worker that fails is retried on a later tick; the third failure in a row ends its unit with the error.
-const guarded = (run: Run, key: string, effect: Effect.Effect<void, unknown, Requirements>) =>
+// A worker that fails is retried on a later tick; the third failure in a row ends its unit with the error. The
+// scenario batch ends only the scenarios it held (`batch`), never one whose needs are not trusted.
+const guarded = (
+  run: Run,
+  key: string,
+  effect: Effect.Effect<void, unknown, Requirements>,
+  batch: ReadonlyArray<string> = [],
+) =>
   effect.pipe(
     Effect.tap(() => Effect.sync(() => MutableHashMap.remove(run.failures, key))),
     Effect.catchCause((cause) =>
@@ -681,13 +687,10 @@ const guarded = (run: Run, key: string, effect: Effect.Effect<void, unknown, Req
             verdict: { id: key, verdict: "rejected", reason },
           })
         }
-        const waiting = Object.values(state.scenarios).filter((item) => item.state === "waiting")
+        const waiting = batch.filter((id) => state.scenarios[id]?.state === "waiting")
         return yield* Effect.forEach(
           waiting,
-          (scenario) =>
-            Effect.flatMap(now, (at) =>
-              record(run, { type: "scenario.proved", at, id: scenario.id, status: "failed", reason }),
-            ),
+          (id) => Effect.flatMap(now, (at) => record(run, { type: "scenario.proved", at, id, status: "failed", reason })),
           { discard: true },
         )
       }),
@@ -698,10 +701,10 @@ const schedule = Effect.fnUntraced(function* (run: Run, workers: Workers) {
   const input = yield* view(run)
   const { state } = input
   const ok = TaskStatus.trusted(input)
-  const spawn = (key: string, effect: Effect.Effect<void, unknown, Requirements>) =>
+  const spawn = (key: string, effect: Effect.Effect<void, unknown, Requirements>, batch: ReadonlyArray<string> = []) =>
     Effect.gen(function* () {
       if (yield* FiberMap.has(workers, key)) return
-      yield* FiberMap.run(workers, key, { onlyIfMissing: true })(guarded(run, key, effect))
+      yield* FiberMap.run(workers, key, { onlyIfMissing: true })(guarded(run, key, effect, batch))
     })
   for (const task of run.plan.tasks) {
     const model = state.tasks[task.id]
@@ -717,7 +720,13 @@ const schedule = Effect.fnUntraced(function* (run: Run, workers: Workers) {
   const ready = run.plan.scenarios.filter(
     (scenario) => state.scenarios[scenario.id]?.state === "waiting" && scenario.needs.every(ok),
   )
-  if (ready.length > 0) yield* spawn("scenarios", proveScenarios(run, ready))
+  if (ready.length > 0) {
+    yield* spawn(
+      "scenarios",
+      proveScenarios(run, ready),
+      ready.map((scenario) => scenario.id),
+    )
+  }
   for (const scenario of run.plan.scenarios) {
     if (state.scenarios[scenario.id]?.state === "verifying") yield* spawn(scenario.id, judgeScenario(run, scenario))
   }
