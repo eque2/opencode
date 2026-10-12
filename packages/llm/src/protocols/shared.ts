@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer"
 import { Effect, HashSet, Predicate, Schema, Stream } from "effect"
-import * as Sse from "effect/unstable/encoding/Sse"
+import * as Sse from "effect/encoding/Sse"
 import { Headers, HttpClientRequest } from "effect/http"
 import {
   InvalidProviderOutputReason,

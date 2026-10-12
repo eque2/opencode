@@ -11,7 +11,7 @@ import { Effect, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
-import * as Sse from "effect/unstable/encoding/Sse"
+import * as Sse from "effect/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
 
