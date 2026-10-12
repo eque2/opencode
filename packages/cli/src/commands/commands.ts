@@ -1,4 +1,4 @@
-import { Argument, Flag } from "effect/unstable/cli"
+import { Argument, Flag } from "effect/cli"
 import { Spec } from "../framework/spec"
 
 declare const OPENCODE_CLI_NAME: string | undefined

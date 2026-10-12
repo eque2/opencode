@@ -1,5 +1,5 @@
 import { Config, ConfigProvider, Effect, Layer, Option } from "effect"
-import { OtlpLogger } from "effect/unstable/observability"
+import { OtlpLogger } from "effect/observability"
 import { FlagConfig } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
 import { runID } from "./shared"
