@@ -10,6 +10,7 @@ import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
+import { TaskSelector } from "@/task/core/selector"
 
 type State = {
   commands: Record<string, Info>
@@ -47,6 +48,7 @@ export function hints(template: string) {
 export const Default = {
   INIT: "init",
   REVIEW: "review",
+  TASK: "task",
 } as const
 
 export interface Interface {
@@ -87,6 +89,15 @@ const layer = Layer.effect(
         subtask: true,
         hints: hints(PROMPT_REVIEW),
       }
+      // The in-core task harness (O1, O2). `SessionPrompt.command` dispatches it before it reads the template.
+      if (yield* TaskSelector.inCore)
+        commands[Default.TASK] = {
+          name: Default.TASK,
+          description: "Run a blend task tree",
+          source: "command",
+          template: "",
+          hints: [],
+        }
 
       for (const [name, command] of Object.entries(cfg.command ?? {})) {
         commands[name] = {
