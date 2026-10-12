@@ -14,6 +14,8 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_TASK_BUILDER from "./prompt/task-builder.txt"
+import PROMPT_TASK_VERIFIER from "./prompt/task-verifier.txt"
 import { Permission } from "@/permission"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -31,6 +33,8 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { Location } from "@opencode-ai/core/location"
 import { PluginV2 } from "@opencode-ai/core/plugin"
+import { TaskHooks } from "@/task/core/hooks"
+import { TaskSelector } from "@/task/core/selector"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -273,6 +277,49 @@ const layer = Layer.effect(
             ),
             prompt: PROMPT_SUMMARY,
           },
+        }
+
+        // The in-core task harness's agents (O1, O2). They run headless, so every permission is decided:
+        // `"*": "allow"` first, then the denials; no rule asks.
+        if (yield* TaskSelector.inCore) {
+          const model = cfg.model ? { model: Provider.parseModel(cfg.model) } : {}
+          agents[TaskHooks.BUILDER] = {
+            name: TaskHooks.BUILDER,
+            description: "Builds one task of a blend task tree for the task harness.",
+            mode: "primary",
+            native: true,
+            hidden: true,
+            prompt: PROMPT_TASK_BUILDER,
+            permission: Permission.fromConfig({
+              "*": "allow",
+              verdict: "deny",
+              question: "deny",
+              task: "deny",
+              doom_loop: "deny",
+            }),
+            options: {},
+            ...model,
+          }
+          agents[TaskHooks.VERIFIER] = {
+            name: TaskHooks.VERIFIER,
+            description: "Judges the obligations of a task for the task harness.",
+            mode: "primary",
+            native: true,
+            hidden: true,
+            prompt: PROMPT_TASK_VERIFIER,
+            permission: Permission.fromConfig({
+              "*": "allow",
+              task_ready: "deny",
+              edit: "deny",
+              write: "deny",
+              apply_patch: "deny",
+              question: "deny",
+              task: "deny",
+              doom_loop: "deny",
+            }),
+            options: {},
+            ...model,
+          }
         }
 
         for (const [key, value] of Object.entries(cfg.agent ?? {})) {
