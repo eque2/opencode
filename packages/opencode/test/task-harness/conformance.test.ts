@@ -16,6 +16,7 @@ import path from "node:path"
 import fs from "node:fs"
 import matter from "gray-matter"
 import * as Arms from "./arms"
+import * as Server from "./arms/server"
 import * as Status from "./arms/status"
 import * as Workspace from "./arms/workspace"
 import * as Scripts from "./scripts"
@@ -901,9 +902,11 @@ check(
             if (open.length > 0) problems.push(`${task} is trusted but ${open.join(", ")} are not`)
           }
         if (s.run.state === "done") {
-          const gates = runGates(ws)
+          const gates = await runGates(ws)
           out.gates = gates
-          for (const [id, code] of Object.entries(gates)) if (code !== 0) problems.push(`gate ${id} exits ${code} on main`)
+          for (const [id, gate] of Object.entries(gates))
+            if (gate.timedOut) problems.push(`gate ${id} did not finish within ${GATE_MS / 1000} s on main`)
+            else if (gate.code !== 0) problems.push(`gate ${id} exits ${gate.code} on main`)
         }
       }
       verify(problems)
@@ -917,20 +920,36 @@ check(
   !live,
 )
 
-// The four gates of SPEC.md, run by the test on a fresh clone of the main branch.
-function runGates(ws: Workspace.Workspace): Record<string, number> {
+// The four gates of SPEC.md, run by the test on a fresh clone of the main branch, each bounded at 300 s. Each gate
+// runs in its own process group, so the bound also stops what it started.
+const GATE_IDS = ["BUILD-1", "BUILD-2", "BUILD-3", "BUILD-4"]
+const GATE_MS = 300_000
+
+async function runGates(ws: Workspace.Workspace): Promise<Record<string, { code: number | null; timedOut: boolean }>> {
+  const gates = record(specFront.gates)
+  const commands = GATE_IDS.map((id) => {
+    const value = record(gates[id]).command
+    if (typeof value !== "string" || value.trim() === "") throw new Error(`SPEC.md has no command for gate ${id}`)
+    return [id, value] as const
+  })
   const dir = path.join(ws.dir, "gates")
   fs.rmSync(dir, { recursive: true, force: true })
   Workspace.git(ws.dir, "clone", "-q", "--branch", "main", ws.repo, dir)
-  const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: dir })
-  if (install.exitCode !== 0) return { install: install.exitCode }
-  const gates = record(specFront.gates)
-  return Object.fromEntries(
-    Object.entries(gates).map(([id, gate]) => {
-      const value = record(gate).command
-      const command = typeof value === "string" ? value : ""
-      const run = Bun.spawnSync(["sh", "-c", command], { cwd: dir, timeout: 600_000 })
-      return [id, run.exitCode ?? -1]
-    }),
-  )
+  const out: Record<string, { code: number | null; timedOut: boolean }> = {}
+  out.install = await bounded(["bun", "install", "--frozen-lockfile"], dir, path.join(ws.dir, "gate-install.log"))
+  if (out.install.code !== 0 || out.install.timedOut) return out
+  for (const [id, command] of commands) out[id] = await bounded(["sh", "-c", command], dir, path.join(ws.dir, `gate-${id}.log`))
+  return out
+}
+
+async function bounded(cmd: string[], cwd: string, log: string) {
+  const proc = Bun.spawn(cmd, { cwd, detached: true, stdout: Bun.file(log), stderr: Bun.file(`${log}.stderr`) })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    Server.kill(proc.pid, "SIGKILL")
+  }, GATE_MS)
+  const code = await proc.exited
+  clearTimeout(timer)
+  return { code: timedOut ? null : code, timedOut }
 }
