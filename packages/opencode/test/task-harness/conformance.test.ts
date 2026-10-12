@@ -895,6 +895,14 @@ check(
       out.idle = idle
       const problems: string[] = []
       if (breach) problems.push(`cap breached: ${breach}`)
+      // The loop samples tokens every 10 s, so a run can end just past the cap between samples: "within the live cap"
+      // is judged on the final count and the final wall clock as well.
+      const finalTokens = record(out.tokens).total
+      const finalWall = Date.now() - startAt
+      if (!breach && typeof finalTokens === "number" && finalTokens > LIVE_TOKENS)
+        problems.push(`cap breached: tokens ${finalTokens} > ${LIVE_TOKENS} at the end of the run`)
+      if (!breach && finalWall > LIVE_WALL_MS)
+        problems.push(`cap breached: wall clock ${Math.round(finalWall / 1000)} s > ${LIVE_WALL_MS / 1000} s`)
       if (!s || !LIVE_ENDS.includes(s.run.state))
         problems.push(
           `the run did not end by itself in a terminal state${idle ? `; it stayed waiting with no task in progress for ${LIVE_IDLE_MS / 1000} s` : ""} (${Status.summary(s)})`,
