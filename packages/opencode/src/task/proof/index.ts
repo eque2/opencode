@@ -239,6 +239,9 @@ const runTests = Effect.fnUntraced(
   Effect.scoped,
 )
 
+// A process of the group outlived SIGKILL: the run or gate leaves the machine in an unknown state.
+const survivedReason = "a process survived the group kill"
+
 const failedCase = (test: Junit.TestCase, run: TestRun) =>
   `${Junit.fullTitle(test)}: ${Option.getOrElse(Junit.messageOf(test, run.failures), () => test.failureText || test.failureType || "failed")}`
 
@@ -248,6 +251,7 @@ const failedCase = (test: Junit.TestCase, run: TestRun) =>
  */
 const tagResult = (tag: string, run: TestRun): TagResult => {
   const label = `[${tag}]`
+  if (!run.result.groupCleared) return { status: "failed", reason: survivedReason }
   if (run.result.timedOut) return { status: "failed", reason: "timed out: the test run passed its wall bound" }
   if (Option.isNone(run.cases)) {
     return {
@@ -362,6 +366,7 @@ const runGate = Effect.fnUntraced(function* (input: TaskInput, gate: string) {
     cancelDeadline: input.limits.cancelDeadline,
   })
   const base = { gate, exitCode: result.exitCode, timedOut: result.timedOut }
+  if (!result.groupCleared) return { ...base, status: "failed", reason: survivedReason } satisfies GateResult
   if (result.timedOut) return { ...base, status: "failed", reason: "timed out" } satisfies GateResult
   if (result.exitCode === 0) return { ...base, status: "passed" } satisfies GateResult
   return {
