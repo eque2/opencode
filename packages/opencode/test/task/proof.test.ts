@@ -297,6 +297,24 @@ describe("TaskProof", () => {
     proveTimeout,
   )
 
+  groupIt("skipped tag: an obligation whose tests are all skipped fails as skipped", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({
+        ...feature,
+        "test/feature.test.ts": testsOf(
+          passing("T1.1.c1"),
+          `test.skip("[T1.1.c2] not ready", () => { expect(answer).toBe(42) })`,
+        ),
+      })
+      const proof = yield* prove(repo)
+      expect(statusOf(proof, "T1.1.c2")).toBe("failed")
+      expect(reasonOf(proof, "T1.1.c2")).toStartWith("skipped:")
+      expect(statusOf(proof, "T1.1.c1")).toBe("passed")
+      expect(proof.evidence.counts.skip).toBeGreaterThan(0)
+    }),
+    proveTimeout,
+  )
+
   groupIt("run: when the leader exits, the runner kills the processes that it left in its group", () =>
     Effect.gen(function* () {
       const result = yield* TaskProof.run("sh", ["-c", "sleep 600 & echo $!"], {
