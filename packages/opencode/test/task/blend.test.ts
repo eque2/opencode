@@ -128,4 +128,20 @@ describe("Blend.load", () => {
       expect(result.spec).toBeUndefined()
     }),
   )
+
+  // The spike's fixture tree (D5): 6 tasks, 31 obligations, 13 scenarios, two preconditions.
+  it.live("accepts the release-notes fixture tree", () =>
+    Effect.gen(function* () {
+      const result = yield* Blend.load(path.join(formatDir, "release-notes.spec"))
+      expect(result.failures).toEqual([])
+      const spec = result.spec
+      if (!spec) return
+      expect(spec.tasks).toHaveLength(6)
+      expect(spec.obligations).toHaveLength(31)
+      expect(spec.scenarios).toHaveLength(13)
+      expect(Object.keys(spec.outside)).toEqual(["T8", "T9"])
+      expect(spec.tasks.find((each) => each.id === "T1.5")?.afterEffective).toEqual(["T1.3", "T1.4", "T9"])
+      expect(spec.scenarios.find((each) => each.id === "S13")?.environment?.kind).toBe("deployed")
+    }),
+  )
 })
