@@ -315,6 +315,29 @@ describe("TaskProof", () => {
     proveTimeout,
   )
 
+  groupIt("failing tag in a describe: the reason holds the full title and the thrown message", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({
+        ...feature,
+        "test/feature.test.ts": [
+          `import { describe, expect, test } from "bun:test"`,
+          `import { answer } from "../src/feature"`,
+          `test("[T1.1.c1] holds", () => { expect(answer).toBe(42) })`,
+          `describe("group", () => {`,
+          `  test("[T1.1.c2] breaks", () => { throw new Error("grouped failure 5151") })`,
+          `})`,
+          "",
+        ].join("\n"),
+      })
+      const proof = yield* prove(repo)
+      expect(statusOf(proof, "T1.1.c2")).toBe("failed")
+      expect(reasonOf(proof, "T1.1.c2")).toContain("group > [T1.1.c2] breaks")
+      expect(reasonOf(proof, "T1.1.c2")).toContain("grouped failure 5151")
+      expect(statusOf(proof, "T1.1.c1")).toBe("passed")
+    }),
+    proveTimeout,
+  )
+
   groupIt("run: when the leader exits, the runner kills the processes that it left in its group", () =>
     Effect.gen(function* () {
       const result = yield* TaskProof.run("sh", ["-c", "sleep 600 & echo $!"], {
