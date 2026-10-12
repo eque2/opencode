@@ -207,18 +207,26 @@ export function killLeft(procs: Proc[]) {
   }
 }
 
-export function pgrep(pattern: string): number[] {
-  const out = Bun.spawnSync(["pgrep", "-f", pattern]).stdout.toString()
-  return out
+// Every process whose command line contains `text` literally (pgrep -f would read it as a regular expression).
+export function pgrep(text: string): number[] {
+  return commands(Bun.spawnSync(["ps", "-axo", "pid=,command="]).stdout.toString(), text)
+}
+
+// The pids in `ps -axo pid=,command=` output whose command contains `text`, without this process.
+export function commands(table: string, text: string): number[] {
+  return table
     .split("\n")
-    .map((line) => Number(line.trim()))
+    .map((line) => /^\s*(\d+)\s(.*)$/.exec(line))
+    .filter((m): m is RegExpExecArray => m !== null && m[2].includes(text))
+    .map((m) => Number(m[1]))
     .filter((pid) => pid > 0 && pid !== process.pid)
 }
 
 // Last line of defence after a check: anything whose command line names the check folder or the check's marker.
 export function sweep(patterns: string[]) {
+  const table = Bun.spawnSync(["ps", "-axo", "pid=,command="]).stdout.toString()
   for (const pattern of patterns)
-    for (const pid of pgrep(pattern)) {
+    for (const pid of commands(table, pattern)) {
       try {
         process.kill(pid, "SIGKILL")
       } catch {
