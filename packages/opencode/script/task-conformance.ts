@@ -42,7 +42,7 @@ if (base && JSON.stringify(base.selection) !== JSON.stringify(selection))
 
 const results: RunResult[] = []
 for (let run = 1; run <= runs; run++) {
-  const waited = await waitForQuietMachine()
+  const { waited, quiet } = await waitForQuietMachine()
   const load = os.loadavg()
   const runId = `${arm}-${stamp}-r${run}`
   const dir = path.join(runsRoot, "conformance", runId)
@@ -77,6 +77,7 @@ for (let run = 1; run <= runs; run++) {
     exitCode,
     loadAverage: load,
     waitedForQuietMs: waited,
+    quiet,
     durationMs: Date.now() - started,
     checks,
     score: round((passed / selection.length) * 100),
@@ -118,6 +119,8 @@ type RunResult = {
   exitCode: number
   loadAverage: number[]
   waitedForQuietMs: number
+  // False when other `bun test` runs were still going after 30 minutes and this run started anyway.
+  quiet: boolean
   durationMs: number
   checks: Record<string, CheckStatus>
   score: number
@@ -161,6 +164,7 @@ function fixtureHashes() {
 // Other sessions run tests on this machine (D8). Wait for any foreign `bun test` to finish, at most 30 minutes.
 async function waitForQuietMachine() {
   const start = Date.now()
+  let quiet = false
   while (Date.now() - start < 30 * 60_000) {
     const ps = Bun.spawnSync(["pgrep", "-f", "bun test"]).stdout.toString().trim()
     const foreign = ps
@@ -168,8 +172,11 @@ async function waitForQuietMachine() {
       .filter(Boolean)
       .map(Number)
       .filter((pid) => pid !== process.pid && pid !== process.ppid)
-    if (foreign.length === 0) break
+    if (foreign.length === 0) {
+      quiet = true
+      break
+    }
     await Bun.sleep(10_000)
   }
-  return Date.now() - start
+  return { waited: Date.now() - start, quiet }
 }
