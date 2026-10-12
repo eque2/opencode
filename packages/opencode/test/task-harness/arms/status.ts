@@ -34,28 +34,53 @@ export function file(repo: string) {
   return path.join(repo, ".opencode", "task", "status.json")
 }
 
-// Undefined when the file is absent or does not parse as an object with the contract's top-level keys.
-export function read(repo: string): Status | undefined {
+// The status, or why there is none: the file is absent, or it is malformed (not JSON, or not the contract's shape).
+export type Reading = { readonly status: Status } | { readonly problem: string; readonly absent: boolean }
+
+export function inspect(repo: string): Reading {
+  const where = file(repo)
   const text = (() => {
     try {
-      return fs.readFileSync(file(repo), "utf8")
+      return fs.readFileSync(where, "utf8")
     } catch {
       return undefined
     }
   })()
-  if (text === undefined) return undefined
-  try {
-    const value: unknown = JSON.parse(text)
-    return isStatus(value) ? value : undefined
-  } catch {
-    return undefined
-  }
+  if (text === undefined) return { problem: `no status file at ${where}`, absent: true }
+  const value: unknown = (() => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return undefined
+    }
+  })()
+  if (value === undefined) return { problem: `the status file at ${where} is malformed: not JSON`, absent: false }
+  const wrong = shape(value)
+  if (wrong || !isStatus(value)) return { problem: `the status file at ${where} is malformed: ${wrong}`, absent: false }
+  return { status: value }
+}
+
+// Undefined when the file is absent or malformed.
+export function read(repo: string): Status | undefined {
+  const reading = inspect(repo)
+  return "status" in reading ? reading.status : undefined
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+// What is wrong with the top-level shape, or undefined when it is the contract's.
+function shape(value: unknown): string | undefined {
+  if (!isObject(value)) return "not an object"
+  if (!isObject(value.run)) return "run is not an object"
+  if (typeof value.run.state !== "string") return "run.state is not a string"
+  for (const key of ["tasks", "obligations", "scenarios"]) if (!isObject(value[key])) return `${key} is not an object`
+  if (!Array.isArray(value.history)) return "history is not an array"
+  return undefined
 }
 
 function isStatus(value: unknown): value is Status {
-  if (!value || typeof value !== "object") return false
-  const keys = ["run", "tasks", "obligations", "scenarios", "history"]
-  return keys.every((key) => key in value) && "history" in value && Array.isArray(value.history)
+  return shape(value) === undefined
 }
 
 // One line for failure messages: the run state and every task's state.
