@@ -175,15 +175,40 @@ export const title = (body: string): Option.Option<string> => {
   return match ? Option.some(match[1].trim()) : Option.none()
 }
 
-// The text of a `## <name>` section, up to the next H1 or H2. None when the heading is absent.
+// The text of a `## <name>` section, up to the next H1 or H2. None when the heading is absent. A `#` line inside
+// a code fence is code, not a heading.
 export const section = (body: string, name: string): Option.Option<string> => {
   const lines = body.split("\n")
-  const start = lines.findIndex((line) => /^##\s+(.+?)\s*$/.exec(line)?.[1] === name)
+  const inFence = fenced(lines)
+  const start = lines.findIndex((line, index) => !inFence[index] && /^##\s+(.+?)\s*$/.exec(line)?.[1] === name)
   if (start < 0) return Option.none()
-  const rest = lines.slice(start + 1)
-  const end = rest.findIndex((line) => /^#{1,2}\s/.test(line))
-  return Option.some((end < 0 ? rest : rest.slice(0, end)).join("\n").trim())
+  const end = lines.findIndex((line, index) => index > start && !inFence[index] && /^#{1,2}\s/.test(line))
+  return Option.some(lines.slice(start + 1, end < 0 ? lines.length : end).join("\n").trim())
 }
+
+const FENCE_MARKER = /^\s*(`{3,}|~{3,})/
+
+interface Fences {
+  // The marker of the open code fence.
+  readonly open: Option.Option<string>
+  readonly flags: ReadonlyArray<boolean>
+}
+
+// For each line, whether it belongs to a code fence (its marker lines included). A fence closes on a marker of the
+// same character that is at least as long as the one that opened it.
+const fenced = (lines: ReadonlyArray<string>): ReadonlyArray<boolean> =>
+  lines.reduce<Fences>(
+    (state, line) => {
+      const marker = FENCE_MARKER.exec(line)?.[1] ?? ""
+      if (Option.isNone(state.open)) {
+        return { open: marker === "" ? Option.none() : Option.some(marker), flags: [...state.flags, marker !== ""] }
+      }
+      const opening = state.open.value
+      const closes = marker !== "" && marker[0] === opening[0] && marker.length >= opening.length
+      return { open: closes ? Option.none() : state.open, flags: [...state.flags, true] }
+    },
+    { open: Option.none(), flags: [] },
+  ).flags
 
 export interface Gherkin {
   readonly title: string
@@ -231,7 +256,11 @@ export const gherkin = (body: string, id: string): Result.Result<Gherkin, Readon
   return Result.succeed({ title: name, tags: head.flatMap((line) => line.trim().split(/\s+/)), steps })
 }
 
-// A task-list checkbox (`- [ ]`, `* [x]`, `1. [X]`): state, which R11 keeps out of the files.
-export const hasCheckbox = (body: string) => /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\](?:\s|$)/m.test(body)
+// A task-list checkbox (`- [ ]`, `* [x]`, `1. [X]`) outside a code fence: state, which R11 keeps out of the files.
+export const hasCheckbox = (body: string) => {
+  const lines = body.split("\n")
+  const inFence = fenced(lines)
+  return lines.some((line, index) => !inFence[index] && /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\](?:\s|$)/.test(line))
+}
 
 export * as BlendDocument from "./document"
