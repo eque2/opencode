@@ -12,6 +12,7 @@
 import os from "node:os"
 import path from "node:path"
 import fs from "node:fs"
+import { killLeft, tree } from "../test/task-harness/arms"
 import { CHECKS, compare, readChecks, round, stats, type Baseline, type CheckStatus } from "../test/task-harness/stats"
 
 // What a run measured with: the fixture trees, the seed, the reference solution and the suite itself.
@@ -26,6 +27,8 @@ const FINGERPRINT = {
 }
 
 const ARMS = ["baseline", "o1", "o2", "o3"]
+// One child `bun test` run may take at most 4 hours; then it and every process it started get SIGKILL.
+const CHILD_BOUND_MS = 4 * 3_600_000
 const args = parseArgs(process.argv.slice(2))
 const arm = args.arm ?? "baseline"
 if (!/^[1-9]\d*$/.test(args.runs ?? "5")) throw new Error(`--runs must be a positive integer, got ${args.runs}`)
@@ -77,7 +80,15 @@ for (let run = 1; run <= runs; run++) {
     // The child's stdout goes to stderr (fd 2), so the runner's own stdout carries only the JSON.
     { cwd: packageDir, env, stdout: 2, stderr: "inherit" },
   )
+  let timedOut = false
+  const bound = setTimeout(() => {
+    timedOut = true
+    const procs = tree(child.pid)
+    child.kill("SIGKILL")
+    killLeft(procs)
+  }, CHILD_BOUND_MS)
   const exitCode = await child.exited
+  clearTimeout(bound)
   const checks = readChecks(fs.existsSync(junit) ? fs.readFileSync(junit, "utf8") : undefined)
   // The baseline exposes no state, so L1 cannot pass for it: scored failed without a run (D8).
   if (arm === "baseline") checks.L1 = "not-runnable"
@@ -89,6 +100,7 @@ for (let run = 1; run <= runs; run++) {
     loadAverage: load,
     waitedForQuietMs: waited,
     quiet,
+    timedOut,
     durationMs: Date.now() - started,
     checks,
     score: round((passed / selection.length) * 100),
@@ -134,6 +146,8 @@ type RunResult = {
   waitedForQuietMs: number
   // False when other `bun test` runs were still going after 30 minutes and this run started anyway.
   quiet: boolean
+  // True when the child run hit the 4-hour bound and was killed.
+  timedOut: boolean
   durationMs: number
   checks: Record<string, CheckStatus>
   score: number
