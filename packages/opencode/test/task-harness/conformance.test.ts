@@ -582,6 +582,7 @@ check("H10", "builder cannot judge", 180_000 + SETUP_MS, async () => {
 
 check("H11", "test tampering", 180_000 + SETUP_MS, async () => {
   await using c = await open("H11")
+  const startAt = Date.now()
   await c.arm.start(T11_DIR)
   // Back in building for attempt 2: a T1.1 `building` entry that follows a `proving` entry, with attempts at 2.
   const back = (s: Status.Status) => {
@@ -589,10 +590,16 @@ check("H11", "test tampering", 180_000 + SETUP_MS, async () => {
     const index = proving < 0 ? -1 : s.history.findIndex((h, i) => i > proving && h.unit === "T1.1" && h.to === "building")
     return index >= 0 && (s.tasks["T1.1"]?.attempts ?? 0) >= 2 ? s.history[index] : undefined
   }
-  const s = await until(c, "T1.1 back in building for attempt 2", 180_000, (s) => {
-    ended(s, ["budget_exhausted"])
-    return s && back(s) ? s : undefined
-  })
+  const s = await until(
+    c,
+    "T1.1 back in building for attempt 2",
+    180_000,
+    (s) => {
+      ended(s)
+      return s && back(s) ? s : undefined
+    },
+    { from: startAt },
+  )
   const entry = back(s)
   const named = (text: string | undefined) => text?.includes(Scripts.TAMPER_FILE) ?? false
   const inStatus = named(s.tasks["T1.1"]?.reason) || history(s, "T1.1").some((h) => named(h.reason))
@@ -606,6 +613,21 @@ check("H11", "test tampering", 180_000 + SETUP_MS, async () => {
   }
   const trusted = s.history.filter((h) => h.unit.startsWith("T1.1.") && h.to === "trusted" && entry && h.at <= entry.at)
   if (trusted.length > 0) problems.push(`obligations trusted in attempt 1: ${trusted.map((h) => h.unit).join(", ")}`)
+  // Attempt 2 removes the file and writes only its own files, so T1.1 ends trusted.
+  const end = await until(
+    c,
+    "T1.1 trusted after attempt 2",
+    180_000,
+    (s) => {
+      ended(s)
+      return state(s, "T1.1") === "trusted" ? s : undefined
+    },
+    { from: startAt },
+  ).catch((error: unknown) => {
+    problems.push(error instanceof Error ? error.message : String(error))
+    return undefined
+  })
+  if (end && end.tasks["T1.1"]?.attempts !== 2) problems.push(`T1.1 has attempts ${end.tasks["T1.1"]?.attempts}, expected 2`)
   verify(problems, c)
 })
 

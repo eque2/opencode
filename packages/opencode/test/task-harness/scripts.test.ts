@@ -121,6 +121,15 @@ describe("Script.answer", () => {
     expect(script.errors).toEqual([])
   })
 
+  test("H11: attempt 1 writes the tampering file, attempt 2 removes it before the happy script", () => {
+    const script = new Script({ check: "H11", marker: "1" })
+    const first = script.plan("T1.1", 1)
+    expect(first.some((a) => a.name === "write" && a.input.filePath === "test/verify-release-notes-S3.spec.ts")).toBe(true)
+    const second = script.plan("T1.1", 2)
+    expect(second[0]).toEqual({ name: "bash", input: { command: "rm -f test/verify-release-notes-S3.spec.ts" } })
+    expect(second.slice(1)).toEqual(new Script({ check: "H3", marker: "1" }).plan("T1.1", 1))
+  })
+
   test("H6 rejects T1.1.c3 in the first round that judges it with siblings and trusts it in every later round", async () => {
     const script = new Script({ check: "H6", marker: "1" })
     const round = async (ids: string[]) =>

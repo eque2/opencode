@@ -294,6 +294,8 @@ export class Script {
       return [{ name: "verdict", input: { verdicts: [{ id: "T1.1.c1", verdict: "trusted" }] } }, ...happy()]
     if (unit === "T1.1" && check === "H11" && first)
       return [...writes(unit), { name: "write", input: { filePath: TAMPER_FILE, content: TAMPER } }, ready(unit)]
+    if (unit === "T1.1" && check === "H11" && attempt === 2)
+      return [{ name: "bash", input: { command: `rm -f ${TAMPER_FILE}` } }, ...happy()]
     if (unit === "T1.1" && check === "H13" && first)
       return [...writes(unit, (target, text) => (isTest(target) ? hungTest(text, marker) : text)), ready(unit)]
     if (unit === "T1.1" && check === "H15" && first) {
