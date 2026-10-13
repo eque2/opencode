@@ -1,6 +1,7 @@
-// The task-ui candidates: seven ways to show a running `/task` in the TUI, as one external TUI plugin. Nothing in
-// opencode imports this folder; `launch.sh` loads it through OPENCODE_TUI_CONFIG with `{ "design": <1-7> }`.
-// Delete the folder once a candidate is chosen.
+// The built-in task-ui plugin: the `/task` harness's task tree, read once a second from
+// `<directory>/.opencode/task/status.json`, in one of seven designs. `/task-design` picks the design and `ctrl+x v`
+// cycles it. Built-in plugins get no options, so it starts on design 1 (Ledger); a `design` option (1-7) is honoured
+// where a host passes one. README.md describes the designs and the keys.
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 import { Clock, Effect, Option } from "effect"
 import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js"
@@ -190,4 +191,4 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   registerTab({ ...base, active: () => true })
 }
 
-export default { id: "task-ui", tui }
+export default { id: "internal:task-ui", tui }

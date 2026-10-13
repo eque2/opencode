@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
-// The task-ui candidates against a real status file: the release-notes run that stopped at T1.4.c8 (paths replaced).
+// The task-ui designs, store and watch view against a real status file: the release-notes run that stopped at
+// T1.4.c8 (paths replaced). plugin.test.tsx loads the plugin entry itself.
 import { expect, test } from "bun:test"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"

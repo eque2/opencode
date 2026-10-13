@@ -11,6 +11,7 @@ import DiffViewer from "./system/diff-viewer"
 import Notifications from "./system/notifications"
 import PluginManager from "./system/plugins"
 import WhichKey from "./system/which-key"
+import TaskUi from "../task-ui/index"
 
 export type BuiltinTuiPlugin = Omit<TuiPluginModule, "id"> & {
   id: string
@@ -34,5 +35,6 @@ export function createBuiltinPlugins(_options: { experimentalEventSystem: boolea
     PluginManager,
     WhichKey,
     DiffViewer,
+    TaskUi,
   ]
 }
