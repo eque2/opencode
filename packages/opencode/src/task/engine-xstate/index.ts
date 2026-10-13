@@ -37,7 +37,21 @@ import type {
 // its obligation entries precede the task's. A step whose log stays empty changed nothing, and `apply` returns
 // the state it received. Resume is the same fold over the stored facts.
 //
-// Deviations from the brief:
+// Deviations from the brief. The brief is section "O2: In-core harness, lifecycle on @jambudipa/xstate-effect" of
+//   _bmad-output/goals/spike-task-harness.goal/experiment-brief.md
+// and the option set is D3 of
+//   _bmad-output/goals/spike-task-harness.goal/decisions.md
+// - Four machines, not one. The brief replaces O1's engine with ONE machine. Here the lifecycle is four machines
+//   (obligation, task, scenario, run), joined by fold code: `stepTask` sends the run the internal `task.moved`
+//   event after a task move, `cancel` cancels the tasks before the run, and `moveObligations` runs one obligation
+//   machine per slot. Reason: a machine config is static, but the tasks, obligations and scenarios of a run come
+//   from its spec; one machine for a whole run needs a config generated per spec and a rebuild of every unit on
+//   every fact. O1's `State` keeps one record per unit, so the fold rebuilds only the unit a fact names. The task
+//   machine keeps the brief's two parallel regions.
+// - Cost: measured on the plan of `release-notes.spec` (50 facts of a happy run, repeated), O2 takes about 250 µs
+//   per `apply` against about 1.2 µs for O1's table, on a machine under load (load average about 16); on the small
+//   plan of the engine tests about 60 µs. Each step resolves and transitions one machine per unit it touches, and a
+//   proof or verdict fact runs the obligation machine once per obligation of the task.
 // - Timeouts: the brief asks for delayed (`after`) transitions on the Effect clock. The shared runner (reused
 //   unchanged, D3) already measures stream stalls, proof time-outs and wall clocks and records them as facts
 //   (`task.stalled`, `task.proved` with a `timed out` reason, ...), and a pure fold over stored facts cannot fire
