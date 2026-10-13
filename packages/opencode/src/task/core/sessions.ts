@@ -126,8 +126,18 @@ export const judgeMessage = (input: {
     "",
     ...input.about,
     "",
-    "Inspect the code in the current directory and run `bun test`. A unit is trusted only when the code and a passing",
-    "test titled with its id in brackets prove exactly its text. Call `verdict` once with one entry for every id above",
+    // A reviewer judges a parent's `proof: review` obligations on the combined diff of its trusted children (blend
+    // README, "Proofs and judges"). A parent has no builder, so no test carries its id.
+    ...(input.role === "reviewer"
+      ? [
+          "Review the combined diff in the current directory and run `bun test`. A unit is trusted only when the combined",
+          "diff meets exactly its text. The review is its proof: no test is titled with its id, and none is needed.",
+          "Call `verdict` once with one entry for every id above",
+        ]
+      : [
+          "Inspect the code in the current directory and run `bun test`. A unit is trusted only when the code and a passing",
+          "test titled with its id in brackets prove exactly its text. Call `verdict` once with one entry for every id above",
+        ]),
     '({ id, verdict: "trusted" | "rejected", reason }), give a reason for each rejection, then stop.',
   ].join("\n")
 

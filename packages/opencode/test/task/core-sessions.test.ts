@@ -30,6 +30,22 @@ describe("the judge messages", () => {
     expect(text).toContain("judge T1.1.c1: first | second")
   })
 
+  // A parent's `e<n>` obligation has `proof: review` (blend README, "Proofs and judges"): the reviewer judges the
+  // combined diff of its trusted children. No builder writes a test titled with a parent's id, so a reviewer told
+  // to require one rejects every parent (the release-notes run: "No passing test title contains [T1.e1]").
+  test("a parent review judges the combined diff, not a test titled with the parent's id", () => {
+    const round = (role: "verifier" | "reviewer", unit: string, id: string) =>
+      TaskSessions.judgeMessage({ role, kind: "task", unit, judge: [{ id, text: "one obligation" }], about: [] })
+    const review = round("reviewer", "T1", "T1.e1")
+    expect(review.split("\n")[0]).toBe("task-harness role=reviewer task=T1")
+    expect(judged(review)).toEqual(["T1.e1"])
+    expect(review).not.toContain("passing\ntest titled with its id in brackets")
+    expect(review).toContain("combined diff")
+    expect(review).toContain("Call `verdict` once with one entry for every id above")
+    // A leaf's verifier still needs the passing tagged test.
+    expect(round("verifier", "T1.1", "T1.1.c1")).toContain("passing\ntest titled with its id in brackets prove exactly its text.")
+  })
+
   test("the follow-up for skipped ids judges exactly those, without a marker", () => {
     const text = TaskSessions.judgeMissingMessage([{ id: "T1.1.c3", text: "third" }])
     expect(MARKER.test(text)).toBe(false)
