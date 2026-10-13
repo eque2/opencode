@@ -331,6 +331,8 @@ export const taskMachine = setup({
     inVerification: inWork("verifying"),
     /** Every obligation of the task is trusted. */
     allTrusted: ({ context }) => slots(context).every((slot) => slot.state === "trusted"),
+    /** A parent whose review trusted every obligation: it counts its one review. */
+    parentTrusted: and(["allTrusted", "parent"]),
     anyStale: ({ context }) => slots(context).some((slot) => slot.state === "stale"),
     /** An obligation failed its proof or was rejected: the task goes back to the builder. */
     anyReopened: ({ context }) => slots(context).some((slot) => slot.state === "failed" || slot.state === "rejected"),
@@ -439,7 +441,7 @@ export const taskMachine = setup({
         judging: {
           always: [
             {
-              guard: and(["allTrusted", "parent"]),
+              guard: "parentTrusted",
               target: "trusted",
               actions: ["reviewed", taskMove("verifying", "trusted")],
             },
