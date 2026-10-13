@@ -59,6 +59,15 @@ describe("the harness-only tools", () => {
   })
 })
 
+describe("the harness agents' shell", () => {
+  test("gets the proof allowlist: no provider key or token; other agents keep their environment", () => {
+    const env = { PATH: "/bin", HOME: "/home/dev", OPENAI_API_KEY: "sk-1", GITHUB_TOKEN: "ghp-2" }
+    expect(TaskHooks.shellEnvironment(TaskHooks.BUILDER, env)).toEqual({ PATH: "/bin", HOME: "/home/dev" })
+    expect(TaskHooks.shellEnvironment(TaskHooks.VERIFIER, env)).toEqual({ PATH: "/bin", HOME: "/home/dev" })
+    expect(TaskHooks.shellEnvironment("build", env)).toBe(env)
+  })
+})
+
 describe("the repetition watch", () => {
   test("watches a session from watch to unwatch, and stops it after the limit of identical calls", () => {
     const sessionID = "ses_wiring_watch"
@@ -98,9 +107,10 @@ describe("the task command and agents", () => {
       expect(action(verifier, "external_directory", "/etc/*")).toBe("deny")
       for (const permission of ["task_ready", "edit", "write", "apply_patch", "question", "task", "webfetch"])
         expect(action(verifier, permission)).toBe("deny")
-      for (const command of ["bun test", "git diff HEAD~1", "git log --oneline", "git show HEAD", "git status"])
+      for (const command of ["bun --no-env-file test", "git diff HEAD~1", "git log --oneline", "git show HEAD", "git status"])
         expect(action(verifier, "bash", command)).toBe("allow")
-      for (const command of ["rm -rf src", "echo x > src/a.ts", "git commit -am x", "git checkout -- .", "sh -c 'x'"])
+      // A plain `bun test` would load the checkout's .env files.
+      for (const command of ["bun test", "rm -rf src", "echo x > src/a.ts", "git commit -am x", "git checkout -- .", "sh -c 'x'"])
         expect(action(verifier, "bash", command)).toBe("deny")
       // The harness stops a repetition itself (TaskHooks.checkRepetition); doom_loop must not end the turn first.
       for (const permission of ["read", "verdict", "doom_loop"]) expect(action(verifier, permission)).toBe("allow")

@@ -260,7 +260,8 @@ const runTests = Effect.fnUntraced(
       .pipe(Effect.mapError((cause) => new ProofError({ message: "could not make the report folder", cause })))
     const report = join(directory, "junit.xml")
     const perTest = Math.max(1, Math.round(Duration.toMillis(limits.proofTimeout)))
-    const args = ["test", "--reporter=junit", `--reporter-outfile=${report}`, `--timeout=${perTest}`]
+    // `--no-env-file`: a checkout's ignored .env files (keys, tokens) never reach the model-written tests.
+    const args = ["--no-env-file", "test", "--reporter=junit", `--reporter-outfile=${report}`, `--timeout=${perTest}`]
     yield* logLine(log, `$ ${["bun", ...args].join(" ")}`)
     const result = yield* runCommand("bun", args, cwd, {
       timeout: testRunBound(limits),

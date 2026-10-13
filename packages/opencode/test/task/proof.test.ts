@@ -491,6 +491,25 @@ describe("TaskProof environment", () => {
     ),
   )
 
+  groupIt("proveTask: the tests load no .env file from the checkout", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({
+        ...feature,
+        "test/feature.test.ts": testsOf(
+          `test("[T1.1.c1] sees no key from a .env file", () => { expect(process.env.TASK_PROOF_ENV_FILE).toBeUndefined() })`,
+          passing("T1.1.c2"),
+        ),
+      })
+      // An ignored .env, as a project keeps its keys: the tree stays clean at head.
+      yield* Effect.promise(async () => {
+        await Bun.write(path.join(repo.dir, ".env"), "TASK_PROOF_ENV_FILE=leaked\n")
+        await fs.appendFile(path.join(repo.dir, ".git", "info", "exclude"), ".env\n")
+      })
+      const proof = yield* prove(repo)
+      expect(statusOf(proof, "T1.1.c1")).toBe("passed")
+    }),
+  )
+
   groupIt("run: a command does not see a provider key that opencode's own environment holds", () =>
     Effect.gen(function* () {
       const before = process.env.OPENAI_API_KEY
@@ -563,7 +582,7 @@ describe("TaskProof logs", () => {
       expect(statusOf(proof, "T1.1.c1")).toBe("passed")
       const text = yield* read(log)
       const lines = text.split("\n")
-      expect(lines[0]).toStartWith("$ bun test --reporter=junit")
+      expect(lines[0]).toStartWith("$ bun --no-env-file test --reporter=junit")
       expect(text).toContain(" 3 pass")
       // Each command ends with how it ended; the gates run in order after the tests.
       const gate = (command: string) => lines.indexOf(`$ ${command}`)

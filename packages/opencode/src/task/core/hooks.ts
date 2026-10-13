@@ -1,4 +1,5 @@
 import { MutableHashMap, Option, Schema } from "effect"
+import { ProofProcess } from "@/task/proof/process"
 import type { Verdict } from "./model"
 
 // The harness's in-session hooks. `SessionPrompt` consults them while a child session runs: it injects the
@@ -10,6 +11,17 @@ import type { Verdict } from "./model"
 
 export const BUILDER = "task-builder"
 export const VERIFIER = "task-verifier"
+
+/**
+ * The environment of a shell an agent runs. The harness's agents run headless and execute model-written code, so
+ * their shell gets the proof allowlist: no provider key or token reaches the model or its tests. Every other agent
+ * keeps the environment it is given.
+ */
+export const shellEnvironment = (
+  agent: string,
+  env: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> =>
+  agent === BUILDER || agent === VERIFIER ? ProofProcess.allowedEnvironment(env) : env
 
 type Call = { readonly tool: string; readonly input: unknown }
 

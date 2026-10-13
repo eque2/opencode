@@ -332,7 +332,7 @@ const layer = Layer.effect(
             list: "allow",
             bash: {
               "*": "deny",
-              "bun test*": "allow",
+              "bun --no-env-file test*": "allow",
               "git diff*": "allow",
               "git log*": "allow",
               "git show*": "allow",
