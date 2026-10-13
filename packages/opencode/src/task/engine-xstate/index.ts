@@ -17,46 +17,34 @@ import type {
   Verdict,
 } from "@/task/core/model"
 
-// O2's engine: the harness lifecycle on @jambudipa/xstate-effect. O1's runner, facts and `State` are reused
-// unchanged; only the fold step differs from O1's transition table (`@/task/engine-table`), and it gives the same
-// `State`, history included.
+// The task harness's engine: the lifecycle on @jambudipa/xstate-effect. The runner records facts; this module folds
+// them into `State` (`@/task/core/model`), history included.
 //
-// A task is ONE machine with two parallel regions. `evidence` holds what the task's obligations prove (open,
-// proved, reopened, stale, trusted); `work` holds the task's own state (waiting ... trusted, and the end states).
-// The context holds the attempts, the budget, the worktree/branch/base/head/session, the reason and one slot per
-// obligation (its state, hash and reason). Facts are the events. Guards are named entries of each machine's
-// registry; every context change is a named `assign` action. One obligation's move is a transition of a small
-// obligation machine, which the evidence region's `moveObligations` action runs for each slot; a scenario and the
-// run have a small machine each. The run follows a task into its end states through the internal `task.moved`
-// event, which the fold sends after every task move.
+// The lifecycle is four machines, joined by fold code: obligation, task, scenario and run. A task is one machine with
+// two parallel regions: `evidence` holds what the task's obligations prove (open, proved, reopened, stale, trusted),
+// and `work` holds the task's own state (waiting ... trusted, and the end states). The context holds the attempts,
+// the budget, the worktree/branch/base/head/session, the reason and one slot per obligation (its state, hash and
+// reason). Facts are the events. Guards are named entries of each machine's registry; every context change is a
+// named `assign` action. One obligation's move is a transition of the obligation machine, which the evidence
+// region's `moveObligations` action runs for each slot. The run follows a task into its end states through the
+// internal `task.moved` event, which the fold sends after every task move; `cancel` cancels the tasks before the
+// run. A machine config is static, but a run's tasks, obligations and scenarios come from its spec, so the fold
+// keeps one machine per unit and rebuilds only the unit a fact names.
 //
 // `apply` is a pure fold step: it rebuilds the affected unit's snapshot from `State` (`machine.resolveState` from
 // the state value and the context), runs the pure `transition` synchronously (the machines have no actors and no
-// delays) and maps the next snapshot back to `State`. Each transition's actions append the history entry the
-// table engine appends (`context.log`), in the same order: the evidence region comes first in document order, so
-// its obligation entries precede the task's. A step whose log stays empty changed nothing, and `apply` returns
-// the state it received. Resume is the same fold over the stored facts.
+// delays) and maps the next snapshot back to `State`. Each transition's actions append their history entries
+// (`context.log`) in document order: the evidence region comes first, so its obligation entries precede the task's.
+// A step whose log stays empty changed nothing, and `apply` returns the state it received. Resume is the same fold
+// over the stored facts.
 //
-// Deviations from the brief. The brief is section "O2: In-core harness, lifecycle on @jambudipa/xstate-effect" of
-//   _bmad-output/goals/spike-task-harness.goal/experiment-brief.md
-// and the option set is D3 of
-//   _bmad-output/goals/spike-task-harness.goal/decisions.md
-// - Four machines, not one. The brief replaces O1's engine with ONE machine. Here the lifecycle is four machines
-//   (obligation, task, scenario, run), joined by fold code: `stepTask` sends the run the internal `task.moved`
-//   event after a task move, `cancel` cancels the tasks before the run, and `moveObligations` runs one obligation
-//   machine per slot. Reason: a machine config is static, but the tasks, obligations and scenarios of a run come
-//   from its spec; one machine for a whole run needs a config generated per spec and a rebuild of every unit on
-//   every fact. O1's `State` keeps one record per unit, so the fold rebuilds only the unit a fact names. The task
-//   machine keeps the brief's two parallel regions.
-// - Cost: measured on the plan of `release-notes.spec` (50 facts of a happy run, repeated), O2 takes about 250 µs
-//   per `apply` against about 1.2 µs for O1's table, on a machine under load (load average about 16); on the small
-//   plan of the engine tests about 60 µs. Each step resolves and transitions one machine per unit it touches, and a
-//   proof or verdict fact runs the obligation machine once per obligation of the task.
-// - Timeouts: the brief asks for delayed (`after`) transitions on the Effect clock. The shared runner (reused
-//   unchanged, D3) already measures stream stalls, proof time-outs and wall clocks and records them as facts
-//   (`task.stalled`, `task.proved` with a `timed out` reason, ...), and a pure fold over stored facts cannot fire
-//   a delay. The machines therefore have no delayed transitions.
-// - `State` has no field for the evidence region (O1's model keeps only the obligation states). A rebuilt snapshot
+// - Timeouts are not delayed transitions: a pure fold over stored facts cannot fire a delay. The runner measures
+//   stream stalls, proof time-outs and wall clocks and records them as facts (`task.stalled`, `task.proved` with a
+//   `timed out` reason, ...).
+// - Cost: about 250 µs per `apply` on the release-notes plan (one machine resolved and transitioned per unit a
+//   fact touches; a proof or verdict fact runs the obligation machine once per obligation of the task). A run
+//   folds a few hundred facts, so this stays far below a model turn.
+// - `State` has no field for the evidence region (it keeps only the obligation states). A rebuilt snapshot
 //   therefore puts the region in its transient `assessing` state, whose eventless rows settle it on what the slots
 //   show within the step. No guard reads the region, so this changes no decision.
 
@@ -101,8 +89,8 @@ const RUN = "run"
 
 /**
  * Where a rebuild puts a unit whose `State` value its machine does not name: only a `State` that the fold never
- * made holds one. `resolveState` fails on such a value, and the table engine ignores the facts it has no row for,
- * so each machine has an `other` state with no rows for the unit's own facts.
+ * made holds one. `resolveState` fails on such a value, and a unit in it must ignore its own facts, so each
+ * machine has an `other` state with no rows for the unit's own facts.
  */
 const OTHER = "other"
 
@@ -638,8 +626,8 @@ export const runMachine = setup({
     needs_human: { type: "final" },
     budget_exhausted: { type: "final" },
     failed: { type: "final" },
-    // A state that `State` names and this machine does not (see `OTHER`): like the table engine, it takes no run
-    // fact, yet records an outside trust and follows a task into an end state.
+    // A state that `State` names and this machine does not (see `OTHER`): it takes no run fact, yet records an
+    // outside trust and follows a task into an end state.
     other: { on: follows },
   },
 })
@@ -676,7 +664,7 @@ const taskInput = (plan: Plan, state: State, task: TaskModel): TaskInput => ({
 })
 
 // The task's worktree, branch, base, head and session from the context: only the ones it has, so a task model gains
-// a key only when a fact gives it a value (as in the table engine).
+// a key only when a fact gives it a value.
 const taskFields = (context: TaskContext): Partial<TaskModel> => ({
   ...(context.worktree === undefined ? {} : { worktree: context.worktree }),
   ...(context.branch === undefined ? {} : { branch: context.branch }),
@@ -769,7 +757,7 @@ const cancel = (plan: Plan, state: State, fact: FactOf<"run.cancelled">) =>
   })
 
 // The staleness of an obligation whose task the state does not hold (a `State` the fold never makes): the
-// obligation's own machine moves it, as the table engine moves it without a task row.
+// obligation's own machine moves it without a task row.
 const staleAlone = (state: State, obligation: ObligationModel, fact: FactOf<"obligation.stale">) =>
   Effect.gen(function* () {
     const { id, state: current, hash, reason } = obligation
