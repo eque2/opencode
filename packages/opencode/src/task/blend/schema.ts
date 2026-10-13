@@ -9,15 +9,20 @@ export const parseOptions = { errors: "all", onExcessProperty: "error", reportIn
 
 const Text = Schema.String.check(Schema.isMinLength(1))
 
-export const TaskId = Schema.String.check(Schema.isPattern(/^T[1-9][0-9]*(\.[1-9][0-9]*)*$/))
-export const GateId = Schema.String.check(Schema.isPattern(/^BUILD-[1-9][0-9]*$/))
-export const RefId = Schema.String.check(Schema.isPattern(/^[A-Z]+-[A-Z]*[0-9]+(\.[a-z0-9]+)?$/))
-const ScenarioOrRefId = Schema.String.check(Schema.isPattern(/^(S[1-9][0-9]*|[A-Z]+-[A-Z]*[0-9]+(\.[a-z0-9]+)?)$/))
-const EnsuresKey = Schema.String.check(Schema.isPattern(/^[ce][1-9][0-9]*$/))
-const ObligationKey = Schema.String.check(Schema.isPattern(/^[cepf][1-9][0-9]*$/))
+// A JSON Schema `pattern`. The check keeps the pattern text exactly as the JSON Schemas write it in its `pattern`
+// annotation: R3 messages quote that text, and `RegExp.source` differs from it (it escapes `/`).
+const pattern = (source: string) => Schema.isPattern(new RegExp(source), { pattern: source })
+
+export const TaskId = Schema.String.check(pattern("^T[1-9][0-9]*(\\.[1-9][0-9]*)*$"))
+export const GateId = Schema.String.check(pattern("^BUILD-[1-9][0-9]*$"))
+export const RefId = Schema.String.check(pattern("^[A-Z]+-[A-Z]*[0-9]+(\\.[a-z0-9]+)?$"))
+// The JSON Schema's `anyOf` of two patterns, so a value that fails both gets the `anyOf` message.
+const ScenarioOrRefId = Schema.Union([Schema.String.check(pattern("^S[1-9][0-9]*$")), RefId])
+const EnsuresKey = Schema.String.check(pattern("^[ce][1-9][0-9]*$"))
+const ObligationKey = Schema.String.check(pattern("^[cepf][1-9][0-9]*$"))
 
 // A repository-relative path: no leading slash and no `..` segment.
-const RepoPath = Schema.String.check(Schema.isPattern(/^(?!\/)(?!(.*\/)?\.\.(\/|$)).+$/))
+const RepoPath = Schema.String.check(pattern("^(?!/)(?!(.*/)?\\.\\.(/|$)).+$"))
 
 export const Judge = Schema.Literals(["runner", "verifier", "reviewer", "engine", "human"])
 const Judges = Schema.Array(Judge).check(Schema.isMinLength(1), Schema.isUnique())
@@ -145,10 +150,10 @@ export const VerifyFrontMatter = Schema.Struct({
   hint: Schema.optionalKey(Text),
   ensures: Schema.optionalKey(Schema.Record(EnsuresKey, Ensures).check(Schema.isMinProperties(1))),
   preserves: Schema.optionalKey(
-    Schema.Record(Schema.String.check(Schema.isPattern(/^p[1-9][0-9]*$/)), Rule).check(Schema.isMinProperties(1)),
+    Schema.Record(Schema.String.check(pattern("^p[1-9][0-9]*$")), Rule).check(Schema.isMinProperties(1)),
   ),
   forbids: Schema.optionalKey(
-    Schema.Record(Schema.String.check(Schema.isPattern(/^f[1-9][0-9]*$/)), Rule).check(Schema.isMinProperties(1)),
+    Schema.Record(Schema.String.check(pattern("^f[1-9][0-9]*$")), Rule).check(Schema.isMinProperties(1)),
   ),
   rejects: Schema.optionalKey(
     Schema.Record(ObligationKey, Schema.Array(Text).check(Schema.isMinLength(1), Schema.isUnique())).check(

@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Result, Schema, SchemaIssue } from "effect"
+import { Effect, Option, Predicate, Result, Schema, SchemaAST, SchemaIssue } from "effect"
 import { BlendSchema } from "./schema"
 
 // One file of a blend spec: YAML front matter between `---` lines, then a markdown body. Everything here is pure
@@ -41,7 +41,8 @@ export const frontMatter = Effect.fnUntraced(function* (text: string): Effect.fn
 })
 
 // Decodes parsed front matter against one of the four schemas. Each schema issue becomes one R3 problem that
-// names the path inside the front matter, for example `touches/0/change`.
+// names the path inside the front matter, for example `touches/0/change`. The messages are the ones the reference
+// checker's JSON Schema validator (Python `jsonschema`) writes, so they match the golden model byte for byte.
 export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   yaml: unknown,
@@ -50,15 +51,171 @@ export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
     formatIssues(error.issue),
   )
 
+// One problem, or one excess key of the object at `path`. jsonschema names all the excess keys of an object in a
+// single message, so they are merged after the walk.
+type Entry =
+  | { readonly _tag: "Problem"; readonly path: string; readonly message: string }
+  | { readonly _tag: "Excess"; readonly path: string; readonly key: string }
+
+const formatIssues = (issue: SchemaIssue.Issue): ReadonlyArray<string> => {
+  const all = entries(issue, [])
+  const excessAt = (path: string) =>
+    all.flatMap((entry) => (entry._tag === "Excess" && entry.path === path ? [entry.key] : []))
+  return all.flatMap((entry, index) => {
+    if (entry._tag === "Problem") return [`${at(entry.path)}: ${entry.message}`]
+    // The object's first excess key carries the message for all of them, which jsonschema sorts.
+    if (all.findIndex((other) => other._tag === "Excess" && other.path === entry.path) !== index) return []
+    const keys = excessAt(entry.path).toSorted()
+    const listed = `${keys.map(repr).join(", ")} ${keys.length === 1 ? "was" : "were"} unexpected`
+    return [`${at(entry.path)}: Additional properties are not allowed (${listed})`]
+  })
+}
+
+const at = (path: string) => (path === "" ? "(root)" : path)
+
+const problem = (path: ReadonlyArray<PropertyKey>, message: string): Entry => ({
+  _tag: "Problem",
+  path: path.map(String).join("/"),
+  message,
+})
+
+const entries = (issue: SchemaIssue.Issue, path: ReadonlyArray<PropertyKey>): ReadonlyArray<Entry> => {
+  switch (issue._tag) {
+    case "Pointer":
+      return entries(issue.issue, [...path, ...issue.path])
+    case "Encoding":
+      return entries(issue.issue, path)
+    case "Composite":
+      return issue.issues.flatMap((inner) => entries(inner, path))
+    case "AnyOf":
+      return [problem(path, unionMessage(issue))]
+    case "InvalidType":
+      return orStandard(typeMessage(issue), issue, path)
+    case "Filter":
+      return orStandard(checkMessage(issue), issue, path)
+    // jsonschema reports a missing key (`required`) on the object, not at the key.
+    case "MissingKey":
+      return [problem(path.slice(0, -1), `${repr(String(path.at(-1)))} is a required property`)]
+    case "UnexpectedKey":
+      return unexpectedKey(issue, path)
+    default:
+      return orStandard(undefined, issue, path)
+  }
+}
+
 const standard = SchemaIssue.makeFormatterStandardSchemaV1()
 
-const formatIssues = (issue: SchemaIssue.Issue) =>
-  standard(issue).issues.map((entry) => {
-    const at = (entry.path ?? [])
-      .map((segment) => String(Predicate.isObject(segment) ? segment.key : segment))
-      .join("/")
-    return `${at === "" ? "(root)" : at}: ${entry.message}`
-  })
+// An issue the four schemas do not produce keeps Effect's own message.
+const orStandard = (
+  message: string | undefined,
+  issue: SchemaIssue.Issue,
+  path: ReadonlyArray<PropertyKey>,
+): ReadonlyArray<Entry> =>
+  message !== undefined
+    ? [problem(path, message)]
+    : standard(issue).issues.map((entry) =>
+        problem(
+          [...path, ...(entry.path ?? []).map((segment) => String(Predicate.isObject(segment) ? segment.key : segment))],
+          entry.message,
+        ),
+      )
+
+// A union of literals is a JSON Schema `enum`; any other union is a `oneOf` or an `anyOf`.
+const unionMessage = (issue: SchemaIssue.AnyOf) => {
+  const literals = issue.ast.types.filter(SchemaAST.isLiteral)
+  return literals.length === issue.ast.types.length
+    ? `${repr(issue.input)} is not one of [${literals.map((member) => repr(member.literal)).join(", ")}]`
+    : `${repr(issue.input)} is not valid under any of the given schemas`
+}
+
+const JSON_TYPES: Partial<Record<SchemaAST.AST["_tag"], string>> = {
+  Objects: "object",
+  Arrays: "array",
+  String: "string",
+  Number: "number",
+  Boolean: "boolean",
+  Null: "null",
+}
+
+const INT = "effect/schema/isInt"
+
+// A single literal is a JSON Schema `const`. An `Int` is a number that carries the integer check.
+const typeMessage = (issue: SchemaIssue.InvalidType) => {
+  if (SchemaAST.isLiteral(issue.ast)) return `${repr(issue.ast.literal)} was expected`
+  const integer = (issue.ast.checks ?? []).some((check) => check.annotations?.representation?.id === INT)
+  const type = integer ? "integer" : JSON_TYPES[issue.ast._tag]
+  return type === undefined ? undefined : `${repr(issue.input)} is not of type ${repr(type)}`
+}
+
+// A failed check, in the words of the JSON Schema keyword it mirrors.
+const checkMessage = (issue: SchemaIssue.Filter) => {
+  const value = repr(issue.input)
+  const source = issue.filter.annotations?.pattern
+  if (Predicate.isString(source)) return `${value} does not match ${repr(source)}`
+  const representation = issue.filter.annotations?.representation
+  const payload = representation?.payload
+  const limit = (key: string) => (Predicate.isObject(payload) ? payload[key] : undefined)
+  switch (representation?.id) {
+    case "effect/schema/isMinLength":
+      return `${value} ${limit("minLength") === 1 ? "should be non-empty" : "is too short"}`
+    case "effect/schema/isMinProperties":
+      return `${value} ${limit("minProperties") === 1 ? "should be non-empty" : "does not have enough properties"}`
+    case "effect/schema/isUnique":
+      return `${value} has non-unique elements`
+    case "effect/schema/isGreaterThanOrEqualTo":
+      return `${value} is less than the minimum of ${repr(limit("minimum"))}`
+    case INT:
+      return `${value} is not of type 'integer'`
+  }
+  return undefined
+}
+
+// A key the object does not declare. In a record it is a key that fails the record's key pattern, which jsonschema
+// reports as `propertyNames` on the record. In a struct it is an excess key (`additionalProperties`).
+const unexpectedKey = (issue: SchemaIssue.UnexpectedKey, path: ReadonlyArray<PropertyKey>): ReadonlyArray<Entry> => {
+  const key = String(path.at(-1))
+  const parent = path.slice(0, -1)
+  const keyPattern = (SchemaAST.isObjects(issue.ast) ? issue.ast.indexSignatures : [])
+    .flatMap((signature) => signature.parameter.checks ?? [])
+    .map((check) => check.annotations?.pattern)
+    .find(Predicate.isString)
+  if (keyPattern !== undefined) return [problem(parent, `${repr(key)} does not match ${repr(keyPattern)}`)]
+  return [{ _tag: "Excess", path: parent.map(String).join("/"), key }]
+}
+
+// Python's `repr` of a parsed YAML value, as jsonschema puts it in its messages.
+const repr = (value: unknown): string => {
+  if (Predicate.isString(value)) return reprString(value)
+  if (Predicate.isBoolean(value)) return value ? "True" : "False"
+  if (Predicate.isNullish(value)) return "None"
+  if (Array.isArray(value)) return `[${value.map(repr).join(", ")}]`
+  if (Predicate.isObject(value)) {
+    return `{${Object.entries(value)
+      .map(([key, item]) => `${reprString(key)}: ${repr(item)}`)
+      .join(", ")}}`
+  }
+  return String(value)
+}
+
+const ESCAPES: Partial<Record<string, string>> = { "\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r" }
+
+// Python quotes with `'` unless the text holds a `'` and no `"`. It escapes the quote, the backslash and every
+// character it does not print (controls, format characters, separators other than the space).
+const reprString = (text: string) => {
+  const quote = text.includes("'") && !text.includes('"') ? '"' : "'"
+  const body = Array.from(text, (char) => {
+    if (char === quote) return `\\${char}`
+    const escaped = ESCAPES[char]
+    if (escaped !== undefined) return escaped
+    if (char === " " || !/[\p{C}\p{Z}]/u.test(char)) return char
+    const code = char.codePointAt(0) ?? 0
+    const hex = code.toString(16)
+    if (code <= 0xff) return `\\x${hex.padStart(2, "0")}`
+    if (code <= 0xffff) return `\\u${hex.padStart(4, "0")}`
+    return `\\U${hex.padStart(8, "0")}`
+  }).join("")
+  return `${quote}${body}${quote}`
+}
 
 interface Frame {
   readonly indent: number

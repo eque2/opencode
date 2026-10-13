@@ -31,13 +31,6 @@ const NegativeCase = Schema.fromJsonString(
 )
 const GoldenModel = Schema.fromJsonString(Schema.Unknown)
 
-// R3 cases whose message comes from the schema library, not the reference checker's JSON Schema validator: only
-// the rule and the file path must match. The message text need not.
-const SCHEMA_MESSAGE_CASES = ["08", "09", "10", "12", "36", "37"]
-
-// `R<n> <path>`: a failure line up to its first ": ".
-const ruleAndPath = (line: string) => line.slice(0, line.indexOf(": "))
-
 const ruleIds = (failures: ReadonlyArray<Blend.Failure>): string[] =>
   [...new Set(failures.map((failure) => failure.rule))].toSorted()
 
@@ -104,20 +97,22 @@ describe("Blend.load", () => {
     }),
   )
 
+  test("reads every negative case of the golden model", () => {
+    expect(negativeCases).toHaveLength(38)
+  })
+
   for (const name of negativeCases) {
     it.live(`refuses negative case ${name} with the expected failures`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const caseDir = path.join(negativeDir, name)
         const result = yield* Blend.load(yield* rebuild(caseDir))
-        const expected = (yield* fs.readFileString(path.join(caseDir, "expected.txt")))
-          .split("\n")
-          .filter((line) => line.trim() !== "")
-        const actual = result.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`)
-        // One failure for each expected line, in the same order, with the same rule and file path.
-        expect(actual).toHaveLength(expected.length)
-        expect(actual.map(ruleAndPath)).toEqual(expected.map(ruleAndPath))
-        if (!SCHEMA_MESSAGE_CASES.includes(name.slice(0, 2))) expect(actual).toEqual(expected)
+        // expected.txt is the checker's stdout: one line per failure, each ended by a newline.
+        const expected = (yield* fs.readFileString(path.join(caseDir, "expected.txt"))).replace(/\n$/, "")
+        const actual = result.failures
+          .map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`)
+          .join("\n")
+        expect(actual).toBe(expected)
         expect(result.spec).toBeUndefined()
       }),
     )
@@ -167,7 +162,7 @@ describe("Blend.load", () => {
     }),
   )
 
-  // The spike's fixture tree (D5): 6 tasks, 31 obligations, 13 scenarios, two preconditions.
+  // The release-notes fixture tree: 6 tasks, 31 obligations, 13 scenarios, two preconditions.
   it.live("accepts the release-notes fixture tree", () =>
     Effect.gen(function* () {
       const result = yield* Blend.load(path.join(formatDir, "release-notes.spec"))
