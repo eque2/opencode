@@ -128,7 +128,6 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
       parts: [{ type: "text", text }],
       noReply: true,
     })
-  const env = yield* environment(ops)
   const ctx = yield* InstanceState.context
   const directory = ctx.directory
   const args = input.arguments.trim()
@@ -136,6 +135,7 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
   const trusted = TRUST.exec(args)
   if (trusted) {
     const id = trusted[1]
+    const env = yield* environment(ops)
     yield* TaskEvents.publish(env.events, TaskEvents.directoryID(directory), {
       type: "outside.trusted",
       at: yield* Clock.currentTimeMillis,
@@ -188,6 +188,8 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
     return yield* refuse(specPath, `the checkout has uncommitted changes: ${shown}`)
   }
 
+  // The services are resolved only once nothing refuses, so a refusal needs no session runtime.
+  const env = yield* environment(ops)
   const start: TaskRunner.Start = {
     env,
     engine: TaskEngineXState.XStateEngine,
