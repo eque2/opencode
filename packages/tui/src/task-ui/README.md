@@ -1,39 +1,44 @@
 # task-ui
 
-Seven candidate designs for showing a running `/task` (the O2 task harness) in the opencode TUI. It is one external
+Seven candidate designs for showing a running `/task` (the O2 task harness) in the opencode TUI. They are one external
 TUI plugin that nothing in opencode imports. The design spec and captures of every design are in
 `_bmad-output/planning-artifacts/ux-designs/ux-opencode-2026-10-13/`.
 
-| # | Design | Where |
-|---|---|---|
-| 1 | Ledger | Task tree at the top of the session sidebar |
-| 2 | Dock | One-line strip at the bottom of every screen |
-| 3 | Board | Full-screen kanban (`ctrl+x p`) |
-| 4 | Matrix | Full-screen grid of obligations and scenarios (`ctrl+x p`) |
-| 5 | Gantt | Full-screen timeline from the status history (`ctrl+x p`) |
-| 6 | HUD | Floating panel in the top-right corner |
-| 7 | Ticker | Line beside the prompt, toasts, and a peek dialog |
+| # | Design | Where it shows | Expanded |
+|---|---|---|---|
+| 1 | Ledger | Task tree in the sidebar | Details under the tree |
+| 2 | Dock | Status line at the bottom of the screen | Details above the line |
+| 3 | Board | Shortcut bar only | Full-screen board of task stages |
+| 4 | Matrix | Shortcut bar only | Full-screen grid of proofs and scenarios |
+| 5 | Gantt | Shortcut bar only | Full-screen timeline of the run |
+| 6 | HUD | Floating panel in the top-right corner | Details under the panel |
+| 7 | Ticker | Line in the shortcut bar, and a notice on each change | Dialog with the task list and details |
 
-## Run one
+## Run a demo
 
 ```bash
-bash packages/tui/src/task-ui/launch.sh --design 3
+bash packages/tui/src/task-ui/launch.sh --design 1
 ```
 
-The script works in this order:
-
-1. It deletes and recreates `~/release-notes-try` (the target repository) and `~/oc-task` (a separate opencode
-   database).
+1. The script deletes and recreates `~/release-notes-try` (the target repository) and `~/oc-task` (a separate
+   opencode database).
 2. It starts a local opencode server with the O2 harness and trusts T9.
-3. It starts `/task task-formats/blend/release-notes.spec`, then attaches the TUI to the run's session.
+3. It opens the TUI on its home screen. Start the run by typing:
+   `/task task-formats/blend/release-notes.spec`
 
-The run uses a live model: about $1–3, and 30 minutes at most. Closing the TUI stops the server and the run. In the
-TUI, use these keys:
+The run uses a live model: about $1–3, and 30 minutes at most. Closing the TUI stops the run.
 
-- `ctrl+x j` and `ctrl+x k` select a task.
-- `ctrl+x o` opens the peek.
-- `ctrl+x v` switches to the next design.
-- `ctrl+x p` opens the full-screen view.
+## Keys
+
+The shortcut bar at the bottom right of the input box shows the keys for the current design.
+
+| Key | What it does |
+|---|---|
+| `ctrl+x o` | Expand or collapse the design (every design) |
+| `/task-design` | Choose a design from a list |
+| `ctrl+x v` | Switch to the next design |
+| `ctrl+x j` / `ctrl+x k` | Select the next or previous task |
+| `esc` | Collapse a full-screen view or the Ticker dialog |
 
 ## Keep one, remove the rest
 
