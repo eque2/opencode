@@ -16,7 +16,8 @@ const pattern = (source: string) => Schema.isPattern(new RegExp(source), { patte
 export const TaskId = Schema.String.check(pattern("^T[1-9][0-9]*(\\.[1-9][0-9]*)*$"))
 export const GateId = Schema.String.check(pattern("^BUILD-[1-9][0-9]*$"))
 export const RefId = Schema.String.check(pattern("^[A-Z]+-[A-Z]*[0-9]+(\\.[a-z0-9]+)?$"))
-// The JSON Schema's `anyOf` of two patterns, so a value that fails both gets the `anyOf` message.
+// The JSON Schema's `type: string` with an `anyOf` of two patterns. A string that fails both gets the `anyOf`
+// message; a value that is not a string gets the `type` message (see `unionMessage` in document.ts).
 const ScenarioOrRefId = Schema.Union([Schema.String.check(pattern("^S[1-9][0-9]*$")), RefId])
 const EnsuresKey = Schema.String.check(pattern("^[ce][1-9][0-9]*$"))
 const ObligationKey = Schema.String.check(pattern("^[cepf][1-9][0-9]*$"))

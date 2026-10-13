@@ -42,7 +42,10 @@ export const frontMatter = Effect.fnUntraced(function* (text: string): Effect.fn
 
 // Decodes parsed front matter against one of the four schemas. Each schema issue becomes one R3 problem that
 // names the path inside the front matter, for example `touches/0/change`. The messages are the ones the reference
-// checker's JSON Schema validator (Python `jsonschema`) writes, so they match the golden model byte for byte.
+// checker's JSON Schema validator (Python `jsonschema`) writes, for the value types the four schemas accept:
+// strings, integers, booleans, null, lists and mappings with string keys. Some Python reprs cannot be rebuilt from
+// the JS values the YAML parse gives: a float (`1.0`, `inf`, `nan`) and a mapping key that is not a string. A
+// whole-number float prints as an integer, so a message that quotes such a value can differ from the checker's.
 export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   yaml: unknown,
@@ -120,12 +123,21 @@ const orStandard = (
         ),
       )
 
-// A union of literals is a JSON Schema `enum`; any other union is a `oneOf` or an `anyOf`.
+// A union of literals is a JSON Schema `enum`. A union whose members are all one JSON type is that `type` with an
+// `anyOf` of checks (the scenario-or-ref id). The checks ignore a value of another type, so jsonschema reports
+// `type` alone. Effect marks that value: no member accepts its type, so the issue holds no inner issues. Any other
+// union is a `oneOf` or an `anyOf`.
 const unionMessage = (issue: SchemaIssue.AnyOf) => {
   const literals = issue.ast.types.filter(SchemaAST.isLiteral)
-  return literals.length === issue.ast.types.length
-    ? `${repr(issue.input)} is not one of [${literals.map((member) => repr(member.literal)).join(", ")}]`
-    : `${repr(issue.input)} is not valid under any of the given schemas`
+  if (literals.length === issue.ast.types.length) {
+    return `${repr(issue.input)} is not one of [${literals.map((member) => repr(member.literal)).join(", ")}]`
+  }
+  const types = new Set(issue.ast.types.map((member) => JSON_TYPES[member._tag]))
+  const [type] = types
+  if (issue.issues.length === 0 && types.size === 1 && type !== undefined) {
+    return `${repr(issue.input)} is not of type ${repr(type)}`
+  }
+  return `${repr(issue.input)} is not valid under any of the given schemas`
 }
 
 const JSON_TYPES: Partial<Record<SchemaAST.AST["_tag"], string>> = {
@@ -183,7 +195,8 @@ const unexpectedKey = (issue: SchemaIssue.UnexpectedKey, path: ReadonlyArray<Pro
   return [{ _tag: "Excess", path: parent.map(String).join("/"), key }]
 }
 
-// Python's `repr` of a parsed YAML value, as jsonschema puts it in its messages.
+// Python's `repr` of a parsed YAML value, as jsonschema puts it in its messages. A number prints as JS writes it:
+// right for an integer, but a whole-number float such as `1.0` prints as `1` (see `decode`).
 const repr = (value: unknown): string => {
   if (Predicate.isString(value)) return reprString(value)
   if (Predicate.isBoolean(value)) return value ? "True" : "False"
