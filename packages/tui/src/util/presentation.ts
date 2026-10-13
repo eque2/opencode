@@ -17,6 +17,7 @@ function wordmark(pad = "") {
         if (char === "_") return `${bg} ${reset}`
         if (char === "^") return `${fg}${bg}▀${reset}`
         if (char === "~") return `${shadow}▀${reset}`
+        if (char === ",") return `${shadow}▄${reset}`
         if (char === " ") return " "
         return `${fg}${char}${reset}`
       })
