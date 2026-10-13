@@ -1,0 +1,30 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "linus",
+  "workflow-name": "e2e-test",
+  "menu-code": "ET",
+  "description": "Generate one Playwright E2E test for a completed change, gated on an existing Xray definition. Maps each Xray step to a test.step(), explores the live UI before writing selectors, verifies green and commits. Stops before [PR]. HARD STOPs when no Xray definition exists.",
+  "supports-headless": true,
+  "phase-name": "e2e-test",
+  "after": ["develop-spec"],
+  "before": ["create-pr"],
+  "is-required": false,
+  "output-location": "{feature_artifacts}/e2e-test-{slug}",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "{feature_artifacts}/e2e-test-{slug}/",
+      "files": [
+        "e2e-test.md"
+      ],
+      "test-output": {
+        "root": "{TEST_CODE_DIR}/",
+        "files": [
+          "tests/*.spec.ts",
+          "pages/*.ts"
+        ]
+      }
+    }
+  }
+}

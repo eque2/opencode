@@ -1,0 +1,13 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "grace",
+  "workflow-name": "update-status",
+  "menu-code": "US",
+  "description": "Sync local test results back to Xray — mark tests automated/passing via the Xray MCP write-back verb.",
+  "supports-headless": true,
+  "phase-name": "3-sync",
+  "after": ["backfill"],
+  "before": [],
+  "is-required": false,
+  "output-location": "{project-root}/_bmad-output/test-artifacts"
+}

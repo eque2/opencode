@@ -486,6 +486,37 @@ run verify "$GI3"
 assert_equals "in-place/mixed-claims-refused" "2" "$RUN_RC"
 
 # --------------------------------------------------------------------------
+# 6b. light lane — no spec pipeline ran, and the manifest says so
+#
+# prepare-goal writes this manifest for a light-lane goal. Verify must accept
+# it, or the starter refuses every light-lane folder (defect 2026-10-12).
+# --------------------------------------------------------------------------
+
+GL1="$(new_goal light1)"
+printf '# MANIFEST\n\n**Authored:** no spec pipeline — light lane.\n' >"$GL1/MANIFEST.md"
+run verify "$GL1"
+assert_equals "light/no-spec-verifies-clean" "0" "$RUN_RC"
+
+# The record says "no spec", so a spec/ next to it contradicts it.
+mkdir -p -- "$GL1/spec"
+printf 'the spec\n' >"$GL1/spec/spec.md"
+run verify "$GL1"
+assert_equals "light/with-spec-folder-refused" "2" "$RUN_RC"
+
+# "No spec" plus a provenance claim cannot both be true.
+GL2="$(new_goal light2)"
+PL2="$(new_pipeline pipeline-light2)"
+# shellcheck disable=SC2016  # writing a literal **Source:** line into the manifest
+printf '**Authored:** no spec pipeline\n**Source:** `%s`\n' "$PL2" >"$GL2/MANIFEST.md"
+run verify "$GL2"
+assert_equals "light/with-source-refused" "2" "$RUN_RC"
+
+GL3="$(new_goal light3)"
+printf '**Authored:** no spec pipeline\n**Authored:** in place\n' >"$GL3/MANIFEST.md"
+run verify "$GL3"
+assert_equals "light/with-in-place-refused" "2" "$RUN_RC"
+
+# --------------------------------------------------------------------------
 # 7. The contract documents both forms
 # --------------------------------------------------------------------------
 

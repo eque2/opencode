@@ -279,6 +279,11 @@ ms_mirror() {
 
 MS_INPLACE_MARK='**Authored:** in place'
 
+# The light lane runs no spec pipeline, so it writes MANIFEST.md with this line
+# instead of a provenance claim. The manifest still exists so "no spec" is a
+# recorded decision, which pursue-goal can tell apart from a spec never mirrored.
+MS_NOSPEC_MARK='**Authored:** no spec pipeline'
+
 # ms_in_place <goal-folder> — record that `spec/` IS the canonical source.
 #
 # The spec pipeline was pointed at `X.goal/spec/` and wrote there, so there is
@@ -325,7 +330,8 @@ ms_in_place() {
 # source (multi-epic). The two forms are mutually exclusive; a manifest carrying
 # both is ambiguous and refused. Everything downstream works off one uniform
 # list of (prefix, source) pairs, so the single case is just the multi case with
-# an empty prefix.
+# an empty prefix. A light-lane manifest (`MS_NOSPEC_MARK`) verifies clean only
+# when no spec/ exists and it claims no source.
 ms_verify() {
 	local folder manifest drift=0 checked=0 rel src copy single line s p i k
 	local -a mslugs=() msrcs=() prefixes=() sources=()
@@ -342,6 +348,21 @@ ms_verify() {
 
 	# shellcheck disable=SC2016  # the manifest sed pattern is a literal, not an expansion
 	single="$(sed -n 's/^\*\*Source:\*\* `\(.*\)`$/\1/p' "$manifest" | head -1)"
+
+	# Light lane: no spec pipeline ran, so there is nothing to verify. A record of
+	# "no spec" next to a spec/ or a provenance claim contradicts itself, so it is
+	# refused rather than resolved — same rule as the in-place mixed claim below.
+	if grep -qF "$MS_NOSPEC_MARK" "$manifest" 2>/dev/null; then
+		if [ -n "$single" ] || grep -q '^\*\*Source `' "$manifest" 2>/dev/null ||
+			grep -qF "$MS_INPLACE_MARK" "$manifest" 2>/dev/null; then
+			ms_die 2 "the manifest records no spec pipeline AND claims a spec source; it cannot be both. Re-record it." || return
+		fi
+		if [ -e "$folder/spec" ]; then
+			ms_die 2 "the manifest records no spec pipeline but $folder/spec exists. Record the spec's provenance instead, or remove spec/." || return
+		fi
+		ms_say "light lane — no spec pipeline, nothing to verify"
+		return 0
+	fi
 
 	# In-place: `spec/` is its own source, so there is no copy→source comparison
 	# to make. All verify owes the caller is that the spec is actually there —

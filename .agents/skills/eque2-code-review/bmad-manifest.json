@@ -1,0 +1,21 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "linus",
+  "workflow-name": "code-review",
+  "menu-code": "RV",
+  "description": "Review local changes against the repo's styleguide review rules — the same rules the GitHub PR-review Action applies — and write a findings report. Local only; never posts to a PR or edits code.",
+  "supports-headless": true,
+  "phase-name": "anytime",
+  "after": [],
+  "before": [],
+  "is-required": false,
+  "output-location": "{output_folder}/code-reviews",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "{output_folder}/code-reviews",
+      "files": ["review-<branch>-<YYYY-MM-DD-HHMM>.md"]
+    }
+  }
+}

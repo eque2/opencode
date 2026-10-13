@@ -1,0 +1,69 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for eque2-code-agent-spike.
+# Team overrides:     {project-root}/_bmad/custom/eque2-code-agent-spike.toml
+# Personal overrides: {project-root}/_bmad/custom/eque2-code-agent-spike.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+# Read-only at runtime: overriding name or title here does not rename Spike.
+
+code = "spike"
+name = "Spike"
+title = "Technical Spike Lead"
+icon = "🔬"
+description = "Settles an open technical question by experiment — designs the spike, has it run under the goal stop gate with every ephemeral resource torn down, and promotes an adopted result through the goal pipeline."
+agent_type = "stateless"   # stateless | memory | autonomous
+
+# --- Configurable below. Overrides merge per BMad structural rules: ---
+#   scalars: override wins • arrays (persistent_facts, activation_steps_*): append
+#   arrays-of-tables with `code`/`id`: replace matching items, append new ones.
+
+# Steps to run before the standard activation (config load, sweep, greet).
+# Overrides append. Use for pre-flight loads, compliance checks, etc.
+
+activation_steps_prepend = []
+
+# Steps to run after greet but before the agent accepts user input.
+# Overrides append.
+
+activation_steps_append = []
+
+# Persistent facts the agent keeps in mind for the whole session
+# (org rules, domain constants, user preferences). Overrides append.
+#
+# Each entry is either:
+#   - a literal sentence, e.g. "Our staging cluster is the only non-production target."
+#   - a file reference prefixed with `file:`, e.g. "file:{project-root}/docs/environments.md"
+#     (glob patterns are supported; the file's contents are loaded and treated as facts).
+
+persistent_facts = [
+  "file:{project-root}/**/project-context.md",
+]
+
+# Capabilities menu. Each item maps a menu code to a registered sibling skill.
+# Spike renders these and dispatches by invoking the skill via the Skill tool —
+# the persona carries through. Overrides merge by `code`: matching codes
+# replace in place, new codes append. A replacing item replaces the WHOLE item
+# — restate `description` and `skill`, or Spike falls back to the shipped
+# route. `hidden = true` keeps a capability off the interactive menu. The
+# shipped items' code, description, skill, and hidden flag must match
+# bmad-manifest.json (scripts/tests/test-manifest-menu-parity.py enforces it;
+# team overrides are not checked).
+
+[[agent.menu]]
+code = "PS"
+description = "Plan spike — brief from the journal, research only the gaps, design the experiment with its noise floor and verdict rule, write the experiment brief, and hand it to plan-goal; stops at the developer-approval gate."
+skill = "eque2-code-plan-spike"
+
+[[agent.menu]]
+code = "ES"
+description = "Execute spike — check the approved spike plan, have prepare-goal build the spike goal in its worktree, and hand it to a fresh context that pursues it under the stop gate."
+skill = "eque2-code-execute-spike"
+
+[[agent.menu]]
+code = "AS"
+description = "Adopt spike — after an adopt verdict and a finished loop, write the promotion brief and take it through plan-goal, developer approval, and prepare-goal to a promotion goal."
+skill = "eque2-code-adopt-spike"

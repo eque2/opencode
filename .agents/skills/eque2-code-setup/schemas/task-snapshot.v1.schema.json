@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "value",
+    "context",
+    "status",
+    "tags"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "building",
+        "evaluating",
+        "completed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "description",
+        "phase",
+        "dependsOn",
+        "supportsScenarios",
+        "tests",
+        "workingDirectory",
+        "idempotencyKey",
+        "attemptNumber",
+        "maxAttempts",
+        "evidence"
+      ],
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "supportsScenarios": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file"
+            ],
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "workingDirectory": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "maxAttempts": {
+          "type": "number"
+        },
+        "lastErrorSignature": {
+          "type": "string"
+        },
+        "consecutiveErrorCount": {
+          "type": "number"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "fromCache": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "testsPassed",
+            "commitSha",
+            "completedAt"
+          ],
+          "properties": {
+            "testsPassed": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "commitSha": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "trustLevel": {
+              "type": "string",
+              "enum": [
+                "untrusted",
+                "pending_review",
+                "verified",
+                "trusted",
+                "suspect"
+              ]
+            },
+            "trustUpdatedAt": {
+              "type": "string"
+            },
+            "trustReason": {
+              "type": "string"
+            },
+            "verificationMethod": {
+              "type": "string",
+              "enum": [
+                "automated",
+                "semantic_ai",
+                "human_review"
+              ]
+            },
+            "invalidatedBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "currentLogFile": {
+          "type": "string"
+        },
+        "trustRequired": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "done",
+        "error",
+        "stopped"
+      ]
+    },
+    "tags": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": {
+        "$id": "/schemas/unknown",
+        "title": "unknown"
+      }
+    },
+    "_integrity": {
+      "type": "string"
+    },
+    "_machineVersion": {
+      "type": "string"
+    },
+    "_schemaVersion": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

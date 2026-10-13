@@ -84,8 +84,8 @@ goal folder**, with `decisions.md` and `ACs.md` as their input:
   `bmad-prd`, `bmad-create-epics-and-stories`, …): same rule — artefacts
   land inside the folder, referenced relatively.
 - **Light lane**: none of the above run. The approved `ACs.md` is the
-  whole contract, and `MANIFEST.md` records "no spec
-  pipeline" honestly. `mirror-spec.sh` is a no-op with nothing to
+  whole contract, and `MANIFEST.md` records it with the exact line
+  `**Authored:** no spec pipeline`. `mirror-spec.sh` is a no-op with nothing to
   mirror — never fabricate an empty `spec/`.
 
 Approved decisions (`decisions.md`) bind BOTH the charter and the

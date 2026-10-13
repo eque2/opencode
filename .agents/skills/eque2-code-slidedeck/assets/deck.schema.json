@@ -1,0 +1,1155 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "version",
+    "cover",
+    "slides"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "number",
+      "enum": [
+        1
+      ],
+      "description": "Schema version. Always 1."
+    },
+    "cover": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "a string at least 1 character(s) long",
+          "title": "minLength(1)",
+          "minLength": 1
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "presenter": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "description": "Free text, e.g. \"1 October 2026\"."
+        },
+        "logo": {
+          "type": "object",
+          "required": [
+            "src",
+            "alt"
+          ],
+          "properties": {
+            "src": {
+              "type": "string",
+              "description": "An https URL, a data: URI, or a path relative to the deck JSON file."
+            },
+            "alt": {
+              "type": "string",
+              "description": "a string at least 1 character(s) long",
+              "title": "minLength(1)",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "The first page of the deck."
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "layout",
+              "title"
+            ],
+            "properties": {
+              "layout": {
+                "type": "string",
+                "enum": [
+                  "section"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "subtitle": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "description": "Optional slug. Unique in the deck. Deep links use the slide number.",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "fade",
+                  "slide",
+                  "zoom"
+                ],
+                "description": "How a slide enters. Default: the deck transition, else \"fade\"."
+              },
+              "notes": {
+                "type": "string",
+                "description": "Speaker notes. Shown only in the presenter view (press P)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "A section divider: one large title."
+          },
+          {
+            "type": "object",
+            "required": [
+              "layout",
+              "blocks"
+            ],
+            "properties": {
+              "layout": {
+                "type": "string",
+                "enum": [
+                  "content"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "blocks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "items"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "bullets"
+                          ]
+                        },
+                        "items": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "text"
+                                ],
+                                "properties": {
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                                  },
+                                  "level": {
+                                    "type": "number",
+                                    "enum": [
+                                      0,
+                                      1,
+                                      2
+                                    ],
+                                    "description": "Indent level. Default 0."
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "reveal": {
+                          "type": "string",
+                          "enum": [
+                            "one-by-one",
+                            "all"
+                          ],
+                          "description": "\"one-by-one\" (default): each click shows the next bullet. \"all\": every bullet shows with the slide."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "language",
+                        "code"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "code"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "description": "A highlight.js language name, e.g. \"typescript\", \"python\", \"bash\", \"json\"."
+                        },
+                        "code": {
+                          "type": "string",
+                          "description": "The initial code. Use \\n for new lines."
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "lineNumbers": {
+                          "type": "boolean",
+                          "description": "Show line numbers. Default true."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "required": [
+                                  "highlight"
+                                ],
+                                "properties": {
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "description": "Spotlight these lines; dim the others."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "diff"
+                                ],
+                                "properties": {
+                                  "diff": {
+                                    "type": "string",
+                                    "description": "A git-style unified diff against the code as it is before this step. Hunks start with \"@@ -a,b +c,d @@\"; lines start with \" \", \"-\" or \"+\". Context lines must match exactly. Added lines animate in; removed lines animate out."
+                                  },
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "description": "Each entry is one click: a spotlight or a diff, applied in order."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "src",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "image"
+                          ]
+                        },
+                        "src": {
+                          "type": "string",
+                          "description": "An https URL, a data: URI, or a path relative to the deck JSON file. The compiler inlines local files."
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required alternative text.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "mermaid",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "diagram"
+                          ]
+                        },
+                        "mermaid": {
+                          "type": "string",
+                          "description": "Mermaid source, e.g. \"flowchart LR\\n  A --> B\".",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required text description of the diagram.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "id": {
+                "type": "string",
+                "description": "Optional slug. Unique in the deck. Deep links use the slide number.",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "fade",
+                  "slide",
+                  "zoom"
+                ],
+                "description": "How a slide enters. Default: the deck transition, else \"fade\"."
+              },
+              "notes": {
+                "type": "string",
+                "description": "Speaker notes. Shown only in the presenter view (press P)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "A title and a vertical stack of blocks."
+          },
+          {
+            "type": "object",
+            "required": [
+              "layout",
+              "left",
+              "right"
+            ],
+            "properties": {
+              "layout": {
+                "type": "string",
+                "enum": [
+                  "two-column"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "left": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "items"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "bullets"
+                          ]
+                        },
+                        "items": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "text"
+                                ],
+                                "properties": {
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                                  },
+                                  "level": {
+                                    "type": "number",
+                                    "enum": [
+                                      0,
+                                      1,
+                                      2
+                                    ],
+                                    "description": "Indent level. Default 0."
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "reveal": {
+                          "type": "string",
+                          "enum": [
+                            "one-by-one",
+                            "all"
+                          ],
+                          "description": "\"one-by-one\" (default): each click shows the next bullet. \"all\": every bullet shows with the slide."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "language",
+                        "code"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "code"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "description": "A highlight.js language name, e.g. \"typescript\", \"python\", \"bash\", \"json\"."
+                        },
+                        "code": {
+                          "type": "string",
+                          "description": "The initial code. Use \\n for new lines."
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "lineNumbers": {
+                          "type": "boolean",
+                          "description": "Show line numbers. Default true."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "required": [
+                                  "highlight"
+                                ],
+                                "properties": {
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "description": "Spotlight these lines; dim the others."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "diff"
+                                ],
+                                "properties": {
+                                  "diff": {
+                                    "type": "string",
+                                    "description": "A git-style unified diff against the code as it is before this step. Hunks start with \"@@ -a,b +c,d @@\"; lines start with \" \", \"-\" or \"+\". Context lines must match exactly. Added lines animate in; removed lines animate out."
+                                  },
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "description": "Each entry is one click: a spotlight or a diff, applied in order."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "src",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "image"
+                          ]
+                        },
+                        "src": {
+                          "type": "string",
+                          "description": "An https URL, a data: URI, or a path relative to the deck JSON file. The compiler inlines local files."
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required alternative text.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "mermaid",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "diagram"
+                          ]
+                        },
+                        "mermaid": {
+                          "type": "string",
+                          "description": "Mermaid source, e.g. \"flowchart LR\\n  A --> B\".",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required text description of the diagram.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "right": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "items"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "bullets"
+                          ]
+                        },
+                        "items": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "text"
+                                ],
+                                "properties": {
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                                  },
+                                  "level": {
+                                    "type": "number",
+                                    "enum": [
+                                      0,
+                                      1,
+                                      2
+                                    ],
+                                    "description": "Indent level. Default 0."
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "reveal": {
+                          "type": "string",
+                          "enum": [
+                            "one-by-one",
+                            "all"
+                          ],
+                          "description": "\"one-by-one\" (default): each click shows the next bullet. \"all\": every bullet shows with the slide."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "language",
+                        "code"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "code"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "description": "A highlight.js language name, e.g. \"typescript\", \"python\", \"bash\", \"json\"."
+                        },
+                        "code": {
+                          "type": "string",
+                          "description": "The initial code. Use \\n for new lines."
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "lineNumbers": {
+                          "type": "boolean",
+                          "description": "Show line numbers. Default true."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "required": [
+                                  "highlight"
+                                ],
+                                "properties": {
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "description": "Spotlight these lines; dim the others."
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "diff"
+                                ],
+                                "properties": {
+                                  "diff": {
+                                    "type": "string",
+                                    "description": "A git-style unified diff against the code as it is before this step. Hunks start with \"@@ -a,b +c,d @@\"; lines start with \" \", \"-\" or \"+\". Context lines must match exactly. Added lines animate in; removed lines animate out."
+                                  },
+                                  "highlight": {
+                                    "type": "string",
+                                    "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                    "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "description": "Each entry is one click: a spotlight or a diff, applied in order."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "src",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "image"
+                          ]
+                        },
+                        "src": {
+                          "type": "string",
+                          "description": "An https URL, a data: URI, or a path relative to the deck JSON file. The compiler inlines local files."
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required alternative text.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "mermaid",
+                        "alt"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "diagram"
+                          ]
+                        },
+                        "mermaid": {
+                          "type": "string",
+                          "description": "Mermaid source, e.g. \"flowchart LR\\n  A --> B\".",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "alt": {
+                          "type": "string",
+                          "description": "Required text description of the diagram.",
+                          "title": "minLength(1)",
+                          "minLength": 1
+                        },
+                        "caption": {
+                          "type": "string",
+                          "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                        },
+                        "onClick": {
+                          "type": "boolean",
+                          "description": "true: hidden until the next click. Default false."
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "id": {
+                "type": "string",
+                "description": "Optional slug. Unique in the deck. Deep links use the slide number.",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "fade",
+                  "slide",
+                  "zoom"
+                ],
+                "description": "How a slide enters. Default: the deck transition, else \"fade\"."
+              },
+              "notes": {
+                "type": "string",
+                "description": "Speaker notes. Shown only in the presenter view (press P)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "Two columns of blocks. Steps run through the left column, then the right. Use an image block in one column for image + text."
+          },
+          {
+            "type": "object",
+            "required": [
+              "layout",
+              "block"
+            ],
+            "properties": {
+              "layout": {
+                "type": "string",
+                "enum": [
+                  "full-bleed"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "block": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "language",
+                      "code"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "code"
+                        ]
+                      },
+                      "language": {
+                        "type": "string",
+                        "description": "A highlight.js language name, e.g. \"typescript\", \"python\", \"bash\", \"json\"."
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The initial code. Use \\n for new lines."
+                      },
+                      "filename": {
+                        "type": "string"
+                      },
+                      "lineNumbers": {
+                        "type": "boolean",
+                        "description": "Show line numbers. Default true."
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "required": [
+                                "highlight"
+                              ],
+                              "properties": {
+                                "highlight": {
+                                  "type": "string",
+                                  "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                  "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "description": "Spotlight these lines; dim the others."
+                            },
+                            {
+                              "type": "object",
+                              "required": [
+                                "diff"
+                              ],
+                              "properties": {
+                                "diff": {
+                                  "type": "string",
+                                  "description": "A git-style unified diff against the code as it is before this step. Hunks start with \"@@ -a,b +c,d @@\"; lines start with \" \", \"-\" or \"+\". Context lines must match exactly. Added lines animate in; removed lines animate out."
+                                },
+                                "highlight": {
+                                  "type": "string",
+                                  "description": "1-based line numbers in the code as it is at this step, e.g. \"3\", \"3-5\", \"1,4-6\".",
+                                  "pattern": "^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$"
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "description": "Each entry is one click: a spotlight or a diff, applied in order."
+                      },
+                      "onClick": {
+                        "type": "boolean",
+                        "description": "true: hidden until the next click. Default false."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "src",
+                      "alt"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "image"
+                        ]
+                      },
+                      "src": {
+                        "type": "string",
+                        "description": "An https URL, a data: URI, or a path relative to the deck JSON file. The compiler inlines local files."
+                      },
+                      "alt": {
+                        "type": "string",
+                        "description": "Required alternative text.",
+                        "title": "minLength(1)",
+                        "minLength": 1
+                      },
+                      "caption": {
+                        "type": "string",
+                        "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                      },
+                      "onClick": {
+                        "type": "boolean",
+                        "description": "true: hidden until the next click. Default false."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "mermaid",
+                      "alt"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "diagram"
+                        ]
+                      },
+                      "mermaid": {
+                        "type": "string",
+                        "description": "Mermaid source, e.g. \"flowchart LR\\n  A --> B\".",
+                        "title": "minLength(1)",
+                        "minLength": 1
+                      },
+                      "alt": {
+                        "type": "string",
+                        "description": "Required text description of the diagram.",
+                        "title": "minLength(1)",
+                        "minLength": 1
+                      },
+                      "caption": {
+                        "type": "string",
+                        "description": "Plain text with inline markup: **bold**, *italic*, `code`, [label](https://url)."
+                      },
+                      "onClick": {
+                        "type": "boolean",
+                        "description": "true: hidden until the next click. Default false."
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "description": "Optional slug. Unique in the deck. Deep links use the slide number.",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "fade",
+                  "slide",
+                  "zoom"
+                ],
+                "description": "How a slide enters. Default: the deck transition, else \"fade\"."
+              },
+              "notes": {
+                "type": "string",
+                "description": "Speaker notes. Shown only in the presenter view (press P)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "One code, image, or diagram block that fills the slide."
+          }
+        ]
+      }
+    },
+    "theme": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark",
+            "auto"
+          ],
+          "description": "\"auto\" (default) follows the viewer's system setting."
+        },
+        "accent": {
+          "type": "string",
+          "description": "Accent colour, e.g. \"#2563eb\".",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "font": {
+          "type": "string",
+          "description": "CSS font-family for text."
+        },
+        "monoFont": {
+          "type": "string",
+          "description": "CSS font-family for code."
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "string",
+      "enum": [
+        "none",
+        "fade",
+        "slide",
+        "zoom"
+      ],
+      "description": "How a slide enters. Default: the deck transition, else \"fade\"."
+    },
+    "slideNumbers": {
+      "type": "boolean",
+      "description": "Show \"n / total\" on each slide. Default true."
+    },
+    "progressBar": {
+      "type": "boolean",
+      "description": "Show a progress bar. Default true."
+    }
+  },
+  "additionalProperties": false,
+  "description": "A clickable HTML slidedeck. Keys: → / Space / click = next, ← = back, P = presenter view, F = fullscreen. URL #/<slide>/<step> deep-links (slide 1 is the cover). Print or \"Save as PDF\" gives one page per slide.",
+  "title": "Slidedeck"
+}

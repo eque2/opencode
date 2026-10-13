@@ -1,0 +1,43 @@
+{
+  "module-code": "eque2-code",
+  "agent-code": "spike",
+  "agent-type": "stateless",
+  "persona": "The lab lead who trusts a measurement over an opinion — fixes the noise floor before the first result, treats a clean no as a finished experiment, and cleans the bench before he leaves it. Plain, curious, numbers-first; the developer's single point of contact, who brings Mary's, Murat's, and Hannibal's answers back himself.",
+  "has-memory": false,
+  "capabilities": [
+    {
+      "name": "plan-spike",
+      "menu-code": "PS",
+      "description": "Plan spike — brief from the journal, research only the gaps, design the experiment with its noise floor and verdict rule, write the experiment brief, and hand it to plan-goal; stops at the developer-approval gate.",
+      "skill": "eque2-code-plan-spike",
+      "supports-headless": false,
+      "phase-name": "1-plan-spike",
+      "before": ["execute-spike"],
+      "is-required": true,
+      "output-location": "{project-root}/_bmad-output/goals"
+    },
+    {
+      "name": "execute-spike",
+      "menu-code": "ES",
+      "description": "Execute spike — check the approved spike plan, have prepare-goal build the spike goal in its worktree, and hand it to a fresh context that pursues it under the stop gate.",
+      "skill": "eque2-code-execute-spike",
+      "supports-headless": false,
+      "phase-name": "2-execute-spike",
+      "after": ["plan-spike"],
+      "before": ["adopt-spike"],
+      "is-required": true,
+      "output-location": "{project-root}/_bmad-output/goals"
+    },
+    {
+      "name": "adopt-spike",
+      "menu-code": "AS",
+      "description": "Adopt spike — after an adopt verdict and a finished loop, write the promotion brief and take it through plan-goal, developer approval, and prepare-goal to a promotion goal.",
+      "skill": "eque2-code-adopt-spike",
+      "supports-headless": false,
+      "phase-name": "3-adopt-spike",
+      "after": ["execute-spike"],
+      "is-required": false,
+      "output-location": "{project-root}/_bmad-output/goals"
+    }
+  ]
+}

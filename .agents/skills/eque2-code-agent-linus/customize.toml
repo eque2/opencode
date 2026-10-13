@@ -1,0 +1,160 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for eque2-code-agent-linus.
+# Team overrides:     {project-root}/_bmad/custom/eque2-code-agent-linus.toml
+# Personal overrides: {project-root}/_bmad/custom/eque2-code-agent-linus.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+
+code = "linus"
+name = "Linus"
+title = "Feature Development Orchestrator"
+icon = "👨‍💻"
+description = "End-to-end feature orchestrator from a Jira ticket or a prose brief to an open PR — fetch, spec, build, E2E-test, ship, and address review; spec-driven, evidence-obsessed. Headless-scriptable end to end."
+agent_type = "autonomous"
+
+# The identity scalars above (code/name/title/icon) are READ-ONLY at runtime:
+# Linus's live identity comes from the sanctum (PERSONA.md), not this block.
+# Overriding them here only affects the install-time roster, not how Linus
+# presents himself in a session. Edit PERSONA.md to change the living persona.
+
+# --- Configurable below. Overrides merge per BMad structural rules: ---
+#   scalars: override wins • arrays (persistent_facts, activation_steps_*): append
+#   arrays-of-tables with `code`/`id`: replace matching items, append new ones.
+#
+# For memory/autonomous agents: your sanctum (PERSONA/CREED/BOND/CAPABILITIES)
+# is the primary behavior surface. Prefer editing sanctum files over this block.
+
+# Steps to run before the standard activation (config load, greet).
+# Overrides append. Use for pre-flight loads, compliance checks, etc.
+
+activation_steps_prepend = []
+
+# Steps to run after greet but before the agent accepts user input.
+# Overrides append. Use for context-heavy setup that should happen
+# once the user has been acknowledged.
+
+activation_steps_append = []
+
+# Persistent facts the agent keeps in mind for the whole session
+# (org rules, domain constants, user preferences). Overrides append.
+#
+# Each entry is either:
+#   - a literal sentence, e.g. "Our org is AWS-only -- do not propose GCP or Azure."
+#   - a file reference prefixed with `file:`, e.g. "file:{project-root}/docs/standards.md"
+#     (glob patterns are supported; the file's contents are loaded and treated as facts).
+
+persistent_facts = [
+  "file:{project-root}/**/project-context.md",
+]
+
+# Scalar: hook executed when a workflow reports complete. Override wins.
+# Leave empty for no custom post-completion behavior.
+
+on_complete = ""
+
+# Capabilities menu. Each item maps a menu code to a registered sibling skill
+# (the BMad idiom). Linus renders these and dispatches by invoking the skill via
+# the Skill tool — the persona carries through. Overrides merge by `code`:
+# matching codes replace in place, new codes append. `hidden = true` keeps a
+# capability off the interactive menu (still invocable programmatically / by
+# pre-flight). Each item has exactly one of `skill` (invoke a registered skill)
+# or `prompt` (execute prompt text directly).
+
+[[agent.menu]]
+code = "JF"
+description = "Fetch Jira ticket details, related tickets, and discover Figma links."
+skill = "eque2-code-jira-fetch"
+
+[[agent.menu]]
+code = "CS"
+description = "Produce a validated, executable build spec — context, coverage, scenarios, tasks, and a definitions.json handoff to the state CLI."
+skill = "eque2-code-create-spec"
+
+[[agent.menu]]
+code = "RS"
+description = "Archive a completed spec and produce a fresh one with prior context carried forward. Use when requirements shift after a spec ships."
+skill = "eque2-code-re-spec"
+
+[[agent.menu]]
+code = "DS"
+description = "Implement a spec end-to-end — initialise state, build tasks, review code, verify scenarios, run Figma compliance — until ready for PR."
+skill = "eque2-code-develop-spec"
+
+[[agent.menu]]
+code = "ET"
+description = "Generate one Playwright E2E test for the change just built — gated on an existing Xray definition (HARD STOP if none). Explores the live UI, maps each Xray step to a test.step(), verifies green and commits. Runs between [DS] and [PR]; only applies to Jira-sourced specs."
+skill = "eque2-code-e2e-test"
+
+[[agent.menu]]
+code = "BF"
+description = "Fix a bug test-first — reproduce it, write a test that fails for the right reason, fix it, and confirm the full suite stays green. Stops before commit/push. Chains [JF] when given a ticket key."
+skill = "eque2-code-bug-fix"
+
+[[agent.menu]]
+code = "PR"
+description = "Open a pull request — enforce the repo's review-rules on the diff, confirm the suite is green, sync with the base branch, commit, push, and open the PR. Stops at an open PR (no merge). The ship companion to [BF]."
+skill = "eque2-code-create-pr"
+
+[[agent.menu]]
+code = "RV"
+description = "Review local changes against the repo's styleguide review rules — the same rules the GitHub PR-review Action applies — every changed file, every applicable rule. Writes a findings report; never posts to a PR or edits code."
+skill = "eque2-code-review"
+
+[[agent.menu]]
+code = "IS"
+description = "Detect tech stack and install coding standards + review rules. Runs automatically before [CS] when standards are missing."
+skill = "eque2-code-install-styleguide"
+hidden = true
+
+[[agent.menu]]
+code = "XC"
+description = "Xray step-conformance gate — fetch fresh, read stepCount, conformant only at >=1. Invoked by [ET] before it generates a test; not a standalone menu option for Linus."
+skill = "eque2-code-xray-conformance"
+hidden = true
+
+[[agent.menu]]
+code = "TV"
+description = "Test-quality best-practice gate — score the just-built spec against the anti-flakiness rubric (hard waits, positional/CSS selectors, floating promises, isolation debt); findings feed [ET]'s fix loop. Invoked by [ET] after the fidelity gate; not a standalone menu option for Linus."
+skill = "eque2-code-test-validation"
+hidden = true
+
+# --- Agent-specific configurables ---
+#
+# Swappable reference docs and patterns the agent loads. Bare paths resolve
+# from the skill root; use `{project-root}/...` to point at an org-owned
+# resource elsewhere in the repo. Override wins.
+
+# Note: overriding the globs below customises them for Linus's own activation
+# pre-flight. A standalone `/eque2-code-create-spec` invocation (i.e. [CS] run
+# without going through Linus) re-resolves its own copies and does NOT inherit
+# an override set here — set the matching keys on the workflow skill too if you
+# need both entry paths to agree.
+
+# Glob of coding-standards files loaded during the [CS] investigation stage.
+# Loaded into in-memory context for task generation, not into persistent_facts.
+
+coding_standards_glob = "{project-root}/docs/CLAUDE/code-standards/*.md"
+
+# Glob of review-rule files surfaced by the pre-flight bootstrap check and
+# referenced during [CS] task generation.
+
+review_rules_glob = "{project-root}/.github/review-rules/*.md"
+
+# Glob for the LEGACY project-docs marker checked by pre-flight (check 9),
+# consulted only when AGENTS.md carries no `bmad-project-context` block.
+# Points at an `index.md` written to `{planning_artifacts}` (resolved from
+# bmm/config.yaml). A miss on both markers makes the doc-dependent workflows
+# ([CS], [DS], [RS], [BF], [ET]) strongly recommend running
+# `bmad-project-context` first; it never blocks.
+# Override to `{planning_artifacts}/index.md` if your docs live there.
+
+project_docs_glob = "{project-root}/docs/index.md"
+
+# NOTE: the test-file naming hint lives on the `eque2-code-create-spec` workflow
+# (its own `[workflow]` block), which is the only consumer. It was removed from
+# this `[agent]` block because nothing reads `{agent.test_file_prefix_hint}` —
+# overriding it here was a silent no-op. Set it on the [CS] workflow instead.

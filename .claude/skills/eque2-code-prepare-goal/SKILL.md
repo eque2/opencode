@@ -135,9 +135,11 @@ every workflow here: a SPEC or design that contradicts an approved
   (`bmad-ux`, `bmad-prd`, epic breakdowns) writes into the
   folder likewise.
 - **Light lane** — no `[CS]`/`[DS]`, no test state, and the gate does
-  not care: the approved `ACs.md` is the whole contract. Record "no spec
-  pipeline" honestly in `MANIFEST.md` rather than claiming an empty
-  `spec/`. The evidence bar does not drop — criteria are still evidenced
+  not care: the approved `ACs.md` is the whole contract. Write a
+  `MANIFEST.md` that holds the exact line
+  `**Authored:** no spec pipeline`, and create no `spec/`.
+  `mirror-spec.sh verify` accepts only that line, so free prose makes
+  the starter refuse the folder. The evidence bar does not drop — criteria are still evidenced
   by real command output at execution time.
 
 ### The approved ACs — add, never weaken

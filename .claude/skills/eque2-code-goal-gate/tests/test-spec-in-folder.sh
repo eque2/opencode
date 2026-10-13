@@ -212,5 +212,20 @@ else
 	fail "compat/the-loop-actually-started" "reported AND refused — the report was meant to be non-fatal"
 fi
 
+# --- 6. a light-lane folder whose manifest records no spec pipeline starts ---
+#
+# prepare-goal tells the light lane to write this manifest. The starter refused
+# it with exit 2 until the verifier learned the mark (defect 2026-10-12).
+
+G="$(new_goal light)"
+printf '# MANIFEST\n\n**Authored:** no spec pipeline — light lane.\n' >"$G/MANIFEST.md"
+start "$G"
+
+if [ "$START_RC" -eq 0 ]; then
+	pass "light/a-light-lane-folder-starts"
+else
+	fail "light/a-light-lane-folder-starts" "the light-lane manifest was refused (exit $START_RC): [$OUT]"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

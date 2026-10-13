@@ -1,0 +1,33 @@
+{
+  "module-code": "eque2-code",
+  "parent-agent": "linus",
+  "workflow-name": "jira-fetch",
+  "menu-code": "JF",
+  "description": "Fetches Jira ticket data, related tickets, and discovers Figma links for spec creation.",
+  "supports-headless": true,
+  "phase-name": "1-fetch",
+  "after": [],
+  "before": ["create-spec"],
+  "is-required": false,
+  "output-location": "{feature_artifacts}",
+  "output-contract": {
+    "frozen": true,
+    "depended-on-by": ["create-spec"],
+    "structure": {
+      "root": "{feature_artifacts}/{TICKET-KEY}/",
+      "files": [
+        "jira/ticket.json",
+        "jira/ticket.md",
+        "jira/related-tickets.json",
+        ".metadata.json",
+        ".progress.json"
+      ],
+      "conditional": [
+        {
+          "path": "figma/design-N/",
+          "condition": "ticket contains Figma URLs"
+        }
+      ]
+    }
+  }
+}

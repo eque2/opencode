@@ -219,6 +219,11 @@ there is no copy→source comparison to make, and an in-place manifest over an e
 `spec/` is the same lie an empty mirror would be. A manifest claiming both in-place
 and an external source is refused rather than silently resolved.
 
+**Light lane: no spec.** The plan declined a spec pipeline, so there is no `spec/`.
+`MANIFEST.md` holds the exact line `**Authored:** no spec pipeline` and nothing that
+claims a source. `verify` accepts it and returns. The same line next to a `spec/`, a
+`**Source**` line, or the in-place mark contradicts itself and is refused.
+
 A **multi-epic** goal has more than one canonical source — one
 `_bmad-output/features/<slug>/` per epic. Mirror each under its own
 `spec/<slug>/` subtree with the labelled `<slug>=<dir>` form; the manifest then

@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "testId",
+    "folderPath",
+    "complianceAttempts",
+    "runAttempts",
+    "failureReason",
+    "lastRunId",
+    "machineVersion",
+    "lastVerificationAt",
+    "resetCount"
+  ],
+  "properties": {
+    "testId": {
+      "type": "string"
+    },
+    "folderPath": {
+      "type": "string"
+    },
+    "complianceAttempts": {
+      "type": "number"
+    },
+    "runAttempts": {
+      "type": "number"
+    },
+    "failureReason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lastRunId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "machineVersion": {
+      "type": "string"
+    },
+    "lastVerificationAt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resetCount": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

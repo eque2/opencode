@@ -1,0 +1,20 @@
+{
+  "module-code": "eque2-code",
+  "workflow-name": "check-doc-snippets",
+  "menu-code": "CD",
+  "description": "Compile and lint every fenced code block in the repo's Markdown through a scratch harness that supplies missing imports, then report each failure at its file:line. With --fix, splice corrected snippets back into the .md files. Never commits.",
+  "supports-headless": true,
+  "phase-name": "anytime",
+  "after": [],
+  "before": [],
+  "is-required": false,
+  "output-location": "{output_folder}/snippet-checks",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "{output_folder}/snippet-checks",
+      "files": ["<YYYY-MM-DD-HHMM>.md"]
+    }
+  }
+}

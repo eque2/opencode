@@ -1,0 +1,20 @@
+{
+  "module-code": "eque2-code",
+  "workflow-name": "init-testing",
+  "menu-code": "IT",
+  "description": "Set a repo's test baseline with the BMAD TEA chain (test-design, automate, test-review, trace, ci), write unit and integration tests layer by layer to ≥ 90 % lines and ≥ 85 % branches, enforce the threshold in a pre-push hook and in CI, and add an AGENTS.md block that keeps the tests current. Commits per layer; never pushes.",
+  "supports-headless": true,
+  "phase-name": "anytime",
+  "after": [],
+  "before": [],
+  "is-required": false,
+  "output-location": "{test_artifacts}/init-testing",
+  "output-contract": {
+    "frozen": false,
+    "depended-on-by": [],
+    "structure": {
+      "root": "{test_artifacts}/init-testing",
+      "files": ["plan.md", ".decision-log.md", "inventory.json"]
+    }
+  }
+}

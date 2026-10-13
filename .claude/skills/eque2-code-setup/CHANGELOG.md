@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.67.1 — 2026-10-12
+
+- fix: a light-lane goal folder now starts. `prepare-goal` told the light lane to record "no spec pipeline" in `MANIFEST.md`, but `mirror-spec.sh verify` accepted only a spec source, so `pursue-goal` refused every light-lane folder with exit 2. `verify` now accepts the line `**Authored:** no spec pipeline` when no `spec/` exists, and refuses that line next to a `spec/`, a `**Source**` line, or the in-place mark.
+- fix: `prepare-goal` names the exact light-lane manifest line, so the agent no longer writes free prose that the verifier cannot read.
+
+## v0.67.0 — 2026-10-12
+
+- feat: `[IT]` init testing (`eque2-code-init-testing`) takes the repo it runs in from whatever tests it has to an enforced baseline. It measures the repo, runs the BMAD TEA chain (test-design, automate, test-review, trace, ci), and writes unit and integration tests one layer at a time, worst-covered first, to ≥ 90 % lines and ≥ 85 % branches. It puts the threshold in the runner's own config, adds a pre-push hook that it proves will block a push, wires the same command into CI, and adds a marked `AGENTS.md` block plus `docs/testing.md` that name which TEA skill to run as the code changes. It commits once per layer and never pushes. Supports JavaScript/TypeScript, Python, and .NET; `--headless` and `--scope <path>` are available. No agent menu dispatches it.
+- feat: init testing bundles `repo_inventory.py` (packages, test runners, coverage tools, hook manager, CI pipelines, and agent instruction files) and `coverage_by_dir.py` (line and branch coverage per directory from lcov or Cobertura reports).
+
+## v0.66.0 — 2026-10-12
+
+- feat: `[DD]` Diataxis docs (`eque2-code-diataxis-docs`) writes documentation for a codebase as Markdown in `docs/`, in four sections: tutorials, how-to guides, reference, and explanation. It maps the codebase from the code itself, agrees a page plan with you, writes the pages in parallel, and checks the set with a bundled validator. The default scope is exhaustive; `--curated[=N]` writes the N most useful pages and keeps the rest as a ranked deferred list. `update` refreshes the pages whose source code changed, and `validate` grades existing docs without changing them. It never overwrites a file it did not write. No agent menu dispatches it.
+- feat: `[CD]` check doc snippets (`eque2-code-check-doc-snippets`) compiles and lints every code block in the repo's Markdown with the repo's own toolchain, then reports each failure at its Markdown file and line. `--fix` splices corrected blocks back in without committing. No agent menu dispatches it.
+
 ## v0.65.0 — 2026-10-03
 
 - feat: new agent **Spike** (`/eque2-code-agent-spike`) runs technical spikes — an open question settled by experiment, such as "can we make this MCP server faster by changing its queries?". He designs the experiment, has it run under the goal stop gate, and brings back a verdict — adopt, reject, or inconclusive — with numbers. Every stage reuses Hannibal's plan-goal, approval, prepare-goal, and pursue-goal unchanged.

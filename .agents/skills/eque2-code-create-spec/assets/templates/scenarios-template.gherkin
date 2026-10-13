@@ -1,0 +1,31 @@
+# Scenarios: {FEATURE-ID}
+
+## BUILD Checks
+
+@build
+Scenario: BUILD-1 Lint passes
+  Given the codebase
+  When I run the linter
+  Then there are no lint errors
+
+@build
+Scenario: BUILD-2 Type check passes
+  Given the codebase
+  When I run the type checker
+  Then there are no type errors
+
+@build
+Scenario: BUILD-3 Build succeeds
+  Given the codebase
+  When I run the build command
+  Then the build completes successfully
+
+@build
+Scenario: BUILD-4 Tests pass
+  Given the codebase
+  When I run the test suite
+  Then all tests pass
+
+## Feature Scenarios
+
+{Gherkin scenarios organized by category from coverage model}
