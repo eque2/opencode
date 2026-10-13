@@ -7,7 +7,7 @@ import {
   registerManagedTextareaLayer,
   registerTimedLeader,
 } from "@opentui/keymap/addons/opentui"
-import { stringifyKeyStroke, type Binding } from "@opentui/keymap"
+import { stringifyKeyStroke, type Binding, type KeySequencePart } from "@opentui/keymap"
 import {
   formatCommandBindings as formatCommandBindingsExtra,
   formatKeySequence as formatKeySequenceExtra,
@@ -271,6 +271,37 @@ export function useCommandShortcut(command: string): Accessor<string> {
       config,
     ),
   )
+}
+
+/**
+ * The command's shortcut while its key reaches it, or "" while a newer or higher layer takes that key for something
+ * else (a plugin can bind Tab to its own command), so a hint never names a key that now does something different.
+ * Only a single-stroke shortcut can be taken this way; a sequence is always shown.
+ */
+export function useReachableCommandShortcut(command: string): Accessor<string> {
+  const config = useTuiConfig()
+  return useKeymapSelector((keymap: OpenTuiKeymap) =>
+    Option.match(reachableSequence(keymap, command), {
+      onNone: () => "",
+      onSome: (sequence) => formatKeySequence(sequence, config),
+    }),
+  )
+}
+
+/** The command's first key sequence, unless another command now takes its single key. */
+export function reachableSequence(
+  keymap: OpenTuiKeymap,
+  command: string,
+): Option.Option<ReadonlyArray<KeySequencePart>> {
+  const sequence = keymap.getCommandBindings({ visibility: "registered", commands: [command] }).get(command)?.[0]?.sequence
+  const first = sequence?.[0]
+  if (!sequence || !first) return Option.none()
+  const taken =
+    sequence.length === 1 &&
+    keymap
+      .getActiveKeys()
+      .some((key) => key.display === first.display && key.command !== undefined && key.command !== command)
+  return taken ? Option.none() : Option.some(sequence)
 }
 
 export function useCommandSlashes(): Accessor<readonly CommandSlashEntry[]> {

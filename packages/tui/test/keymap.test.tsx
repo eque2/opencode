@@ -3,9 +3,16 @@ import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { testRender, useRenderer } from "@opentui/solid"
 import { expect, test } from "bun:test"
+import { Option } from "effect"
 import { onCleanup } from "solid-js"
 import { TuiKeybind } from "../src/config/keybind"
-import { getOpencodeModeStack, OPENCODE_BASE_MODE, OpencodeKeymapProvider, registerOpencodeKeymap } from "../src/keymap"
+import {
+  getOpencodeModeStack,
+  OPENCODE_BASE_MODE,
+  OpencodeKeymapProvider,
+  reachableSequence,
+  registerOpencodeKeymap,
+} from "../src/keymap"
 
 function createResolvedKeymapConfig(input: TuiKeybind.KeybindOverrides = {}) {
   const keybinds = TuiKeybind.parse(input)
@@ -162,6 +169,41 @@ test("a keymap without the opencode registration keeps the base mode", async () 
   const app = await testRender(() => <Harness />)
   try {
     expect(modes).toEqual([OPENCODE_BASE_MODE, OPENCODE_BASE_MODE])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("a shortcut is not reachable while a newer layer takes its key for another command", async () => {
+  const seen: string[] = []
+
+  function Harness() {
+    const renderer = useRenderer()
+    const keymap = createDefaultOpenTuiKeymap(renderer)
+    const shortcut = () =>
+      Option.match(reachableSequence(keymap, "agent.cycle"), {
+        onNone: () => "",
+        onSome: (sequence) => sequence.map((part) => part.stroke.name).join(" "),
+      })
+    const offAgents = keymap.registerLayer({
+      commands: [{ name: "agent.cycle", run: () => {} }],
+      bindings: [{ key: "tab", cmd: "agent.cycle" }],
+    })
+    seen.push(shortcut())
+    const offTasks = keymap.registerLayer({
+      commands: [{ name: "task.next", run: () => {} }],
+      bindings: [{ key: "tab", cmd: "task.next" }],
+    })
+    seen.push(shortcut())
+    offTasks()
+    seen.push(shortcut())
+    onCleanup(offAgents)
+    return <box />
+  }
+
+  const app = await testRender(() => <Harness />)
+  try {
+    expect(seen).toEqual(["tab", "", "tab"])
   } finally {
     app.renderer.destroy()
   }
