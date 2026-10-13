@@ -76,7 +76,13 @@ Paths are under `packages/opencode/` unless they start with `packages/` or `task
 ## Implementation Notes
 
 - 2026-10-13: Checkpoint 1 passed without a human pause under the developer's goal "Complete all workflows autonomously"; the spec exceeds 1,600 tokens and is kept whole (one approved promotion, D1). Multi-goal check: one goal, the promotion the plan approved.
-- Non-harness commits taken with the transfer (AC 14): `dbf57fe844` (Punjabi Nastaliq i18n mapping, needed for the app suite on Bun 1.3.14), `25eb9e45ba` (ESLint `runSync` exception scoped to the engine file), `a0113e5f11` (`.gitignore` line only), `70e1f314bd` (task-ui README only).
+- Transfer (AC 14): 178 picks onto this branch, `2cdd8c054c` to `6deb463572` — 175 whole product commits with `-x` (their spike SHA in the message), and three partial picks: `25eb9e45ba` (ESLint), `a0113e5f11` (`.gitignore` line only), `70e1f314bd` (task-ui README only). Skipped: 30 evidence-only commits, `19ca8d4768` (tooling; dev has 0.67.1 as `55ab6b3e56`), `8b4325a5e6` (`task-seed.sh`, demo tooling), `be2452ea6a` (`task-ui.md` brief).
+- Picked commits that touch files outside the harness folders (promotion-branch SHAs):
+  - harness wiring in core files: `6d5c712d05` (`src/command/index.ts`), `02d8664aa2`, `10d53690a6`, `4c74c37268` (`src/agent/agent.ts`), `8c459b2bd7`, `6eeac31100`, `d640bafeb6` (`src/session/prompt.ts`);
+  - dependency and tooling: `8ab699cad4` (`@jambudipa/xstate-effect` 0.1.0 in the catalog, `bun.lock`), `17e50e4bd3` (`eslint.config.mjs` `runSync` exception for the engine file), `1cfb58dfdb` (`.gitignore` run folder);
+  - test library: `56d851acda`, `c8b9e979d9` (`test/lib/llm-server.ts` per-request responder);
+  - generic TUI used by the watch view: `ec31485090` (route `watch` param, `session_watch` slot, plugin API and spec doc), `1344b18eea` (hide a hint whose key another layer takes);
+  - unrelated fix: `db6c781b4c` = spike `dbf57fe844` (`packages/app/src/i18n/desktop-native.ts`, Punjabi Nastaliq to the Arabic-script bundle; the app suite fails on Bun 1.3.14 without it).
 
 ## Spec Change Log
 
