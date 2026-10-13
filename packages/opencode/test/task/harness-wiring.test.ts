@@ -118,6 +118,38 @@ describe("the task command and agents", () => {
       expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
     }),
   )
+
+  it.instance(
+    "keep the user's deny rules, and leave out the user's allow and ask rules",
+    () =>
+      Effect.gen(function* () {
+        const builder = yield* Agent.Service.use((svc) => svc.get(TaskHooks.BUILDER))
+        const verifier = yield* Agent.Service.use((svc) => svc.get(TaskHooks.VERIFIER))
+        const action = (agent: Agent.Info, permission: string, pattern = "*") =>
+          Permission.evaluate(permission, pattern, agent.permission).action
+        expect(action(builder, "bash", "rm -rf src")).toBe("deny")
+        expect(action(builder, "edit", "secrets/key.ts")).toBe("deny")
+        expect(action(verifier, "bash", "git log --oneline")).toBe("deny")
+        // The harness rules still decide what the user did not deny.
+        expect(action(builder, "bash", "bun test")).toBe("allow")
+        expect(action(builder, "edit", "src/a.ts")).toBe("allow")
+        expect(action(verifier, "bash", "git status")).toBe("allow")
+        // An ask would hang a headless run, and a user allow must not widen a role.
+        expect(action(builder, "bash", "git push origin dev")).toBe("allow")
+        expect(action(builder, "webfetch")).toBe("deny")
+        expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
+        expect(verifier.permission.some((rule) => rule.action === "ask")).toBe(false)
+      }),
+    {
+      config: {
+        permission: {
+          bash: { "rm *": "deny", "git log*": "deny", "git push*": "ask" },
+          edit: { "secrets/*": "deny" },
+          webfetch: "allow",
+        },
+      },
+    },
+  )
 })
 
 describe("a configured task command", () => {

@@ -279,8 +279,10 @@ const layer = Layer.effect(
         }
 
         // The task harness's agents. They run headless, so every permission is decided: `"*": "deny"` first,
-        // then what each role needs; no rule asks.
+        // then what each role needs; no rule asks. The user's own deny rules come last, so they still win; their
+        // allow and ask rules are left out (an ask would hang a headless run).
         const model = cfg.model ? { model: Provider.parseModel(cfg.model) } : {}
+        const userDenies = user.filter((rule) => rule.action === "deny")
         agents[TaskHooks.BUILDER] = {
           name: TaskHooks.BUILDER,
           description: "Builds one task of a blend task tree for the task harness.",
@@ -291,26 +293,29 @@ const layer = Layer.effect(
           // Deny by default: every allowed tool's definition rides on every request, and a live run is capped
           // in tokens. The builder needs files, search and the shell; `invalid` answers a call to a tool it
           // does not have (a builder's `verdict` call fails there).
-          permission: Permission.fromConfig({
-            "*": "deny",
-            read: "allow",
-            glob: "allow",
-            grep: "allow",
-            list: "allow",
-            edit: "allow",
-            write: "allow",
-            apply_patch: "allow",
-            bash: "allow",
-            invalid: "allow",
-            // The builder works in its leaf's worktree, which is the session's directory: a path outside it is
-            // refused, by the file tools and by the shell's path scan. A deterrent, not a sandbox: the shell scan
-            // sees only the paths it can parse.
-            external_directory: "deny",
-            task_ready: "allow",
-            // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
-            // turn with an error instead.
-            doom_loop: "allow",
-          }),
+          permission: Permission.merge(
+            Permission.fromConfig({
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              edit: "allow",
+              write: "allow",
+              apply_patch: "allow",
+              bash: "allow",
+              invalid: "allow",
+              // The builder works in its leaf's worktree, which is the session's directory: a path outside it is
+              // refused, by the file tools and by the shell's path scan. A deterrent, not a sandbox: the shell scan
+              // sees only the paths it can parse.
+              external_directory: "deny",
+              task_ready: "allow",
+              // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
+              // turn with an error instead.
+              doom_loop: "allow",
+            }),
+            userDenies,
+          ),
           options: {},
           ...model,
         }
@@ -324,25 +329,28 @@ const layer = Layer.effect(
           // Deny by default, as for the builder. The verifier only reads: no file tool writes, and the shell runs
           // the tests and read-only git commands alone. The tests are model-written code that could still write;
           // the runner resets the judge's checkout after each round.
-          permission: Permission.fromConfig({
-            "*": "deny",
-            read: "allow",
-            glob: "allow",
-            grep: "allow",
-            list: "allow",
-            bash: {
+          permission: Permission.merge(
+            Permission.fromConfig({
               "*": "deny",
-              "bun --no-env-file test*": "allow",
-              "git diff*": "allow",
-              "git log*": "allow",
-              "git show*": "allow",
-              "git status*": "allow",
-            },
-            invalid: "allow",
-            external_directory: "deny",
-            verdict: "allow",
-            doom_loop: "allow",
-          }),
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              bash: {
+                "*": "deny",
+                "bun --no-env-file test*": "allow",
+                "git diff*": "allow",
+                "git log*": "allow",
+                "git show*": "allow",
+                "git status*": "allow",
+              },
+              invalid: "allow",
+              external_directory: "deny",
+              verdict: "allow",
+              doom_loop: "allow",
+            }),
+            userDenies,
+          ),
           options: {},
           ...model,
         }
