@@ -524,6 +524,7 @@ Metadata is persisted by plugin id.
 - `internal:sidebar-files`
 - `internal:sidebar-footer`
 - `internal:plugin-manager`
+- `internal:task-ui` — shows the `/task` harness's task tree and run progress, in one of seven designs; it reads `.opencode/task/status.json` in the session directory once a second and shows nothing when the file is absent.
 
 Sidebar content order is currently: context `100`, mcp `200`, lsp `300`, todo `400`, files `500`.
 

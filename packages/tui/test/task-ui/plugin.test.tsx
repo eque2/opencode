@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 // The task-ui plugin as opencode loads it: in the built-in list, and through its entry with the plugin API, a real
-// keymap and the host's slot registry, over a status file in a temporary directory.
+// keymap and the host's slot registry, over a status file (or none) in a temporary directory.
 import { expect, test } from "bun:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
@@ -8,6 +8,7 @@ import { testRender, useRenderer } from "@opentui/solid"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Show, createRoot, createSignal } from "solid-js"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import type {
   TuiDialogSelectProps,
   TuiDispose,
@@ -17,11 +18,11 @@ import type {
   TuiToast,
 } from "@opencode-ai/plugin/tui"
 import { TuiKeybind } from "../../src/config/keybind"
-import { OpencodeKeymapProvider, registerOpencodeKeymap, useCommandSlashes } from "../../src/keymap"
+import { OPENCODE_BASE_MODE, OpencodeKeymapProvider, registerOpencodeKeymap, useCommandSlashes } from "../../src/keymap"
 import { createSlots } from "../../src/plugin/slots"
 import { createBuiltinPlugins } from "../../src/feature-plugins/builtins"
 import TaskUi from "../../src/task-ui/index"
-import { DESIGNS, statusFile } from "../../src/task-ui/store"
+import { DESIGNS, MARK, statusFile } from "../../src/task-ui/store"
 import { createTuiPluginApi } from "../fixture/tui-plugin"
 import { tmpdir } from "../fixture/fixture"
 import fixture from "./fixture-status.json"
@@ -54,9 +55,13 @@ async function writeStatus(directory: string, status: unknown) {
   await Bun.write(statusFile(directory), JSON.stringify(status))
 }
 
-// Loads the plugin entry the way the runtime does, with no options. The shortcut bar's slot is on screen.
-async function load(directory: string) {
+// Loads the plugin entry the way the runtime does, with no options. The sidebar and the shortcut bar's slot are on
+// screen, and Tab that the plugin does not take reaches opencode's agent key. `kv` is the TUI's kv store from an
+// earlier load (a fresh one by default); `session` opens that session's route instead of home. The SDK client answers
+// every request with an empty list: the session has no harness children.
+async function load(directory: string, options: { kv?: TuiPluginApi["kv"]; session?: string } = {}) {
   const toasts: TuiToast[] = []
+  const agent = { moves: 0 }
   const pickers: Picker[] = []
   const disposers: TuiDispose[] = []
   const slots = createSlots()
@@ -76,11 +81,22 @@ async function load(directory: string) {
       bindingDefaults: TuiKeybind.bindingDefaults(),
     })
     registerOpencodeKeymap(keymap, renderer, { keybinds, leader_timeout: 2000 })
-    const base = createTuiPluginApi({ renderer, keymap })
+    // opencode's agent key, bound the way the app binds it.
+    keymap.registerLayer({ commands: [{ name: "agent.cycle", run: () => void agent.moves++ }] })
+    keymap.registerLayer({ mode: OPENCODE_BASE_MODE, bindings: keybinds.gather("app", ["agent.cycle"]) })
+    const client = createOpencodeClient({
+      baseUrl: "http://localhost:4096",
+      fetch: Object.assign(async () => Response.json([]), { preconnect: fetch.preconnect }),
+    })
+    const base = createTuiPluginApi({ renderer, keymap, client })
     const host = slots.setup(base)
     let count = 0
     handles.api = {
       ...base,
+      kv: options.kv ?? base.kv,
+      route: options.session
+        ? { ...base.route, current: { name: "session", params: { sessionID: options.session } } }
+        : base.route,
       state: { ...base.state, path: { ...base.state.path, directory } },
       slots: {
         register(plugin: TuiSlotPlugin) {
@@ -129,6 +145,7 @@ async function load(directory: string) {
               registers five slots in one tick. */}
           <Show when={loaded()}>
             <slots.Slot name="session_prompt_right" session_id="" />
+            <slots.Slot name="sidebar_content" session_id="" />
           </Show>
           <Slashes />
         </box>
@@ -136,7 +153,7 @@ async function load(directory: string) {
     )
   }
 
-  const app = await testRender(() => <Host />, { width: 200, height: 4 })
+  const app = await testRender(() => <Host />, { width: 200, height: 30 })
   const { api, slashes } = handles
   if (!api || !slashes) throw new Error("the host did not render")
   await TaskUi.tui(api, undefined, meta)
@@ -169,7 +186,11 @@ async function load(directory: string) {
     toasts,
     slash,
     openPicker,
+    frame,
     shows,
+    agent,
+    kv: api.kv,
+    pressTab: () => app.mockInput.pressTab(),
     async [Symbol.asyncDispose]() {
       for (const dispose of disposers) await dispose()
       app.renderer.destroy()
@@ -220,4 +241,41 @@ test("the plugin follows a new status file through its one-second poll", async (
   await writeStatus(dir.path, next)
   expect(await plugin.shows("4/6 trusted")).toBe(true)
   expect(plugin.toasts.map((toast) => toast.message)).toContain("T1.4 budget exhausted → trusted")
+})
+
+test("a chosen design survives a reload of the plugin with the same kv", async () => {
+  await using dir = await tmpdir()
+  await writeStatus(dir.path, fixture)
+  const first = await load(dir.path)
+  expect(await first.shows("◆ In the Flow Ledger")).toBe(true)
+  first.openPicker().select(6)
+  expect(await first.shows("◆ In the Flow HUD ")).toBe(true)
+  await first[Symbol.asyncDispose]()
+
+  const second = await load(dir.path, { kv: first.kv })
+  expect(second.openPicker().current).toBe(6)
+  expect(await second.shows("◆ In the Flow HUD ")).toBe(true)
+  await second[Symbol.asyncDispose]()
+
+  // A stored value that is not a design falls back to design 1.
+  first.kv.set("task_ui_design", 9)
+  await using third = await load(dir.path, { kv: first.kv })
+  expect(third.openPicker().current).toBe(1)
+  expect(await third.shows("◆ In the Flow Ledger")).toBe(true)
+})
+
+test("without a status file the plugin shows nothing in its slots and leaves Tab to the agent key", async () => {
+  await using dir = await tmpdir()
+  await using plugin = await load(dir.path, { session: "ses_root" })
+
+  // Past two polls of the status file: still no mark in the sidebar or beside the prompt.
+  const end = Date.now() + 2500
+  while (Date.now() < end) {
+    expect(await plugin.frame()).not.toContain(MARK)
+    await Bun.sleep(100)
+  }
+
+  plugin.pressTab()
+  for (let tries = 0; tries < 100 && plugin.agent.moves === 0; tries++) await Bun.sleep(10)
+  expect(plugin.agent.moves).toBe(1)
 })

@@ -1,10 +1,11 @@
 // The built-in task-ui plugin: the `/task` harness's task tree, read once a second from
 // `<directory>/.opencode/task/status.json`, in one of seven designs. `/task-design` picks the design and `ctrl+x v`
-// cycles it. Built-in plugins get no options, so it starts on design 1 (Ledger); a `design` option (1-7) is honoured
-// where a host passes one. README.md describes the designs and the keys.
+// cycles it. The chosen design is kept in the TUI's kv store and restored at the next launch. Without a stored design
+// it starts on a host's `design` option (1-7) where a host passes one, else on design 1 (Ledger); built-in plugins get
+// no options. README.md describes the designs and the keys.
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 import { Clock, Effect, Option } from "effect"
-import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js"
+import { createEffect, createMemo, createRoot, createSignal, on, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { liveSessions } from "./peek"
 import {
@@ -30,14 +31,19 @@ import { registerScreen } from "./designs/screen"
 const tui: TuiPlugin = (api, options) =>
   Effect.runPromise(
     Effect.sync(() => {
-      const asked = Number(options?.design)
-      const design = DESIGNS.some((item) => item.id === asked) ? asked : 1
+      // A stored value that is not a design (an older or hand-edited kv file) is passed over.
+      const design = [api.kv.get(KV_DESIGN), Number(options?.design)].find(isDesign) ?? 1
       createRoot((dispose) => {
         api.lifecycle.onDispose(dispose)
         start(api, design)
       })
     }),
   )
+
+/** The kv key that keeps the chosen design across launches. */
+const KV_DESIGN = "task_ui_design"
+
+const isDesign = (value: unknown): value is number => DESIGNS.some((item) => item.id === value)
 
 // When a file was last written, in epoch milliseconds; 0 when it cannot be read.
 const modified = (file: string) =>
@@ -104,6 +110,8 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   })
 
   const view = createView({ status, now, design, live })
+  // Every change is kept, whichever key made it (the picker, `ctrl+x v`, or a full-screen design's own key).
+  createEffect(on(view.design, (id) => api.kv.set(KV_DESIGN, id), { defer: true }))
   const base = {
     api,
     view,

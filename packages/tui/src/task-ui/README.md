@@ -18,7 +18,8 @@ twice and the watch view act only on a live run, in its own session.
 
 ## Designs
 
-The plugin starts on design 1. `/task-design` opens a list of the seven designs; `ctrl+x v` switches to the next one.
+The plugin starts on the design chosen last, and on design 1 the first time. `/task-design` opens a list of the seven
+designs; `ctrl+x v` switches to the next one.
 Each switch shows a notice that names the design and where it shows.
 
 | # | Design | Where it shows | Expanded (`ctrl+x o`) |
