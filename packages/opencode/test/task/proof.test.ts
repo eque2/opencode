@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { $ } from "bun"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Clock, Duration, Effect } from "effect"
+import { Clock, Duration, Effect, Fiber } from "effect"
 import { TaskLimits } from "@/task/limits"
 import { TaskProof } from "@/task/proof"
 import { tmpdir } from "../fixture/fixture"
@@ -456,6 +456,77 @@ describe("TaskProof", () => {
       expect(pid).toBeGreaterThan(1)
       expect(isAlive(pid)).toBe(false)
     }),
+  )
+})
+
+describe("TaskProof logs", () => {
+  // A folder outside any repository under proof, removed when the test's scope closes.
+  const scratch = Effect.acquireRelease(
+    Effect.promise(() => tmpdir()),
+    (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+  )
+  const read = (file: string) => Effect.promise(() => fs.readFile(file, "utf8").catch(() => ""))
+
+  groupIt("run: with a log, the output reaches the file within a second, both streams in arrival order", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch
+      const log = path.join(dir.path, "proof.log")
+      yield* Effect.promise(() => fs.writeFile(log, "$ sh\n"))
+      const running = yield* TaskProof.run("sh", ["-c", "echo first; sleep 0.2; echo second >&2; sleep 3; echo third"], {
+        cwd: dir.path,
+        timeout: "10 seconds",
+        cancelDeadline: limits.cancelDeadline,
+        log,
+      }).pipe(Effect.forkChild)
+      // The first two lines arrive while the command still sleeps.
+      yield* pollWithTimeout(
+        read(log).pipe(Effect.map((text) => (text === "$ sh\nfirst\nsecond\n" ? true : undefined))),
+        "the log did not follow the output",
+        "1500 millis",
+      )
+      const result = yield* Fiber.join(running)
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toBe("first\nthird\n")
+      expect(result.stderr).toBe("second\n")
+      expect(yield* read(log)).toBe("$ sh\nfirst\nsecond\nthird\n")
+    }),
+  )
+
+  groupIt("proveTask: the log holds each test and gate command, then its output, then how it ended", () =>
+    Effect.gen(function* () {
+      const repo = yield* taskRepo({
+        ...feature,
+        "test/feature.test.ts": testsOf(passing("T1.1.c1"), passing("T1.1.c2")),
+      })
+      const log = path.join((yield* scratch).path, "T1.1.log")
+      // A gate that writes to both streams, so its own output must reach the log.
+      const echo = "echo gate-out; echo gate-err >&2"
+      const proof = yield* TaskProof.proveTask({
+        spec: { ...spec, gates: { ...spec.gates, ECHO: { title: "Writes to both streams", command: echo } } },
+        task: { ...task, gates: ["BUILD-1", "ECHO"] },
+        cwd: repo.dir,
+        base: repo.base,
+        head: repo.head,
+        limits,
+        log,
+      })
+      expect(statusOf(proof, "T1.1.c1")).toBe("passed")
+      const text = yield* read(log)
+      const lines = text.split("\n")
+      expect(lines[0]).toStartWith("$ bun test --reporter=junit")
+      expect(text).toContain(" 3 pass")
+      // Each command ends with how it ended; the gates run in order after the tests.
+      const gate = (command: string) => lines.indexOf(`$ ${command}`)
+      expect(lines[gate("exit 0") - 1]).toBe("exit 0")
+      expect(lines[gate("exit 0") + 1]).toBe("exit 0")
+      expect(gate(echo)).toBeGreaterThan(gate("exit 0"))
+      // The two streams arrive on their own pipes, so their order is not fixed.
+      expect(lines.slice(gate(echo) + 1, gate(echo) + 3).toSorted()).toEqual(["gate-err", "gate-out"])
+      expect(lines[gate(echo) + 3]).toBe("exit 0")
+      expect(gate("test -f src/feature.ts")).toBe(gate(echo) + 4)
+      expect(lines.at(-2)).toBe("exit 0")
+    }),
+    proveTimeout,
   )
 })
 

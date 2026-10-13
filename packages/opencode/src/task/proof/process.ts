@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { constants } from "node:os"
-import { Deferred, Duration, Effect, Exit, Option, Predicate, Schema } from "effect"
+import { Deferred, Duration, Effect, Exit, Fiber, FileSystem, Option, Predicate, Schedule, Schema } from "effect"
 
 // The process-group runner of the proof runner. Every command runs as the leader of its own process
 // group (detached), so one signal to the group reaches every descendant. When the leader exits, and
@@ -18,6 +18,9 @@ const outputLimit = 4 * 1024 * 1024
 /** How often the runner checks whether a process of the group is left. */
 const pollInterval = Duration.millis(25)
 
+/** How often the runner appends the output that arrived to the command's log. */
+const logInterval = Duration.millis(200)
+
 /** The exit code that the runner reports when the command timed out, as `timeout(1)` does. */
 export const timedOutExitCode = 124
 
@@ -30,6 +33,12 @@ export interface Bounds {
 /** The options of one command. */
 export interface Options extends Bounds {
   readonly cwd: string
+  /**
+   * A file that receives stdout and stderr as they arrive, in the order they arrive, so that someone can watch a
+   * long command. The runner only appends to it. It is best effort: a failed write leaves a gap in the file, never
+   * a failed command.
+   */
+  readonly log?: string
 }
 
 /** How one command ended. */
@@ -65,6 +74,8 @@ interface Running {
   /** Completes when the stdio pipes closed: every process that held them is gone. */
   readonly closed: Deferred.Deferred<void>
   readonly output: () => { readonly stdout: string; readonly stderr: string; readonly truncated: boolean }
+  /** Takes the output that arrived since the last take, both streams in arrival order; always empty without a log. */
+  readonly takeUnlogged: () => string
 }
 
 const exitStatus = (code: number | null, signal: NodeJS.Signals | null): number => {
@@ -78,8 +89,14 @@ const errorCode = (cause: unknown): string =>
 
 const describe = (command: string, args: ReadonlyArray<string>) => [command, ...args].join(" ")
 
-// Starts the command as the leader of a new process group and wires every event before it can fire.
-const start = (command: string, args: ReadonlyArray<string>, cwd: string): Effect.Effect<Running, SpawnError> =>
+// Starts the command as the leader of a new process group and wires every event before it can fire. With `logged`,
+// it also keeps the output that the log has not received yet.
+const start = (
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  logged: boolean,
+): Effect.Effect<Running, SpawnError> =>
   Effect.try({
     try: (): Running => {
       const started = Deferred.makeUnsafe<number, SpawnError>()
@@ -89,19 +106,26 @@ const start = (command: string, args: ReadonlyArray<string>, cwd: string): Effec
       let stdout = ""
       let stderr = ""
       let truncated = false
+      let unlogged = ""
       // Keeps the last `outputLimit` characters of a stream and records when it drops the start.
       const keepTail = (text: string) => {
         if (text.length <= outputLimit) return text
         truncated = true
         return text.slice(text.length - outputLimit)
       }
+      // The log is taken every `logInterval`, so this holds a fraction of a second of output.
+      const forLog = (chunk: string) => {
+        if (logged) unlogged += chunk
+      }
       child.stdout?.setEncoding("utf8")
       child.stderr?.setEncoding("utf8")
       child.stdout?.on("data", (chunk: string) => {
         stdout = keepTail(stdout + chunk)
+        forLog(chunk)
       })
       child.stderr?.on("data", (chunk: string) => {
         stderr = keepTail(stderr + chunk)
+        forLog(chunk)
       })
       // A read error only ends the output. Without a listener, Node would raise it as an uncaught error.
       child.stdout?.on("error", () => {})
@@ -121,7 +145,12 @@ const start = (command: string, args: ReadonlyArray<string>, cwd: string): Effec
       child.once("close", () => {
         Deferred.doneUnsafe(closed, Exit.void)
       })
-      return { child, started, exited, closed, output: () => ({ stdout, stderr, truncated }) }
+      const takeUnlogged = () => {
+        const text = unlogged
+        unlogged = ""
+        return text
+      }
+      return { child, started, exited, closed, output: () => ({ stdout, stderr, truncated }), takeUnlogged }
     },
     catch: (cause) =>
       new SpawnError({
@@ -166,18 +195,53 @@ const stopReading = (running: Running) =>
     running.child.stderr?.destroy()
   })
 
-// Kills the group when the use did not finish (failure or interruption), then stops reading.
-const release = (running: Running, exit: Exit.Exit<Result, SpawnError>, cancelDeadline: Duration.Input) =>
+/** A started command, and its log when it has one. */
+interface Started {
+  readonly running: Running
+  /** Appends the output that arrived since the last append to the log; nothing without a log. */
+  readonly append: Effect.Effect<void>
+  /** The fiber that appends every `logInterval` while the command runs; none without a log. */
+  readonly appender: Option.Option<Fiber.Fiber<unknown>>
+}
+
+// A failed write drops that output from the log only.
+// The take and its write are one uninterruptible step: interrupting the appender waits for a write in progress
+// instead of dropping output that it has already taken.
+const appendLog = (fs: FileSystem.FileSystem, log: string, running: Running) =>
+  Effect.uninterruptible(
+    Effect.suspend(() => {
+      const text = running.takeUnlogged()
+      return text === "" ? Effect.void : fs.writeFileString(log, text, { flag: "a" }).pipe(Effect.ignore)
+    }),
+  )
+
+const acquire = Effect.fnUntraced(function* (command: string, args: ReadonlyArray<string>, options: Options) {
+  const fs = yield* FileSystem.FileSystem
+  const log = Option.fromUndefinedOr(options.log)
+  const running = yield* start(command, args, options.cwd, Option.isSome(log))
+  const append = Option.match(log, { onNone: () => Effect.void, onSome: (file) => appendLog(fs, file, running) })
+  const appender = Option.isSome(log)
+    ? Option.some(yield* Effect.forkDetach(append.pipe(Effect.repeat(Schedule.spaced(logInterval)))))
+    : Option.none()
+  return { running, append, appender } satisfies Started
+})
+
+// Kills the group when the use did not finish (failure or interruption), then stops reading. The log gets the last
+// output after its appender stopped, so nothing reaches the file out of order.
+const release = (started: Started, exit: Exit.Exit<Result, SpawnError>, cancelDeadline: Duration.Input) =>
   Effect.gen(function* () {
-    const pid = running.child.pid
+    const pid = started.running.child.pid
     if (Exit.isFailure(exit) && Predicate.isNumber(pid)) yield* killGroup(pid, cancelDeadline)
-    yield* stopReading(running)
+    yield* stopReading(started.running)
+    if (Option.isSome(started.appender)) yield* Fiber.interrupt(started.appender.value)
+    yield* started.append
   })
 
 /**
  * Runs one command as the leader of its own process group. It waits for the leader's exit for at most
  * `timeout`, then kills the whole group (see {@link killGroup}). A timed-out command reports exit code
- * 124. When the effect is interrupted, the group is killed too.
+ * 124. When the effect is interrupted, the group is killed too. With `log`, the output also reaches that
+ * file while the command runs.
  */
 export const run = Effect.fn("TaskProof.run")(function* (
   command: string,
@@ -185,8 +249,8 @@ export const run = Effect.fn("TaskProof.run")(function* (
   options: Options,
 ) {
   return yield* Effect.acquireUseRelease(
-    start(command, args, options.cwd),
-    (running) =>
+    acquire(command, args, options),
+    ({ running }) =>
       Effect.gen(function* () {
         const pgid = yield* Deferred.await(running.started)
         const exit = yield* Deferred.await(running.exited).pipe(Effect.timeoutOption(options.timeout))
@@ -204,7 +268,7 @@ export const run = Effect.fn("TaskProof.run")(function* (
           groupCleared,
         } satisfies Result
       }),
-    (running, exit) => release(running, exit, options.cancelDeadline),
+    (started, exit) => release(started, exit, options.cancelDeadline),
   )
 })
 

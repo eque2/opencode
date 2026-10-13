@@ -112,6 +112,8 @@ export interface TaskInput {
   /** The task's final commit. */
   readonly head: string
   readonly limits: TaskLimits.Limits
+  /** A file that receives each test and gate command, then its output as it arrives (see `ProofProcess.Options`). */
+  readonly log?: string
 }
 
 export interface ScenarioInput {
@@ -119,6 +121,8 @@ export interface ScenarioInput {
   readonly cwd: string
   readonly head: string
   readonly limits: TaskLimits.Limits
+  /** A file that receives the test command, then its output as it arrives (see `ProofProcess.Options`). */
+  readonly log?: string
 }
 
 /** A proof could not run: a commit did not resolve, the working tree is not clean at head, git failed, or a command could not start. */
@@ -153,8 +157,24 @@ const tail = (text: string, size = 600) => {
 const startFailed = (error: ProofProcess.SpawnError) =>
   new ProofError({ message: `${error.command}: ${error.message}`, cause: error })
 
-const runCommand = (command: string, args: ReadonlyArray<string>, cwd: string, bounds: ProofProcess.Bounds) =>
-  ProofProcess.run(command, args, { cwd, ...bounds }).pipe(Effect.mapError(startFailed))
+const runCommand = (
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  options: ProofProcess.Bounds & { readonly log?: string },
+) => ProofProcess.run(command, args, { cwd, ...options }).pipe(Effect.mapError(startFailed))
+
+// A line of the proof log. A logged command starts with its prompt line, as a shell call reads in a session
+// (`$ bun test …`), and ends with how it ended (`exit 0`, `timed out`). The log is telemetry, so a failed write fails
+// nothing.
+const logLine = (log: string | undefined, line: string) =>
+  Effect.gen(function* () {
+    if (!log) return
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFileString(log, `${line}\n`, { flag: "a" }).pipe(Effect.ignore)
+  })
+
+const ended = (result: ProofProcess.Result) => (result.timedOut ? "timed out" : `exit ${result.exitCode}`)
 
 const git = (cwd: string, bounds: ProofProcess.Bounds, ...args: ReadonlyArray<string>) =>
   runCommand("git", args, cwd, bounds)
@@ -232,19 +252,21 @@ interface TestRun {
 
 // Runs `bun test` once in the working tree, with the JUnit reporter and the per-test timeout.
 const runTests = Effect.fnUntraced(
-  function* (cwd: string, limits: TaskLimits.Limits) {
+  function* (cwd: string, limits: TaskLimits.Limits, log: string | undefined) {
     const fs = yield* FileSystem.FileSystem
     const directory = yield* fs
       .makeTempDirectoryScoped({ prefix: "opencode-proof-" })
       .pipe(Effect.mapError((cause) => new ProofError({ message: "could not make the report folder", cause })))
     const report = join(directory, "junit.xml")
     const perTest = Math.max(1, Math.round(Duration.toMillis(limits.proofTimeout)))
-    const result = yield* runCommand(
-      "bun",
-      ["test", "--reporter=junit", `--reporter-outfile=${report}`, `--timeout=${perTest}`],
-      cwd,
-      { timeout: testRunBound(limits), cancelDeadline: limits.cancelDeadline },
-    )
+    const args = ["test", "--reporter=junit", `--reporter-outfile=${report}`, `--timeout=${perTest}`]
+    yield* logLine(log, `$ ${["bun", ...args].join(" ")}`)
+    const result = yield* runCommand("bun", args, cwd, {
+      timeout: testRunBound(limits),
+      cancelDeadline: limits.cancelDeadline,
+      log,
+    })
+    yield* logLine(log, ended(result))
     const xml = result.timedOut ? Option.none<string>() : yield* fs.readFileString(report).pipe(Effect.option)
     return {
       result,
@@ -377,10 +399,13 @@ const runGate = Effect.fnUntraced(function* (input: TaskInput, gate: string) {
   }
   // A gate is a whole command, like the tagged-test run, so it gets the same wall bound; the proof timeout bounds
   // each test inside it.
+  yield* logLine(input.log, `$ ${definition.value.command}`)
   const result = yield* runCommand("sh", ["-c", definition.value.command], input.cwd, {
     timeout: testRunBound(input.limits),
     cancelDeadline: input.limits.cancelDeadline,
+    log: input.log,
   })
+  yield* logLine(input.log, ended(result))
   const base = { gate, exitCode: result.exitCode, timedOut: result.timedOut }
   if (!result.groupCleared) return { ...base, status: "failed", reason: survivedReason } satisfies GateResult
   if (result.timedOut) return { ...base, status: "failed", reason: "timed out" } satisfies GateResult
@@ -422,7 +447,7 @@ export const proveTask = Effect.fn("TaskProof.proveTask")(function* (input: Task
   const head = yield* resolveCommit(input.cwd, bounds, input.head)
   yield* requireTreeAt(input.cwd, bounds, head)
   const obligations = input.spec.obligations.filter((obligation) => obligation.task === input.task.id)
-  const run = yield* runTests(input.cwd, input.limits)
+  const run = yield* runTests(input.cwd, input.limits, input.log)
   const structural = yield* checkStructural(input, bounds, base, head)
   const gateIds = Arr.dedupe([
     ...input.task.gates,
@@ -477,7 +502,7 @@ export const proveScenario = Effect.fn("TaskProof.proveScenario")(function* (inp
   const bounds = commandBounds(input.limits)
   const head = yield* resolveCommit(input.cwd, bounds, input.head)
   yield* requireTreeAt(input.cwd, bounds, head)
-  const run = yield* runTests(input.cwd, input.limits)
+  const run = yield* runTests(input.cwd, input.limits, input.log)
   return {
     scenario: input.scenario.id,
     result: tagResult(input.scenario.id, run),
@@ -492,7 +517,7 @@ export const proveScenarios = Effect.fn("TaskProof.proveScenarios")(function* (
   const bounds = commandBounds(input.limits)
   const head = yield* resolveCommit(input.cwd, bounds, input.head)
   yield* requireTreeAt(input.cwd, bounds, head)
-  const run = yield* runTests(input.cwd, input.limits)
+  const run = yield* runTests(input.cwd, input.limits, input.log)
   const evidence = yield* evidenceOf(run, head)
   return input.scenarios.map(
     (scenario) => ({ scenario: scenario.id, result: tagResult(scenario.id, run), evidence }) satisfies ScenarioProof,

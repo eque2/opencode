@@ -162,6 +162,13 @@ export const refused = (input: { harness: Harness; spec: string; path: string; r
 /** `<directory>/.opencode/task/status.json`. */
 export const file = (path: Path.Path, directory: string) => path.join(directory, ".opencode", "task", "status.json")
 
+/**
+ * `<directory>/.opencode/task/proofs/<name>.log`: the live output of a proving pass, `name` a task id or `scenarios`.
+ * The task UI reads the same path.
+ */
+export const proofLogFile = (path: Path.Path, directory: string, name: string) =>
+  path.join(directory, ".opencode", "task", "proofs", `${name}.log`)
+
 /** Writes the status atomically: a temp file next to it, then a rename. A failed write is logged, not raised. */
 export const write = Effect.fn("TaskStatus.write")(
   function* (directory: string, status: Status) {

@@ -1,10 +1,11 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, FileSystem, Option, Schema } from "effect"
+import { Effect, FileSystem, Option, Path, Schema } from "effect"
 import path from "path"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
 import { TaskCommand } from "@/task/core/command"
+import { TaskRunner } from "@/task/core/runner"
 import type { Plan, ScenarioState, State, TaskState } from "@/task/core/model"
 import { TaskStatus } from "@/task/core/status"
 import { TableEngine } from "@/task/engine-table"
@@ -182,6 +183,21 @@ describe("the status projection", () => {
       )
       expect(decoded.run.state).toBe("waiting")
       expect(decoded.tasks["T1.5"]?.waitingOn).toEqual(["T1.3", "T1.4", "T9"])
+    }),
+  )
+
+  it.live("a proving pass makes its log at .opencode/task/proofs/<name>.log and empties it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const file = path.join(directory, ".opencode", "task", "proofs", "T1.4.log")
+      expect(TaskStatus.proofLogFile(yield* Path.Path, directory, "T1.4")).toBe(file)
+      expect(yield* TaskRunner.proofLog(directory, "T1.4")).toBe(file)
+      expect(yield* fs.readFileString(file)).toBe("")
+      // The next pass starts from an empty file, never from the previous pass's output.
+      yield* fs.writeFileString(file, "$ bun test\nexit 1\n")
+      yield* TaskRunner.proofLog(directory, "T1.4")
+      expect(yield* fs.readFileString(file)).toBe("")
     }),
   )
 })

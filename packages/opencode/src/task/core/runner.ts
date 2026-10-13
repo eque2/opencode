@@ -291,6 +291,21 @@ const proved = (run: Run, task: string, outcome: ReturnType<typeof results>) =>
   )
 
 /**
+ * The live output of one proving pass, `<directory>/.opencode/task/proofs/<name>.log`, emptied at the start of the
+ * pass: the proof runner appends each test and gate command and its output as they arrive, so the task UI can show
+ * the proofs running. It is telemetry: when the file cannot be made, the pass runs without it.
+ */
+export const proofLog = Effect.fnUntraced(function* (directory: string, name: string) {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const file = TaskStatus.proofLogFile(path, directory, name)
+  const made = yield* fs
+    .makeDirectory(path.dirname(file), { recursive: true })
+    .pipe(Effect.andThen(fs.writeFileString(file, "")), Effect.as(file), Effect.option)
+  return Option.getOrUndefined(made)
+})
+
+/**
  * The proofs of a leaf in its worktree between `base` and `head`. The tests and the structural rule run first;
  * the gates run only when nothing failed, so a hung test reaches the builder without waiting for every gate.
  */
@@ -298,7 +313,7 @@ const proveLeaf = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task, 
   const { worktree, base, head } = model
   if (!worktree || !base || !head) return yield* proveOnMain(run, task)
   const spec = yield* Ref.get(run.spec)
-  const input = { cwd: worktree, base, head, limits: run.limits }
+  const input = { cwd: worktree, base, head, limits: run.limits, log: yield* proofLog(run.directory, task.id) }
   const quick = yield* TaskProof.proveTask({
     ...input,
     spec: {
@@ -322,6 +337,8 @@ const proveLeaf = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task, 
  * or the obligations of a parent before its review. Reviews need no run; they are judged.
  */
 const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
+  // Emptied first, so a task that waits for the permit (or needs only reviews) never shows the previous pass.
+  const log = yield* proofLog(run.directory, task.id)
   const spec = yield* Ref.get(run.spec)
   const state = yield* Ref.get(run.state)
   const own = obligationsOf(spec, task.id)
@@ -341,6 +358,7 @@ const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
         base: head,
         head,
         limits: run.limits,
+        log,
       })
       yield* proved(run, task.id, results(spec, proof, []))
     }),
@@ -582,6 +600,7 @@ const proveScenarios = Effect.fnUntraced(function* (run: Run, batch: ReadonlyArr
         cwd: run.directory,
         head,
         limits: run.limits,
+        log: yield* proofLog(run.directory, "scenarios"),
       })
       for (const proof of proofs) {
         yield* record(run, { type: "scenario.proved", at: yield* now, id: proof.scenario, ...scenarioOutcome(proof) })
