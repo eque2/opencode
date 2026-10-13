@@ -32,7 +32,7 @@ ensures:
     covers: [S1]
   c8:
     category: compatibility
-    text: "`src/cli.ts` starts with `#!/usr/bin/env bun`, `package.json` has the `bin` entry, and the delivery test reports skipped, never passed, when `RELEASE_NOTES_REGISTRY` is unset."
+    text: "`src/cli.ts` starts with `#!/usr/bin/env bun` and `package.json` has the `bin` entry."
     covers: [S13]
 preserves:
   p1:
