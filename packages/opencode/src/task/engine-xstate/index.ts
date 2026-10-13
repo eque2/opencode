@@ -622,6 +622,16 @@ const taskInput = (plan: Plan, state: State, task: TaskModel): TaskInput => ({
     })),
 })
 
+// The task's worktree, branch, base, head and session from the context: only the ones it has, so a task model gains
+// a key only when a fact gives it a value (as in the table engine).
+const taskFields = (context: TaskContext): Partial<TaskModel> => ({
+  ...(context.worktree === undefined ? {} : { worktree: context.worktree }),
+  ...(context.branch === undefined ? {} : { branch: context.branch }),
+  ...(context.base === undefined ? {} : { base: context.base }),
+  ...(context.head === undefined ? {} : { head: context.head }),
+  ...(context.session === undefined ? {} : { session: context.session }),
+})
+
 const runSnapshot = (state: State) =>
   runMachine.resolveState({ value: state.run.state, context: { reason: state.run.reason, log: [] } })
 
@@ -677,11 +687,7 @@ const stepTask = (plan: Plan, state: State, id: string, event: TaskEvent) =>
     const work = yield* settled(next.value.work)
     const moved: TaskModel = {
       ...task,
-      worktree: next.context.worktree,
-      branch: next.context.branch,
-      base: next.context.base,
-      head: next.context.head,
-      session: next.context.session,
+      ...taskFields(next.context),
       state: work,
       attempts: next.context.attempts,
       reason: next.context.reason,
