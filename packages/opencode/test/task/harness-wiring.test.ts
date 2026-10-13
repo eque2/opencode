@@ -9,7 +9,7 @@ import { SessionPrompt } from "@/session/prompt"
 import { SessionID } from "@/session/schema"
 import { TaskHooks } from "@/task/core/hooks"
 import type { Verdict } from "@/task/core/model"
-import { disposeAllInstances } from "../fixture/fixture"
+import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 // The wiring of the task harness: the `task` command, its two hidden agents and their one-turn tools.
@@ -117,5 +117,35 @@ describe("a configured task command", () => {
         ])
       }),
     { config: { command: { task: { template: "Do my own task flow for $ARGUMENTS", description: "mine" } } } },
+  )
+
+  it.instance(
+    "a skill named task does not replace the harness either, and is reported by name",
+    () =>
+      Effect.gen(function* () {
+        const directory = (yield* TestInstance).directory
+        yield* Effect.promise(() =>
+          Bun.write(
+            `${directory}/.opencode/skill/task/SKILL.md`,
+            "---\nname: task\ndescription: My own task skill.\n---\n\nDo the task my way.\n",
+          ),
+        )
+        const messages: unknown[] = []
+        const command = yield* Command.Service.use((svc) => svc.get("task")).pipe(
+          Effect.provide(
+            Logger.layer([
+              Logger.make<unknown, void>((options) => {
+                messages.push(options.message)
+              }),
+            ]),
+          ),
+        )
+        expect(command).toMatchObject({ name: "task", source: "command", template: "" })
+        expect(messages).toContainEqual([
+          "command shadowed by the built-in task harness",
+          expect.objectContaining({ command: "task", source: "skill" }),
+        ])
+      }),
+    { git: true },
   )
 })

@@ -97,8 +97,8 @@ const layer = Layer.effect(
         hints: [],
       }
 
-      // `/task` is the harness for every user: a config command or an MCP prompt of that name cannot replace it,
-      // and is reported once instead of disappearing silently.
+      // `/task` is the harness for every user: a config command, an MCP prompt or a skill of that name cannot replace
+      // it, and is reported once instead of disappearing silently.
       const shadowed = (name: string, source: string) =>
         name === Default.TASK
           ? Effect.logWarning("command shadowed by the built-in task harness", { command: name, source }).pipe(
@@ -153,6 +153,7 @@ const layer = Layer.effect(
       }
 
       for (const item of yield* skill.all()) {
+        if (yield* shadowed(item.name, "skill")) continue
         if (commands[item.name]) continue
         const dir = item.location === "<built-in>" ? Option.none<string>() : Option.some(path.dirname(item.location))
         commands[item.name] = {
