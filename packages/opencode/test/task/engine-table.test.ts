@@ -155,6 +155,13 @@ const obligationStates = (state: State, prefix: string) =>
 
 const entriesOf = (state: State, unit: string) => state.history.filter((item) => item.unit === unit)
 
+// A changed copy of a state: one the fold never makes, for the cases that ask how an engine treats it.
+const altered = (state: State, change: (copy: State) => unknown): State => {
+  const copy = structuredClone(state)
+  change(copy)
+  return copy
+}
+
 describe.each(engines)("%s", (_, engine, name) => {
   const fold = (facts: ReadonlyArray<Fact>, from: State = engine.initial(plan)) =>
     facts.reduce((state, fact) => engine.apply(plan, state, fact), from)
@@ -500,6 +507,69 @@ describe.each(engines)("%s", (_, engine, name) => {
     const copy = structuredClone(before)
     engine.apply(plan, before, failingProof())
     expect(before).toEqual(copy)
+  })
+
+  test("obligation.stale on an obligation that is neither passed nor trusted changes nothing, its trusted task included", () => {
+    const trusted = fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
+    const odd = altered(trusted, (copy) => Object.assign(copy.obligations["T1.1.c2"], { state: "rejected" }))
+    expect(engine.apply(plan, odd, { type: "obligation.stale", at: at(), id: "T1.1.c2", hash: "hash-new" })).toBe(odd)
+  })
+
+  test("obligation.stale moves an obligation whose task the state does not hold", () => {
+    const orphan = altered(engine.initial(plan), (copy) =>
+      Object.assign(copy.obligations, {
+        "T2.1.c1": { id: "T2.1.c1", task: "T2.1", state: "trusted", hash: "hash-T2.1.c1" },
+      }),
+    )
+    const after = engine.apply(plan, orphan, { type: "obligation.stale", at: at(), id: "T2.1.c1", hash: "hash-new" })
+    expect(after.obligations["T2.1.c1"]).toEqual({ id: "T2.1.c1", task: "T2.1", state: "stale", hash: "hash-new" })
+    expect(entriesOf(after, "T2.1.c1").map((item) => [item.from, item.to])).toEqual([["trusted", "stale"]])
+    expect(after.tasks).toEqual(orphan.tasks)
+  })
+
+  test("a unit in a state its lifecycle does not name takes no fact, and no such state makes apply throw", () => {
+    // A task: its own facts change nothing; one of its trusted obligations still goes stale.
+    const lostTask = altered(fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()]), (copy) =>
+      Object.assign(copy.tasks["T1.1"], { state: "lost" }),
+    )
+    for (const fact of [started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
+      expect(engine.apply(plan, lostTask, fact)).toBe(lostTask)
+    const staled = engine.apply(plan, lostTask, { type: "obligation.stale", at: at(), id: "T1.1.c2", hash: "hash-new" })
+    expect(staled.obligations["T1.1.c2"].state).toBe("stale")
+    expect(staled.tasks["T1.1"]).toMatchObject({ state: "lost" })
+
+    // An obligation: a proof round moves the task's other obligations and leaves it.
+    const lostObligation = altered(fold([started("T1.1"), ready("T1.1")]), (copy) =>
+      Object.assign(copy.obligations["T1.1.c1"], { state: "lost" }),
+    )
+    const proved = engine.apply(plan, lostObligation, happyProof())
+    expect(proved.tasks["T1.1"].state).toBe("verifying")
+    expect<Record<string, string>>(obligationStates(proved, "T1.1")).toEqual({
+      "T1.1.c1": "lost",
+      "T1.1.c2": "passed",
+      "T1.1.c3": "passed",
+      "T1.1.p1": "trusted",
+    })
+
+    // A scenario.
+    const lostScenario = altered(engine.initial(plan), (copy) => Object.assign(copy.scenarios["S1"], { state: "lost" }))
+    expect(engine.apply(plan, lostScenario, { type: "scenario.proved", at: at(), id: "S1", status: "passed" })).toBe(
+      lostScenario,
+    )
+
+    // The run: its own facts change nothing; an outside trust is recorded, and it follows a task into an end state.
+    const lostRun = altered(fold([started("T1.1")]), (copy) => Object.assign(copy.run, { state: "lost" }))
+    for (const fact of [
+      { type: "run.resumed", at: at() },
+      { type: "run.cancelled", at: at(), reason: "abort" },
+      { type: "run.ended", at: at(), state: "done" },
+    ] satisfies Fact[])
+      expect(engine.apply(plan, lostRun, fact)).toBe(lostRun)
+    const outside = engine.apply(plan, lostRun, { type: "outside.trusted", at: at(), id: "T9" })
+    expect(outside.history.at(-1)).toMatchObject({ unit: "T9", to: "trusted", reason: "outside" })
+    const followed = engine.apply(plan, lostRun, { type: "task.needs_human", at: at(), task: "T1.1", reason: "quota" })
+    expect(followed.run).toMatchObject({ state: "needs_human", reason: "T1.1: quota" })
+    expect(followed.history.at(-1)).toMatchObject({ unit: "run", from: "lost", to: "needs_human" })
   })
 })
 
