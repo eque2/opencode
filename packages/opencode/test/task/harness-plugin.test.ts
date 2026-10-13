@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { NodeServices } from "@effect/platform-node"
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node"
 import { createOpencodeClient } from "@opencode-ai/sdk"
-import { Effect, Option } from "effect"
+import { Effect, FileSystem, Layer, Option } from "effect"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -12,6 +12,8 @@ import { HarnessCommand } from "@/task/harness-plugin/command"
 import { HarnessLog } from "@/task/harness-plugin/log"
 import { HarnessMessages } from "@/task/harness-plugin/messages"
 import { HarnessRegistry } from "@/task/harness-plugin/registry"
+import { HarnessRunner } from "@/task/harness-plugin/runner"
+import { TaskLimits } from "@/task/limits"
 
 // The parts of option O3, the task harness as a plugin, that need no opencode server: its JSONL log and fold, its
 // protocol texts, its role permissions, its repetition check, and how a run is claimed and learns of trust. The
@@ -233,6 +235,58 @@ describe("the run claim", () => {
       )
       expect(messages.filter((message) => message.includes("running"))).toHaveLength(1)
       expect(messages.filter((message) => message.includes("already going on"))).toHaveLength(1)
+    } finally {
+      await close(directory)
+    }
+  })
+})
+
+describe("the trust a run learns of", () => {
+  test("a /task trust that lands between the run's log read and its register still reaches the run", async () => {
+    const directory = scratch()
+    const log = path.join(directory, ".opencode", "task", "events.jsonl")
+    fs.mkdirSync(path.dirname(log), { recursive: true })
+    fs.writeFileSync(log, "")
+    const trust = HarnessLog.encode({ spec: HarnessLog.DIRECTORY, fact: { type: "outside.trusted", at: 1, id: "T99" } })
+    // The run's first read of the log returns it as it was; then the trust lands, in the log only.
+    const landing = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem
+        let first = true
+        return FileSystem.FileSystem.of({
+          ...fileSystem,
+          readFileString: (file, encoding) =>
+            fileSystem.readFileString(file, encoding).pipe(
+              Effect.tap(() => {
+                if (!first || file !== log) return Effect.void
+                first = false
+                return fileSystem.writeFileString(log, trust, { flag: "a" })
+              }),
+            ),
+        })
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer))
+    const { spec } = await Effect.runPromise(
+      Blend.load(path.join(directory, T2_SPEC)).pipe(Effect.provide(NodeServices.layer)),
+    )
+    if (!spec) throw new Error("the T2 copy does not load")
+    const start: HarnessRunner.Start = {
+      client,
+      directory,
+      specDir: path.join(directory, T2_SPEC),
+      plan: HarnessCommand.plan({ spec, specPath: T2_SPEC, path: T2_TASK, root: Option.some("T2") }),
+      root: "ses_root",
+      limits: TaskLimits.scripted,
+    }
+    Effect.runFork(HarnessRunner.run(start).pipe(Effect.provide(Layer.mergeAll(landing, NodePath.layer))))
+    try {
+      const reached = () =>
+        HarnessLog.parse(fs.readFileSync(log, "utf8")).some(
+          (entry) => entry.spec === T2_SPEC && entry.fact.type === "outside.trusted" && entry.fact.id === "T99",
+        )
+      for (let i = 0; i < 100 && !reached(); i++) await Bun.sleep(50)
+      expect(reached()).toBe(true)
     } finally {
       await close(directory)
     }

@@ -778,7 +778,10 @@ export const run = Effect.fn("HarnessRunner.run")(function* (start: Start) {
     })
   const body = Effect.gen(function* () {
     yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at })
-    yield* Effect.forEach(HarnessLog.directoryTrust(entries), trust, { discard: true })
+    // Read again, now that the run is registered: a `/task trust` that landed after the first read and before the
+    // register reached neither the read nor the run, and only the log holds it.
+    const trusted = HarnessLog.directoryTrust(yield* HarnessLog.read(start.directory))
+    yield* Effect.forEach(trusted, trust, { discard: true })
     const workers = yield* FiberMap.make<string>()
     const ending = yield* loop(self, workers).pipe(
       Effect.as("ended" as const),
