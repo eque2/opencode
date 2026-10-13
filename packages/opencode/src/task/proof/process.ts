@@ -89,6 +89,44 @@ const errorCode = (cause: unknown): string =>
 
 const describe = (command: string, args: ReadonlyArray<string>) => [command, ...args].join(" ")
 
+// The variables a proof command needs to find its tools, its home, its locale and git; nothing else passes. Proof
+// commands run tests and gates that a model wrote, so provider keys, tokens and opencode's own settings stay out.
+const allowedNames = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "TERM",
+  "TZ",
+  "CI",
+  "NODE_ENV",
+  // Windows needs these to start processes and find the user's folders.
+  "SYSTEMROOT",
+  "SystemRoot",
+  "COMSPEC",
+  "PATHEXT",
+  "WINDIR",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+])
+const allowedPrefixes = ["LC_", "GIT_", "BUN_", "XDG_"]
+
+/** The part of `source` that a proof command receives. */
+export const allowedEnvironment = (source: Readonly<Record<string, string | undefined>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(source).filter(
+      (entry): entry is [string, string] =>
+        Predicate.isString(entry[1]) &&
+        (allowedNames.has(entry[0]) || allowedPrefixes.some((prefix) => entry[0].startsWith(prefix))),
+    ),
+  )
+
 // Starts the command as the leader of a new process group and wires every event before it can fire. With `logged`,
 // it also keeps the output that the log has not received yet.
 const start = (
@@ -102,7 +140,12 @@ const start = (
       const started = Deferred.makeUnsafe<number, SpawnError>()
       const exited = Deferred.makeUnsafe<number>()
       const closed = Deferred.makeUnsafe<void>()
-      const child = spawn(command, [...args], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] })
+      const child = spawn(command, [...args], {
+        cwd,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: allowedEnvironment(process.env),
+      })
       let stdout = ""
       let stderr = ""
       let truncated = false

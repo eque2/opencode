@@ -20,7 +20,7 @@ import { ProofProcess } from "./process"
 // git reports are all relative to it. It must be checked out at `head` with no change, or the proof
 // fails with a ProofError.
 
-export { killGroup, run, SpawnError, timedOutExitCode } from "./process"
+export { allowedEnvironment, killGroup, run, SpawnError, timedOutExitCode } from "./process"
 export type { Bounds, Options, Result } from "./process"
 
 // The fields of the blend model (`@/task/blend`) that the runner reads. A whole `Spec`, `Task`,

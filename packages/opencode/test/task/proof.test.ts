@@ -459,6 +459,43 @@ describe("TaskProof", () => {
   )
 })
 
+describe("TaskProof environment", () => {
+  it.live("passes a proof command its tools, home, locale and git variables, and no key or token", () =>
+    Effect.sync(() =>
+      expect(
+        TaskProof.allowedEnvironment({
+          PATH: "/bin",
+          HOME: "/home/dev",
+          LC_ALL: "C",
+          GIT_AUTHOR_NAME: "dev",
+          OPENAI_API_KEY: "sk-1",
+          ANTHROPIC_API_KEY: "sk-2",
+          GITHUB_TOKEN: "ghp-3",
+          AWS_SECRET_ACCESS_KEY: "aws-4",
+          OPENCODE_SERVER_PASSWORD: "pw-5",
+        }),
+      ).toEqual({ PATH: "/bin", HOME: "/home/dev", LC_ALL: "C", GIT_AUTHOR_NAME: "dev" }),
+    ),
+  )
+
+  groupIt("run: a command does not see a provider key that opencode's own environment holds", () =>
+    Effect.gen(function* () {
+      const before = process.env.OPENAI_API_KEY
+      const restore = Effect.sync(() => {
+        if (before === undefined) delete process.env.OPENAI_API_KEY
+        else process.env.OPENAI_API_KEY = before
+      })
+      process.env.OPENAI_API_KEY = "sk-proof-environment-test"
+      const result = yield* TaskProof.run("sh", ["-c", 'printf "%s|%s" "${OPENAI_API_KEY:-none}" "${PATH:+path}"'], {
+        cwd: process.cwd(),
+        timeout: limits.proofTimeout,
+        cancelDeadline: limits.cancelDeadline,
+      }).pipe(Effect.ensuring(restore))
+      expect(result.stdout).toBe("none|path")
+    }),
+  )
+})
+
 describe("TaskProof logs", () => {
   // A folder outside any repository under proof, removed when the test's scope closes.
   const scratch = Effect.acquireRelease(
