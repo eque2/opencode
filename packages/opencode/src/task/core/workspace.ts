@@ -3,11 +3,10 @@ import { TaskProof } from "@/task/proof"
 import type { TaskLimits } from "@/task/limits"
 
 // The git side of the harness. Each leaf builds in its own worktree `<directory>/.opencode/task/worktrees/<id>` on
-// the branch `task/<id>`, branched from `main`; a trusted leaf's branch merges into `main` in the root checkout.
-// Every git call runs through `TaskProof.run`: bounded, in its own process group, killed with it on interruption.
-
-/** The branch that the leaves branch from and merge into. */
-export const MAIN = "main"
+// the branch `task/<id>`, branched from the run's base branch; a trusted leaf's verified head merges into the base
+// branch in the root checkout. The base is the branch the root checkout has checked out when `/task` starts
+// (`currentBranch`), so a repository whose default branch is not `main` works as one that is. Every git call runs
+// through `TaskProof.run`: bounded, in its own process group, killed with it on interruption.
 
 /** A git call failed or did not finish. */
 export class GitError extends Schema.TaggedError<GitError>()("TaskWorkspaceGitError", {
@@ -60,12 +59,33 @@ export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.
 export const commit = (cwd: string, limits: TaskLimits.Limits, revision: string) =>
   git(cwd, limits, "rev-parse", "--verify", `${revision}^{commit}`)
 
-/** The head of `main`. */
-export const mainHead = (root: string, limits: TaskLimits.Limits) => commit(root, limits, `refs/heads/${MAIN}`)
+/** The branch the checkout has checked out, or none on a detached HEAD. */
+export const currentBranch = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
+  const result = yield* call(cwd, limits, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+  return result.exitCode === 0 && result.stdout.trim() !== "" ? Option.some(result.stdout.trim()) : Option.none<string>()
+})
 
-/** True when `ancestor` is already in the history of `main`. */
-export const merged = Effect.fnUntraced(function* (root: string, limits: TaskLimits.Limits, ancestor: string) {
-  const result = yield* call(root, limits, ["merge-base", "--is-ancestor", ancestor, `refs/heads/${MAIN}`])
+/**
+ * The tracked paths that differ from HEAD in the checkout, staged or not; the harness's own `.opencode/task/` does
+ * not count. Untracked files are left alone: a merge that would overwrite one refuses by itself.
+ */
+export const uncommitted = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
+  const output = yield* git(cwd, limits, "diff", "--name-only", "HEAD", "--", ".", ":(exclude).opencode/task")
+  return output.split("\n").filter((path) => path !== "")
+})
+
+/** The head of the base branch. */
+export const baseHead = (root: string, limits: TaskLimits.Limits, base: string) =>
+  commit(root, limits, `refs/heads/${base}`)
+
+/** True when `ancestor` is already in the history of the base branch. */
+export const merged = Effect.fnUntraced(function* (
+  root: string,
+  limits: TaskLimits.Limits,
+  base: string,
+  ancestor: string,
+) {
+  const result = yield* call(root, limits, ["merge-base", "--is-ancestor", ancestor, `refs/heads/${base}`])
   return result.exitCode === 0
 })
 
@@ -82,17 +102,18 @@ export const branchOf = (task: string) => `task/${task}`
 export interface Worktree {
   readonly worktree: string
   readonly branch: string
-  /** The `main` commit the branch started from. */
+  /** The base-branch commit the branch started from. */
   readonly base: string
 }
 
 /**
- * The task's worktree: made on its branch from the current `main` head, or reused when it already exists (a later
- * attempt or a resume). `node_modules` links to the root checkout's, so no install runs.
+ * The task's worktree: made on its branch from the current head of the base branch, or reused when it already
+ * exists (a later attempt or a resume). `node_modules` links to the root checkout's, so no install runs.
  */
 export const ensureWorktree = Effect.fn("TaskWorkspace.ensureWorktree")(function* (
   root: string,
   task: string,
+  base: string,
   limits: TaskLimits.Limits,
 ) {
   const fs = yield* FileSystem.FileSystem
@@ -109,16 +130,16 @@ export const ensureWorktree = Effect.fn("TaskWorkspace.ensureWorktree")(function
     yield* git(root, limits, "worktree", "prune")
     yield* fs.makeDirectory(path.dirname(worktree), { recursive: true }).pipe(Effect.orDie)
     if (yield* branchExists(root, limits, branch)) yield* git(root, limits, "worktree", "add", worktree, branch)
-    else yield* git(root, limits, "worktree", "add", "-b", branch, worktree, `refs/heads/${MAIN}`)
+    else yield* git(root, limits, "worktree", "add", "-b", branch, worktree, `refs/heads/${base}`)
   }
-  const base = yield* git(root, limits, "merge-base", `refs/heads/${MAIN}`, `refs/heads/${branch}`)
+  const from = yield* git(root, limits, "merge-base", `refs/heads/${base}`, `refs/heads/${branch}`)
   const modules = path.join(root, "node_modules")
   const link = path.join(worktree, "node_modules")
   const linked = yield* fs.readLink(link).pipe(Effect.option)
   if ((yield* fs.exists(modules).pipe(Effect.orElseSucceed(() => false))) && Option.isNone(linked)) {
     yield* fs.symlink(modules, link).pipe(Effect.ignore)
   }
-  return { worktree, branch, base } satisfies Worktree
+  return { worktree, branch, base: from } satisfies Worktree
 })
 
 /** Commits everything in the worktree (an empty commit is allowed) and returns the new head. */
@@ -141,12 +162,22 @@ export const restore = Effect.fn("TaskWorkspace.restore")(function* (cwd: string
   yield* git(cwd, limits, "clean", "-fd", "-q", "-e", ".opencode/")
 })
 
-/** Merges a commit (a task's verified head) into `main` in the root checkout; a failed merge is aborted and fails. */
+/**
+ * Merges a commit (a task's verified head) into the base branch in the root checkout; a failed merge is aborted and
+ * fails. The root must still have the base branch checked out: a merge never lands on another branch.
+ */
 export const merge = Effect.fn("TaskWorkspace.merge")(function* (
   root: string,
   limits: TaskLimits.Limits,
+  base: string,
   commit: string,
 ) {
+  const current = yield* currentBranch(root, limits)
+  if (Option.getOrUndefined(current) !== base) {
+    return yield* new GitError({
+      message: `git merge ${commit}: the root checkout is on ${Option.getOrElse(current, () => "a detached HEAD")}, not the run's base branch ${base}`,
+    })
+  }
   const result = yield* call(root, limits, ["merge", "--no-ff", "--no-edit", "--no-verify", commit])
   if (result.exitCode === 0) return yield* Effect.void
   yield* call(root, limits, ["merge", "--abort"]).pipe(Effect.ignore)

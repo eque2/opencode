@@ -19,6 +19,7 @@ import type { Ops } from "./ops"
 import { TaskRunner } from "./runner"
 import type { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
+import { TaskWorkspace } from "./workspace"
 
 // `/task` of the task harness. `SessionPrompt.command` calls `run` before it reads any template, so no model
 // request is made here: the command answers with a user message created with `noReply`, and the run goes on as a
@@ -174,10 +175,24 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
   const id = TaskEvents.runID(directory, specPath)
   if (TaskRunner.running(id)) return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
   const limits = yield* TaskLimits.load
+
+  // The leaves branch from the checked-out branch and merge back into it, so the root checkout must be on a branch
+  // and hold no uncommitted change that a merge could collide with.
+  const base = yield* TaskWorkspace.currentBranch(directory, limits).pipe(Effect.orElseSucceed(() => Option.none()))
+  if (Option.isNone(base)) return yield* refuse(specPath, "the checkout is not on a branch (detached HEAD)")
+  const dirty = yield* TaskWorkspace.uncommitted(directory, limits).pipe(
+    Effect.catch((error) => Effect.succeed([`(git status failed: ${error.message})`])),
+  )
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, and ${dirty.length - 5} more` : "")
+    return yield* refuse(specPath, `the checkout has uncommitted changes: ${shown}`)
+  }
+
   const start: TaskRunner.Start = {
     env,
     engine: TaskEngineXState.XStateEngine,
     directory,
+    base: base.value,
     specDir,
     plan: plan({ spec, specPath, path: args, root }),
     root: input.sessionID,

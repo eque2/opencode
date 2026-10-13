@@ -43,6 +43,8 @@ export interface Start {
   readonly engine: Engine
   /** The instance directory: the root checkout. */
   readonly directory: string
+  /** The branch the root checkout had checked out at `/task`: the leaves branch from it and merge into it. */
+  readonly base: string
   /** The spec folder, absolute. */
   readonly specDir: string
   readonly plan: Plan
@@ -64,8 +66,8 @@ interface Run extends Start {
   readonly spec: Ref.Ref<BlendModel.Spec>
   /** Serialises record → fold → status write. */
   readonly lock: Semaphore.Semaphore
-  /** Serialises everything that reads or moves `main` in the root checkout. */
-  readonly main: Semaphore.Semaphore
+  /** Serialises everything that reads or moves the base branch in the root checkout. */
+  readonly checkout: Semaphore.Semaphore
   /** Serialises worktree creation. */
   readonly git: Semaphore.Semaphore
   /** The child sessions with a turn in flight, and the directory of each one's instance. */
@@ -166,10 +168,11 @@ const cancelChildren = (run: Run, children: ReadonlyArray<readonly [SessionID, s
     { concurrency: "unbounded", discard: true },
   )
 
-// Restores a judge's directory to its HEAD; the root checkout only under the `main` semaphore, as it holds `main`.
+// Restores a judge's directory to its HEAD; the root checkout only under the `checkout` semaphore, as it holds
+// the base branch.
 const restore = (run: Run, directory: string) => {
   const reset = TaskWorkspace.restore(directory, run.limits)
-  return directory === run.directory ? run.main.withPermit(reset) : reset
+  return directory === run.directory ? run.checkout.withPermit(reset) : reset
 }
 
 /**
@@ -332,7 +335,7 @@ const proveLeaf = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task, 
 })
 
 /**
- * Proves obligations of a task on `main` in the root checkout: the stale obligations of a task that was trusted,
+ * Proves obligations of a task on the base branch in the root checkout: the stale obligations of a task that was trusted,
  * or the obligations of a parent before its review. Reviews need no run; they are judged.
  */
 const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
@@ -347,9 +350,9 @@ const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
     const items = targets.map((obligation): Proved => ({ id: obligation.id, status: "needs-judge" }))
     return yield* proved(run, task.id, { results: items, reason: Option.none() })
   }
-  return yield* run.main.withPermit(
+  return yield* run.checkout.withPermit(
     Effect.gen(function* () {
-      const head = yield* TaskWorkspace.mainHead(run.directory, run.limits)
+      const head = yield* TaskWorkspace.baseHead(run.directory, run.limits, run.base)
       const proof = yield* TaskProof.proveTask({
         spec: { gates: spec.gates, obligations: [...spec.obligations.filter((item) => item.task !== task.id), ...targets] },
         task: { id: task.id, touches: [], gates: [] },
@@ -479,7 +482,7 @@ const build = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
   }
 })
 
-/** A task in `proving`: a leaf's proofs in its worktree, or stale obligations and parent obligations on `main`. */
+/** A task in `proving`: a leaf's proofs in its worktree, or stale obligations and parent obligations on the base branch. */
 const prove = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
   const found = yield* taskOf(run, task.id)
   if (Option.isNone(found) || found.value.state !== "proving") return yield* Effect.void
@@ -492,21 +495,21 @@ const prove = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 })
 
 // Merges the proved and verified `head`, never the branch tip: a commit added to the branch after `task.ready`
-// (a verifier can run git) must not reach `main` unproven.
+// (a verifier can run git) must not reach the base branch unproven.
 const mergeLeaf = Effect.fnUntraced(function* (run: Run, model: TaskModel) {
   if (!model.head) return
   const head = model.head
-  yield* run.main.withPermit(
+  yield* run.checkout.withPermit(
     Effect.gen(function* () {
-      if (yield* TaskWorkspace.merged(run.directory, run.limits, head)) return
-      yield* TaskWorkspace.merge(run.directory, run.limits, head)
+      if (yield* TaskWorkspace.merged(run.directory, run.limits, run.base, head)) return
+      yield* TaskWorkspace.merge(run.directory, run.limits, run.base, head)
     }),
   ).pipe(Effect.retry({ times: 3, schedule: Schedule.spaced(Duration.millis(500)) }))
 })
 
 /**
  * A task in `verifying`: a verifier round for a leaf (in its worktree) or a review round for a parent (in the root
- * checkout), judging only the obligations in `passed`. A leaf whose obligations all end trusted merges into `main`
+ * checkout), judging only the obligations in `passed`. A leaf whose obligations all end trusted merges into the base branch
  * first, unless its head already is there (a stale round, or a resume after the merge).
  */
 const verify = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
@@ -530,8 +533,8 @@ const verify = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
           about: leaf
             ? [`You verify task ${task.id}: ${task.title}.`, `Goal: ${TaskSessions.oneLine(task.goal)}`]
             : [
-                `You review task ${task.id}: ${task.title}. Its children are trusted and merged on the main branch.`,
-                "Review their combined diff on the main branch (git log, git diff) against the obligations above.",
+                `You review task ${task.id}: ${task.title}. Its children are trusted and merged on the ${run.base} branch.`,
+                `Review their combined diff on the ${run.base} branch (git log, git diff) against the obligations above.`,
               ],
         })
   if (Option.isNone(verdicts)) {
@@ -558,7 +561,7 @@ const verify = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 
 /** A leaf whose dependencies are trusted: its worktree, its builder session, `task.started`, then the first build. */
 const begin = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
-  const tree = yield* run.git.withPermit(TaskWorkspace.ensureWorktree(run.directory, task.id, run.limits))
+  const tree = yield* run.git.withPermit(TaskWorkspace.ensureWorktree(run.directory, task.id, run.base, run.limits))
   const session = yield* TaskSessions.create(run.env, tree.worktree, {
     parentID: run.root,
     title: `${task.id} builder`,
@@ -589,11 +592,11 @@ export const scenarioOutcome = (
   return { status: "failed", reason: `skipped: every test titled [${proof.scenario}] was skipped` }
 }
 
-/** The scenarios whose needs became trusted together: one `bun test` run on `main` for the batch. */
+/** The scenarios whose needs became trusted together: one `bun test` run on the base branch for the batch. */
 const proveScenarios = Effect.fnUntraced(function* (run: Run, batch: ReadonlyArray<BlendModel.Scenario>) {
-  yield* run.main.withPermit(
+  yield* run.checkout.withPermit(
     Effect.gen(function* () {
-      const head = yield* TaskWorkspace.mainHead(run.directory, run.limits)
+      const head = yield* TaskWorkspace.baseHead(run.directory, run.limits, run.base)
       const proofs = yield* TaskProof.proveScenarios({
         scenarios: batch.map((scenario) => ({ id: scenario.id })),
         cwd: run.directory,
@@ -845,7 +848,7 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
     outside: yield* Ref.make(TaskEvents.trustedOutside(facts)),
     spec: yield* Ref.make(start.plan.spec),
     lock: yield* Semaphore.make(1),
-    main: yield* Semaphore.make(1),
+    checkout: yield* Semaphore.make(1),
     git: yield* Semaphore.make(1),
     children: MutableHashMap.empty(),
     failures: MutableHashMap.empty(),
