@@ -70,17 +70,24 @@ describe("the task command and agents", () => {
       const verifier = yield* Agent.Service.use((svc) => svc.get(TaskHooks.VERIFIER))
       expect(builder).toMatchObject({ mode: "primary", hidden: true, native: true })
       expect(verifier).toMatchObject({ mode: "primary", hidden: true, native: true })
-      const action = (agent: Agent.Info, permission: string) =>
-        Permission.evaluate(permission, "*", agent.permission).action
+      const action = (agent: Agent.Info, permission: string, pattern = "*") =>
+        Permission.evaluate(permission, pattern, agent.permission).action
       // Deny by default: only the tools each role needs ride on its requests (a live run is capped in tokens).
       for (const permission of ["verdict", "question", "task", "webfetch", "todowrite", "skill"])
         expect(action(builder, permission)).toBe("deny")
-      for (const permission of ["bash", "edit", "write", "read", "grep", "task_ready", "external_directory", "doom_loop"])
+      for (const permission of ["bash", "edit", "write", "read", "grep", "task_ready", "doom_loop"])
         expect(action(builder, permission)).toBe("allow")
+      // Builders stay in their worktree, and the verifier reads only.
+      expect(action(builder, "external_directory", "/etc/*")).toBe("deny")
+      expect(action(verifier, "external_directory", "/etc/*")).toBe("deny")
       for (const permission of ["task_ready", "edit", "write", "apply_patch", "question", "task", "webfetch"])
         expect(action(verifier, permission)).toBe("deny")
+      for (const command of ["bun test", "git diff HEAD~1", "git log --oneline", "git show HEAD", "git status"])
+        expect(action(verifier, "bash", command)).toBe("allow")
+      for (const command of ["rm -rf src", "echo x > src/a.ts", "git commit -am x", "git checkout -- .", "sh -c 'x'"])
+        expect(action(verifier, "bash", command)).toBe("deny")
       // The harness stops a repetition itself (TaskHooks.checkRepetition); doom_loop must not end the turn first.
-      for (const permission of ["bash", "read", "verdict", "doom_loop"]) expect(action(verifier, permission)).toBe("allow")
+      for (const permission of ["read", "verdict", "doom_loop"]) expect(action(verifier, permission)).toBe("allow")
       // A builder or verifier that would ask would hang a headless run.
       expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
     }),
