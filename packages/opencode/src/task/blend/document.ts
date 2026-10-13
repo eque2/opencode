@@ -57,17 +57,17 @@ export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
 // One problem, or one excess key of the object at `path`. jsonschema names all the excess keys of an object in a
 // single message, so they are merged after the walk.
 type Entry =
-  | { readonly _tag: "Problem"; readonly path: string; readonly message: string }
-  | { readonly _tag: "Excess"; readonly path: string; readonly key: string }
+  | { readonly kind: "problem"; readonly path: string; readonly message: string }
+  | { readonly kind: "excess"; readonly path: string; readonly key: string }
 
 const formatIssues = (issue: SchemaIssue.Issue): ReadonlyArray<string> => {
   const all = entries(issue, [])
   const excessAt = (path: string) =>
-    all.flatMap((entry) => (entry._tag === "Excess" && entry.path === path ? [entry.key] : []))
+    all.flatMap((entry) => (entry.kind === "excess" && entry.path === path ? [entry.key] : []))
   return all.flatMap((entry, index) => {
-    if (entry._tag === "Problem") return [`${at(entry.path)}: ${entry.message}`]
+    if (entry.kind === "problem") return [`${at(entry.path)}: ${entry.message}`]
     // The object's first excess key carries the message for all of them, which jsonschema sorts.
-    if (all.findIndex((other) => other._tag === "Excess" && other.path === entry.path) !== index) return []
+    if (all.findIndex((other) => other.kind === "excess" && other.path === entry.path) !== index) return []
     const keys = excessAt(entry.path).toSorted()
     const listed = `${keys.map(repr).join(", ")} ${keys.length === 1 ? "was" : "were"} unexpected`
     return [`${at(entry.path)}: Additional properties are not allowed (${listed})`]
@@ -77,7 +77,7 @@ const formatIssues = (issue: SchemaIssue.Issue): ReadonlyArray<string> => {
 const at = (path: string) => (path === "" ? "(root)" : path)
 
 const problem = (path: ReadonlyArray<PropertyKey>, message: string): Entry => ({
-  _tag: "Problem",
+  kind: "problem",
   path: path.map(String).join("/"),
   message,
 })
@@ -102,7 +102,7 @@ const entries = (issue: SchemaIssue.Issue, path: ReadonlyArray<PropertyKey>): Re
     case "UnexpectedKey":
       return unexpectedKey(issue, path)
     default:
-      return orStandard(undefined, issue, path)
+      return orStandard(Option.none(), issue, path)
   }
 }
 
@@ -110,12 +110,12 @@ const standard = SchemaIssue.makeFormatterStandardSchemaV1()
 
 // An issue the four schemas do not produce keeps Effect's own message.
 const orStandard = (
-  message: string | undefined,
+  message: Option.Option<string>,
   issue: SchemaIssue.Issue,
   path: ReadonlyArray<PropertyKey>,
 ): ReadonlyArray<Entry> =>
-  message !== undefined
-    ? [problem(path, message)]
+  Option.isSome(message)
+    ? [problem(path, message.value)]
     : standard(issue).issues.map((entry) =>
         problem(
           [...path, ...(entry.path ?? []).map((segment) => String(Predicate.isObject(segment) ? segment.key : segment))],
@@ -132,9 +132,9 @@ const unionMessage = (issue: SchemaIssue.AnyOf) => {
   if (literals.length === issue.ast.types.length) {
     return `${repr(issue.input)} is not one of [${literals.map((member) => repr(member.literal)).join(", ")}]`
   }
-  const types = new Set(issue.ast.types.map((member) => JSON_TYPES[member._tag]))
+  const types = issue.ast.types.map((member) => JSON_TYPES[member._tag])
   const [type] = types
-  if (issue.issues.length === 0 && types.size === 1 && type !== undefined) {
+  if (issue.issues.length === 0 && Predicate.isString(type) && types.every((item) => item === type)) {
     return `${repr(issue.input)} is not of type ${repr(type)}`
   }
   return `${repr(issue.input)} is not valid under any of the given schemas`
@@ -153,33 +153,33 @@ const INT = "effect/schema/isInt"
 
 // A single literal is a JSON Schema `const`. An `Int` is a number that carries the integer check.
 const typeMessage = (issue: SchemaIssue.InvalidType) => {
-  if (SchemaAST.isLiteral(issue.ast)) return `${repr(issue.ast.literal)} was expected`
+  if (SchemaAST.isLiteral(issue.ast)) return Option.some(`${repr(issue.ast.literal)} was expected`)
   const integer = (issue.ast.checks ?? []).some((check) => check.annotations?.representation?.id === INT)
   const type = integer ? "integer" : JSON_TYPES[issue.ast._tag]
-  return type === undefined ? undefined : `${repr(issue.input)} is not of type ${repr(type)}`
+  return Option.map(Option.fromNullishOr(type), (name) => `${repr(issue.input)} is not of type ${repr(name)}`)
 }
 
 // A failed check, in the words of the JSON Schema keyword it mirrors.
 const checkMessage = (issue: SchemaIssue.Filter) => {
   const value = repr(issue.input)
   const source = issue.filter.annotations?.pattern
-  if (Predicate.isString(source)) return `${value} does not match ${repr(source)}`
+  if (Predicate.isString(source)) return Option.some(`${value} does not match ${repr(source)}`)
   const representation = issue.filter.annotations?.representation
   const payload = representation?.payload
-  const limit = (key: string) => (Predicate.isObject(payload) ? payload[key] : undefined)
+  const limits: Record<string, unknown> = Predicate.isObject(payload) ? Object.fromEntries(Object.entries(payload)) : {}
   switch (representation?.id) {
     case "effect/schema/isMinLength":
-      return `${value} ${limit("minLength") === 1 ? "should be non-empty" : "is too short"}`
+      return Option.some(`${value} ${limits.minLength === 1 ? "should be non-empty" : "is too short"}`)
     case "effect/schema/isMinProperties":
-      return `${value} ${limit("minProperties") === 1 ? "should be non-empty" : "does not have enough properties"}`
+      return Option.some(`${value} ${limits.minProperties === 1 ? "should be non-empty" : "does not have enough properties"}`)
     case "effect/schema/isUnique":
-      return `${value} has non-unique elements`
+      return Option.some(`${value} has non-unique elements`)
     case "effect/schema/isGreaterThanOrEqualTo":
-      return `${value} is less than the minimum of ${repr(limit("minimum"))}`
+      return Option.some(`${value} is less than the minimum of ${repr(limits.minimum)}`)
     case INT:
-      return `${value} is not of type 'integer'`
+      return Option.some(`${value} is not of type 'integer'`)
   }
-  return undefined
+  return Option.none<string>()
 }
 
 // A key the object does not declare. In a record it is a key that fails the record's key pattern, which jsonschema
@@ -192,7 +192,7 @@ const unexpectedKey = (issue: SchemaIssue.UnexpectedKey, path: ReadonlyArray<Pro
     .map((check) => check.annotations?.pattern)
     .find(Predicate.isString)
   if (keyPattern !== undefined) return [problem(parent, `${repr(key)} does not match ${repr(keyPattern)}`)]
-  return [{ _tag: "Excess", path: parent.map(String).join("/"), key }]
+  return [{ kind: "excess", path: parent.map(String).join("/"), key }]
 }
 
 // Python's `repr` of a parsed YAML value, as jsonschema puts it in its messages. A number prints as JS writes it:
@@ -207,7 +207,7 @@ const repr = (value: unknown): string => {
       .map(([key, item]) => `${reprString(key)}: ${repr(item)}`)
       .join(", ")}}`
   }
-  return String(value)
+  return Predicate.isNumber(value) || Predicate.isBigInt(value) ? value.toString() : ""
 }
 
 const ESCAPES: Partial<Record<string, string>> = { "\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r" }

@@ -39,6 +39,7 @@ const runTask = Effect.gen(function* () {
     prompt: (input) =>
       Effect.sync(() => {
         replies.push(input.parts.map((part) => part.text).join(""))
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) a refusal never reads the reply message, and a real WithParts needs a stored session
         return {} as SessionV1.WithParts
       }),
     cancel: () => Effect.void,

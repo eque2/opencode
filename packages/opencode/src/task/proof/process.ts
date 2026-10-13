@@ -93,7 +93,7 @@ const describe = (command: string, args: ReadonlyArray<string>) => [command, ...
 // passes. Proof commands run tests and gates that a model wrote, so provider keys, tokens and opencode's own settings
 // stay out. Git and Bun variables are named one by one: a prefix would also pass GIT_CONFIG_PARAMETERS (which can carry
 // an http.extraHeader token) or a registry token. Names compare upper-cased, as Windows names its variables `Path`.
-const allowedNames = new Set([
+const allowedNames: ReadonlyArray<string> = [
   "PATH",
   "HOME",
   "USER",
@@ -120,7 +120,7 @@ const allowedNames = new Set([
   "USERPROFILE",
   "APPDATA",
   "LOCALAPPDATA",
-])
+]
 const allowedPrefixes = ["LC_", "XDG_"]
 
 /** The part of `source` that a proof command receives. */
@@ -130,7 +130,7 @@ export const allowedEnvironment = (source: Readonly<Record<string, string | unde
       const name = entry[0].toUpperCase()
       return (
         Predicate.isString(entry[1]) &&
-        (allowedNames.has(name) || allowedPrefixes.some((prefix) => name.startsWith(prefix)))
+        (allowedNames.includes(name) || allowedPrefixes.some((prefix) => name.startsWith(prefix)))
       )
     }),
   )
