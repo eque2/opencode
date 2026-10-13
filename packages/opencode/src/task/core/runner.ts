@@ -827,6 +827,17 @@ const interrupted = Effect.fnUntraced(function* (run: Run, workers: Workers) {
 })
 
 /**
+ * The base branch the stored run started on, when it has not ended and recorded one: a resume must use the same
+ * branch, because the leaves merged so far are there.
+ */
+export const unfinishedBase = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>): Option.Option<string> =>
+  Option.flatMap(
+    Option.filter(TaskEvents.latestRun(stored), (facts) => !TaskEvents.ended(TaskEvents.fold(engine, plan, facts).run.state)),
+    (facts) =>
+      Option.fromNullishOr(facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0]),
+  )
+
+/**
  * Runs the run of `start.plan` to its end: resumes the stored run when it has not ended, else starts a new one.
  * Its result is the end state.
  */
@@ -860,7 +871,7 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
       yield* record(self, { type: "outside.trusted", at: yield* now, id: outside })
     })
   const body = Effect.gen(function* () {
-    yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at })
+    yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at, base: start.base })
     const recorded = TaskEvents.trustedOutside(yield* TaskEvents.read(start.env.db, TaskEvents.directoryID(start.directory)))
     yield* Effect.forEach(recorded, trust, { discard: true })
     const workers = yield* FiberMap.make<string>()

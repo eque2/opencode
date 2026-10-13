@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import type { BlendModel } from "@/task/blend/model"
 import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
+import { TaskRunner } from "@/task/core/runner"
 import { TaskEngineXState } from "@/task/engine-xstate"
 
 // A small spec: parent T1 with leaves T1.1 and T1.2. T1.1 has three test obligations and one gate obligation;
@@ -597,5 +599,20 @@ describe("XStateEngine", () => {
     const followed = engine.apply(plan, lostRun, { type: "task.needs_human", at: at(), task: "T1.1", reason: "quota" })
     expect(followed.run).toMatchObject({ state: "needs_human", reason: "T1.1: quota" })
     expect(followed.history.at(-1)).toMatchObject({ unit: "run", from: "lost", to: "needs_human" })
+  })
+})
+
+describe("the base of an unfinished run", () => {
+  test("is the branch its run.started recorded, until the run ends", () => {
+    const started: Fact[] = [{ type: "run.started", at: at(), base: "dev" }]
+    expect(TaskRunner.unfinishedBase(engine, plan, started)).toEqual(Option.some("dev"))
+    const resumed: Fact[] = [...started, { type: "run.resumed", at: at(), base: "dev" }]
+    expect(TaskRunner.unfinishedBase(engine, plan, resumed)).toEqual(Option.some("dev"))
+    const cancelled: Fact[] = [...started, { type: "run.cancelled", at: at(), reason: "stop" }]
+    expect(TaskRunner.unfinishedBase(engine, plan, cancelled)).toEqual(Option.none())
+  })
+
+  test("is unknown for a run stored before the base was recorded", () => {
+    expect(TaskRunner.unfinishedBase(engine, plan, [{ type: "run.started", at: at() }])).toEqual(Option.none())
   })
 })

@@ -29,8 +29,8 @@ const TaskFact = <T extends string>(type: T) => ({ type: Schema.Literal(type), a
 
 /** The JSON form of a `Fact` (`./model`). The decoder is the validation boundary of the stored facts. */
 export const FactSchema = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("run.started"), at: At }),
-  Schema.Struct({ type: Schema.Literal("run.resumed"), at: At }),
+  Schema.Struct({ type: Schema.Literal("run.started"), at: At, base: Schema.optionalKey(Text) }),
+  Schema.Struct({ type: Schema.Literal("run.resumed"), at: At, base: Schema.optionalKey(Text) }),
   Schema.Struct({ type: Schema.Literal("outside.trusted"), at: At, id: Text }),
   Schema.Struct({ ...TaskFact("task.started"), worktree: Text, branch: Text, base: Text, session: Text }),
   Schema.Struct({ ...TaskFact("task.ready"), head: Text }),

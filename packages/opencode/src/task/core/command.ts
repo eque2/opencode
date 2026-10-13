@@ -185,13 +185,25 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
 
   // The services are resolved only once nothing refuses, so a refusal needs no session runtime.
   const env = yield* environment(ops)
+  const runPlan = plan({ spec, specPath, path: args, root })
+  const startedOn = TaskRunner.unfinishedBase(
+    TaskEngineXState.XStateEngine,
+    runPlan,
+    yield* TaskEvents.read(env.db, id),
+  )
+  if (Option.isSome(startedOn) && startedOn.value !== base) {
+    return yield* refuse(
+      specPath,
+      `the unfinished run of ${specPath} started on the branch ${startedOn.value}; switch back to it to resume the run`,
+    )
+  }
   const start: TaskRunner.Start = {
     env,
     engine: TaskEngineXState.XStateEngine,
     directory,
     base,
     specDir,
-    plan: plan({ spec, specPath, path: args, root }),
+    plan: runPlan,
     root: input.sessionID,
     model,
     limits,

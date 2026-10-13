@@ -74,8 +74,9 @@ export type Result = { readonly id: string; readonly status: "passed" | "failed"
  * change from these alone; a fact that does not apply in the current state is ignored (and leaves no history).
  */
 export type Fact =
-  | { readonly type: "run.started"; readonly at: number }
-  | { readonly type: "run.resumed"; readonly at: number }
+  /** `base`: the branch the leaves branch from and merge into; absent in runs stored before it was recorded. */
+  | { readonly type: "run.started"; readonly at: number; readonly base?: string }
+  | { readonly type: "run.resumed"; readonly at: number; readonly base?: string }
   /** An `outside` precondition the state store records as trusted. */
   | { readonly type: "outside.trusted"; readonly at: number; readonly id: string }
   | {
