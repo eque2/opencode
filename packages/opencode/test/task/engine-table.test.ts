@@ -509,6 +509,45 @@ describe.each(engines)("%s", (_, engine, name) => {
     expect(before).toEqual(copy)
   })
 
+  test("a parent's stale review obligation reopens it once; the new review trusts it (attempts 1) or fails it", () => {
+    const trusted = fold([proved("T1", []), verified("T1", [trust("T1.e1")])])
+    expect(trusted.tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    const stale = fold([{ type: "obligation.stale", at: at(), id: "T1.e1", hash: "hash-new" }], trusted)
+    expect(stale.obligations["T1.e1"]).toMatchObject({ state: "stale", hash: "hash-new" })
+    expect(stale.tasks["T1"]).toMatchObject({ state: "proving", attempts: 1, reason: "stale: T1.e1" })
+
+    // The new proof round gives the review obligation no result: it waits for the reviewer again.
+    const reproved = fold([proved("T1", [])], stale)
+    expect(reproved.tasks["T1"].state).toBe("verifying")
+    expect(reproved.obligations["T1.e1"].state).toBe("passed")
+
+    const again = fold([verified("T1", [trust("T1.e1")])], reproved)
+    expect(again.tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    expect(again.obligations["T1.e1"]).toMatchObject({ state: "trusted", hash: "hash-new" })
+    expect(again.run.state).toBe("running")
+
+    const failed = fold([verified("T1", [reject("T1.e1", "the new diff drops a test")])], reproved)
+    expect(failed.tasks["T1"]).toMatchObject({ state: "failed", reason: "T1.e1: the new diff drops a test" })
+    expect(failed.run).toMatchObject({ state: "failed", reason: "T1: T1.e1: the new diff drops a test" })
+  })
+
+  test("task.failed fails a waiting leaf, a waiting parent and a verifying leaf, and the run with it", () => {
+    const failure = (task: string): Fact => ({ type: "task.failed", at: at(), task, reason: "merge conflict" })
+    for (const [from, task] of [
+      [engine.initial(plan), "T1.1"],
+      [engine.initial(plan), "T1"],
+      [fold([started("T1.1"), ready("T1.1"), happyProof()]), "T1.1"],
+    ] as const) {
+      const state = fold([failure(task)], from)
+      expect(state.tasks[task]).toMatchObject({ state: "failed", reason: "merge conflict" })
+      expect(state.run).toMatchObject({ state: "failed", reason: `${task}: merge conflict` })
+      expect(state.history.slice(-2)).toMatchObject([
+        { unit: task, from: from.tasks[task].state, to: "failed", reason: "merge conflict" },
+        { unit: "run", from: "running", to: "failed", reason: `${task}: merge conflict` },
+      ])
+    }
+  })
+
   test("obligation.stale on an obligation that is neither passed nor trusted changes nothing, its trusted task included", () => {
     const trusted = fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
     const odd = altered(trusted, (copy) => Object.assign(copy.obligations["T1.1.c2"], { state: "rejected" }))
