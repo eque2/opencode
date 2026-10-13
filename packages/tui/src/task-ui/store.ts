@@ -221,14 +221,15 @@ export const elapsed = (ms: number) => {
 
 // --- the view state ------------------------------------------------------------------------------------------------
 
+/** The designs, and where each one shows: the picker and the switch notice say it, so a design is never hard to find. */
 export const DESIGNS = [
-  { id: 1, name: "Ledger" },
-  { id: 2, name: "Dock" },
-  { id: 3, name: "Board" },
-  { id: 4, name: "Matrix" },
-  { id: 5, name: "Gantt" },
-  { id: 6, name: "HUD" },
-  { id: 7, name: "Ticker" },
+  { id: 1, name: "Ledger", where: "task tree in the sidebar" },
+  { id: 2, name: "Dock", where: "status line at the bottom of the screen" },
+  { id: 3, name: "Board", where: "full-screen board of task stages" },
+  { id: 4, name: "Matrix", where: "full-screen grid of proofs and scenarios" },
+  { id: 5, name: "Gantt", where: "full-screen timeline of the run" },
+  { id: 6, name: "HUD", where: "floating panel in the top-right corner" },
+  { id: 7, name: "Ticker", where: "line beside the prompt, with notices" },
 ] as const
 
 export type View = ReturnType<typeof createView>
@@ -268,6 +269,7 @@ export function createView(input: { status: Accessor<Status | undefined>; now: A
     setExpanded,
     toggleExpanded: () => setExpanded((open) => !open),
     design,
+    setDesign: (id: number) => DESIGNS.some((item) => item.id === id) && setDesign(id),
     cycleDesign: () => setDesign((id) => (id % DESIGNS.length) + 1),
   }
 }

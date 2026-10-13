@@ -66,10 +66,31 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   registerHud(ctx(6))
   registerTicker(ctx(7))
 
+  // Every switch says where the new design shows, so a one-line design is never hard to find.
+  const announce = () => {
+    const current = DESIGNS[view.design() - 1]
+    api.ui.toast({
+      title: `Task design ${current.id}: ${current.name}`,
+      message: `${current.where[0].toUpperCase()}${current.where.slice(1)}. ${base.leader} o expands it.`,
+    })
+  }
   const cycle = () => {
     view.cycleDesign()
-    api.ui.toast({ message: `Task UI design ${view.design()}: ${DESIGNS[view.design() - 1].name}` })
+    announce()
   }
+  const pick = () =>
+    api.ui.dialog.replace(() => (
+      <api.ui.DialogSelect
+        title="Task design"
+        current={view.design()}
+        options={DESIGNS.map((item) => ({ title: `${item.id} ${item.name}`, value: item.id, description: item.where }))}
+        onSelect={(option) => {
+          view.setDesign(option.value)
+          api.ui.dialog.clear()
+          announce()
+        }}
+      />
+    ))
   const command = (name: string, title: string, run: () => void) => ({
     name,
     title,
@@ -84,6 +105,7 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
         command("task_ui.previous", "Select the previous harness task", view.previous),
         command("task_ui.expand", "Expand or collapse the task design", view.toggleExpanded),
         command("task_ui.design", "Next task UI design", cycle),
+        { ...command("task_ui.pick", "Choose a task design", pick), slashName: "task-design" },
       ],
       bindings: [
         { key: "<leader>j", cmd: "task_ui.next", desc: "Select the next harness task" },
