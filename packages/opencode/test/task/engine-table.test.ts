@@ -5,6 +5,7 @@ import path from "path"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
 import { TaskCommand } from "@/task/core/command"
+import { TaskEngines } from "@/task/core/engines"
 import type { Engine, Fact, Plan, Result, State, Verdict } from "@/task/core/model"
 import { TaskEngineTable } from "@/task/engine-table"
 import { TaskEngineXState } from "@/task/engine-xstate"
@@ -814,6 +815,17 @@ describe("TableEngine and XStateEngine on the same facts", () => {
         "run:running>cancelled",
       ])
         expect(moves).toContain(move)
+    }),
+  )
+})
+
+describe("the engine registry", () => {
+  it.live("gives the o2 harness the xstate engine", () =>
+    Effect.gen(function* () {
+      const engine = yield* TaskEngines.forHarness("o2")
+      expect(Option.isSome(engine)).toBe(true)
+      expect(Option.getOrUndefined(engine)?.name).toBe("xstate")
+      expect(Option.getOrUndefined(engine)).toBe(TaskEngineXState.XStateEngine)
     }),
   )
 })
