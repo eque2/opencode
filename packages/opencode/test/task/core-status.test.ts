@@ -167,7 +167,7 @@ describe("the status projection", () => {
     }),
   )
 
-  it.live("write replaces the status file atomically and leaves no temp file", () =>
+  it.live("write replaces the status file atomically, leaves no temp file, and makes the folder ignore itself", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
@@ -175,7 +175,8 @@ describe("the status projection", () => {
       yield* TaskStatus.write(directory, TaskStatus.refused({ spec: "x", path: "x", reason: "R1" }))
       yield* TaskStatus.write(directory, project(plan, TaskEngineXState.XStateEngine.initial(plan)))
       const folder = path.join(directory, ".opencode", "task")
-      expect(yield* fs.readDirectory(folder)).toEqual(["status.json"])
+      expect((yield* fs.readDirectory(folder)).toSorted()).toEqual([".gitignore", "status.json"])
+      expect(yield* fs.readFileString(path.join(folder, ".gitignore"))).toBe("*\n")
       const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(
         yield* fs.readFileString(path.join(folder, "status.json")),
       )
