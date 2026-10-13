@@ -473,8 +473,21 @@ describe("TaskProof environment", () => {
           GITHUB_TOKEN: "ghp-3",
           AWS_SECRET_ACCESS_KEY: "aws-4",
           OPENCODE_SERVER_PASSWORD: "pw-5",
+          GIT_CONFIG_PARAMETERS: "'http.extraHeader=Authorization: Bearer t-6'",
+          GIT_ASKPASS: "/usr/local/bin/askpass",
+          BUN_AUTH_TOKEN: "npm-7",
         }),
       ).toEqual({ PATH: "/bin", HOME: "/home/dev", LC_ALL: "C", GIT_AUTHOR_NAME: "dev" }),
+    ),
+  )
+
+  it.live("matches Windows-cased names such as Path and ComSpec", () =>
+    Effect.sync(() =>
+      expect(TaskProof.allowedEnvironment({ Path: "C:\\bin", ComSpec: "cmd.exe", windir: "C:\\Windows" })).toEqual({
+        Path: "C:\\bin",
+        ComSpec: "cmd.exe",
+        windir: "C:\\Windows",
+      }),
     ),
   )
 

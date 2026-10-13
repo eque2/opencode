@@ -89,8 +89,10 @@ const errorCode = (cause: unknown): string =>
 
 const describe = (command: string, args: ReadonlyArray<string>) => [command, ...args].join(" ")
 
-// The variables a proof command needs to find its tools, its home, its locale and git; nothing else passes. Proof
-// commands run tests and gates that a model wrote, so provider keys, tokens and opencode's own settings stay out.
+// The variables a proof command needs to find its tools, its home, its locale and git's identity; nothing else
+// passes. Proof commands run tests and gates that a model wrote, so provider keys, tokens and opencode's own settings
+// stay out. Git and Bun variables are named one by one: a prefix would also pass GIT_CONFIG_PARAMETERS (which can carry
+// an http.extraHeader token) or a registry token. Names compare upper-cased, as Windows names its variables `Path`.
 const allowedNames = new Set([
   "PATH",
   "HOME",
@@ -105,9 +107,13 @@ const allowedNames = new Set([
   "TZ",
   "CI",
   "NODE_ENV",
+  "BUN_INSTALL",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
   // Windows needs these to start processes and find the user's folders.
   "SYSTEMROOT",
-  "SystemRoot",
   "COMSPEC",
   "PATHEXT",
   "WINDIR",
@@ -115,16 +121,18 @@ const allowedNames = new Set([
   "APPDATA",
   "LOCALAPPDATA",
 ])
-const allowedPrefixes = ["LC_", "GIT_", "BUN_", "XDG_"]
+const allowedPrefixes = ["LC_", "XDG_"]
 
 /** The part of `source` that a proof command receives. */
 export const allowedEnvironment = (source: Readonly<Record<string, string | undefined>>): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(source).filter(
-      (entry): entry is [string, string] =>
+    Object.entries(source).filter((entry): entry is [string, string] => {
+      const name = entry[0].toUpperCase()
+      return (
         Predicate.isString(entry[1]) &&
-        (allowedNames.has(entry[0]) || allowedPrefixes.some((prefix) => entry[0].startsWith(prefix))),
-    ),
+        (allowedNames.has(name) || allowedPrefixes.some((prefix) => name.startsWith(prefix)))
+      )
+    }),
   )
 
 // Starts the command as the leader of a new process group and wires every event before it can fire. With `logged`,
