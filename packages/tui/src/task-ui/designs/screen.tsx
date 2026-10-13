@@ -77,7 +77,7 @@ export function Screen(props: ViewProps & { width: number; height: number }) {
               </Show>
             </box>
             <text fg={props.theme().textMuted} wrapMode="none" flexShrink={0}>
-              j/k select task · v next design · esc collapse
+              {`j/k select task · v next design · ${props.leader} w ${props.view.watching() ? "stop watching" : "watch"} · esc collapse`}
             </text>
           </>
         )}

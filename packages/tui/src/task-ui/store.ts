@@ -1,6 +1,6 @@
 // The data every task-ui design shares: the harness status file, the task tree derived from it, the selection, the
 // expanded toggle, and the design number. The designs only render; nothing here writes to the harness.
-import { Effect, Fiber, Option, Schedule, Schema, type Duration } from "effect"
+import { Array as Arr, Effect, Fiber, Option, Schedule, Schema, type Duration } from "effect"
 import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { RGBA } from "@opentui/core"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
@@ -71,6 +71,15 @@ export const byId = (a: string, b: string) => collator.compare(a, b)
 
 /** `<directory>/.opencode/task/status.json`, as the harness writes it. */
 export const statusFile = (directory: string) => `${directory}/.opencode/task/status.json`
+
+/** `<directory>/.opencode/task/proofs/<task>.log`: the harness appends each proof command and its output as they run. */
+export const proofLogFile = (directory: string, task: string) => `${directory}/.opencode/task/proofs/${task}.log`
+
+/** A proof log: its name (a task id, or `scenarios`) and when the harness last wrote to it, in epoch milliseconds. */
+export type ProofLog = { readonly name: string; readonly mtime: number }
+
+/** How long a run may stand still and still count as live: the harness's own stream-idle bound. */
+export const LIVE_WINDOW = 300_000
 
 /** The mark on every task-workflow surface, so none of it reads as an ordinary subagent task. */
 export const MARK = "◆ In the Flow"
@@ -203,6 +212,27 @@ export const counts = (status: Status) => {
   }
 }
 
+/** The run has not ended: the harness can still build, prove or verify. */
+export const runActive = (status: Status) => !ENDED.includes(status.run.state)
+
+/** What the run waits on: the dependencies of its waiting tasks, in natural order. */
+export const waitsOn = (status: Status) =>
+  Arr.dedupe(Object.values(status.tasks).flatMap((task) => (task.state === "waiting" ? task.waitingOn : []))).sort(byId)
+
+/**
+ * The task in work after `selected` in tree order (`by` 1), or before it (`by` -1), wrapping round; none when no task
+ * is in work, or when the selected task is the only one.
+ */
+export const nextRunning = (list: ReadonlyArray<Row>, selected: string | undefined, by: 1 | -1) => {
+  const at = list.findIndex((row) => row.id === selected)
+  const working = list.flatMap((row, index) => (ACTIVE.includes(row.task.state) ? [{ id: row.id, index }] : []))
+  const found =
+    by === 1
+      ? (working.find((item) => item.index > at) ?? working[0])
+      : (working.findLast((item) => item.index < at) ?? working.at(-1))
+  return Option.fromNullishOr(found?.id).pipe(Option.filter((id) => id !== selected))
+}
+
 /** The task to select when nothing is selected: the first one in work, else the first stopped one, else the first. */
 export const focus = (list: ReadonlyArray<Row>) =>
   (list.find((row) => ACTIVE.includes(row.task.state)) ??
@@ -215,9 +245,11 @@ export const bar = (done: number, total: number, width: number) => {
   return "▰".repeat(full) + "▱".repeat(width - full)
 }
 
-/** `text` cut to `width` characters, with `…` when it was longer. */
-export const cut = (text: string, width: number) =>
-  text.length <= width ? text : width <= 1 ? text.slice(0, width) : `${text.slice(0, width - 1)}…`
+/** `text` cut to `width` characters, with `…` when it was longer; nothing for a width below 1. */
+export const cut = (text: string, width: number) => {
+  const room = Math.max(0, width)
+  return text.length <= room ? text : room <= 1 ? text.slice(0, room) : `${text.slice(0, room - 1)}…`
+}
 
 /** `95s` → `1m 35s`. */
 export const elapsed = (ms: number) => {
@@ -245,10 +277,17 @@ export type View = ReturnType<typeof createView>
  * Expanded is one state for every design: what it shows (details under the tree, a full-screen view, a dialog) is the
  * design's own, and it survives a design switch.
  */
-export function createView(input: { status: Accessor<Status | undefined>; now: Accessor<number>; design: number }) {
+export function createView(input: {
+  status: Accessor<Status | undefined>
+  now: Accessor<number>
+  design: number
+  /** The run is live (see `index.tsx`); without it, live means the status says the run has not ended. */
+  live?: Accessor<boolean>
+}) {
   const [design, setDesign] = createSignal(input.design)
   const [chosen, setChosen] = createSignal<string>()
   const [expanded, setExpanded] = createSignal(false)
+  const [watching, setWatching] = createSignal(false)
   const list = createMemo(() => {
     const status = input.status()
     return status ? rows(status) : []
@@ -263,17 +302,33 @@ export function createView(input: { status: Accessor<Status | undefined>; now: A
     const at = ids.indexOf(selected() ?? ids[0])
     setChosen(ids[(at + by + ids.length) % ids.length])
   }
+  const moveRunning = (by: 1 | -1) => {
+    const id = nextRunning(list(), selected(), by)
+    if (Option.isSome(id)) setChosen(id.value)
+  }
   return {
     status: input.status,
     now: input.now,
+    /** Tab and `esc` act on the run: it has not ended, and it is still moving. */
+    live: (): boolean => {
+      if (input.live) return input.live()
+      const status = input.status()
+      return Boolean(status && runActive(status))
+    },
     rows: list,
     selected,
     select: setChosen,
     next: () => move(1),
     previous: () => move(-1),
+    /** The next task in work: what Tab selects in the watch view. */
+    nextRunning: () => moveRunning(1),
+    previousRunning: () => moveRunning(-1),
     expanded,
     setExpanded,
     toggleExpanded: () => setExpanded((open) => !open),
+    /** The watch view is on: the session area shows the selected task's running session (see `watch.tsx`). */
+    watching,
+    setWatching,
     design,
     setDesign: (id: number) => DESIGNS.some((item) => item.id === id) && setDesign(id),
     cycleDesign: () => setDesign((id) => (id % DESIGNS.length) + 1),

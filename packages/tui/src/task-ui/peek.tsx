@@ -7,7 +7,17 @@ import { For, Show, createMemo, type Accessor } from "solid-js"
 import { MARK, bySeverity, color, cut, glyph, label, obligationsOf, poll, stateColor, tone, type Tone, type View } from "./store"
 
 /** A builder, verifier or reviewer session the harness made for a unit (`T1.4 builder`, `S3 verifier (again)`). */
-export type Child = { readonly id: string; readonly role: string; readonly again: boolean; readonly created: number }
+export type Child = {
+  readonly id: string
+  readonly role: string
+  readonly again: boolean
+  readonly created: number
+  /** When the session last changed: a session still at work keeps moving this. */
+  readonly updated: number
+}
+
+/** A harness session and the unit it works on. */
+export type Harness = Child & { readonly unit: string }
 
 /** One line of a session's latest activity. */
 export type Line = { readonly glyph: string; readonly tone: Tone; readonly text: string }
@@ -18,6 +28,31 @@ export type Sessions = {
   readonly children: (unit: string) => Accessor<ReadonlyArray<Child>>
   /** The latest activity of one session. Polls while the calling component lives. */
   readonly activity: (sessionID: string) => Accessor<ReadonlyArray<Line>>
+  /** Every harness session of the root, with its unit. Polls while the calling owner lives. */
+  readonly all: () => Accessor<ReadonlyArray<Harness>>
+}
+
+const HARNESS_TITLE = /^(\S+) (builder|verifier|reviewer)( \(again\))?$/
+
+/** The harness session a session is, from its title (`T1.4 builder`); none for any other session. */
+export const harnessOf = (session: {
+  readonly id: string
+  readonly title: string
+  readonly time: { readonly created: number; readonly updated: number }
+}): ReadonlyArray<Harness> => {
+  const match = HARNESS_TITLE.exec(session.title)
+  return match
+    ? [
+        {
+          id: session.id,
+          unit: match[1],
+          role: match[2],
+          again: Boolean(match[3]),
+          created: session.time.created,
+          updated: session.time.updated,
+        },
+      ]
+    : []
 }
 
 /**
@@ -25,27 +60,18 @@ export type Sessions = {
  * a failed read keeps what is on screen.
  */
 export function liveSessions(api: TuiPluginApi, root: Accessor<string>): Sessions {
+  // No root yet (the developer has not opened a session): no call, an empty list.
+  const read = Effect.suspend((): Effect.Effect<ReadonlyArray<Harness>, unknown> =>
+    root()
+      ? Effect.tryPromise(() => api.client.session.children({ sessionID: root() })).pipe(
+          Effect.map((result) => (result.data ?? []).flatMap(harnessOf)),
+        )
+      : Effect.succeed([]),
+  )
   return {
     children: (unit) =>
-      poll<ReadonlyArray<Child>>(
-        [],
-        "2 seconds",
-        // No root yet (the developer has not opened a session): no call, an empty list.
-        Effect.suspend((): Effect.Effect<ReadonlyArray<Child>, unknown> =>
-          root()
-            ? Effect.tryPromise(() => api.client.session.children({ sessionID: root() })).pipe(
-                Effect.map((result) =>
-                  (result.data ?? []).flatMap((session) => {
-                    const match = /^(\S+) (builder|verifier|reviewer)( \(again\))?$/.exec(session.title)
-                    return match?.[1] === unit
-                      ? [{ id: session.id, role: match[2], again: Boolean(match[3]), created: session.time.created }]
-                      : []
-                  }),
-                ),
-              )
-            : Effect.succeed([]),
-        ),
-      ),
+      poll<ReadonlyArray<Child>>([], "2 seconds", read.pipe(Effect.map((all) => all.filter((item) => item.unit === unit)))),
+    all: () => poll<ReadonlyArray<Harness>>([], "2 seconds", read),
     activity: (sessionID) =>
       poll<ReadonlyArray<Line>>(
         [],
