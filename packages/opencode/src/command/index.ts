@@ -97,7 +97,17 @@ const layer = Layer.effect(
         hints: [],
       }
 
+      // `/task` is the harness for every user: a config command or an MCP prompt of that name cannot replace it,
+      // and is reported once instead of disappearing silently.
+      const shadowed = (name: string, source: string) =>
+        name === Default.TASK
+          ? Effect.logWarning("command shadowed by the built-in task harness", { command: name, source }).pipe(
+              Effect.as(true),
+            )
+          : Effect.succeed(false)
+
       for (const [name, command] of Object.entries(cfg.command ?? {})) {
+        if (yield* shadowed(name, "config")) continue
         commands[name] = {
           name,
           agent: command.agent,
@@ -113,6 +123,7 @@ const layer = Layer.effect(
       }
 
       for (const [name, prompt] of Object.entries(yield* mcp.prompts())) {
+        if (yield* shadowed(name, "mcp")) continue
         commands[name] = {
           name,
           source: "mcp",

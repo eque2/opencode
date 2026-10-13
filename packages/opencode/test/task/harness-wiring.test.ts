@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
+import { Effect, Logger } from "effect"
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -84,5 +84,31 @@ describe("the task command and agents", () => {
       // A builder or verifier that would ask would hang a headless run.
       expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
     }),
+  )
+})
+
+describe("a configured task command", () => {
+  it.instance(
+    "does not replace the harness, and is reported by name",
+    () =>
+      Effect.gen(function* () {
+        const messages: unknown[] = []
+        const command = yield* Command.Service.use((svc) => svc.get("task")).pipe(
+          Effect.provide(
+            Logger.layer([
+              Logger.make<unknown, void>((options) => {
+                messages.push(options.message)
+              }),
+            ]),
+          ),
+        )
+        expect(command).toMatchObject({ name: "task", description: "Run a blend task tree", source: "command" })
+        expect(command?.template).toBe("")
+        expect(messages).toContainEqual([
+          "command shadowed by the built-in task harness",
+          expect.objectContaining({ command: "task", source: "config" }),
+        ])
+      }),
+    { config: { command: { task: { template: "Do my own task flow for $ARGUMENTS", description: "mine" } } } },
   )
 })
