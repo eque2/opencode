@@ -184,8 +184,8 @@ export function Header(props: { githubStars: string; links?: readonly HeaderLink
 function DataWordmark() {
   return (
     <svg data-slot="stats-wordmark" width="66" height="20" viewBox="0 0 66 20" fill="none" aria-hidden="true">
-      <path opacity="0.2" d="M12 16H4V8H12V16Z" fill="currentColor" />
-      <path d="M12 4H4V16H12V4ZM16 20H0V0H16V20Z" fill="currentColor" />
+      <path opacity="0.2" d="M4 12H16V16H4Z" fill="currentColor" />
+      <path d="M0 0H16V4H0ZM0 4H4V8H0ZM12 4H16V8H12ZM0 8H16V12H0ZM0 12H4V16H0ZM0 16H16V20H0Z" fill="currentColor" />
       <path
         d="M63.3543 16L62.5119 12.8711H58.6437L57.8013 16H55.7383L59.2454 4H61.9618L65.4689 16H63.3543ZM61.0678 7.851L60.6896 5.94269H60.4489L60.0707 7.851L59.1595 11.1347H61.9962L61.0678 7.851Z"
         fill="currentColor"
