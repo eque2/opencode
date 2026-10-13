@@ -253,24 +253,26 @@ const STYLES = `
   @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 `
 
-// OpenCode wordmark — same path geometry as packages/ui/src/components/logo.tsx (Logo).
-const WORDMARK = `<svg class="wordmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 234 42" fill="none" aria-label="OpenCode" role="img">
-        <path d="M18 30H6V18H18V30Z" fill="var(--oc-icon-weak)" />
-        <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="var(--oc-icon-base)" />
-        <path d="M48 30H36V18H48V30Z" fill="var(--oc-icon-weak)" />
-        <path d="M36 30H48V12H36V30ZM54 36H36V42H30V6H54V36Z" fill="var(--oc-icon-base)" />
-        <path d="M84 24V30H66V24H84Z" fill="var(--oc-icon-weak)" />
-        <path d="M84 24H66V30H84V36H60V6H84V24ZM66 18H78V12H66V18Z" fill="var(--oc-icon-base)" />
-        <path d="M108 36H96V18H108V36Z" fill="var(--oc-icon-weak)" />
-        <path d="M108 12H96V36H90V6H108V12ZM114 36H108V12H114V36Z" fill="var(--oc-icon-base)" />
-        <path d="M144 30H126V18H144V30Z" fill="var(--oc-icon-weak)" />
-        <path d="M144 12H126V30H144V36H120V6H144V12Z" fill="var(--oc-icon-strong)" />
-        <path d="M168 30H156V18H168V30Z" fill="var(--oc-icon-weak)" />
-        <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="var(--oc-icon-strong)" />
-        <path d="M198 30H186V18H198V30Z" fill="var(--oc-icon-weak)" />
-        <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="var(--oc-icon-strong)" />
-        <path d="M234 24V30H216V24H234Z" fill="var(--oc-icon-weak)" />
-        <path d="M216 12V18H228V12H216ZM234 24H216V30H234V36H210V6H234V24Z" fill="var(--oc-icon-strong)" />
+// eque2code wordmark — same path geometry as packages/ui/src/components/logo.tsx (Logo).
+const WORDMARK = `<svg class="wordmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 42" fill="none" aria-label="eque2code" role="img">
+        <path d="M6 24H24V30H6Z" fill="var(--oc-icon-weak)" />
+        <path d="M0 6H24V12H0ZM0 12H6V18H0ZM18 12H24V18H18ZM0 18H24V24H0ZM0 24H6V30H0ZM0 30H24V36H0Z" fill="var(--oc-icon-base)" />
+        <path d="M36 18H48V30H36Z" fill="var(--oc-icon-weak)" />
+        <path d="M30 6H54V12H30ZM30 12H36V30H30ZM48 12H54V30H48ZM30 30H54V36H30ZM48 36H54V42H48Z" fill="var(--oc-icon-base)" />
+        <path d="M66 12H78V30H66Z" fill="var(--oc-icon-weak)" />
+        <path d="M60 6H66V30H60ZM78 6H84V30H78ZM60 30H84V36H60Z" fill="var(--oc-icon-base)" />
+        <path d="M96 24H114V30H96Z" fill="var(--oc-icon-weak)" />
+        <path d="M90 6H114V12H90ZM90 12H96V18H90ZM108 12H114V18H108ZM90 18H114V24H90ZM90 24H96V30H90ZM90 30H114V36H90Z" fill="var(--oc-icon-base)" />
+        <path d="M126 24H144V30H126Z" fill="var(--oc-icon-weak)" />
+        <path d="M120 0H144V6H120ZM138 6H144V18H138ZM120 18H144V24H120ZM120 24H126V30H120ZM120 30H144V36H120Z" fill="var(--oc-icon-base)" />
+        <path d="M156 18H174V30H156Z" fill="var(--oc-icon-weak)" />
+        <path d="M150 6H174V12H150ZM150 12H156V30H150ZM150 30H174V36H150Z" fill="var(--oc-icon-strong)" />
+        <path d="M186 18H198V30H186Z" fill="var(--oc-icon-weak)" />
+        <path d="M180 6H204V12H180ZM180 12H186V30H180ZM198 12H204V30H198ZM180 30H204V36H180Z" fill="var(--oc-icon-strong)" />
+        <path d="M216 18H228V30H216Z" fill="var(--oc-icon-weak)" />
+        <path d="M228 0H234V6H228ZM210 6H234V12H210ZM210 12H216V30H210ZM228 12H234V30H228ZM210 30H234V36H210Z" fill="var(--oc-icon-strong)" />
+        <path d="M246 24H264V30H246Z" fill="var(--oc-icon-weak)" />
+        <path d="M240 6H264V12H240ZM240 12H246V18H240ZM258 12H264V18H258ZM240 18H264V24H240ZM240 24H246V30H240ZM240 30H264V36H240Z" fill="var(--oc-icon-strong)" />
       </svg>`
 
 const ICON_CHECK = `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="m8.5 12.5 2.4 2.4 4.6-5.4" /></svg>`
