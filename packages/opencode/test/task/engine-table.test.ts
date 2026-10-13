@@ -1,12 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import type { BlendModel } from "@/task/blend/model"
-import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
+import type { Engine, Fact, Plan, Result, State, Verdict } from "@/task/core/model"
 import { TaskEngineTable } from "@/task/engine-table"
+import { TaskEngineXState } from "@/task/engine-xstate"
 
 // A small spec: parent T1 with leaves T1.1 and T1.2. T1.1 has three test obligations and one gate obligation;
 // T1.2 has one test obligation; T1 has one review obligation. Budget 3 for every task.
+//
+// The table engine's behaviour is the contract of every in-core engine: each case runs against O1's TableEngine
+// and O2's XStateEngine, and both must give the same states.
 
-const engine = TaskEngineTable.TableEngine
+const engines: ReadonlyArray<readonly [string, Engine, Engine["name"]]> = [
+  ["TableEngine", TaskEngineTable.TableEngine, "table"],
+  ["XStateEngine", TaskEngineXState.XStateEngine, "xstate"],
+]
 const BUDGET = 3
 
 // The policy of `release-notes.spec`.
@@ -97,9 +104,6 @@ const plan: Plan = {
 let clock = 0
 const at = () => ++clock
 
-const fold = (facts: ReadonlyArray<Fact>, from: State = engine.initial(plan)) =>
-  facts.reduce((state, fact) => engine.apply(plan, state, fact), from)
-
 const started = (id: string): Fact => ({
   type: "task.started",
   at: at(),
@@ -145,9 +149,13 @@ const obligationStates = (state: State, prefix: string) =>
 
 const entriesOf = (state: State, unit: string) => state.history.filter((item) => item.unit === unit)
 
-describe("TableEngine", () => {
-  test("is named table", () => {
-    expect(engine.name).toBe("table")
+describe.each(engines)("%s", (_, engine, name) => {
+  const fold = (facts: ReadonlyArray<Fact>, from: State = engine.initial(plan)) =>
+    facts.reduce((state, fact) => engine.apply(plan, state, fact), from)
+
+  // "is named table" for the table engine, as before.
+  test(`is named ${name}`, () => {
+    expect(engine.name).toBe(name)
   })
 
   test("the initial state: tasks waiting, obligations pending, scenarios waiting", () => {
