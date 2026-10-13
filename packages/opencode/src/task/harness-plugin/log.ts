@@ -73,8 +73,11 @@ export const DIRECTORY = ""
 /** `<directory>/.opencode/task/events.jsonl`. */
 export const file = (path: Path.Path, directory: string) => path.join(directory, ".opencode", "task", "events.jsonl")
 
-/** One line of JSON for an entry, newline included. */
-export const encode = (entry: Entry) => `${encodeLine({ spec: entry.spec, fact: asStored(entry.fact) })}\n`
+/**
+ * One line of JSON for an entry. The newline comes first: a line that a crash cut short then never runs into the
+ * next entry, which starts on a line of its own.
+ */
+export const encode = (entry: Entry) => `\n${encodeLine({ spec: entry.spec, fact: asStored(entry.fact) })}`
 
 /** The entries of a log text, oldest first; a line that does not decode is skipped. */
 export const parse = (text: string): ReadonlyArray<Entry> =>
@@ -92,7 +95,7 @@ export const read = Effect.fn("HarnessLog.read")(function* (directory: string) {
   return parse(text)
 })
 
-/** Appends one entry. A plain append: a crash can cut only the last line, which `parse` then skips. */
+/** Appends one entry. A plain append: a crash can cut only the last line, which `parse` then skips (see `encode`). */
 export const append = Effect.fn("HarnessLog.append")(function* (directory: string, entry: Entry) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
