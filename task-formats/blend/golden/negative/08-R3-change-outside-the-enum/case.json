@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "change outside the enum",
+  "exit": 1,
+  "delete": []
+}

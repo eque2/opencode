@@ -1,0 +1,6 @@
+{
+  "rule": "R7",
+  "name": "a child after its parent",
+  "exit": 1,
+  "delete": []
+}

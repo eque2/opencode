@@ -1,0 +1,6 @@
+{
+  "rule": "R7",
+  "name": "two siblings after each other",
+  "exit": 1,
+  "delete": []
+}

@@ -1,0 +1,1 @@
+R3 T2-services.task/T2.4-gateway-dry-run.task/VERIFY.md: rejects/c5: 'asserting the returned value only. Use a provider stub that fails the test if it is entered.' is not of type 'array'

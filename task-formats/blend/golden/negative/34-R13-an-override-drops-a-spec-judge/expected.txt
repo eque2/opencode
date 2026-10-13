@@ -1,0 +1,1 @@
+R13 T2-services.task/T2.4-gateway-dry-run.task/VERIFY.md: policy.judges.test drops runner, verifier, which the spec requires

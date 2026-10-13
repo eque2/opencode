@@ -1,0 +1,1 @@
+R2 acceptance/S07.md: file name is not `<scenario id>.md`

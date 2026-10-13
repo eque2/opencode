@@ -47,6 +47,7 @@ export function hints(template: string) {
 export const Default = {
   INIT: "init",
   REVIEW: "review",
+  TASK: "task",
 } as const
 
 export interface Interface {
@@ -87,8 +88,26 @@ const layer = Layer.effect(
         subtask: true,
         hints: hints(PROMPT_REVIEW),
       }
+      // The task harness. `SessionPrompt.command` dispatches it in code before it reads the template.
+      commands[Default.TASK] = {
+        name: Default.TASK,
+        description: "Run a blend task tree",
+        source: "command",
+        template: "",
+        hints: [],
+      }
+
+      // `/task` is the harness for every user: a config command, an MCP prompt or a skill of that name cannot replace
+      // it, and is reported once instead of disappearing silently.
+      const shadowed = (name: string, source: string) =>
+        name === Default.TASK
+          ? Effect.logWarning("command shadowed by the built-in task harness", { command: name, source }).pipe(
+              Effect.as(true),
+            )
+          : Effect.succeed(false)
 
       for (const [name, command] of Object.entries(cfg.command ?? {})) {
+        if (yield* shadowed(name, "config")) continue
         commands[name] = {
           name,
           agent: command.agent,
@@ -104,6 +123,7 @@ const layer = Layer.effect(
       }
 
       for (const [name, prompt] of Object.entries(yield* mcp.prompts())) {
+        if (yield* shadowed(name, "mcp")) continue
         commands[name] = {
           name,
           source: "mcp",
@@ -133,6 +153,7 @@ const layer = Layer.effect(
       }
 
       for (const item of yield* skill.all()) {
+        if (yield* shadowed(item.name, "skill")) continue
         if (commands[item.name]) continue
         const dir = item.location === "<built-in>" ? Option.none<string>() : Option.some(path.dirname(item.location))
         commands[item.name] = {

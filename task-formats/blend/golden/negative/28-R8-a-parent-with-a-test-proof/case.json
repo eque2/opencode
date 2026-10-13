@@ -1,0 +1,6 @@
+{
+  "rule": "R8",
+  "name": "a parent with a test proof",
+  "exit": 1,
+  "delete": []
+}

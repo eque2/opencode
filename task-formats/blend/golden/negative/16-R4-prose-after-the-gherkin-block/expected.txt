@@ -1,0 +1,1 @@
+R4 acceptance/S25.md: body is not exactly one ```gherkin block

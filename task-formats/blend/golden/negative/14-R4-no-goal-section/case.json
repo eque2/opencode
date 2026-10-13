@@ -1,0 +1,6 @@
+{
+  "rule": "R4",
+  "name": "no Goal section",
+  "exit": 1,
+  "delete": []
+}

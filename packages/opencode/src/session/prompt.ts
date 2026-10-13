@@ -56,6 +56,9 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { TaskCommand } from "@/task/core/command"
+import { TaskHooks } from "@/task/core/hooks"
+import type { TaskOps } from "@/task/core/ops"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1207,6 +1210,16 @@ const layer = Layer.effect(
             continue
           }
 
+          // A task harness builder that repeats one call ends its turn here, without a model request. Only the
+          // sessions the harness watches are checked, so other sessions skip the scan of their calls.
+          if (TaskHooks.watching(sessionID)) {
+            const repetition = TaskHooks.checkRepetition(sessionID, completedCallsSince(msgs, lastUser.id))
+            if (repetition !== undefined) {
+              yield* Effect.logInfo("task harness repetition stop", { "session.id": sessionID, reason: repetition })
+              break
+            }
+          }
+
           const agent = (yield* agents.get(lastUser.agent)) ?? (yield* agentNotFound(lastUser.agent, sessionID))
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
@@ -1270,6 +1283,9 @@ const layer = Layer.effect(
                 },
               })
             }
+
+            // The task harness agents get their own tools; every other agent gets none.
+            Object.assign(tools, createTaskHarnessTools(agent.name, sessionID))
 
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -1375,6 +1391,25 @@ const layer = Layer.effect(
       return yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input, ready), ready)
     })
 
+    // What the task harness needs from this service. Passed in: the harness prompts sessions itself, so it
+    // cannot import this module without a cycle.
+    const taskOps: TaskOps.Ops = {
+      prompt: (input) =>
+        prompt({
+          sessionID: input.sessionID,
+          agent: input.agent,
+          model: {
+            providerID: ProviderV2.ID.make(input.model.providerID),
+            modelID: ModelV2.ID.make(input.model.modelID),
+          },
+          parts: input.parts,
+          noReply: input.noReply,
+        }).pipe(Effect.catch(Effect.die)),
+      cancel: (sessionID) => cancel(sessionID),
+      currentModel: (sessionID) =>
+        currentModel(sessionID).pipe(Effect.map((model) => ({ providerID: model.providerID, modelID: model.modelID }))),
+    }
+
     const command = Effect.fn("SessionPrompt.command")(function* (input: CommandInput) {
       yield* Effect.logInfo("command", {
         "session.id": input.sessionID,
@@ -1389,6 +1424,8 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         return yield* Effect.die(error)
       }
+      // The task harness runs `/task` in code: no template, no model turn in this session.
+      if (input.command === Command.Default.TASK) return yield* TaskCommand.run(input, taskOps)
       const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
@@ -1616,6 +1653,126 @@ export function createStructuredOutputTool(input: {
     },
   })
 }
+
+const TASK_READY_DESCRIPTION = `Tell the task harness that the task is built. The harness then runs the proofs.
+
+Call it once, after the tests and gates pass, then end your turn.`
+
+const VERDICT_DESCRIPTION = `Record your verdicts for the task harness: one per \`judge <id>\` line of your message.
+
+Call it once with all of them, then end your turn.`
+
+const TaskReadyInput = Schema.Struct({ summary: Schema.optional(Schema.String) }).annotate({
+  identifier: "SessionPrompt.TaskReadyInput",
+})
+const TaskVerdictsInput = Schema.Struct({
+  verdicts: Schema.Array(
+    Schema.Struct({
+      id: Schema.String.pipe(Schema.brand("TaskObligationID")),
+      verdict: Schema.Literals(["trusted", "rejected"]),
+      reason: Schema.optional(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "SessionPrompt.TaskVerdictsInput" })
+const decodeTaskReady = Schema.decodeUnknownExit(TaskReadyInput)
+const decodeTaskVerdicts = Schema.decodeUnknownExit(TaskVerdictsInput)
+
+const TASK_READY_SCHEMA: JSONSchema7 = {
+  type: "object",
+  properties: { summary: { type: "string", description: "What you built, in one or two sentences" } },
+  additionalProperties: false,
+}
+
+const VERDICT_SCHEMA: JSONSchema7 = {
+  type: "object",
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "The id of a `judge <id>` line" },
+          verdict: { type: "string", enum: ["trusted", "rejected"] },
+          reason: { type: "string", description: "Why, when rejected" },
+        },
+        required: ["id", "verdict"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["verdicts"],
+  additionalProperties: false,
+}
+
+const harnessResult = (title: string, output: string, valid: boolean) => ({ output, title, metadata: { valid } })
+
+/**
+ * @internal Exported for testing. The task harness's own tools for one turn of `agent`: the builder gets
+ * `task_ready`, the verifier gets `verdict`, and every other agent gets neither. Each records what it receives
+ * in `TaskHooks`; the harness reads it after the turn.
+ */
+export function createTaskHarnessTools(agent: string, sessionID: SessionID): Record<string, AITool> {
+  if (agent === TaskHooks.BUILDER)
+    return {
+      task_ready: tool({
+        description: TASK_READY_DESCRIPTION,
+        inputSchema: jsonSchema(TASK_READY_SCHEMA),
+        execute(args) {
+          const input = decodeTaskReady(args)
+          if (Exit.isFailure(input))
+            return harnessResult(
+              "Task ready",
+              "Invalid input: expected { summary?: string }. Nothing was recorded.",
+              false,
+            )
+          TaskHooks.recordReady(sessionID, input.value)
+          return harnessResult("Task ready", "Ready recorded. End your turn now: the harness runs the proofs.", true)
+        },
+        toModelOutput({ output }) {
+          return { type: "text", value: output.output }
+        },
+      }),
+    }
+  if (agent === TaskHooks.VERIFIER)
+    return {
+      verdict: tool({
+        description: VERDICT_DESCRIPTION,
+        inputSchema: jsonSchema(VERDICT_SCHEMA),
+        execute(args) {
+          const input = decodeTaskVerdicts(args)
+          if (Exit.isFailure(input))
+            return harnessResult(
+              "Verdict",
+              'Invalid input: expected { verdicts: { id: string, verdict: "trusted" | "rejected", reason?: string }[] }. Nothing was recorded.',
+              false,
+            )
+          TaskHooks.recordVerdicts(sessionID, input.value.verdicts)
+          return harnessResult("Verdict", `Recorded ${input.value.verdicts.length} verdicts.`, true)
+        },
+        toModelOutput({ output }) {
+          return { type: "text", value: output.output }
+        },
+      }),
+    }
+  return {}
+}
+
+// The completed tool calls of the replies to user message `userID`, oldest first: what the repetition check
+// reads. Array position is not chronological after a compaction, so order by creation time, then id.
+function completedCallsSince(msgs: ReadonlyArray<SessionV1.WithParts>, userID: MessageID) {
+  return msgs
+    .filter((msg) => msg.info.role === "assistant" && msg.info.parentID === userID)
+    .toSorted(
+      (a, b) =>
+        a.info.time.created - b.info.time.created || (a.info.id < b.info.id ? -1 : a.info.id > b.info.id ? 1 : 0),
+    )
+    .flatMap((msg) =>
+      msg.parts.flatMap((part) =>
+        part.type === "tool" && part.state.status === "completed" ? [{ tool: part.tool, input: part.state.input }] : [],
+      ),
+    )
+}
+
 const bashRegex = /!`([^`]+)`/g
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi

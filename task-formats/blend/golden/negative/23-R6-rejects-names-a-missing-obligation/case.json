@@ -1,0 +1,6 @@
+{
+  "rule": "R6",
+  "name": "rejects names a missing obligation",
+  "exit": 1,
+  "delete": []
+}

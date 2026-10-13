@@ -1,0 +1,6 @@
+{
+  "rule": "R4",
+  "name": "Scenario line id differs from file",
+  "exit": 1,
+  "delete": []
+}

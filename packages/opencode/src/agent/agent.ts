@@ -14,6 +14,8 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_TASK_BUILDER from "./prompt/task-builder.txt"
+import PROMPT_TASK_VERIFIER from "./prompt/task-verifier.txt"
 import { Permission } from "@/permission"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -31,6 +33,7 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { Location } from "@opencode-ai/core/location"
 import { PluginV2 } from "@opencode-ai/core/plugin"
+import { TaskHooks } from "@/task/core/hooks"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -273,6 +276,83 @@ const layer = Layer.effect(
             ),
             prompt: PROMPT_SUMMARY,
           },
+        }
+
+        // The task harness's agents. They run headless, so every permission is decided: `"*": "deny"` first,
+        // then what each role needs; no rule asks. The user's own deny rules come last, so they still win; their
+        // allow and ask rules are left out (an ask would hang a headless run).
+        const model = cfg.model ? { model: Provider.parseModel(cfg.model) } : {}
+        const userDenies = user.filter((rule) => rule.action === "deny")
+        agents[TaskHooks.BUILDER] = {
+          name: TaskHooks.BUILDER,
+          description: "Builds one task of a blend task tree for the task harness.",
+          mode: "primary",
+          native: true,
+          hidden: true,
+          prompt: PROMPT_TASK_BUILDER,
+          // Deny by default: every allowed tool's definition rides on every request, and a live run is capped
+          // in tokens. The builder needs files, search and the shell; `invalid` answers a call to a tool it
+          // does not have (a builder's `verdict` call fails there).
+          permission: Permission.merge(
+            Permission.fromConfig({
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              edit: "allow",
+              write: "allow",
+              apply_patch: "allow",
+              bash: "allow",
+              invalid: "allow",
+              // The builder works in its leaf's worktree, which is the session's directory: a path outside it is
+              // refused, by the file tools and by the shell's path scan. A deterrent, not a sandbox: the shell scan
+              // sees only the paths it can parse.
+              external_directory: "deny",
+              task_ready: "allow",
+              // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
+              // turn with an error instead.
+              doom_loop: "allow",
+            }),
+            userDenies,
+          ),
+          options: {},
+          ...model,
+        }
+        agents[TaskHooks.VERIFIER] = {
+          name: TaskHooks.VERIFIER,
+          description: "Judges the obligations of a task for the task harness.",
+          mode: "primary",
+          native: true,
+          hidden: true,
+          prompt: PROMPT_TASK_VERIFIER,
+          // Deny by default, as for the builder. The verifier only reads: no file tool writes, and the shell runs
+          // the tests and read-only git commands alone. The tests are model-written code that could still write;
+          // the runner resets the judge's checkout after each round.
+          permission: Permission.merge(
+            Permission.fromConfig({
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              bash: {
+                "*": "deny",
+                "bun --no-env-file test*": "allow",
+                "git diff*": "allow",
+                "git log*": "allow",
+                "git show*": "allow",
+                "git status*": "allow",
+              },
+              invalid: "allow",
+              external_directory: "deny",
+              verdict: "allow",
+              doom_loop: "allow",
+            }),
+            userDenies,
+          ),
+          options: {},
+          ...model,
         }
 
         for (const [key, value] of Object.entries(cfg.agent ?? {})) {

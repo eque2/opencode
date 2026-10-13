@@ -349,9 +349,16 @@ Mode pushes are automatically tracked by the plugin runtime. If a plugin is disa
 - Any other name is treated as a plugin route.
 - `api.route.current` returns one of:
   - `{ name: "home" }`
-  - `{ name: "session", params: { sessionID, initialPrompt? } }`
+  - `{ name: "session", params: { sessionID, initialPrompt?, watch? } }`
   - `{ name: string, params?: Record<string, unknown> }`
-- `api.route.navigate("session", params)` only uses `params.sessionID`. It cannot set `initialPrompt`.
+- `api.route.navigate("session", params)` only uses `params.sessionID` and `params.watch`. It cannot set `initialPrompt`.
+- `params.watch` is another session ID. The session screen then shows that session's transcript in place of its own,
+  inside a double border in the theme's `accent`, with the `session_watch` slot above it. It is watch only: the
+  prompt, the footer, the sidebar, revert and every session command stay bound to `params.sessionID`, and clicking a
+  message opens no message actions. The host loads the watched session, and tries again each second until it loads.
+  A `watch` equal to `params.sessionID` shows the session's own transcript as usual (unframed, with revert and message
+  actions) and only renders the `session_watch` slot above it. Navigating without `watch` shows the session's own
+  transcript again.
 - If multiple plugins register the same route name, the last registered route wins.
 - Unknown plugin routes render a fallback screen with a `go home` action.
 
@@ -428,6 +435,8 @@ Current host slot names:
 - `home_prompt_right` with props `{ workspace_id? }`
 - `session_prompt` with props `{ session_id, visible?, disabled?, on_submit?, ref? }`
 - `session_prompt_right` with props `{ session_id }`
+- `session_watch` with props `{ session_id, watch_id }`, rendered above the transcript only while the session route
+  carries `watch`
 - `home_bottom`
 - `home_footer`
 - `sidebar_title` with props `{ session_id, title, share_url? }`
@@ -441,7 +450,7 @@ Slot notes:
 - `api.slots.register(plugin)` does not return an unregister function.
 - Returned ids are `pluginId`, `pluginId:1`, `pluginId:2`, and so on.
 - Plugin-provided `id` is not allowed.
-- The current host renders `home_logo`, `home_prompt`, and `session_prompt` with `replace`, `home_footer`, `sidebar_title`, and `sidebar_footer` with `single_winner`, and `app`, `app_bottom`, `home_prompt_right`, `session_prompt_right`, `home_bottom`, and `sidebar_content` with the slot library default mode.
+- The current host renders `home_logo`, `home_prompt`, and `session_prompt` with `replace`, `home_footer`, `sidebar_title`, and `sidebar_footer` with `single_winner`, and `app`, `app_bottom`, `home_prompt_right`, `session_prompt_right`, `session_watch`, `home_bottom`, and `sidebar_content` with the slot library default mode.
 - `app_bottom` is rendered in normal layout flow below the active route, while `app` is rendered afterward for global app-level UI.
 - Plugins can define custom slot names in `api.slots.register(...)` and render them from plugin UI with `ui.Slot`.
 
@@ -515,6 +524,7 @@ Metadata is persisted by plugin id.
 - `internal:sidebar-files`
 - `internal:sidebar-footer`
 - `internal:plugin-manager`
+- `internal:task-ui` — shows the `/task` harness's task tree and run progress, in one of seven designs; it reads `.opencode/task/status.json` in the session directory once a second and shows nothing when the file is absent.
 
 Sidebar content order is currently: context `100`, mcp `200`, lsp `300`, todo `400`, files `500`.
 

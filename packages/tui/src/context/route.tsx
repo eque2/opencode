@@ -13,6 +13,8 @@ export type SessionRoute = {
   type: "session"
   sessionID: string
   prompt?: PromptInfo
+  /** A session whose transcript shows in place of this one's, framed and watch only; the rest stays on `sessionID`. */
+  watch?: string
 }
 
 export type PluginRoute = {

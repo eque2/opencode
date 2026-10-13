@@ -1,0 +1,6 @@
+{
+  "rule": "R9",
+  "name": "needs names a parent",
+  "exit": 1,
+  "delete": []
+}

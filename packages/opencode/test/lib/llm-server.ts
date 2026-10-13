@@ -15,10 +15,16 @@ type Flow =
   | { type: "tool-args"; text: string }
   | { type: "usage"; usage: Usage }
 
-type Hit = {
+export type Hit = {
   url: URL
   body: Record<string, unknown>
+  // Receive time, epoch ms.
+  at: number
 }
+
+// Consulted before the queue for every request that is not a title request. It computes the reply from the request
+// (`undefined` falls through to the queue); a promise holds the response until it settles.
+export type Responder = (hit: Hit) => Item | Reply | undefined | PromiseLike<Item | Reply | undefined>
 
 type Match = (hit: Hit) => boolean
 
@@ -606,6 +612,7 @@ function hit(url: string, body: unknown) {
   return {
     url: new URL(url, "http://localhost"),
     body: Predicate.isObject(body) ? body : {},
+    at: Date.now(),
   } satisfies Hit
 }
 
@@ -619,6 +626,7 @@ namespace TestLLMServer {
     readonly url: string
     readonly push: (...input: (Item | Reply)[]) => Effect.Effect<void>
     readonly pushMatch: (match: Match, ...input: (Item | Reply)[]) => Effect.Effect<void>
+    readonly respond: (fn: Responder | undefined) => Effect.Effect<void>
     readonly textMatch: (match: Match, value: string, opts?: { usage?: Usage }) => Effect.Effect<void>
     readonly toolMatch: (match: Match, name: string, input: unknown) => Effect.Effect<void>
     readonly text: (value: string, opts?: { usage?: Usage }) => Effect.Effect<void>
@@ -650,6 +658,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
       let list: Queue[] = []
       let waits: Wait[] = []
       let misses: Hit[] = []
+      let responder: Responder | undefined
 
       const queue = (...input: (Item | Reply)[]) => {
         list = [...list, ...input.map((value) => ({ item: item(value) }))]
@@ -685,17 +694,28 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
-        const pulled = pull(current)
+        hits = [...hits, current]
+        yield* notify()
+        const fn = responder
+        // A responder that throws or rejects answers HTTP 500 instead of failing the handler.
+        const computed = fn
+          ? yield* Effect.tryPromise(async () => fn(current)).pipe(
+              Effect.catch((error) =>
+                Effect.succeed(
+                  httpError(500, {
+                    error: { message: `responder failed: ${error.cause instanceof Error ? error.cause.message : error.message}` },
+                  }),
+                ),
+              ),
+            )
+          : undefined
+        const pulled = computed === undefined ? pull(current) : Option.some(item(computed))
         if (Option.isNone(pulled)) {
-          hits = [...hits, current]
-          yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("ok"), finishLine("stop")] }
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
         const next = pulled.value
-        hits = [...hits, current]
-        yield* notify()
         if (next.type !== "sse") return fail(next)
         if (mode === "responses") return send(responses(next, modelFrom(body)))
         if (next.reset) return yield* reset(next)
@@ -717,6 +737,9 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         }),
         pushMatch: Effect.fn("TestLLMServer.pushMatch")(function* (match: Match, ...input: (Item | Reply)[]) {
           queueMatch(match, ...input)
+        }),
+        respond: Effect.fn("TestLLMServer.respond")(function* (fn: Responder | undefined) {
+          responder = fn
         }),
         textMatch: Effect.fn("TestLLMServer.textMatch")(function* (
           match: Match,
@@ -764,6 +787,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           list = []
           waits = []
           misses = []
+          responder = undefined
         }),
         hits: Effect.sync(() => [...hits]),
         calls: Effect.sync(() => hits.length),

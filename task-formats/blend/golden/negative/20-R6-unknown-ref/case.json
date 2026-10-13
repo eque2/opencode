@@ -1,0 +1,6 @@
+{
+  "rule": "R6",
+  "name": "unknown ref",
+  "exit": 1,
+  "delete": []
+}

@@ -1,0 +1,758 @@
+{
+  "run": {
+    "state": "budget_exhausted",
+    "reason": "T1.4: T1.4.c8: skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry",
+    "spec": "task-formats/blend/release-notes.spec",
+    "path": "task-formats/blend/release-notes.spec"
+  },
+  "tasks": {
+    "T1": {
+      "state": "waiting",
+      "attempts": 0,
+      "waitingOn": []
+    },
+    "T1.1": {
+      "state": "trusted",
+      "attempts": 1,
+      "waitingOn": [],
+      "worktree": "/repo/.opencode/task/worktrees/T1.1"
+    },
+    "T1.2": {
+      "state": "trusted",
+      "attempts": 1,
+      "waitingOn": [],
+      "worktree": "/repo/.opencode/task/worktrees/T1.2"
+    },
+    "T1.3": {
+      "state": "trusted",
+      "attempts": 2,
+      "waitingOn": [],
+      "worktree": "/repo/.opencode/task/worktrees/T1.3"
+    },
+    "T1.4": {
+      "state": "budget_exhausted",
+      "attempts": 3,
+      "waitingOn": [],
+      "worktree": "/repo/.opencode/task/worktrees/T1.4",
+      "reason": "T1.4.c8: skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry"
+    },
+    "T1.5": {
+      "state": "waiting",
+      "attempts": 0,
+      "waitingOn": [
+        "T1.4"
+      ]
+    }
+  },
+  "obligations": {
+    "T1.e1": {
+      "state": "pending"
+    },
+    "T1.1.c1": {
+      "state": "trusted"
+    },
+    "T1.1.c2": {
+      "state": "trusted"
+    },
+    "T1.1.c3": {
+      "state": "trusted"
+    },
+    "T1.1.c4": {
+      "state": "trusted"
+    },
+    "T1.1.c5": {
+      "state": "trusted"
+    },
+    "T1.2.c1": {
+      "state": "trusted"
+    },
+    "T1.2.c2": {
+      "state": "trusted"
+    },
+    "T1.2.c3": {
+      "state": "trusted"
+    },
+    "T1.2.c4": {
+      "state": "trusted"
+    },
+    "T1.3.c1": {
+      "state": "trusted"
+    },
+    "T1.3.c2": {
+      "state": "trusted"
+    },
+    "T1.3.c3": {
+      "state": "trusted"
+    },
+    "T1.3.c4": {
+      "state": "trusted"
+    },
+    "T1.3.c5": {
+      "state": "trusted"
+    },
+    "T1.4.c1": {
+      "state": "passed"
+    },
+    "T1.4.c2": {
+      "state": "passed"
+    },
+    "T1.4.c3": {
+      "state": "passed"
+    },
+    "T1.4.c4": {
+      "state": "passed"
+    },
+    "T1.4.c5": {
+      "state": "passed"
+    },
+    "T1.4.c6": {
+      "state": "passed"
+    },
+    "T1.4.c7": {
+      "state": "passed"
+    },
+    "T1.4.c8": {
+      "state": "failed",
+      "reason": "skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry"
+    },
+    "T1.4.p1": {
+      "state": "passed"
+    },
+    "T1.4.f1": {
+      "state": "trusted"
+    },
+    "T1.4.f2": {
+      "state": "trusted"
+    },
+    "T1.5.c1": {
+      "state": "pending"
+    },
+    "T1.5.c2": {
+      "state": "pending"
+    },
+    "T1.5.c3": {
+      "state": "pending"
+    },
+    "T1.5.c4": {
+      "state": "pending"
+    },
+    "T1.5.f1": {
+      "state": "pending"
+    }
+  },
+  "scenarios": {
+    "S1": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S2": {
+      "state": "rejected",
+      "waitingOn": [],
+      "reason": "The passing [S2] test does not assert the subject for either commit, and it does not assert type or scope for the footer-based commit. Therefore it does not prove that each commit has all required parts."
+    },
+    "S3": {
+      "state": "rejected",
+      "waitingOn": [],
+      "reason": "The passing [S3] test omits the required no-bump behavior for other change types. That behavior only appears in a test without [S3]."
+    },
+    "S4": {
+      "state": "rejected",
+      "waitingOn": [],
+      "reason": "The passing [S4] test proves Features then Fixes, omits Performance, and formats two scoped lines. It does not include or verify the required Breaking changes and Other headings and their full fixed order."
+    },
+    "S5": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.5"
+      ]
+    },
+    "S6": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S7": {
+      "state": "trusted",
+      "waitingOn": []
+    },
+    "S8": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S9": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S10": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S11": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4"
+      ]
+    },
+    "S12": {
+      "state": "trusted",
+      "waitingOn": []
+    },
+    "S13": {
+      "state": "waiting",
+      "waitingOn": [
+        "T1.4",
+        "T8"
+      ]
+    }
+  },
+  "history": [
+    {
+      "at": 1791887066948,
+      "unit": "run",
+      "from": "running",
+      "to": "running"
+    },
+    {
+      "at": 1791887066975,
+      "unit": "T9",
+      "to": "trusted",
+      "reason": "outside"
+    },
+    {
+      "at": 1791887067184,
+      "unit": "T1.1",
+      "from": "waiting",
+      "to": "building"
+    },
+    {
+      "at": 1791887067523,
+      "unit": "T1.2",
+      "from": "waiting",
+      "to": "building"
+    },
+    {
+      "at": 1791887100068,
+      "unit": "T1.2",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887100902,
+      "unit": "T1.2.c1",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887100902,
+      "unit": "T1.2.c2",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887100902,
+      "unit": "T1.2.c3",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887100902,
+      "unit": "T1.2.c4",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887100902,
+      "unit": "T1.2",
+      "from": "proving",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887113023,
+      "unit": "T1.2.c1",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887113023,
+      "unit": "T1.2.c2",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887113023,
+      "unit": "T1.2.c3",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887113023,
+      "unit": "T1.2.c4",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887113023,
+      "unit": "T1.2",
+      "from": "verifying",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887113298,
+      "unit": "S3",
+      "from": "waiting",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887125247,
+      "unit": "S3",
+      "from": "verifying",
+      "to": "rejected",
+      "reason": "The passing [S3] test omits the required no-bump behavior for other change types. That behavior only appears in a test without [S3]."
+    },
+    {
+      "at": 1791887132776,
+      "unit": "T1.1",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1.c1",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1.c2",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1.c3",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1.c4",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1.c5",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887133534,
+      "unit": "T1.1",
+      "from": "proving",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1.c1",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1.c2",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1.c3",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1.c4",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1.c5",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887151771,
+      "unit": "T1.1",
+      "from": "verifying",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887152002,
+      "unit": "S2",
+      "from": "waiting",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887152004,
+      "unit": "S7",
+      "from": "waiting",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887152102,
+      "unit": "T1.3",
+      "from": "waiting",
+      "to": "building"
+    },
+    {
+      "at": 1791887160557,
+      "unit": "S7",
+      "from": "verifying",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887161891,
+      "unit": "S2",
+      "from": "verifying",
+      "to": "rejected",
+      "reason": "The passing [S2] test does not assert the subject for either commit, and it does not assert type or scope for the footer-based commit. Therefore it does not prove that each commit has all required parts."
+    },
+    {
+      "at": 1791887212688,
+      "unit": "T1.3",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3.c1",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3.c2",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3.c3",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3.c4",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3.c5",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887213512,
+      "unit": "T1.3",
+      "from": "proving",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3.c1",
+      "from": "passed",
+      "to": "rejected",
+      "reason": "The [T1.3.c1] test omits the Performance group, so it does not prove the full fixed heading order and empty-group behavior."
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3.c2",
+      "from": "passed",
+      "to": "rejected",
+      "reason": "The [T1.3.c2] test exercises only one breaking type and does not prove that breaking commits of every type group correctly."
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3.c3",
+      "from": "passed",
+      "to": "rejected",
+      "reason": "The [T1.3.c3] test covers only invalid-only input. It does not prove that empty input has no Unparsed commits heading."
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3.c4",
+      "from": "passed",
+      "to": "rejected",
+      "reason": "The [T1.3.c4] test does not exercise escaped unparsed text or a commit with no refs, so it does not prove the full obligation."
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3.c5",
+      "from": "passed",
+      "to": "rejected",
+      "reason": "The [T1.3.c5] test has no refs suffix, so it does not prove hash placement before such a suffix."
+    },
+    {
+      "at": 1791887230374,
+      "unit": "T1.3",
+      "from": "verifying",
+      "to": "building",
+      "reason": "T1.3.c1: The [T1.3.c1] test omits the Performance group, so it does not prove the full fixed heading order and empty-group behavior.; T1.3.c2: The [T1.3.c2] test exercises only one breaking type and does not prove that breaking commits of every type group correctly.; T1.3.c3: The [T1.3.c3] test covers only invalid-only input. It does not prove that empty input has no Unparsed commits heading.; T1.3.c4: The [T1.3.c4] test does not exercise escaped unparsed text or a commit with no refs, so it does not prove the full obligation.; T1.3.c5: The [T1.3.c5] test has no refs suffix, so it does not prove hash placement before such a suffix."
+    },
+    {
+      "at": 1791887254936,
+      "unit": "T1.3",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3.c1",
+      "from": "rejected",
+      "to": "passed"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3.c2",
+      "from": "rejected",
+      "to": "passed"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3.c3",
+      "from": "rejected",
+      "to": "passed"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3.c4",
+      "from": "rejected",
+      "to": "passed"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3.c5",
+      "from": "rejected",
+      "to": "passed"
+    },
+    {
+      "at": 1791887255784,
+      "unit": "T1.3",
+      "from": "proving",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3.c1",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3.c2",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3.c3",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3.c4",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3.c5",
+      "from": "passed",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887269847,
+      "unit": "T1.3",
+      "from": "verifying",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887270064,
+      "unit": "S4",
+      "from": "waiting",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887270066,
+      "unit": "S12",
+      "from": "waiting",
+      "to": "verifying"
+    },
+    {
+      "at": 1791887270151,
+      "unit": "T1.4",
+      "from": "waiting",
+      "to": "building"
+    },
+    {
+      "at": 1791887284669,
+      "unit": "S12",
+      "from": "verifying",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887286598,
+      "unit": "S4",
+      "from": "verifying",
+      "to": "rejected",
+      "reason": "The passing [S4] test proves Features then Fixes, omits Performance, and formats two scoped lines. It does not include or verify the required Breaking changes and Other headings and their full fixed order."
+    },
+    {
+      "at": 1791887371252,
+      "unit": "T1.4",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c1",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c2",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c3",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c4",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c5",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c6",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c7",
+      "from": "pending",
+      "to": "failed",
+      "reason": "no test titled [T1.4.c7]"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.c8",
+      "from": "pending",
+      "to": "failed",
+      "reason": "no test titled [T1.4.c8]"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.p1",
+      "from": "pending",
+      "to": "passed"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.f1",
+      "from": "pending",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4.f2",
+      "from": "pending",
+      "to": "trusted"
+    },
+    {
+      "at": 1791887372495,
+      "unit": "T1.4",
+      "from": "proving",
+      "to": "building",
+      "reason": "T1.4.c7: no test titled [T1.4.c7]; T1.4.c8: no test titled [T1.4.c8]"
+    },
+    {
+      "at": 1791887406572,
+      "unit": "T1.4",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887408403,
+      "unit": "T1.4.c7",
+      "from": "failed",
+      "to": "passed"
+    },
+    {
+      "at": 1791887408403,
+      "unit": "T1.4.c8",
+      "from": "failed",
+      "to": "failed",
+      "reason": "skipped: every test titled [T1.4.c8] was skipped"
+    },
+    {
+      "at": 1791887408403,
+      "unit": "T1.4",
+      "from": "proving",
+      "to": "building",
+      "reason": "T1.4.c8: skipped: every test titled [T1.4.c8] was skipped"
+    },
+    {
+      "at": 1791887424583,
+      "unit": "T1.4",
+      "from": "building",
+      "to": "proving"
+    },
+    {
+      "at": 1791887426445,
+      "unit": "T1.4.c8",
+      "from": "failed",
+      "to": "failed",
+      "reason": "skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry"
+    },
+    {
+      "at": 1791887426445,
+      "unit": "T1.4",
+      "from": "proving",
+      "to": "budget_exhausted",
+      "reason": "T1.4.c8: skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry"
+    },
+    {
+      "at": 1791887426445,
+      "unit": "run",
+      "from": "running",
+      "to": "budget_exhausted",
+      "reason": "T1.4: T1.4.c8: skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry"
+    }
+  ]
+}

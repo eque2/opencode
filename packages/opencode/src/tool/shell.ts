@@ -20,6 +20,7 @@ import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { TaskHooks } from "@/task/core/hooks"
 
 export { Parameters } from "./shell/prompt"
 
@@ -487,10 +488,10 @@ export const ShellTool = Tool.define(
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
-      return {
+      return TaskHooks.shellEnvironment(ctx.agent, {
         ...process.env,
         ...extra.env,
-      }
+      })
     })
 
     const run = Effect.fn("ShellTool.run")(function* (

@@ -1,0 +1,6 @@
+{
+  "rule": "R6",
+  "name": "needs names an unknown task",
+  "exit": 1,
+  "delete": []
+}

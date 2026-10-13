@@ -1,0 +1,6 @@
+{
+  "rule": "R9",
+  "name": "a covered scenario does not need the task",
+  "exit": 1,
+  "delete": []
+}

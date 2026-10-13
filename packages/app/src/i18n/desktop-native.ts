@@ -197,6 +197,10 @@ export const DESKTOP_NATIVE_LOCALE_TAGS: Record<DesktopNativeLocale, string> = {
   uz: "uz-Latn-UZ",
 }
 
+// ICU data differs between runtimes: newer CLDR data gives Punjabi in Pakistan the script `Aran` (Nastaliq), a style
+// of `Arab`, so the two must match the same bundle.
+const scriptFamily = (script: string | undefined) => (script === "Aran" ? "Arab" : script)
+
 export function detectDesktopNativeLocale(languages: readonly string[]): DesktopNativeLocale {
   for (const language of languages) {
     const source = locale(language)
@@ -206,7 +210,7 @@ export function detectDesktopNativeLocale(languages: readonly string[]): Desktop
     const match = DESKTOP_NATIVE_LOCALES.find((candidate) =>
       Option.exists(
         locale(DESKTOP_NATIVE_LOCALE_TAGS[candidate]),
-        (target) => target.language === sourceLanguage && target.script === sourceScript,
+        (target) => target.language === sourceLanguage && scriptFamily(target.script) === scriptFamily(sourceScript),
       ),
     )
     if (match) return match

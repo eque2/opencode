@@ -44,7 +44,8 @@ type Input = {
   Slot: TuiPluginApi["ui"]["Slot"]
 }
 
-function routeNavigate(route: ReturnType<typeof useRoute>, name: string, params?: Record<string, unknown>) {
+/** A plugin's `api.route.navigate`: `home`, a session (with its optional `watch`), or a plugin route. */
+export function routeNavigate(route: ReturnType<typeof useRoute>, name: string, params?: Record<string, unknown>) {
   if (name === "home") {
     route.navigate({ type: "home" })
     return
@@ -53,14 +54,16 @@ function routeNavigate(route: ReturnType<typeof useRoute>, name: string, params?
   if (name === "session") {
     const sessionID = params?.sessionID
     if (typeof sessionID !== "string") return
-    route.navigate({ type: "session", sessionID })
+    const watch = params?.watch
+    route.navigate(typeof watch === "string" ? { type: "session", sessionID, watch } : { type: "session", sessionID })
     return
   }
 
   route.navigate({ type: "plugin", id: name, data: params })
 }
 
-function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]["current"] {
+/** A plugin's `api.route.current`, the session route with its `watch` when it has one. */
+export function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]["current"] {
   if (route.data.type === "home") return { name: "home" }
   if (route.data.type === "session") {
     return {
@@ -68,6 +71,7 @@ function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]
       params: {
         sessionID: route.data.sessionID,
         prompt: route.data.prompt,
+        watch: route.data.watch,
       },
     }
   }

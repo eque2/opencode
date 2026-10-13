@@ -1,0 +1,6 @@
+{
+  "rule": "R10",
+  "name": "notHere owned by the task itself",
+  "exit": 1,
+  "delete": []
+}

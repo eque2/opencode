@@ -1,0 +1,1 @@
+R4 acceptance/S25.md: the Scenario line names S26, the file is S25

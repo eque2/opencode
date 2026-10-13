@@ -15,7 +15,7 @@ import {
   useContext,
 } from "solid-js"
 import path from "node:path"
-import { Data, DateTime, Effect, Fiber, FileSystem, HashMap, HashSet, Option, Predicate } from "effect"
+import { Data, DateTime, Effect, Fiber, FileSystem, HashMap, HashSet, Option, Predicate, Schedule } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -249,6 +249,13 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  // The transcript on screen: the route's own session, or another session it watches. While it watches another
+  // session, the transcript is framed and watch only; the prompt, the footer, the sidebar, revert and every session
+  // command stay bound to the route's own session and its `messages`. A `watch` of the route's own session shows its
+  // own transcript as usual, under the `session_watch` slot.
+  const watching = createMemo(() => Boolean(route.watch) && route.watch !== route.sessionID)
+  const shownID = createMemo(() => (watching() && route.watch) || route.sessionID)
+  const transcript = createMemo(() => sync.data.message[shownID()] ?? [])
   const messagesBeforeRevert = () => {
     const messageID = session()?.revert?.messageID
     if (!messageID) return messages()
@@ -280,15 +287,15 @@ export function Session() {
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
   const pending = createMemo(() => {
-    const completed = messages().findLastIndex((message) => message.role === "assistant" && message.time.completed)
-    const pending = messages().findLastIndex(
+    const completed = transcript().findLastIndex((message) => message.role === "assistant" && message.time.completed)
+    const pending = transcript().findLastIndex(
       (message, index) => index > completed && message.role === "assistant" && !message.time.completed,
     )
     return pending === -1 ? Option.none() : Option.some(pending)
   })
 
   const lastAssistant = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant")
+    return transcript().findLast((x) => x.role === "assistant")
   })
 
   const dimensions = useTerminalDimensions()
@@ -368,6 +375,17 @@ export function Session() {
     )
   })
 
+  // A watched session loads as a child session does (see Task), and the event stream keeps it live from then on.
+  // It may not be readable yet (another process has just made it), so a failed load is tried again each second.
+  createEffect(() => {
+    const watch = route.watch
+    if (!watch || !watching()) return
+    const loading = Effect.runFork(
+      attempt(() => sync.session.sync(watch)).pipe(Effect.retry(Schedule.spaced("1 second")), Effect.ignore),
+    )
+    onCleanup(() => Effect.runFork(Fiber.interrupt(loading)))
+  })
+
   let lastSwitch: Option.Option<string> = Option.none()
   event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
@@ -423,7 +441,7 @@ export function Session() {
   // Helper: Find next visible message boundary in direction
   const findNextVisibleMessage = (direction: "next" | "prev"): Option.Option<string> => {
     const children = scroll.getChildren()
-    const messagesList = messages()
+    const messagesList = transcript()
     const scrollTop = scroll.y
 
     // Get visible messages sorted by position, filtering for valid non-synthetic, non-ignored content
@@ -1281,17 +1299,23 @@ export function Session() {
     ),
   )
 
-  // snap to bottom when session changes
-  createEffect(on(() => route.sessionID, toBottom))
+  // A watched transcript shows no revert: revert belongs to the route's own session.
+  const shownRevert = createMemo(() => (watching() ? Option.none() : revert()))
+
+  // snap to bottom when the transcript on screen changes
+  createEffect(on(shownID, toBottom))
 
   return (
     <LocationProvider location={Option.getOrUndefined(location())}>
       <context.Provider
         value={{
+          // The watch frame takes one column on each side.
           get width() {
-            return contentWidth()
+            return contentWidth() - (watching() ? 2 : 0)
           },
-          sessionID: route.sessionID,
+          get sessionID() {
+            return shownID()
+          },
           conceal,
           thinkingMode,
           showThinking,
@@ -1307,134 +1331,152 @@ export function Session() {
         <box flexDirection="row" flexGrow={1} minHeight={0}>
           <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
             <Show when={session()}>
-              <scrollbox
-                ref={(r) => (scroll = r)}
-                viewportOptions={{
-                  paddingRight: showScrollbar() ? 1 : 0,
-                }}
-                verticalScrollbarOptions={{
-                  paddingLeft: 1,
-                  visible: showScrollbar(),
-                  trackOptions: {
-                    backgroundColor: theme.backgroundElement,
-                    foregroundColor: theme.border,
-                  },
-                }}
-                stickyScroll={true}
-                stickyStart="bottom"
-                flexGrow={1}
-                scrollAcceleration={scrollAcceleration()}
-              >
-                <box height={1} />
-                <For each={messages()}>
-                  {(message, index) => (
-                    <Switch>
-                      <Match
-                        when={Option.getOrUndefined(Option.filter(revert(), (value) => value.messageID === message.id))}
-                      >
-                        {(reverted) => {
-                          const redoShortcut = useCommandShortcut("session.redo")
-                          const [hover, setHover] = createSignal(false)
-                          const dialog = useDialog()
+              {/* While the route watches another session, a plugin says above the frame what is watched. */}
+              <Show when={route.watch}>
+                {(watch) => (
+                  <box flexShrink={0}>
+                    <pluginRuntime.Slot name="session_watch" session_id={route.sessionID} watch_id={watch()} />
+                  </box>
+                )}
+              </Show>
+              <WatchFrame when={watching()} color={theme.accent}>
+                <scrollbox
+                  ref={(r) => (scroll = r)}
+                  viewportOptions={{
+                    paddingRight: showScrollbar() ? 1 : 0,
+                  }}
+                  verticalScrollbarOptions={{
+                    paddingLeft: 1,
+                    visible: showScrollbar(),
+                    trackOptions: {
+                      backgroundColor: theme.backgroundElement,
+                      foregroundColor: theme.border,
+                    },
+                  }}
+                  stickyScroll={true}
+                  stickyStart="bottom"
+                  flexGrow={1}
+                  scrollAcceleration={scrollAcceleration()}
+                >
+                  <box height={1} />
+                  <For each={transcript()}>
+                    {(message, index) => (
+                      <Switch>
+                        <Match
+                          when={Option.getOrUndefined(
+                            Option.filter(shownRevert(), (value) => value.messageID === message.id),
+                          )}
+                        >
+                          {(reverted) => {
+                            const redoShortcut = useCommandShortcut("session.redo")
+                            const [hover, setHover] = createSignal(false)
+                            const dialog = useDialog()
 
-                          const handleUnrevert = () => {
-                            runSessionAction(
-                              Effect.gen(function* () {
-                                const confirmed = yield* Effect.promise(() =>
-                                  DialogConfirm.show(
-                                    dialog,
-                                    "Confirm Redo",
-                                    "Are you sure you want to restore the reverted messages?",
-                                  ),
-                                )
-                                if (confirmed) {
-                                  keymap.dispatchCommand("session.redo")
-                                }
-                              }),
-                            )
-                          }
+                            const handleUnrevert = () => {
+                              runSessionAction(
+                                Effect.gen(function* () {
+                                  const confirmed = yield* Effect.promise(() =>
+                                    DialogConfirm.show(
+                                      dialog,
+                                      "Confirm Redo",
+                                      "Are you sure you want to restore the reverted messages?",
+                                    ),
+                                  )
+                                  if (confirmed) {
+                                    keymap.dispatchCommand("session.redo")
+                                  }
+                                }),
+                              )
+                            }
 
-                          return (
-                            <box
-                              onMouseOver={() => setHover(true)}
-                              onMouseOut={() => setHover(false)}
-                              onMouseUp={handleUnrevert}
-                              marginTop={1}
-                              flexShrink={0}
-                              border={["left"]}
-                              customBorderChars={SplitBorder.customBorderChars}
-                              borderColor={theme.backgroundPanel}
-                            >
+                            return (
                               <box
-                                paddingTop={1}
-                                paddingBottom={1}
-                                paddingLeft={2}
-                                backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                                onMouseOver={() => setHover(true)}
+                                onMouseOut={() => setHover(false)}
+                                onMouseUp={handleUnrevert}
+                                marginTop={1}
+                                flexShrink={0}
+                                border={["left"]}
+                                customBorderChars={SplitBorder.customBorderChars}
+                                borderColor={theme.backgroundPanel}
                               >
-                                <text fg={theme.textMuted}>{reverted().reverted.length} message reverted</text>
-                                <text fg={theme.textMuted}>
-                                  <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
-                                </text>
-                                <Show when={reverted().diffFiles?.length}>
-                                  <box marginTop={1}>
-                                    <For each={reverted().diffFiles}>
-                                      {(file) => (
-                                        <text fg={theme.text}>
-                                          {file.filename}
-                                          <Show when={file.additions > 0}>
-                                            <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
-                                          </Show>
-                                          <Show when={file.deletions > 0}>
-                                            <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
-                                          </Show>
-                                        </text>
-                                      )}
-                                    </For>
-                                  </box>
-                                </Show>
+                                <box
+                                  paddingTop={1}
+                                  paddingBottom={1}
+                                  paddingLeft={2}
+                                  backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                                >
+                                  <text fg={theme.textMuted}>{reverted().reverted.length} message reverted</text>
+                                  <text fg={theme.textMuted}>
+                                    <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
+                                  </text>
+                                  <Show when={reverted().diffFiles?.length}>
+                                    <box marginTop={1}>
+                                      <For each={reverted().diffFiles}>
+                                        {(file) => (
+                                          <text fg={theme.text}>
+                                            {file.filename}
+                                            <Show when={file.additions > 0}>
+                                              <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
+                                            </Show>
+                                            <Show when={file.deletions > 0}>
+                                              <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
+                                            </Show>
+                                          </text>
+                                        )}
+                                      </For>
+                                    </box>
+                                  </Show>
+                                </box>
                               </box>
-                            </box>
-                          )
-                        }}
-                      </Match>
-                      <Match
-                        when={Option.isSome(revert()) && revertMessageIndex() !== -1 && index() >= revertMessageIndex()}
-                      >
-                        <></>
-                      </Match>
-                      <Match when={message.role === "user" && message}>
-                        {(user) => (
-                          <UserMessage
-                            index={index()}
-                            onMouseUp={() => {
-                              if (renderer.getSelection()?.getSelectedText()) return
-                              dialog.replace(() => (
-                                <DialogMessage
-                                  messageID={message.id}
-                                  sessionID={route.sessionID}
-                                  setPrompt={(promptInfo) => prompt?.set(promptInfo)}
-                                />
-                              ))
-                            }}
-                            message={user()}
-                            parts={sync.data.part[message.id] ?? []}
-                            pending={pending()}
-                          />
-                        )}
-                      </Match>
-                      <Match when={message.role === "assistant" && message}>
-                        {(assistant) => (
-                          <AssistantMessage
-                            last={lastAssistant()?.id === message.id}
-                            message={assistant()}
-                            parts={sync.data.part[message.id] ?? []}
-                          />
-                        )}
-                      </Match>
-                    </Switch>
-                  )}
-                </For>
-              </scrollbox>
+                            )
+                          }}
+                        </Match>
+                        <Match
+                          when={
+                            Option.isSome(shownRevert()) &&
+                            revertMessageIndex() !== -1 &&
+                            index() >= revertMessageIndex()
+                          }
+                        >
+                          <></>
+                        </Match>
+                        <Match when={message.role === "user" && message}>
+                          {(user) => (
+                            <UserMessage
+                              index={index()}
+                              onMouseUp={() => {
+                                if (renderer.getSelection()?.getSelectedText()) return
+                                // The message actions (revert, copy, fork) act on the route's own session.
+                                if (watching()) return
+                                dialog.replace(() => (
+                                  <DialogMessage
+                                    messageID={message.id}
+                                    sessionID={route.sessionID}
+                                    setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                                  />
+                                ))
+                              }}
+                              message={user()}
+                              parts={sync.data.part[message.id] ?? []}
+                              pending={pending()}
+                            />
+                          )}
+                        </Match>
+                        <Match when={message.role === "assistant" && message}>
+                          {(assistant) => (
+                            <AssistantMessage
+                              last={lastAssistant()?.id === message.id}
+                              message={assistant()}
+                              parts={sync.data.part[message.id] ?? []}
+                            />
+                          )}
+                        </Match>
+                      </Switch>
+                    )}
+                  </For>
+                </scrollbox>
+              </WatchFrame>
               <box flexShrink={0}>
                 <Show when={permissions().length > 0}>
                   <PermissionPrompt
@@ -1500,6 +1542,21 @@ export function Session() {
         </box>
       </context.Provider>
     </LocationProvider>
+  )
+}
+
+/**
+ * The double border around a watched transcript. Without `when`, the children render as they are, with no box around
+ * them: opentui draws a border as soon as a box has a border style or colour, so the frame exists only while watching.
+ * Toggling it builds the children again.
+ */
+function WatchFrame(props: { when: boolean; color: RGBA; children: JSX.Element }) {
+  return (
+    <Show when={props.when} fallback={props.children}>
+      <box flexGrow={1} minHeight={0} border borderStyle="double" borderColor={props.color}>
+        {props.children}
+      </box>
+    </Show>
   )
 }
 

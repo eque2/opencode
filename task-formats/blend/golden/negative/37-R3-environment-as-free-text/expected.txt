@@ -1,0 +1,1 @@
+R3 acceptance/S51.md: environment: 'the service deployed to its hosting environment, with the configuration store selected' is not of type 'object'

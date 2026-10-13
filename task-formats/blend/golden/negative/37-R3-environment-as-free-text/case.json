@@ -1,0 +1,6 @@
+{
+  "rule": "R3",
+  "name": "environment as free text",
+  "exit": 1,
+  "delete": []
+}

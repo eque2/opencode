@@ -59,6 +59,11 @@ export type TuiRouteCurrent =
       params: {
         sessionID: string
         prompt?: unknown
+        /**
+         * Another session whose transcript the session screen shows in place of its own, framed and watch only.
+         * The prompt, the footer and every session command stay bound to `sessionID`.
+         */
+        watch?: string
       }
     }
   | {
@@ -469,6 +474,11 @@ export type TuiHostSlotMap = {
   }
   session_prompt_right: {
     session_id: string
+  }
+  /** Above the transcript while the session route watches another session (`watch`); never rendered otherwise. */
+  session_watch: {
+    session_id: string
+    watch_id: string
   }
   home_bottom: {}
   home_footer: {}
