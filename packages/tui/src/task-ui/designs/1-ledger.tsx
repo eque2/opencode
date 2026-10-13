@@ -41,9 +41,6 @@ export function LedgerView(props: ViewProps & { width: number }) {
               {cut(status().run.reason ?? "", props.width * 3)}
             </text>
           </Show>
-          <text fg={props.theme().textMuted} wrapMode="none">
-            {cut(`${props.leader} o peek · ${props.leader} j/k task`, props.width)}
-          </text>
           <Show when={props.view.expanded() && props.view.selected()} keyed>
             {(unit) => (
               <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={props.width} lines={3} />

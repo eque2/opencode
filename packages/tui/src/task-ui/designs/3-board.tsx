@@ -1,8 +1,8 @@
 // Design 3, Board: a full-screen kanban. One column for each stage of the harness's work, one card for each task;
 // the peek opens on the right.
 import { For, Show } from "solid-js"
-import { cut, glyph, obligationsOf, stateColor, type Row } from "../store"
-import { stateText, type ViewProps } from "../ui"
+import { cut, glyph, label, obligationsOf, stateColor, type Row } from "../store"
+import { attemptText, type ViewProps } from "../ui"
 
 const COLUMNS = [
   { name: "WAITING", states: ["waiting"] },
@@ -61,8 +61,13 @@ function Card(props: ViewProps & { row: Row; width: number }) {
         <b>{cut(`${glyph(props.row.task.state)} ${props.row.id}`, inner())}</b>
       </text>
       <text fg={props.theme().textMuted} wrapMode="none">
-        {cut(stateText(props.row), inner())}
+        {cut(label(props.row.task.state), inner())}
       </text>
+      <Show when={attemptText(props.row)}>
+        <text fg={props.theme().textMuted} wrapMode="none">
+          {attemptText(props.row)}
+        </text>
+      </Show>
       <Show when={proofs().length > 0}>
         <text fg={props.theme().text} wrapMode="none">
           {cut(`proofs ${proofs().filter((item) => item.state === "trusted").length}/${proofs().length}`, inner())}

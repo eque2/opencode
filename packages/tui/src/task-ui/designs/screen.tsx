@@ -33,7 +33,7 @@ export function Screen(props: ViewProps & { width: number; height: number }) {
                 <b>{name()}</b>
               </text>
               <text fg={props.theme().textMuted} wrapMode="none">
-                {`${status().run.spec} · ${runText(status())}`}
+                {`${status().run.spec.split("/").at(-1)} · ${runText(status())}`}
               </text>
               <box flexGrow={1} />
               <text fg={props.theme().success} wrapMode="none">
@@ -132,24 +132,4 @@ export function registerScreen(ctx: Ctx) {
     },
   ])
 
-  // In the session, the full-screen designs show only a hint next to the prompt.
-  ctx.api.slots.register({
-    order: 50,
-    slots: {
-      session_prompt_right() {
-        return (
-          <Show when={ctx.active() && SCREENS[ctx.view.design()] && ctx.view.status()}>
-            {(status) => (
-              <text wrapMode="none">
-                <Brand theme={ctx.theme} />
-                <span style={{ fg: ctx.theme().textMuted }}>
-                  {` ${trustedText(status())} · ${ctx.leader} o ${DESIGNS.find((design) => design.id === ctx.view.design())?.name.toLowerCase()}`}
-                </span>
-              </text>
-            )}
-          </Show>
-        )
-      },
-    },
-  })
 }

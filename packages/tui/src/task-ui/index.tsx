@@ -4,9 +4,10 @@
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 import { Clock, Effect, Option } from "effect"
 import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import { liveSessions } from "./peek"
 import { DESIGNS, createView, parse, poll, statusFile, type Status } from "./store"
-import { leaderOf, type Ctx } from "./ui"
+import { ShortcutBar, leaderOf, type Ctx } from "./ui"
 import { registerLedger } from "./designs/1-ledger"
 import { registerDock } from "./designs/2-dock"
 import { registerHud } from "./designs/6-hud"
@@ -65,6 +66,16 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   registerScreen({ ...base, active: () => true })
   registerHud(ctx(6))
   registerTicker(ctx(7))
+  // One shortcut bar for every design, at the bottom right of the input box.
+  api.slots.register({
+    order: 50,
+    slots: {
+      session_prompt_right() {
+        const dimensions = useTerminalDimensions()
+        return <ShortcutBar {...base} width={dimensions().width} />
+      },
+    },
+  })
 
   // Every switch says where the new design shows, so a one-line design is never hard to find.
   const announce = () => {

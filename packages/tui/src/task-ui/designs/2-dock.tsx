@@ -61,10 +61,6 @@ export function DockView(props: ViewProps & { width: number }) {
                 </>
               )}
             </Show>
-            <box flexGrow={1} />
-            <text fg={props.theme().textMuted} wrapMode="none" flexShrink={0}>
-              {`${props.leader} o peek`}
-            </text>
           </box>
         </box>
       )}

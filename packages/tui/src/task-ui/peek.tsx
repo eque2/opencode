@@ -98,8 +98,9 @@ const describe = (input: Record<string, unknown>) =>
   ) ?? ""
 
 /**
- * The peek for one task. `width` is the outer width; `lines` is how many activity lines each session shows.
- * The double accent border and the HARNESS title are the distinction from opencode's own subagent rows.
+ * A task's details: what its builder did, what its proofs found, what its verifier decided. `width` is the outer
+ * width; `lines` is how many lines each section shows. The double accent border and the HARNESS title are the
+ * distinction from opencode's own subagent rows.
  */
 export function Peek(props: {
   theme: Accessor<TuiThemeCurrent>
@@ -122,9 +123,9 @@ export function Peek(props: {
     return status ? obligationsOf(status, props.unit) : []
   })
   const open = createMemo(() => proofs().toSorted(bySeverity))
-  // opentui drops a border title that does not fit, so a narrow peek gets the short one; both say read-only.
+  // opentui drops a border title that does not fit, so a narrow panel gets the short one; both say read-only.
   const title = () =>
-    props.width >= 48 ? ` ◆ HARNESS · peek ${props.unit} · read-only ` : ` ◆ HARNESS peek ${props.unit} read-only `
+    props.width >= 48 ? ` ◆ HARNESS · ${props.unit} details · read-only ` : ` ◆ ${props.unit} details · read-only `
 
   return (
     <box
@@ -139,17 +140,17 @@ export function Peek(props: {
       flexShrink={0}
       alignSelf="flex-start"
     >
-      <Heading theme={props.theme} name="BUILD" text={builderText()} width={inner()} />
+      <Heading theme={props.theme} name="BUILDER" text={builderText()} width={inner()} />
       <Show
         when={builderID()}
         keyed
-        fallback={<Muted theme={props.theme} text="no builder yet" width={inner()} />}
+        fallback={<Muted theme={props.theme} text="no builder session yet" width={inner()} />}
       >
         {(id) => (
           <Activity theme={props.theme} sessions={props.sessions} sessionID={id} width={inner()} lines={props.lines} />
         )}
       </Show>
-      <Heading theme={props.theme} name="PROOF" text={proofText()} width={inner()} />
+      <Heading theme={props.theme} name="PROOFS" text={proofText()} width={inner()} />
       <For each={open().slice(0, props.lines)}>
         {(item) => (
           <text fg={stateColor(props.theme(), item.state)} wrapMode="none">
@@ -157,11 +158,11 @@ export function Peek(props: {
           </text>
         )}
       </For>
-      <Heading theme={props.theme} name="VERIFY" text={verifierText()} width={inner()} />
+      <Heading theme={props.theme} name="VERIFIER" text={verifierText()} width={inner()} />
       <Show
         when={verifierID()}
         keyed
-        fallback={<Muted theme={props.theme} text="no verifier yet" width={inner()} />}
+        fallback={<Muted theme={props.theme} text="no verifier session yet" width={inner()} />}
       >
         {(id) => (
           <Activity theme={props.theme} sessions={props.sessions} sessionID={id} width={inner()} lines={props.lines} />
@@ -172,14 +173,15 @@ export function Peek(props: {
 
   function builderText() {
     const current = task()
-    const child = builder()
-    if (!child) return current ? label(current.state) : ""
-    return `${sessionText(child)}${current ? ` · attempt ${current.attempts} · ${label(current.state)}` : ""}`
+    if (!current) return ""
+    return [current.attempts > 0 ? `attempt ${current.attempts}` : "", label(current.state)].filter(Boolean).join(" · ")
   }
 
+  // A parent task is judged by a reviewer; a verifier asked a second time is marked.
   function verifierText() {
     const child = verifier()
-    return child ? sessionText(child) : ""
+    if (!child) return ""
+    return [child.role === "reviewer" ? "parent review" : "", child.again ? "second try" : ""].filter(Boolean).join(" · ")
   }
 
   function proofText() {
@@ -188,19 +190,15 @@ export function Peek(props: {
     const failed = list.filter((item) => tone(item.state) === "bad").length
     return `${list.length} obligations · ${trusted} trusted${failed ? ` · ${failed} failed` : ""}`
   }
-
-  function sessionText(child: Child) {
-    return `${props.unit} ${child.role}${child.again ? " (again)" : ""}`
-  }
 }
 
 function Heading(props: { theme: Accessor<TuiThemeCurrent>; name: string; text: string; width: number }) {
   return (
     <text wrapMode="none">
       <b>
-        <span style={{ fg: props.theme().accent }}>{props.name.padEnd(7)}</span>
+        <span style={{ fg: props.theme().accent }}>{props.name.padEnd(9)}</span>
       </b>
-      <span style={{ fg: props.theme().text }}>{cut(props.text, props.width - 7)}</span>
+      <span style={{ fg: props.theme().text }}>{cut(props.text, props.width - 9)}</span>
     </text>
   )
 }

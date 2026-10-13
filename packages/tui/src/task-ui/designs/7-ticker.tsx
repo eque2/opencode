@@ -1,9 +1,9 @@
-// Design 7, Ticker: the quietest. One line beside the prompt, a toast when a task changes state, a notification when
-// the run ends, and the peek as a dialog over the session.
+// Design 7, Ticker: the quietest. Its line is the status part of the shortcut bar beside the prompt; it adds a toast
+// when a task changes state, a notification when the run ends, and expands to a dialog over the session.
 import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
-import { ENDED, glyph, label, stateColor, tone, type Status } from "../store"
-import { Brand, TaskLine, trustedText, type Ctx, type ViewProps } from "../ui"
+import { ENDED, label, tone, type Status } from "../store"
+import { Brand, TaskLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
 const PEEK = 72
@@ -15,27 +15,6 @@ export const changes = (before: Status, after: Status) => [
     before.tasks[id]?.state === task.state ? [] : [{ unit: id, from: before.tasks[id]?.state, to: task.state }],
   ),
 ]
-
-export function TickerText(props: ViewProps) {
-  const selected = () => props.view.rows().find((row) => row.id === props.view.selected())
-  return (
-    <Show when={props.view.status()}>
-      {(status) => (
-        <text wrapMode="none">
-          <Brand theme={props.theme} />
-          <span style={{ fg: props.theme().textMuted }}>{` ${trustedText(status())}`}</span>
-          <Show when={selected()}>
-            {(row) => (
-              <span style={{ fg: stateColor(props.theme(), row().task.state) }}>
-                {` · ${glyph(row().task.state)} ${row().id} ${label(row().task.state)}`}
-              </span>
-            )}
-          </Show>
-        </text>
-      )}
-    </Show>
-  )
-}
 
 export function TickerDialog(props: ViewProps) {
   return (
@@ -58,7 +37,7 @@ export function TickerDialog(props: ViewProps) {
           )}
         </For>
         <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
-          j/k task · esc close
+          j/k select task · esc collapse
         </text>
       </box>
       <Show when={props.view.selected()} keyed>
@@ -69,19 +48,6 @@ export function TickerDialog(props: ViewProps) {
 }
 
 export function registerTicker(ctx: Ctx) {
-  ctx.api.slots.register({
-    order: 50,
-    slots: {
-      session_prompt_right() {
-        return (
-          <Show when={ctx.active()}>
-            <TickerText theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} />
-          </Show>
-        )
-      },
-    },
-  })
-
   // A toast for each change, at most three at a time; the first snapshot is the baseline, not news.
   createEffect(
     on(ctx.view.status, (after, before) => {

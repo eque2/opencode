@@ -1,11 +1,11 @@
 // Design 5, Gantt: the run as time. One lane per task, coloured by its state over time from the status history, so
 // a retry loop or a long wait shows as a shape, not a number.
 import { For, createMemo } from "solid-js"
-import { ENDED, cut, elapsed, glyph, label, stateColor, type Status } from "../store"
-import { treePrefix, type ViewProps } from "../ui"
+import { ENDED, cut, elapsed, glyph, stateColor, type Status } from "../store"
+import { stateText, treePrefix, type ViewProps } from "../ui"
 
 const LABEL = 11
-const RIGHT = 20
+const RIGHT = 30
 
 // The three working stages get their own block, so a build-prove-build retry loop is visible; every other state is
 // a full block in its colour.
@@ -75,7 +75,7 @@ export function GanttView(props: ViewProps & { width: number }) {
                 )}
               </For>
               <span style={{ fg: props.theme().textMuted }}>
-                {` ${cut(`${label(row.task.state)}${row.task.attempts > 1 ? ` ×${row.task.attempts}` : ""}`, RIGHT - 1)}`}
+                {` ${cut(stateText(row), RIGHT - 1)}`}
               </span>
             </text>
           )

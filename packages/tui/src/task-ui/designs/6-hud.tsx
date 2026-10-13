@@ -6,7 +6,7 @@ import { bar, counts, cut, elapsed, glyph, stateColor } from "../store"
 import { Brand, runText, stateText, trustedText, type Ctx, type ViewProps } from "../ui"
 import { span } from "./5-gantt"
 
-const WIDTH = 40
+const WIDTH = 44
 const PEEK = 64
 
 export function HudView(props: ViewProps) {
@@ -47,10 +47,7 @@ export function HudView(props: ViewProps) {
               )}
             </Show>
             <text fg={props.theme().textMuted} wrapMode="none">
-              {cut(
-                `${elapsed(span(status(), props.view.now()).end - span(status(), props.view.now()).start)} · ${props.leader} o peek · ${props.leader} j/k`,
-                inner,
-              )}
+              {`elapsed ${elapsed(span(status(), props.view.now()).end - span(status(), props.view.now()).start)}`}
             </text>
           </box>
           <Show when={props.view.expanded() && props.view.selected()} keyed>
