@@ -682,7 +682,10 @@ const checkDone = Effect.fnUntraced(function* (run: Run) {
     const current = state.scenarios[scenario.id]?.state
     return current === "failed" || current === "rejected"
   })
-  if (unproved.length === 0) return yield* record(run, { type: "run.ended", at: yield* now, state: "done" })
+  if (unproved.length === 0) {
+    yield* record(run, { type: "run.ended", at: yield* now, state: "done" })
+    return
+  }
   const reason = `acceptance not proved: ${unproved.map((scenario) => `${scenario.id} ${state.scenarios[scenario.id]?.state}`).join(", ")}`
   yield* record(run, { type: "run.ended", at: yield* now, state: "failed", reason })
 })

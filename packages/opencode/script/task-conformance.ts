@@ -206,7 +206,7 @@ async function waitForQuietMachine() {
       .filter((pid) => pid !== process.pid && pid !== process.ppid)
     // ponytail: quiet also means the 1-minute load average is under 80% of the cores; the scripted bounds are
     // seconds long, so a loaded machine turns them into flakes. Raise the share if a busy host never qualifies.
-    const busy = os.loadavg()[0]! > os.cpus().length * 0.8
+    const busy = os.loadavg()[0] > os.cpus().length * 0.8
     if (foreign.length === 0 && !busy) {
       quiet = true
       break

@@ -19,7 +19,8 @@ const isEngine = (value: unknown): value is Engine =>
 // The first export of the module that is an engine named `xstate`.
 const xstate = Effect.tryPromise({
   try: (): Promise<unknown> => import(XSTATE),
-  catch: (cause) => cause,
+  // The cause is dropped below (a missing engine is `none`), so a typed marker is all the channel needs.
+  catch: () => "engine-unavailable" as const,
 }).pipe(
   Effect.map((module) =>
     Predicate.isObject(module)
