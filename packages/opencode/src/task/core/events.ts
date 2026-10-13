@@ -4,7 +4,7 @@ import type { Database } from "@opencode-ai/core/database/database"
 import { Event } from "@opencode-ai/schema/event"
 import type { Engine, Fact, Plan, RunState, State } from "./model"
 
-// The durable store of the in-core harness. Every fact of a run is one EventV2 event on the run's own aggregate,
+// The durable store of the task harness. Every fact of a run is one EventV2 event on the run's own aggregate,
 // `task_<16 hex>`, never on a session aggregate: a session's event stream must not carry harness facts. The
 // `outside` preconditions that `/task trust` records live on a second aggregate per directory, `taskdir_<16 hex>`,
 // because they may be recorded before any run exists.

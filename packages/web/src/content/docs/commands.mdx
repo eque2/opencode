@@ -317,7 +317,7 @@ This is an **optional** config option.
 opencode includes several built-in commands like `/init`, `/undo`, `/redo`, `/share`, `/help`; [learn more](/docs/tui#commands).
 
 :::note
-Custom commands can override built-in commands.
+Custom commands can override built-in commands, except `/task`.
 :::
 
-If you define a custom command with the same name, it will override the built-in command.
+If you define a custom command with the same name, it will override the built-in command. The one exception is `/task`: it runs the task harness in code, and a custom command, MCP prompt or skill named `task` is skipped with a warning in the log.

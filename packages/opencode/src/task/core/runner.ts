@@ -28,8 +28,8 @@ import { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
 import { TaskWorkspace } from "./workspace"
 
-// The in-core task harness runner. One run per (directory, spec folder): it records every fact as a durable event,
-// folds it through the selected engine, projects the state to the status file, and drives the builders, the proofs,
+// The task harness runner. One run per (directory, spec folder): it records every fact as a durable event,
+// folds it through the engine, projects the state to the status file, and drives the builders, the proofs,
 // the verifiers, the merges, the parent review and the scenarios. It never changes state except by recording a
 // fact; a resume is the same fold over the stored facts.
 

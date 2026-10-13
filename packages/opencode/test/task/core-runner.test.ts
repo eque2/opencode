@@ -5,7 +5,7 @@ import type { History } from "@/task/core/model"
 import { TaskRunner } from "@/task/core/runner"
 import type { TaskProof } from "@/task/proof"
 
-// The pure parts of the in-core harness runner: no server, no model.
+// The pure parts of the task harness runner: no server, no model.
 
 const entry = (at: number, unit: string, from: string, to: string): History => ({ at, unit, from, to })
 
