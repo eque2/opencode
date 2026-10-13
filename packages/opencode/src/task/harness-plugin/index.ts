@@ -29,6 +29,7 @@ import { HarnessRegistry } from "./registry"
 //   command.execute.before   `/task`: refuses, starts or resumes a run, or records `/task trust <id>` (`./command`)
 //   tool.execute.before      stops a builder at its 3rd identical call in a row
 //   event                    notes stream activity; an abort of a run's root session cancels the run
+//   dispose                  stops the runs of a disposed root instance, resumable
 //
 // The plugin stays inert when `OPENCODE_TASK_HARNESS` selects an in-core option (o1, o2).
 
@@ -60,6 +61,10 @@ const STOP_BOUND = Duration.seconds(5)
 const TOAST_BOUND = Duration.seconds(1)
 
 const hooks = (input: PluginInput): Hooks => ({
+  // The instance of a run's root checkout goes away (the server stops): its runs stop and stay resumable, so a
+  // worker that fails while the server shuts down never records a failure.
+  dispose: () =>
+    run(Effect.forEach(HarnessRegistry.runsIn(input.directory), (active) => active.halt, { discard: true })),
   config: (cfg) =>
     run(
       Effect.sync(() => {

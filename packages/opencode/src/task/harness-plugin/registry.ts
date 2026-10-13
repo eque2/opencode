@@ -97,6 +97,8 @@ export interface ActiveRun {
   readonly trust: (id: string) => Effect.Effect<void>
   /** Cancels the run: its child sessions are aborted and the run ends `cancelled`. */
   readonly cancel: Effect.Effect<void>
+  /** Stops the run without recording anything, so a later `/task` resumes it; waits (bounded) until it stopped. */
+  readonly halt: Effect.Effect<void>
 }
 
 const runs = MutableHashMap.empty<string, ActiveRun>()

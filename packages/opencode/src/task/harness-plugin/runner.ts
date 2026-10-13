@@ -67,8 +67,12 @@ interface Run extends Start {
   readonly children: MutableHashMap.MutableHashMap<string, string>
   readonly failures: MutableHashMap.MutableHashMap<string, number>
   readonly stopping: Ref.Ref<boolean>
-  /** Completed when the root session is aborted. */
+  /** Completed when the root session is aborted: the run ends `cancelled`. */
   readonly cancelled: Deferred.Deferred<void>
+  /** Completed when the root instance is disposed (the server stops): the run stops and stays resumable. */
+  readonly halted: Deferred.Deferred<void>
+  /** Completed when the run has stopped, however it ended. */
+  readonly finished: Deferred.Deferred<void>
 }
 
 type Workers = FiberMap.FiberMap<string>
@@ -700,6 +704,8 @@ const schedule = Effect.fnUntraced(function* (run: Run, workers: Workers) {
 })
 
 const TICK = Duration.millis(250)
+// How long a halt waits for the run to stop its workers and child turns.
+const HALT_BOUND = Duration.seconds(3)
 const STALE_EVERY = 4
 
 const loop = Effect.fnUntraced(function* (run: Run, workers: Workers) {
@@ -762,6 +768,8 @@ export const run = Effect.fn("HarnessRunner.run")(function* (start: Start) {
     failures: MutableHashMap.empty(),
     stopping: yield* Ref.make(false),
     cancelled: yield* Deferred.make<void>(),
+    halted: yield* Deferred.make<void>(),
+    finished: yield* Deferred.make<void>(),
   }
   const trust = (outside: string) =>
     Effect.gen(function* () {
@@ -772,11 +780,12 @@ export const run = Effect.fn("HarnessRunner.run")(function* (start: Start) {
     yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at })
     yield* Effect.forEach(HarnessLog.directoryTrust(entries), trust, { discard: true })
     const workers = yield* FiberMap.make<string>()
-    const stopped = yield* loop(self, workers).pipe(
-      Effect.as(false),
-      Effect.raceFirst(Deferred.await(self.cancelled).pipe(Effect.as(true))),
+    const ending = yield* loop(self, workers).pipe(
+      Effect.as("ended" as const),
+      Effect.raceFirst(Deferred.await(self.cancelled).pipe(Effect.as("cancelled" as const))),
+      Effect.raceFirst(Deferred.await(self.halted).pipe(Effect.as("halted" as const))),
     )
-    if (stopped) yield* cancel(self, workers)
+    if (ending === "cancelled") yield* cancel(self, workers)
     else yield* stopWork(self, workers)
     return (yield* Ref.get(self.state)).run.state
   })
@@ -791,8 +800,17 @@ export const run = Effect.fn("HarnessRunner.run")(function* (start: Start) {
         Effect.catch((error) => Effect.logWarning("task harness o3: the trust record failed", { error: error.message })),
       ),
     cancel: Deferred.done(self.cancelled, Exit.void).pipe(Effect.asVoid),
+    halt: Deferred.done(self.halted, Exit.void).pipe(
+      Effect.andThen(Deferred.await(self.finished)),
+      Effect.timeoutOption(HALT_BOUND),
+      Effect.asVoid,
+    ),
   })
-  return yield* Effect.scoped(body).pipe(Effect.ensuring(Effect.sync(() => HarnessRegistry.unregister(key))))
+  return yield* Effect.scoped(body).pipe(
+    Effect.ensuring(
+      Effect.sync(() => HarnessRegistry.unregister(key)).pipe(Effect.andThen(Deferred.done(self.finished, Exit.void))),
+    ),
+  )
 })
 
 export * as HarnessRunner from "./runner"
