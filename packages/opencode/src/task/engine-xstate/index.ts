@@ -85,6 +85,13 @@ const phantom = <C, E, I = undefined>(): Phantom<C, E, I> => ({})
 /** The run's unit id in `history`. */
 const RUN = "run"
 
+/**
+ * Where a rebuild puts a unit whose `State` value its machine does not name: only a `State` that the fold never
+ * made holds one. `resolveState` fails on such a value, and the table engine ignores the facts it has no row for,
+ * so each machine has an `other` state with no rows for the unit's own facts.
+ */
+const OTHER = "other"
+
 // --- reads shared by the guards and actions ----------------------------------------------------------------------
 
 const resultOf = (event: TaskEvent, id: string): Result | undefined => {
@@ -204,6 +211,8 @@ export const obligationMachine = setup({
     stale: {
       on: { "task.proved": [...proofRows("stale"), reviewRow("stale")], "task.verified": verdictRows("stale") },
     },
+    // A state that `State` names and this machine does not (see `OTHER`): it takes no event.
+    other: {},
   },
 })
 
@@ -274,18 +283,20 @@ const taskReason = (context: TaskContext, event: TaskEvent, to: TaskState) => {
 }
 
 // One obligation's machine snapshot, from its slot.
-const obligationSnapshot = (slot: Slot) =>
-  obligationMachine.resolveState({
-    value: slot.state,
-    context: { id: slot.id, hash: slot.hash, reason: slot.reason, review: slot.review, log: [] },
-  })
+const obligationSnapshot = (slot: Slot) => {
+  const context = { id: slot.id, hash: slot.hash, reason: slot.reason, review: slot.review, log: [] }
+  return obligationMachine
+    .resolveState({ value: slot.state, context })
+    .pipe(Effect.catch(() => obligationMachine.resolveState({ value: OTHER, context })))
+}
 
 // One obligation's move: its machine's snapshot from the slot, the pure transition, the slot and log after it.
 const stepObligation = (slot: Slot, event: TaskEvent) =>
   Effect.gen(function* () {
     const snapshot = yield* obligationSnapshot(slot)
     const [next] = yield* transition(obligationMachine, snapshot, event)
-    if (next.context.log.length === 0) return { slot, log: [] }
+    // `other` takes no event, so a step that moved the obligation never ends there.
+    if (next.context.log.length === 0 || next.value === OTHER) return { slot, log: [] }
     const moved: Slot = { ...slot, state: next.value, hash: next.context.hash, reason: next.context.reason }
     return { slot: moved, log: next.context.log }
   }).pipe(Effect.orDie)
@@ -451,6 +462,9 @@ export const taskMachine = setup({
         budget_exhausted: { type: "final" },
         cancelled: { type: "final" },
         failed: { type: "final" },
+        // A state that `State` names and this machine does not (see `OTHER`): the task takes no fact, while the
+        // evidence region still moves its obligations on a staleness fact.
+        other: {},
       },
     },
   },
@@ -509,12 +523,19 @@ export const scenarioMachine = setup({
     trusted: { type: "final" },
     rejected: { type: "final" },
     failed: { type: "final" },
+    // A state that `State` names and this machine does not (see `OTHER`): it takes no event.
+    other: {},
   },
 })
 
 // --- the run machine ---------------------------------------------------------------------------------------------
 
 interface RunContext {
+  /**
+   * The run's state as `State` holds it when the step starts: the `from` of the run's history entry, also for a
+   * value that the machine does not name.
+   */
+  readonly from: string
   readonly reason?: string
   readonly log: ReadonlyArray<History>
 }
@@ -536,37 +557,37 @@ const runWhy = (event: RunEvent): { readonly reason?: string; readonly noted?: s
   }
 }
 
-const runMove = (from: RunState, to: RunState) => ({ type: "enter", params: { from, to } }) as const
+const runMove = (to: RunState) => ({ type: "enter", params: { to } }) as const
 
-// A live run (running or waiting): the run facts, an outside trust, and the task end states the run follows.
-const live = (from: RunState) =>
-  ({
-    "run.started": { target: "running", actions: runMove(from, "running") },
-    "run.resumed": { target: "running", actions: runMove(from, "running") },
-    "run.ended": [
-      { guard: "endedDone", target: "done", actions: runMove(from, "done") },
-      { target: "failed", actions: runMove(from, "failed") },
-    ],
-    "run.cancelled": { target: "cancelled", actions: runMove(from, "cancelled") },
-    "outside.trusted": { actions: "trustOutside" },
-    "task.moved": [
-      {
-        guard: { type: "taskReached", params: { state: "needs_human" } },
-        target: "needs_human",
-        actions: runMove(from, "needs_human"),
-      },
-      {
-        guard: { type: "taskReached", params: { state: "budget_exhausted" } },
-        target: "budget_exhausted",
-        actions: runMove(from, "budget_exhausted"),
-      },
-      {
-        guard: { type: "taskReached", params: { state: "failed" } },
-        target: "failed",
-        actions: runMove(from, "failed"),
-      },
-    ],
-  }) as const
+// What a run that has not ended takes in any state: an outside trust, and the task end states it follows.
+const follows = {
+  "outside.trusted": { actions: "trustOutside" },
+  "task.moved": [
+    {
+      guard: { type: "taskReached", params: { state: "needs_human" } },
+      target: "needs_human",
+      actions: runMove("needs_human"),
+    },
+    {
+      guard: { type: "taskReached", params: { state: "budget_exhausted" } },
+      target: "budget_exhausted",
+      actions: runMove("budget_exhausted"),
+    },
+    { guard: { type: "taskReached", params: { state: "failed" } }, target: "failed", actions: runMove("failed") },
+  ],
+} as const
+
+// A live run (running or waiting): the run facts too.
+const live = {
+  "run.started": { target: "running", actions: runMove("running") },
+  "run.resumed": { target: "running", actions: runMove("running") },
+  "run.ended": [
+    { guard: "endedDone", target: "done", actions: runMove("done") },
+    { target: "failed", actions: runMove("failed") },
+  ],
+  "run.cancelled": { target: "cancelled", actions: runMove("cancelled") },
+  ...follows,
+} as const
 
 /** The run. Its end states are final: a run in one of them takes no event, and nothing else changes either. */
 export const runMachine = setup({
@@ -577,9 +598,9 @@ export const runMachine = setup({
       event.type === "task.moved" && event.state === params.state,
   },
   actions: {
-    enter: assign(({ context, event }, move: Move<RunState>) => {
+    enter: assign(({ context, event }, move: { readonly to: RunState }) => {
       const why = runWhy(event)
-      return { reason: why.reason, log: [...context.log, entry(event.at, RUN, move.from, move.to, why.noted)] }
+      return { reason: why.reason, log: [...context.log, entry(event.at, RUN, context.from, move.to, why.noted)] }
     }),
     /** An `outside` precondition the state store records as trusted: a history entry, no state change. */
     trustOutside: assign(({ context, event }) =>
@@ -590,17 +611,20 @@ export const runMachine = setup({
   },
 }).createMachine({
   id: "run",
-  context: { log: [] },
+  context: { from: "running", log: [] },
   initial: "running",
   states: {
-    running: { on: live("running") },
-    waiting: { on: live("waiting") },
+    running: { on: live },
+    waiting: { on: live },
     refused: { type: "final" },
     done: { type: "final" },
     cancelled: { type: "final" },
     needs_human: { type: "final" },
     budget_exhausted: { type: "final" },
     failed: { type: "final" },
+    // A state that `State` names and this machine does not (see `OTHER`): like the table engine, it takes no run
+    // fact, yet records an outside trust and follows a task into an end state.
+    other: { on: follows },
   },
 })
 
@@ -612,10 +636,10 @@ const runPure = <A>(effect: Effect.Effect<A, unknown>): A => Effect.runSync(Effe
 
 const appended = (state: State, log: ReadonlyArray<History>): ReadonlyArray<History> => [...state.history, ...log]
 
-// The work region's state after a macrostep. `judging` is transient: its last row has no guard, so no macrostep
-// ends in it.
-const settled = (work: TaskState | "judging"): Effect.Effect<TaskState> =>
-  work === "judging" ? Effect.die("the task machine ended a step in `judging`") : Effect.succeed(work)
+// A unit's state after a step that moved it, or at the start: never `other`, which no row enters, nor the work
+// region's transient `judging`, whose last row has no guard.
+const settled = <S extends string>(value: S | typeof OTHER | "judging"): Effect.Effect<S> =>
+  value === OTHER || value === "judging" ? Effect.die(`a machine ended a step in \`${value}\``) : Effect.succeed(value)
 
 const isReview = (plan: Plan, id: string) =>
   plan.spec.obligations.some((obligation) => obligation.id === id && obligation.proof.kind === "review")
@@ -645,8 +669,12 @@ const taskFields = (context: TaskContext): Partial<TaskModel> => ({
   ...(context.session === undefined ? {} : { session: context.session }),
 })
 
-const runSnapshot = (state: State) =>
-  runMachine.resolveState({ value: state.run.state, context: { reason: state.run.reason, log: [] } })
+const runSnapshot = (state: State) => {
+  const context = { from: state.run.state, reason: state.run.reason, log: [] }
+  return runMachine
+    .resolveState({ value: state.run.state, context })
+    .pipe(Effect.catch(() => runMachine.resolveState({ value: OTHER, context })))
+}
 
 // The run on one event: unchanged when its machine takes no transition.
 const stepRun = (state: State, event: RunEvent) =>
@@ -654,9 +682,8 @@ const stepRun = (state: State, event: RunEvent) =>
     const [next] = yield* transition(runMachine, yield* runSnapshot(state), event)
     const log = next.context.log
     if (log.length === 0) return state
-    const run = log.some((item) => item.unit === RUN)
-      ? { ...state.run, state: next.value, reason: next.context.reason }
-      : state.run
+    if (!log.some((item) => item.unit === RUN)) return { ...state, history: appended(state, log) }
+    const run = { ...state.run, state: yield* settled(next.value), reason: next.context.reason }
     return { ...state, run, history: appended(state, log) }
   })
 
@@ -678,7 +705,9 @@ const stepTask = (plan: Plan, state: State, id: string, event: TaskEvent) =>
       log: [],
     }
     // `State` keeps no evidence state: the region starts in `assessing` and settles on what the slots show.
-    const snapshot = yield* taskMachine.resolveState({ value: { evidence: "assessing", work: task.state }, context })
+    const snapshot = yield* taskMachine
+      .resolveState({ value: { evidence: "assessing", work: task.state }, context })
+      .pipe(Effect.catch(() => taskMachine.resolveState({ value: { evidence: "assessing", work: OTHER }, context })))
     const [next] = yield* transition(taskMachine, snapshot, event)
     const log = next.context.log
     if (log.length === 0) return state
@@ -748,18 +777,15 @@ const stepScenario = (state: State, fact: ScenarioEvent) =>
     const id = fact.type === "scenario.proved" ? fact.id : fact.verdict.id
     const scenario: ScenarioModel | undefined = state.scenarios[id]
     if (scenario === undefined) return state
-    const snapshot = yield* scenarioMachine.resolveState({
-      value: scenario.state,
-      context: { id, reason: scenario.reason, log: [] },
-    })
+    const context = { id, reason: scenario.reason, log: [] }
+    const snapshot = yield* scenarioMachine
+      .resolveState({ value: scenario.state, context })
+      .pipe(Effect.catch(() => scenarioMachine.resolveState({ value: OTHER, context })))
     const [next] = yield* transition(scenarioMachine, snapshot, fact)
     const log = next.context.log
     if (log.length === 0) return state
-    return {
-      ...state,
-      scenarios: { ...state.scenarios, [id]: { ...scenario, state: next.value, reason: next.context.reason } },
-      history: appended(state, log),
-    }
+    const moved: ScenarioModel = { ...scenario, state: yield* settled(next.value), reason: next.context.reason }
+    return { ...state, scenarios: { ...state.scenarios, [id]: moved }, history: appended(state, log) }
   })
 
 /** The first state of a run: each unit in its machine's initial state. */
@@ -795,23 +821,32 @@ export const initial = (plan: Plan): State =>
       const obligations = yield* Effect.forEach(
         plan.spec.obligations.filter((obligation) => ids.includes(obligation.task)),
         (obligation) =>
-          Effect.map(
-            getInitialSnapshot(obligationMachine, { id: obligation.id, hash: obligation.hash, review: false, log: [] }),
-            (snapshot): [string, ObligationModel] => [
-              obligation.id,
-              { id: obligation.id, task: obligation.task, state: snapshot.value, hash: snapshot.context.hash },
-            ],
-          ),
+          Effect.gen(function* () {
+            const snapshot = yield* getInitialSnapshot(obligationMachine, {
+              id: obligation.id,
+              hash: obligation.hash,
+              review: false,
+              log: [],
+            })
+            const model: ObligationModel = {
+              id: obligation.id,
+              task: obligation.task,
+              state: yield* settled(snapshot.value),
+              hash: snapshot.context.hash,
+            }
+            return [obligation.id, model] as const
+          }),
       )
       const scenarios = yield* Effect.forEach(plan.scenarios, (scenario) =>
-        Effect.map(getInitialSnapshot(scenarioMachine, { id: scenario.id }), (snapshot): [string, ScenarioModel] => [
-          scenario.id,
-          { id: scenario.id, state: snapshot.value },
-        ]),
+        Effect.gen(function* () {
+          const snapshot = yield* getInitialSnapshot(scenarioMachine, { id: scenario.id })
+          const model: ScenarioModel = { id: scenario.id, state: yield* settled(snapshot.value) }
+          return [scenario.id, model] as const
+        }),
       )
       return {
         ...empty,
-        run: { ...empty.run, state: run.value },
+        run: { ...empty.run, state: yield* settled(run.value) },
         tasks: Object.fromEntries(tasks),
         obligations: Object.fromEntries(obligations),
         scenarios: Object.fromEntries(scenarios),
