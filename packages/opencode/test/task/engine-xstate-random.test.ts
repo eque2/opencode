@@ -185,7 +185,7 @@ describe("XStateEngine on random facts", () => {
           const fact = randomFact(plan, state, random, step)
           const next = engine.apply(plan, state, fact)
           // History only grows, and a fact that adds none changes nothing: the engine gives back the very state.
-          expect(next.history.slice(0, state.history.length)).toStrictEqual(state.history)
+          expect(next.history.slice(0, state.history.length)).toStrictEqual([...state.history])
           if (next.history.length === state.history.length) expect(next).toBe(state)
           for (const item of next.history.slice(state.history.length)) moves.add(moveOf(plan, item))
           run = [...run, fact]
