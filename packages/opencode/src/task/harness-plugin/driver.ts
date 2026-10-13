@@ -83,6 +83,15 @@ export const messages = (client: Client, directory: string, session: string, lim
     }),
   )
 
+/**
+ * Shows a toast in a TUI attached to the directory: the only way the plugin API leaves to tell the user what a
+ * `/task` that stopped its own command did. Headless, nobody sees it.
+ */
+export const toast = (client: Client, directory: string, message: string, variant: "info" | "error") =>
+  call("tui.showToast", (signal) =>
+    client.tui.showToast({ body: { title: "Task harness o3", message, variant }, query: { directory }, signal }),
+  ).pipe(Effect.asVoid)
+
 /** The session's status in its instance; idle when the instance holds none. */
 export const status = (client: Client, directory: string, session: string) =>
   call("session.status", (signal) => client.session.status({ query: { directory }, signal })).pipe(

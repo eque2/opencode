@@ -56,6 +56,8 @@ const agent = (description: string, prompt: string, permission: Record<string, "
 
 // How long a repetition stop waits for the abort to land before it fails the call anyway.
 const STOP_BOUND = Duration.seconds(5)
+// How long a stopped `/task` waits for its toast.
+const TOAST_BOUND = Duration.seconds(1)
 
 const hooks = (input: PluginInput): Hooks => ({
   config: (cfg) =>
@@ -141,6 +143,15 @@ const hooks = (input: PluginInput): Hooks => ({
             Effect.map((text) => {
               for (const part of output.parts) if (part.type === "text") part.text = text
             }),
+            // Every other `/task` fails the command, which the caller sees only as a server error: a toast says why.
+            Effect.tapError((error) =>
+              HarnessDriver.toast(
+                input.client,
+                input.directory,
+                error.message,
+                error.message.includes("refused") ? "error" : "info",
+              ).pipe(Effect.timeoutOption(TOAST_BOUND), Effect.ignore),
+            ),
           ),
     ),
   "tool.execute.before": (call, output) =>
