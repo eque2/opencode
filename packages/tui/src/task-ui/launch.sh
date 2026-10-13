@@ -47,6 +47,9 @@ config="$data/tui.json"
 printf '{ "plugin": [["file://%s/index.tsx", { "design": %s }]] }\n' "$here" "$design" >"$config"
 
 export OPENCODE_TASK_HARNESS=o2 XDG_DATA_HOME="$data/data" XDG_STATE_HOME="$data/state" OPENCODE_TUI_CONFIG="$config"
+# The harness builds with the session's model, and a session made by `opencode run` has none, so it falls back to the
+# server's default model; without this the default can be any configured provider (gemini on one machine).
+export OPENCODE_CONFIG_CONTENT="{\"model\":\"$model\"}"
 cd "$root"
 
 # One local server holds the run, and the TUI attaches to it. Two opencode behaviours rule out simpler routes:
