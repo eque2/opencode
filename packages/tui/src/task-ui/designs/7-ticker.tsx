@@ -2,7 +2,7 @@
 // when a task changes state, a notification when the run ends, and expands to a dialog over the session.
 import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
-import { ENDED, label, tone, type Status } from "../store"
+import { ENDED, MARK, NAME, label, tone, type Status } from "../store"
 import { Brand, TaskLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
@@ -57,13 +57,13 @@ export function registerTicker(ctx: Ctx) {
         const value = tone(change.to)
         ctx.api.ui.toast({
           variant: value === "good" ? "success" : value === "bad" ? "error" : value === "warn" ? "warning" : "info",
-          title: "◆ HARNESS",
+          title: MARK,
           message: `${change.unit} ${change.from ? `${label(change.from)} → ` : ""}${label(change.to)}`,
         })
       }
       if (before.run.state !== after.run.state && ENDED.includes(after.run.state))
         void ctx.api.attention.notify({
-          title: "Task harness",
+          title: NAME,
           message: `Run ${label(after.run.state)}${after.run.reason ? `: ${after.run.reason}` : ""}`,
         })
     }),

@@ -72,6 +72,12 @@ export const byId = (a: string, b: string) => collator.compare(a, b)
 /** `<directory>/.opencode/task/status.json`, as the harness writes it. */
 export const statusFile = (directory: string) => `${directory}/.opencode/task/status.json`
 
+/** The mark on every task-workflow surface, so none of it reads as an ordinary subagent task. */
+export const MARK = "◆ In the Flow"
+
+/** The plain name of the task workflow, for titles that carry no glyph. */
+export const NAME = "In the Flow"
+
 // --- tones and glyphs ----------------------------------------------------------------------------------------------
 
 export type Tone = "idle" | "active" | "pass" | "good" | "bad" | "warn" | "off"

@@ -115,7 +115,7 @@ test("turns harness tool calls into peek lines", () => {
 test("every design shows the stopped run", async () => {
   const props = view()
   const ledger = await frame(() => <LedgerView {...props} width={38} />)
-  expect(ledger).toContain("◆ HARNESS run: budget exhausted")
+  expect(ledger).toContain("◆ In the Flow run: budget exhausted")
   expect(ledger).toContain("├ ⊘ T1.4")
   expect(ledger).toContain("└ ○ T1.5")
   expect(await frame(() => <DockView {...props} width={160} />, 160)).toContain("▰▰▰▱▱▱ 3/6 trusted")
@@ -127,7 +127,7 @@ test("every design shows the stopped run", async () => {
   expect(matrix).toContain("✗ T1.4.c8 failed")
   expect(await frame(() => <GanttView {...props} width={110} />)).toContain("budget exhausted · attempt 3")
   expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attempt 3")
-  expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ HARNESS · T1.4 details · read-only")
+  expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ In the Flow · T1.4 details · read-only")
 })
 
 test("the peek shows the builder, the failed proof first, and the verifier", async () => {
@@ -143,7 +143,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
   }
   const props = view(sessions)
   const peek = await frame(() => <Peek {...props} unit="T1.4" width={70} lines={3} />)
-  expect(peek).toContain("◆ HARNESS · T1.4 details · read-only")
+  expect(peek).toContain("◆ In the Flow · T1.4 details · read-only")
   expect(peek).toContain("BUILDER  attempt 3 · budget exhausted")
   expect(peek).toContain("✗ c8 failed")
   expect(peek).toContain("VERIFIER second try")
@@ -157,7 +157,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
 test("the shortcut bar names the design, its keys, and drops keys before it overflows", async () => {
   const ledger = view()
   const wide = await frame(() => <ShortcutBar {...ledger} width={200} />, 200, 3)
-  expect(wide).toContain("◆ HARNESS Ledger")
+  expect(wide).toContain("◆ In the Flow Ledger")
   expect(wide).toContain("ctrl+x o expand")
   expect(wide).toContain("/task-design switch")
   expect(wide).toContain("ctrl+x j/k select task")
@@ -167,7 +167,7 @@ test("the shortcut bar names the design, its keys, and drops keys before it over
   expect(narrow).not.toContain("select task")
   const ticker = view(none, status, 7)
   const line = await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)
-  expect(line).toContain("◆ HARNESS Ticker  3/6 trusted  ⊘ T1.4 budget exhausted  ctrl+x o expand")
+  expect(line).toContain("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted  ctrl+x o expand")
   ticker.view.toggleExpanded()
   expect(await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)).toContain("ctrl+x o collapse")
 })

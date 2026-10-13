@@ -3,7 +3,7 @@ import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { RGBA } from "@opentui/core"
 import { For, Show, type Accessor } from "solid-js"
 import type { Sessions } from "./peek"
-import { DESIGNS, counts, cut, glyph, label, stateColor, type Row, type Status, type View } from "./store"
+import { DESIGNS, MARK, counts, cut, glyph, label, stateColor, type Row, type Status, type View } from "./store"
 
 /** What a design gets: the host API, the shared view state, the peek's session source, and whether it is selected. */
 export type Ctx = {
@@ -26,11 +26,11 @@ export type ViewProps = {
   readonly leader: string
 }
 
-/** `◆ HARNESS`: the mark every design carries, so no harness surface reads as an ordinary subagent task. */
+/** The mark every design carries (`MARK`), in bold accent. */
 export function Brand(props: { theme: Accessor<TuiThemeCurrent> }) {
   return (
     <b>
-      <span style={{ fg: props.theme().accent }}>◆ HARNESS</span>
+      <span style={{ fg: props.theme().accent }}>{MARK}</span>
     </b>
   )
 }
@@ -113,7 +113,7 @@ export function ShortcutBar(props: ViewProps & { width: number }) {
       { key: `${props.leader} j/k`, label: "select task" },
     ]
     const ordered = design === 7 ? [trusted, ...ticker, ...keys] : design >= 3 && design <= 5 ? [...keys, trusted] : keys
-    const room = barRoom(props.width) - `◆ HARNESS ${DESIGNS[design - 1].name}`.length
+    const room = barRoom(props.width) - `${MARK} ${DESIGNS[design - 1].name}`.length
     return ordered.reduce<{ used: number; list: Part[] }>(
       (fit, part) => {
         const size = part.key.length + part.label.length + 3

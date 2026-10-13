@@ -4,7 +4,7 @@ import type { Part } from "@opencode-ai/sdk/v2"
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { Effect } from "effect"
 import { For, Show, createMemo, type Accessor } from "solid-js"
-import { bySeverity, color, cut, glyph, label, obligationsOf, poll, stateColor, tone, type Tone, type View } from "./store"
+import { MARK, bySeverity, color, cut, glyph, label, obligationsOf, poll, stateColor, tone, type Tone, type View } from "./store"
 
 /** A builder, verifier or reviewer session the harness made for a unit (`T1.4 builder`, `S3 verifier (again)`). */
 export type Child = { readonly id: string; readonly role: string; readonly again: boolean; readonly created: number }
@@ -99,7 +99,7 @@ const describe = (input: Record<string, unknown>) =>
 
 /**
  * A task's details: what its builder did, what its proofs found, what its verifier decided. `width` is the outer
- * width; `lines` is how many lines each section shows. The double accent border and the HARNESS title are the
+ * width; `lines` is how many lines each section shows. The double accent border and the In the Flow title are the
  * distinction from opencode's own subagent rows.
  */
 export function Peek(props: {
@@ -125,7 +125,7 @@ export function Peek(props: {
   const open = createMemo(() => proofs().toSorted(bySeverity))
   // opentui drops a border title that does not fit, so a narrow panel gets the short one; both say read-only.
   const title = () =>
-    props.width >= 48 ? ` ◆ HARNESS · ${props.unit} details · read-only ` : ` ◆ ${props.unit} details · read-only `
+    props.width >= 48 ? ` ${MARK} · ${props.unit} details · read-only ` : ` ◆ ${props.unit} details · read-only `
 
   return (
     <box

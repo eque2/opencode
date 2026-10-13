@@ -6,7 +6,7 @@ import { Clock, Effect, Option } from "effect"
 import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { liveSessions } from "./peek"
-import { DESIGNS, createView, parse, poll, statusFile, type Status } from "./store"
+import { DESIGNS, NAME, createView, parse, poll, statusFile, type Status } from "./store"
 import { ShortcutBar, leaderOf, type Ctx } from "./ui"
 import { registerLedger } from "./designs/1-ledger"
 import { registerDock } from "./designs/2-dock"
@@ -105,7 +105,7 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   const command = (name: string, title: string, run: () => void) => ({
     name,
     title,
-    category: "Task harness",
+    category: NAME,
     namespace: "palette",
     run,
   })
