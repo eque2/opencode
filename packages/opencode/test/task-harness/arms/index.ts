@@ -10,11 +10,8 @@ import * as Server from "./server"
 import * as Status from "./status"
 import type { Workspace } from "./workspace"
 
-export const ARMS = ["baseline", "o1", "o2", "o3"] as const
+export const ARMS = ["baseline", "o1", "o2"] as const
 export type Arm = (typeof ARMS)[number]
-
-const worktree = path.resolve(import.meta.dir, "../../../../..")
-export const pluginEntry = `file://${path.join(worktree, "packages/opencode/src/task/harness-plugin/index.ts")}`
 
 export function parseArm(value: string | undefined): Arm {
   const arm = ARMS.find((item) => item === (value || "baseline"))
@@ -40,7 +37,6 @@ export function config(arm: Arm, model: Model): Record<string, unknown> {
         },
       },
     }
-  if (arm === "o3") return { ...base, plugin: [pluginEntry] }
   return base
 }
 

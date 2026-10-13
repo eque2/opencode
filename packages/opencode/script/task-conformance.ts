@@ -26,7 +26,7 @@ const FINGERPRINT = {
   arms: "packages/opencode/test/task-harness/arms",
 }
 
-const ARMS = ["baseline", "o1", "o2", "o3"]
+const ARMS = ["baseline", "o1", "o2"]
 // One child `bun test` run may take at most 4 hours; then it and every process it started get SIGKILL.
 const CHILD_BOUND_MS = 4 * 3_600_000
 const args = parseArgs(process.argv.slice(2))
