@@ -102,6 +102,34 @@ describe("the harness workspace", () => {
     }),
   )
 
+  it.live("keeps the harness folder out of git through the local exclude file, never through a .gitignore", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* repository()
+      const folder = path.join(root, ".opencode", "task")
+      yield* fs.makeDirectory(path.join(folder, "worktrees", "k", "T1.1", "src"), { recursive: true })
+      yield* fs.writeFileString(path.join(folder, "status.json"), "{}\n")
+      yield* fs.writeFileString(path.join(folder, "worktrees", "k", "T1.1", "src", "a.ts"), "export const a = 1\n")
+      expect(yield* git(root, "status", "--porcelain", "--untracked-files=all")).not.toBe("")
+
+      yield* TaskWorkspace.ensureExcluded(root, limits)
+      yield* TaskWorkspace.ensureExcluded(root, limits)
+
+      expect(yield* git(root, "status", "--porcelain", "--untracked-files=all")).toBe("")
+      const exclude = yield* fs.readFileString(path.join(root, ".git", "info", "exclude"))
+      expect(exclude.split("\n").filter((line) => line === "/.opencode/task/")).toHaveLength(1)
+      // A linter that honours parent .gitignore files still sees the leaf worktrees' own files.
+      expect(yield* fs.exists(path.join(folder, ".gitignore"))).toBe(false)
+
+      const sub = path.join(root, "app")
+      yield* fs.makeDirectory(sub)
+      yield* TaskWorkspace.ensureExcluded(sub, limits)
+      expect((yield* fs.readFileString(path.join(root, ".git", "info", "exclude"))).split("\n")).toContain(
+        "/app/.opencode/task/",
+      )
+    }),
+  )
+
   it.live("checks the whole repository from a subfolder, excluding the subfolder's harness folder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem

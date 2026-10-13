@@ -146,6 +146,9 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
   }
   if (args === "") return yield* reply("Usage: /task <path to a .spec or .task folder> | /task trust <id>")
 
+  const limits = yield* TaskLimits.load
+  // Before the first status write, refusals included. Outside a git repository there is nothing to exclude from.
+  yield* TaskWorkspace.ensureExcluded(directory, limits).pipe(Effect.ignore)
   const path = yield* Path.Path
   const target = path.resolve(directory, args)
   const found = specFolder(path, directory, target)
@@ -174,7 +177,6 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
 
   const id = TaskEvents.runID(directory, specPath)
   if (TaskRunner.running(id)) return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
-  const limits = yield* TaskLimits.load
 
   // The leaves branch from the checked-out branch and merge back into it (`TaskWorkspace.readiness`).
   const ready = yield* TaskWorkspace.readiness(directory, limits).pipe(

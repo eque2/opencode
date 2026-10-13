@@ -103,6 +103,23 @@ export const readiness = Effect.fnUntraced(function* (cwd: string, limits: TaskL
   return Result.fail(`the checkout has uncommitted changes or untracked files: ${shown}`)
 })
 
+/**
+ * Keeps the harness's folder (`.opencode/task/`: status, proof logs, leaf worktrees) out of git through the
+ * repository's local exclude file, so it never shows as untracked and `git add -A` never adds a leaf worktree as an
+ * embedded repository. Not a `.gitignore` there: linters honour parent ignore files, and would then skip every file of
+ * the leaf worktrees inside it.
+ */
+export const ensureExcluded = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const exclude = yield* git(cwd, limits, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+  const line = `/${yield* git(cwd, limits, "rev-parse", "--show-prefix")}.opencode/task/`
+  const current = yield* fs.readFileString(exclude).pipe(Effect.orElseSucceed(() => ""))
+  if (current.split("\n").includes(line)) return
+  yield* fs.makeDirectory(path.dirname(exclude), { recursive: true })
+  yield* fs.writeFileString(exclude, `${current}${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`)
+})
+
 /** The head of the base branch. */
 export const baseHead = (root: string, limits: TaskLimits.Limits, base: string) =>
   commit(root, limits, `refs/heads/${base}`)

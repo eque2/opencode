@@ -169,10 +169,6 @@ export const write = Effect.fn("TaskStatus.write")(
     const path = yield* Path.Path
     const target = file(path, directory)
     yield* fs.makeDirectory(path.dirname(target), { recursive: true })
-    // The harness's folder ignores itself: its status, proof logs and leaf worktrees never show as untracked, and
-    // `git add -A` never adds a leaf worktree as an embedded repository.
-    const ignore = path.join(path.dirname(target), ".gitignore")
-    if (!(yield* fs.exists(ignore))) yield* fs.writeFileString(ignore, "*\n")
     const temp = `${target}.${yield* Random.nextIntBetween(0, 0x7fffffff)}.tmp`
     yield* fs.writeFileString(temp, `${encode(status)}\n`)
     yield* fs.rename(temp, target)
