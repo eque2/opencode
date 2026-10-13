@@ -1,4 +1,4 @@
-import { Duration, Effect, FileSystem, Option, Path, Schema } from "effect"
+import { Duration, Effect, FileSystem, Option, Path, Result, Schema } from "effect"
 import { TaskProof } from "@/task/proof"
 import type { TaskLimits } from "@/task/limits"
 
@@ -59,19 +59,47 @@ export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.
 export const commit = (cwd: string, limits: TaskLimits.Limits, revision: string) =>
   git(cwd, limits, "rev-parse", "--verify", `${revision}^{commit}`)
 
-/** The branch the checkout has checked out, or none on a detached HEAD. */
+/** The branch the checkout has checked out, or none on a detached HEAD (a tag of the same name does not confuse it). */
 export const currentBranch = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
-  const result = yield* call(cwd, limits, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-  return result.exitCode === 0 && result.stdout.trim() !== "" ? Option.some(result.stdout.trim()) : Option.none<string>()
+  const result = yield* call(cwd, limits, ["symbolic-ref", "--quiet", "HEAD"])
+  const ref = result.stdout.trim()
+  return result.exitCode === 0 && ref.startsWith("refs/heads/")
+    ? Option.some(ref.slice("refs/heads/".length))
+    : Option.none<string>()
 })
 
 /**
- * The tracked paths that differ from HEAD in the checkout, staged or not; the harness's own `.opencode/task/` does
- * not count. Untracked files are left alone: a merge that would overwrite one refuses by itself.
+ * The paths of the whole repository that differ from HEAD, staged or not, and the untracked ones; ignored files and
+ * the harness's own `.opencode/task/` (wherever the instance sits in the repository) do not count. Untracked files
+ * count because a judge's checkout is restored to HEAD after each round, which would delete them.
  */
 export const uncommitted = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
-  const output = yield* git(cwd, limits, "diff", "--name-only", "HEAD", "--", ".", ":(exclude).opencode/task")
-  return output.split("\n").filter((path) => path !== "")
+  const prefix = yield* git(cwd, limits, "rev-parse", "--show-prefix")
+  const exclude = `:(top,exclude)${prefix}.opencode/task`
+  const changed = yield* git(cwd, limits, "diff", "--name-only", "HEAD", "--", ":(top)", exclude)
+  const untracked = yield* git(cwd, limits, "ls-files", "--others", "--exclude-standard", "--full-name", "--", ":(top)", exclude)
+  return [...changed.split("\n"), ...untracked.split("\n")].filter((path) => path !== "")
+})
+
+/**
+ * Why the checkout cannot take a run, or its base branch. The leaves branch from the checked-out branch and merge
+ * back into it, so the checkout must be a repository with a commit, on a branch, with no merge in progress and no
+ * change of its own: tracked or untracked.
+ */
+export const readiness = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits) {
+  const gitDir = yield* call(cwd, limits, ["rev-parse", "--absolute-git-dir"])
+  if (gitDir.exitCode !== 0) return Result.fail("the folder is not inside a git repository")
+  const head = yield* call(cwd, limits, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
+  if (head.exitCode !== 0) return Result.fail("the repository has no commit yet")
+  const base = yield* currentBranch(cwd, limits)
+  if (Option.isNone(base)) return Result.fail("the checkout is not on a branch (detached HEAD)")
+  const fs = yield* FileSystem.FileSystem
+  const merging = yield* fs.exists(`${gitDir.stdout.trim()}/MERGE_HEAD`).pipe(Effect.orElseSucceed(() => false))
+  if (merging) return Result.fail("a merge is in progress in the checkout; finish it or run `git merge --abort`")
+  const dirty = yield* uncommitted(cwd, limits)
+  if (dirty.length === 0) return Result.succeed(base.value)
+  const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, and ${dirty.length - 5} more` : "")
+  return Result.fail(`the checkout has uncommitted changes or untracked files: ${shown}`)
 })
 
 /** The head of the base branch. */

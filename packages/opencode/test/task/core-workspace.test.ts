@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, FileSystem, Option } from "effect"
+import { Effect, FileSystem, Option, Result } from "effect"
 import path from "path"
 import { TaskWorkspace } from "@/task/core/workspace"
 import { TaskLimits } from "@/task/limits"
@@ -66,30 +66,81 @@ describe("the harness workspace", () => {
     }),
   )
 
-  it.live("names the checked-out branch, and none on a detached HEAD", () =>
+  it.live("names the checked-out branch, none on a detached HEAD, and is not confused by a tag of the same name", () =>
     Effect.gen(function* () {
       const root = yield* repository()
+      expect(yield* TaskWorkspace.currentBranch(root, limits)).toEqual(Option.some(BASE))
+      yield* git(root, "tag", BASE)
       expect(yield* TaskWorkspace.currentBranch(root, limits)).toEqual(Option.some(BASE))
       yield* git(root, "switch", "-q", "--detach", "HEAD")
       expect(yield* TaskWorkspace.currentBranch(root, limits)).toEqual(Option.none())
     }),
   )
 
-  it.live("lists tracked changes, staged or not, and ignores the harness folder and untracked files", () =>
+  it.live("lists tracked changes, staged or not, and untracked files; ignores ignored files and the harness folder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const root = yield* repository()
       expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual([])
 
+      // The harness folder does not count, even where a project tracks it.
       yield* fs.makeDirectory(path.join(root, ".opencode", "task"), { recursive: true })
       yield* fs.writeFileString(path.join(root, ".opencode", "task", "status.json"), "{}\n")
-      yield* fs.writeFileString(path.join(root, "notes.txt"), "untracked\n")
+      yield* git(root, "add", "-f", ".opencode/task/status.json")
+      yield* git(root, "commit", "-q", "-m", "a tracked status file")
+      yield* fs.writeFileString(path.join(root, ".opencode", "task", "status.json"), "{\"changed\":true}\n")
+      yield* fs.makeDirectory(path.join(root, "node_modules"))
+      yield* fs.writeFileString(path.join(root, "node_modules", "ignored.js"), "ignored\n")
       expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual([])
 
+      yield* fs.writeFileString(path.join(root, "notes.txt"), "untracked\n")
+      expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual(["notes.txt"])
       yield* fs.writeFileString(path.join(root, "tracked.ts"), "export const tracked = 2\n")
-      expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual(["tracked.ts"])
       yield* git(root, "add", "tracked.ts")
-      expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual(["tracked.ts"])
+      expect(yield* TaskWorkspace.uncommitted(root, limits)).toEqual(["tracked.ts", "notes.txt"])
+    }),
+  )
+
+  it.live("checks the whole repository from a subfolder, excluding the subfolder's harness folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* repository()
+      const sub = path.join(root, "app")
+      yield* fs.makeDirectory(path.join(sub, ".opencode", "task"), { recursive: true })
+      yield* fs.writeFileString(path.join(sub, ".opencode", "task", "status.json"), "{}\n")
+      expect(yield* TaskWorkspace.uncommitted(sub, limits)).toEqual([])
+      yield* fs.writeFileString(path.join(root, "tracked.ts"), "export const tracked = 3\n")
+      expect(yield* TaskWorkspace.uncommitted(sub, limits)).toEqual(["tracked.ts"])
+    }),
+  )
+
+  it.live("says why a checkout cannot take a run, or gives its base branch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const reason = (cwd: string) =>
+        TaskWorkspace.readiness(cwd, limits).pipe(Effect.map((ready) => (Result.isFailure(ready) ? ready.failure : "")))
+
+      const bare = yield* fs.makeTempDirectoryScoped()
+      expect(yield* reason(bare)).toBe("the folder is not inside a git repository")
+      yield* git(bare, "init", "-q", "-b", BASE)
+      expect(yield* reason(bare)).toBe("the repository has no commit yet")
+
+      const root = yield* repository()
+      expect(yield* TaskWorkspace.readiness(root, limits)).toEqual(Result.succeed(BASE))
+      yield* fs.writeFileString(path.join(root, "notes.txt"), "untracked\n")
+      expect(yield* reason(root)).toBe("the checkout has uncommitted changes or untracked files: notes.txt")
+      yield* fs.remove(path.join(root, "notes.txt"))
+
+      // A conflicting merge stops half way and leaves MERGE_HEAD.
+      yield* git(root, "switch", "-q", "-c", "other")
+      yield* fs.writeFileString(path.join(root, "tracked.ts"), "export const tracked = 'other'\n")
+      yield* git(root, "commit", "-q", "-am", "other")
+      yield* git(root, "switch", "-q", BASE)
+      yield* fs.writeFileString(path.join(root, "tracked.ts"), "export const tracked = 'base'\n")
+      yield* git(root, "commit", "-q", "-am", "base")
+      yield* TaskWorkspace.merge(root, limits, BASE, "other").pipe(Effect.ignore)
+      yield* git(root, "merge", "--no-edit", "other").pipe(Effect.ignore)
+      expect(yield* reason(root)).toBe("a merge is in progress in the checkout; finish it or run `git merge --abort`")
     }),
   )
 

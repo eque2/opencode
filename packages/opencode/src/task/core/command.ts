@@ -1,5 +1,5 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
-import { Clock, type Context, Effect, Layer, Option, Path, Schema } from "effect"
+import { Clock, type Context, Effect, Layer, Option, Path, Result, Schema } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import type { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
@@ -176,17 +176,12 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
   if (TaskRunner.running(id)) return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
   const limits = yield* TaskLimits.load
 
-  // The leaves branch from the checked-out branch and merge back into it, so the root checkout must be on a branch
-  // and hold no uncommitted change that a merge could collide with.
-  const base = yield* TaskWorkspace.currentBranch(directory, limits).pipe(Effect.orElseSucceed(() => Option.none()))
-  if (Option.isNone(base)) return yield* refuse(specPath, "the checkout is not on a branch (detached HEAD)")
-  const dirty = yield* TaskWorkspace.uncommitted(directory, limits).pipe(
-    Effect.catch((error) => Effect.succeed([`(git status failed: ${error.message})`])),
+  // The leaves branch from the checked-out branch and merge back into it (`TaskWorkspace.readiness`).
+  const ready = yield* TaskWorkspace.readiness(directory, limits).pipe(
+    Effect.catch((error) => Effect.succeed(Result.fail(`git could not read the checkout: ${error.message}`))),
   )
-  if (dirty.length > 0) {
-    const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, and ${dirty.length - 5} more` : "")
-    return yield* refuse(specPath, `the checkout has uncommitted changes: ${shown}`)
-  }
+  if (Result.isFailure(ready)) return yield* refuse(specPath, ready.failure)
+  const base = ready.success
 
   // The services are resolved only once nothing refuses, so a refusal needs no session runtime.
   const env = yield* environment(ops)
@@ -194,7 +189,7 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
     env,
     engine: TaskEngineXState.XStateEngine,
     directory,
-    base: base.value,
+    base,
     specDir,
     plan: plan({ spec, specPath, path: args, root }),
     root: input.sessionID,

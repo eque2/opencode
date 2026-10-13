@@ -66,7 +66,7 @@ describe("/task on a root checkout that cannot take a run", () => {
 
         const replies = yield* runTask
 
-        expect(replies).toEqual([`Task harness: refused ${SPEC}: the checkout has uncommitted changes: app.ts`])
+        expect(replies).toEqual([`Task harness: refused ${SPEC}: the checkout has uncommitted changes or untracked files: app.ts`])
         expect(yield* refusalOf(directory)).toMatchObject({ state: "refused", spec: SPEC })
       }),
     { git: true },
