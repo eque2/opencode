@@ -59,6 +59,8 @@ const agent = (description: string, prompt: string, permission: Record<string, "
 const STOP_BOUND = Duration.seconds(5)
 // How long a stopped `/task` waits for its toast.
 const TOAST_BOUND = Duration.seconds(1)
+// A placeholder of argument 9999: empty unless `/task` gets 9999 arguments.
+const UNFILLED = "$9999"
 
 const hooks = (input: PluginInput): Hooks => ({
   // The instance of a run's root checkout goes away (the server stops): its runs stop and stay resumable, so a
@@ -71,7 +73,10 @@ const hooks = (input: PluginInput): Hooks => ({
         cfg.command = {
           ...cfg.command,
           task: {
-            template: "Task harness: $ARGUMENTS",
+            // The arguments must not reach the template: opencode runs every !`cmd` in it before the hook. With
+            // `$ARGUMENTS`, or with no placeholder at all, it puts them in (it appends them). One positional
+            // placeholder that no `/task` fills keeps them out; the hook reads `arguments` itself.
+            template: `Task harness note.${UNFILLED}`,
             description: "Run a blend task tree (task harness o3)",
             agent: HarnessRegistry.NOTE,
           },
