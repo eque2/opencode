@@ -15,10 +15,10 @@ export type Workspace = { readonly dir: string; readonly repo: string; readonly 
 const gitEnv = {
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_NOSYSTEM: "1",
-  GIT_AUTHOR_NAME: "spike",
-  GIT_AUTHOR_EMAIL: "spike@eque2.test",
-  GIT_COMMITTER_NAME: "spike",
-  GIT_COMMITTER_EMAIL: "spike@eque2.test",
+  GIT_AUTHOR_NAME: "conformance",
+  GIT_AUTHOR_EMAIL: "conformance@eque2.test",
+  GIT_COMMITTER_NAME: "conformance",
+  GIT_COMMITTER_EMAIL: "conformance@eque2.test",
 }
 
 export function git(repo: string, ...args: string[]) {

@@ -1,11 +1,14 @@
-// The conformance suite of the task-harness spike: H1–H16 scripted, L1 live (harness contract, section 8).
+// The conformance suite of the /task harness: H1–H16 scripted, L1 live (harness contract, section 8).
 //
-//   TASK_HARNESS_ARM=<baseline|o1|o2|o3> bun test test/task-harness/conformance.test.ts --timeout 2400000
+//   TASK_HARNESS_ARM=<baseline|o2> bun test test/task-harness/conformance.test.ts --timeout 2400000
+//
+// `script/task-conformance.ts` runs it for both arms; it exports the baseline tree and sets TASK_HARNESS_BASELINE_ENTRY,
+// without which the baseline arm cannot start a server.
 //
 // Each check runs on a fresh copy of the seed with its own `opencode serve` process and its own scripted model, and
 // passes only through the arm's observable behaviour: the status file, the requests the scripted model received, the
 // target repository's git state and the process table. `script/task-conformance.ts` runs this file per run and
-// scores it. Environment: TASK_HARNESS_ARM, TASK_HARNESS_RUN_DIR (default `<worktree>/.spike-runs/conformance/dev`),
+// scores it. Environment: TASK_HARNESS_ARM, TASK_HARNESS_RUN_DIR (default `<worktree>/.task-conformance/conformance/dev`),
 // TASK_HARNESS_CHECKS (comma list; the other checks skip), TASK_HARNESS_LIVE=1 (runs L1).
 //
 // The status file must exist within 30 s of `/task` (section 3: the harness rewrites it after every state change,
@@ -26,7 +29,7 @@ const worktree = path.resolve(packageDir, "../..")
 // The package's default test run discovers this file too; without an arm every check registers as skipped.
 const armed = process.env.TASK_HARNESS_ARM !== undefined
 const arm = Arms.parseArm(process.env.TASK_HARNESS_ARM)
-const runDir = process.env.TASK_HARNESS_RUN_DIR || path.join(worktree, ".spike-runs", "conformance", "dev")
+const runDir = process.env.TASK_HARNESS_RUN_DIR || path.join(worktree, ".task-conformance", "conformance", "dev")
 const selected = (process.env.TASK_HARNESS_CHECKS ?? "")
   .split(",")
   .map((item) => item.trim())
@@ -494,10 +497,10 @@ function commitOnMain(dir: string, repo: string, file: string, edit: (text: stri
     ...process.env,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: "spike",
-    GIT_AUTHOR_EMAIL: "spike@eque2.test",
-    GIT_COMMITTER_NAME: "spike",
-    GIT_COMMITTER_EMAIL: "spike@eque2.test",
+    GIT_AUTHOR_NAME: "conformance",
+    GIT_AUTHOR_EMAIL: "conformance@eque2.test",
+    GIT_COMMITTER_NAME: "conformance",
+    GIT_COMMITTER_EMAIL: "conformance@eque2.test",
   }
   const git = (args: string[], extra: Record<string, string> = {}) => {
     const out = Bun.spawnSync(["git", ...args], { cwd: repo, env: { ...env, ...extra } })

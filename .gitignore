@@ -60,5 +60,5 @@ _bmad/config.user.yaml
 /.codex/hooks.json
 # <<< eque2-code managed (do not edit this block) <<<
 
-# spike-task-harness run folders, never committed
-.spike-runs/
+# /task conformance guard runs and the exported baseline tree, never committed
+.task-conformance/

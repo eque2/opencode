@@ -10,8 +10,23 @@ import * as Server from "./server"
 import * as Status from "./status"
 import type { Workspace } from "./workspace"
 
-export const ARMS = ["baseline", "o1", "o2"] as const
+// `baseline` is the code without the /task harness, served from an exported tree (BASELINE_ENTRY_ENV); `o2` is the
+// current tree, where the harness is always on.
+export const ARMS = ["baseline", "o2"] as const
 export type Arm = (typeof ARMS)[number]
+
+// The runner exports the baseline commit and names its `packages/opencode/src/index.ts` in this variable.
+export const BASELINE_ENTRY_ENV = "TASK_HARNESS_BASELINE_ENTRY"
+
+// The CLI entry an arm's server runs. Without the variable the baseline fails instead of serving the current tree,
+// which would measure the harness under the baseline's name.
+export function entry(arm: Arm): string {
+  if (arm === "o2") return Server.currentEntry
+  const value = process.env[BASELINE_ENTRY_ENV]
+  if (!value) throw new Error(`${BASELINE_ENTRY_ENV} is not set; run the baseline arm through script/task-conformance.ts`)
+  if (!fs.existsSync(value)) throw new Error(`${BASELINE_ENTRY_ENV} names ${value}, which does not exist`)
+  return value
+}
 
 export function parseArm(value: string | undefined): Arm {
   const arm = ARMS.find((item) => item === (value || "baseline"))
@@ -38,10 +53,6 @@ export function config(arm: Arm, model: Model): Record<string, unknown> {
       },
     }
   return base
-}
-
-export function env(arm: Arm): Record<string, string> {
-  return arm === "baseline" ? {} : { OPENCODE_TASK_HARNESS: arm }
 }
 
 export type Tokens = { total: number; input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number }
@@ -71,11 +82,12 @@ export async function open(input: {
   readonly env?: Record<string, string>
 }): Promise<Adapter> {
   const options: Server.ServerOptions = {
+    entry: entry(input.arm),
     repo: input.workspace.repo,
     home: input.workspace.home,
     config: config(input.arm, input.model),
     // Scripted bounds for the scripted model only; L1 runs with the live bounds (contract section 1).
-    env: { ...env(input.arm), OPENCODE_TASK_LIMITS: input.model.kind === "live" ? "live" : "scripted", ...input.env },
+    env: { OPENCODE_TASK_LIMITS: input.model.kind === "live" ? "live" : "scripted", ...input.env },
   }
   let server = await Server.start(options)
   let client = createOpencodeClient({ baseUrl: server.url, directory: input.workspace.repo })

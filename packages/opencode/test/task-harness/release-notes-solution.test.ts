@@ -1,4 +1,4 @@
-// The completion check for the spike's release-notes task tree: a fresh repository seeded from
+// The completion check for the release-notes task tree: a fresh repository seeded from
 // release-notes-repo/, each leaf's files from release-notes-solution/ written and committed in tree order, then the
 // four gates of SPEC.md run offline. It proves that the tree can be completed as written.
 import { describe, expect, test } from "bun:test"

@@ -3,9 +3,12 @@
 import path from "node:path"
 import fs from "node:fs"
 
-const entry = path.resolve(import.meta.dir, "../../../src/index.ts")
+// The current tree's CLI entry. The baseline arm serves another tree's entry instead (see Arms.entry()).
+export const currentEntry = path.resolve(import.meta.dir, "../../../src/index.ts")
 
 export type ServerOptions = {
+  // The `src/index.ts` that `bun run` serves.
+  readonly entry: string
   readonly repo: string
   readonly home: string
   readonly config: Record<string, unknown>
@@ -28,7 +31,7 @@ export function isolatedEnv(home: string): Record<string, string> {
     XDG_STATE_HOME: path.join(home, ".local/state"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-    // Not OPENCODE_PURE: it skips every file plugin, so O3 would never load. The isolated XDG folders already keep
+    // Not OPENCODE_PURE: it skips every file plugin, unlike a normal install. The isolated XDG folders already keep
     // the developer's global plugins out; every arm runs with the same environment.
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_DISABLE_AUTOCOMPACT: "1",
@@ -38,9 +41,10 @@ export function isolatedEnv(home: string): Record<string, string> {
   }
 }
 
-// The parent's environment without the arm selector, the forwarded live key and the test preload's in-memory
-// database: the adapter sets the selector from the arm, only L1's server gets the key, and the server keeps its
-// database under the isolated XDG data folder, so a restart (H8) finds what the killed server stored.
+// The parent's environment without the retired harness selector, the forwarded live key and the test preload's
+// in-memory database: a stale OPENCODE_TASK_HARNESS in the shell must not reach either arm, only L1's server gets the
+// key, and the server keeps its database under the isolated XDG data folder, so a restart (H8) finds what the killed
+// server stored.
 function inherited() {
   return Object.fromEntries(
     Object.entries(process.env).filter(
@@ -53,7 +57,7 @@ export async function start(opts: ServerOptions, readyMs = 60_000): Promise<Serv
   fs.mkdirSync(opts.home, { recursive: true })
   const log = path.join(opts.home, `server-${Date.now()}.log`)
   const out = fs.openSync(log, "a")
-  const proc = Bun.spawn(["bun", "run", entry, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+  const proc = Bun.spawn(["bun", "run", opts.entry, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
     cwd: opts.repo,
     env: {
       ...inherited(),
