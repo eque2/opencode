@@ -132,8 +132,9 @@ export type Outcome =
 const POLL = Duration.millis(200)
 
 // The assistant messages of the current turn: created at or after its start.
+// A failed read fails: the watchdog must not take "no message read" for "no tool running".
 const turnMessages = Effect.fnUntraced(function* (client: Client, directory: string, session: string, since: number) {
-  const items = yield* messages(client, directory, session, 6).pipe(Effect.orElseSucceed(() => []))
+  const items = yield* messages(client, directory, session, 6)
   return items.filter((item) => item.info.role === "assistant" && item.info.time.created >= since)
 })
 
@@ -144,7 +145,7 @@ export const spendCapError = Effect.fn("HarnessDriver.spendCapError")(function* 
   session: string,
   since: number,
 ) {
-  const items = yield* turnMessages(client, directory, session, since)
+  const items = yield* turnMessages(client, directory, session, since).pipe(Effect.orElseSucceed(() => []))
   return Option.firstSomeOf(
     items.map((item) =>
       item.info.role === "assistant" && item.info.error !== undefined && Predicate.hasProperty(item.info.error.data, "message")
@@ -158,7 +159,8 @@ export const spendCapError = Effect.fn("HarnessDriver.spendCapError")(function* 
  * One builder turn under the watchdog. Every 200 ms it reads the session's status: a provider retry whose message
  * is a spend cap aborts the turn (`spend-cap`); a session busy for two polls in a row with no running tool whose
  * stream has not moved for `limits.streamIdle` is aborted (`stall`). Stream activity is any part update or delta of
- * the session that the `event` hook saw, and any poll where the session is not busy or runs a tool.
+ * the session that the `event` hook saw, and any poll where the session is not busy or runs a tool. A poll whose
+ * read fails is skipped. Once the watchdog stopped the turn, it aborts again each poll until the prompt returns.
  */
 export const builderTurn = Effect.fn("HarnessDriver.builderTurn")(function* (
   client: Client,
@@ -177,16 +179,22 @@ export const builderTurn = Effect.fn("HarnessDriver.builderTurn")(function* (
     const outcome = yield* Ref.make<Outcome>({ kind: "ended" })
     const touch = Effect.flatMap(Clock.currentTimeMillis, (now) => Effect.sync(() => HarnessRegistry.touch(session, now)))
     yield* touch
-    const stop = (next: Outcome) =>
-      Ref.set(outcome, next).pipe(Effect.andThen(abort(client, directory, session)), Effect.ignore)
+    // One abort, bounded by the cancel deadline; the watch repeats it each poll until the prompt returns.
+    const cut = abort(client, directory, session).pipe(Effect.timeoutOption(input.limits.cancelDeadline), Effect.ignore)
+    const stop = (next: Outcome) => Ref.set(outcome, next).pipe(Effect.andThen(cut))
     const watch = Effect.gen(function* () {
       let busy = false
       while (true) {
         yield* Effect.sleep(POLL)
+        if ((yield* Ref.get(outcome)).kind !== "ended") {
+          yield* cut
+          continue
+        }
         const current = yield* status(client, directory, session).pipe(Effect.option)
         if (Option.isNone(current)) continue
         if (current.value.type === "retry" && SPEND_CAP.test(current.value.message)) {
-          return yield* stop({ kind: "spend-cap", reason: `spend cap: ${HarnessMessages.oneLine(current.value.message)}` })
+          yield* stop({ kind: "spend-cap", reason: `spend cap: ${HarnessMessages.oneLine(current.value.message)}` })
+          continue
         }
         const was = busy
         busy = current.value.type === "busy"
@@ -194,8 +202,9 @@ export const builderTurn = Effect.fn("HarnessDriver.builderTurn")(function* (
           yield* touch
           continue
         }
-        const items = yield* turnMessages(client, directory, session, started)
-        const running = items.some((item) =>
+        const read = yield* turnMessages(client, directory, session, started).pipe(Effect.option)
+        if (Option.isNone(read)) continue
+        const running = read.value.some((item) =>
           item.parts.some((part) => part.type === "tool" && part.state.status === "running"),
         )
         if (running) {
@@ -205,7 +214,7 @@ export const builderTurn = Effect.fn("HarnessDriver.builderTurn")(function* (
         const now = yield* Clock.currentTimeMillis
         const last = Option.getOrElse(HarnessRegistry.lastActivity(session), () => started)
         if (now - last >= idle) {
-          return yield* stop({ kind: "stall", reason: `stall: no stream activity for ${Math.round(idle / 1000)} s` })
+          yield* stop({ kind: "stall", reason: `stall: no stream activity for ${Math.round(idle / 1000)} s` })
         }
       }
     })
