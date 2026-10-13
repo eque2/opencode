@@ -1,26 +1,14 @@
-import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
-import path from "path"
-import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
-import { TaskCommand } from "@/task/core/command"
-import { TaskEngines } from "@/task/core/engines"
-import type { Engine, Fact, Plan, Result, State, Verdict } from "@/task/core/model"
-import { TaskEngineTable } from "@/task/engine-table"
+import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
 import { TaskEngineXState } from "@/task/engine-xstate"
-import { testEffect } from "../lib/effect"
 
 // A small spec: parent T1 with leaves T1.1 and T1.2. T1.1 has three test obligations and one gate obligation;
 // T1.2 has one test obligation; T1 has one review obligation. Budget 3 for every task.
 //
-// The table engine's behaviour is the contract of every in-core engine: each case runs against O1's TableEngine
-// and O2's XStateEngine, and both must give the same states.
+// These cases are the engine's contract: what each fact does to the folded state, history included.
 
-const engines: ReadonlyArray<readonly [string, Engine, Engine["name"]]> = [
-  ["TableEngine", TaskEngineTable.TableEngine, "table"],
-  ["XStateEngine", TaskEngineXState.XStateEngine, "xstate"],
-]
+const engine = TaskEngineXState.XStateEngine
 const BUDGET = 3
 
 // The policy of `release-notes.spec`.
@@ -163,13 +151,12 @@ const altered = (state: State, change: (copy: State) => unknown): State => {
   return copy
 }
 
-describe.each(engines)("%s", (_, engine, name) => {
+describe("XStateEngine", () => {
   const fold = (facts: ReadonlyArray<Fact>, from: State = engine.initial(plan)) =>
     facts.reduce((state, fact) => engine.apply(plan, state, fact), from)
 
-  // "is named table" for the table engine, as before.
-  test(`is named ${name}`, () => {
-    expect(engine.name).toBe(name)
+  test("is named xstate", () => {
+    expect(engine.name).toBe("xstate")
   })
 
   test("the initial state: tasks waiting, obligations pending, scenarios waiting", () => {
@@ -611,221 +598,4 @@ describe.each(engines)("%s", (_, engine, name) => {
     expect(followed.run).toMatchObject({ state: "needs_human", reason: "T1.1: quota" })
     expect(followed.history.at(-1)).toMatchObject({ unit: "run", from: "lost", to: "needs_human" })
   })
-})
-
-// --- both engines on the same random facts -------------------------------------------------------------------------
-
-const it = testEffect(NodeServices.layer)
-
-const RELEASE_NOTES = "task-formats/blend/release-notes.spec"
-const formatDir = path.resolve(import.meta.dir, "../../../../task-formats/blend")
-
-// The plan of `/task task-formats/blend/release-notes.spec`.
-const releaseNotesPlan = Effect.gen(function* () {
-  const loaded = yield* Blend.load(path.join(formatDir, "release-notes.spec"))
-  expect(loaded.failures).toEqual([])
-  if (!loaded.spec) return yield* Effect.die("release-notes.spec did not load")
-  return TaskCommand.plan({ spec: loaded.spec, specPath: RELEASE_NOTES, path: RELEASE_NOTES, root: Option.none() })
-})
-
-// A seeded generator (mulberry32): every run folds the same fact lists.
-const generator = (seed: number) => {
-  let current = seed
-  const next = () => {
-    current = (current + 0x6d2b79f5) | 0
-    let t = Math.imul(current ^ (current >>> 15), 1 | current)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-  const pick = <T>(items: ReadonlyArray<T>): T => items[Math.floor(next() * items.length)]
-  return { next, pick }
-}
-
-type Random = ReturnType<typeof generator>
-
-const KINDS = [
-  "started",
-  "ready",
-  "proved",
-  "verified",
-  "stalled",
-  "repeated",
-  "stale",
-  "scenario.proved",
-  "scenario.verified",
-  "run.started",
-  "run.resumed",
-  "outside",
-  "needs_human",
-  "failed",
-  "cancelled",
-  "ended",
-] as const
-
-type Kind = (typeof KINDS)[number]
-
-// The facts a task's state most likely meets next, so that the folds reach every state.
-const LIKELY: Record<string, ReadonlyArray<Kind>> = {
-  waiting: ["started"],
-  building: ["ready", "ready", "ready", "repeated"],
-  proving: ["proved"],
-  verifying: ["verified"],
-  trusted: ["stale"],
-}
-// A waiting parent moves on its review proof, not on a start.
-const PARENT_WAITING: ReadonlyArray<Kind> = ["proved"]
-
-// One random fact: mostly one that moves the chosen task on, otherwise any fact (unknown ids included).
-const randomFact = (plan: Plan, state: State, { next, pick }: Random, at: number): Fact => {
-  const task = pick([...plan.tasks.map((item) => item.id), "T7"])
-  const own = plan.spec.obligations.filter((item) => item.task === task).map((item) => item.id)
-  // `T7` is in no plan.
-  const current = Object.hasOwn(state.tasks, task) ? state.tasks[task] : undefined
-  const likely = current?.leaf === false && current.state === "waiting" ? PARENT_WAITING : LIKELY[current?.state ?? ""]
-  const kind = next() < 0.75 && likely !== undefined ? pick(likely) : pick(KINDS)
-  const maybe = (text: string) => (next() < 0.3 ? `${text} ${at}` : undefined)
-  switch (kind) {
-    case "started":
-      return {
-        type: "task.started",
-        at,
-        task,
-        worktree: `/wt/${task}`,
-        branch: `task/${task}`,
-        base: "base",
-        session: `ses_${task}`,
-      }
-    case "ready":
-      return { type: "task.ready", at, task, head: `head${at}` }
-    case "proved": {
-      const results = own
-        .filter(() => next() < 0.9)
-        .map((id): Result => {
-          const roll = next()
-          if (roll < 0.08) return { id, status: "failed", reason: maybe("failed") }
-          return { id, status: roll < 0.3 ? "passed" : "needs-judge" }
-        })
-      return { type: "task.proved", at, task, results, reason: next() < 0.05 ? `structural ${at}` : undefined }
-    }
-    case "verified": {
-      const verdicts = own
-        .filter(() => next() < 0.92)
-        .map(
-          (id): Verdict =>
-            next() < 0.88 ? { id, verdict: "trusted" } : { id, verdict: "rejected", reason: maybe("weak") },
-        )
-      return { type: "task.verified", at, task, verdicts }
-    }
-    case "stalled":
-      return { type: "task.stalled", at, task, reason: `idle ${at}` }
-    case "repeated":
-      return { type: "task.repeated", at, task, reason: `repetition ${at}` }
-    case "stale":
-      return { type: "obligation.stale", at, id: pick([...own, "T7.c1"]), hash: `hash${at}` }
-    case "scenario.proved":
-      return {
-        type: "scenario.proved",
-        at,
-        id: pick([...plan.scenarios.map((item) => item.id), "S99"]),
-        status: next() < 0.8 ? "passed" : "failed",
-        reason: maybe("tests failed"),
-      }
-    case "scenario.verified": {
-      const id = pick(plan.scenarios.map((item) => item.id))
-      const verdict: Verdict =
-        next() < 0.8 ? { id, verdict: "trusted" } : { id, verdict: "rejected", reason: maybe("no") }
-      return { type: "scenario.verified", at, verdict }
-    }
-    case "run.started":
-      return { type: "run.started", at }
-    case "run.resumed":
-      return { type: "run.resumed", at }
-    case "outside":
-      return { type: "outside.trusted", at, id: pick(Object.keys(plan.spec.outside)) }
-    case "needs_human":
-      return { type: "task.needs_human", at, task, reason: `quota ${at}` }
-    case "failed":
-      return { type: "task.failed", at, task, reason: `merge conflict ${at}` }
-    case "cancelled":
-      return { type: "run.cancelled", at, reason: `aborted ${at}` }
-    default:
-      return { type: "run.ended", at, state: next() < 0.7 ? "done" : "failed", reason: maybe("ended") }
-  }
-}
-
-// What a history entry moved, for the coverage check: the unit's kind and its two states.
-const moveOf = (plan: Plan, item: State["history"][number]) => {
-  const kind =
-    item.unit === "run"
-      ? "run"
-      : item.unit in plan.spec.outside
-        ? "outside"
-        : plan.scenarios.some((scenario) => scenario.id === item.unit)
-          ? "scenario"
-          : plan.spec.obligations.some((obligation) => obligation.id === item.unit)
-            ? "obligation"
-            : "task"
-  return `${kind}:${item.from}>${item.to}`
-}
-
-describe("TableEngine and XStateEngine on the same facts", () => {
-  it.live("fold random fact lists on the release-notes plan to strictly equal states after every step", () =>
-    Effect.gen(function* () {
-      const plan = yield* releaseNotesPlan
-      const table = TaskEngineTable.TableEngine
-      const xstate = TaskEngineXState.XStateEngine
-      const moves = new Set<string>()
-      let facts = 0
-      for (let seed = 1; seed <= 40; seed++) {
-        const random = generator(seed)
-        let left = table.initial(plan)
-        let right = xstate.initial(plan)
-        expect(right).toStrictEqual(left)
-        for (let step = 1; step <= 100; step++) {
-          // A run in an end state takes no fact: start a new one.
-          if (TaskEngineTable.ended(left.run.state)) {
-            left = table.initial(plan)
-            right = xstate.initial(plan)
-          }
-          const fact = randomFact(plan, left, random, step)
-          const nextLeft = table.apply(plan, left, fact)
-          const nextRight = xstate.apply(plan, right, fact)
-          expect(nextRight).toStrictEqual(nextLeft)
-          // A fact that changes nothing gives back the very state, in both engines.
-          expect(nextRight === right).toBe(nextLeft === left)
-          for (const item of nextLeft.history.slice(left.history.length)) moves.add(moveOf(plan, item))
-          left = nextLeft
-          right = nextRight
-          facts += 1
-        }
-      }
-      expect(facts).toBe(4000)
-      // The folds reached the lifecycle's later moves, not only its first steps.
-      for (const move of [
-        "task:verifying>trusted",
-        "task:proving>building",
-        "task:verifying>building",
-        "task:trusted>proving",
-        "task:building>budget_exhausted",
-        "obligation:passed>stale",
-        "obligation:trusted>stale",
-        "obligation:rejected>passed",
-        "scenario:verifying>trusted",
-        "run:running>done",
-        "run:running>cancelled",
-      ])
-        expect(moves).toContain(move)
-    }),
-  )
-})
-
-describe("the engine registry", () => {
-  it.live("gives the o2 harness the xstate engine", () =>
-    Effect.gen(function* () {
-      const engine = yield* TaskEngines.forHarness("o2")
-      expect(Option.isSome(engine)).toBe(true)
-      expect(Option.getOrUndefined(engine)?.name).toBe("xstate")
-      expect(Option.getOrUndefined(engine)).toBe(TaskEngineXState.XStateEngine)
-    }),
-  )
 })

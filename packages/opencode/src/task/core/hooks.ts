@@ -33,6 +33,11 @@ export function watch(sessionID: string, limit: number) {
   MutableHashMap.remove(repeated, sessionID)
 }
 
+/** Whether the harness watches this session for repeated calls. */
+export function watching(sessionID: string) {
+  return MutableHashMap.has(limits, sessionID)
+}
+
 export function unwatch(sessionID: string) {
   MutableHashMap.remove(limits, sessionID)
 }

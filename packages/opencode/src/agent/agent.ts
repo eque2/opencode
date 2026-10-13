@@ -34,7 +34,6 @@ import { Reference } from "@opencode-ai/core/reference"
 import { Location } from "@opencode-ai/core/location"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { TaskHooks } from "@/task/core/hooks"
-import { TaskSelector } from "@/task/core/selector"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -279,63 +278,61 @@ const layer = Layer.effect(
           },
         }
 
-        // The in-core task harness's agents (O1, O2). They run headless, so every permission is decided:
-        // `"*": "allow"` first, then the denials; no rule asks.
-        if (yield* TaskSelector.inCore) {
-          const model = cfg.model ? { model: Provider.parseModel(cfg.model) } : {}
-          agents[TaskHooks.BUILDER] = {
-            name: TaskHooks.BUILDER,
-            description: "Builds one task of a blend task tree for the task harness.",
-            mode: "primary",
-            native: true,
-            hidden: true,
-            prompt: PROMPT_TASK_BUILDER,
-            // Deny by default: every allowed tool's definition rides on every request, and a live run is capped
-            // in tokens (D11). The builder needs files, search and the shell; `invalid` answers a call to a tool it
-            // does not have (a builder's `verdict` call fails there).
-            permission: Permission.fromConfig({
-              "*": "deny",
-              read: "allow",
-              glob: "allow",
-              grep: "allow",
-              list: "allow",
-              edit: "allow",
-              write: "allow",
-              apply_patch: "allow",
-              bash: "allow",
-              invalid: "allow",
-              external_directory: "allow",
-              task_ready: "allow",
-              // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
-              // turn with an error instead.
-              doom_loop: "allow",
-            }),
-            options: {},
-            ...model,
-          }
-          agents[TaskHooks.VERIFIER] = {
-            name: TaskHooks.VERIFIER,
-            description: "Judges the obligations of a task for the task harness.",
-            mode: "primary",
-            native: true,
-            hidden: true,
-            prompt: PROMPT_TASK_VERIFIER,
-            // Deny by default, as for the builder: the verifier reads, searches and runs the tests.
-            permission: Permission.fromConfig({
-              "*": "deny",
-              read: "allow",
-              glob: "allow",
-              grep: "allow",
-              list: "allow",
-              bash: "allow",
-              invalid: "allow",
-              external_directory: "allow",
-              verdict: "allow",
-              doom_loop: "allow",
-            }),
-            options: {},
-            ...model,
-          }
+        // The task harness's agents. They run headless, so every permission is decided: `"*": "deny"` first,
+        // then what each role needs; no rule asks.
+        const model = cfg.model ? { model: Provider.parseModel(cfg.model) } : {}
+        agents[TaskHooks.BUILDER] = {
+          name: TaskHooks.BUILDER,
+          description: "Builds one task of a blend task tree for the task harness.",
+          mode: "primary",
+          native: true,
+          hidden: true,
+          prompt: PROMPT_TASK_BUILDER,
+          // Deny by default: every allowed tool's definition rides on every request, and a live run is capped
+          // in tokens. The builder needs files, search and the shell; `invalid` answers a call to a tool it
+          // does not have (a builder's `verdict` call fails there).
+          permission: Permission.fromConfig({
+            "*": "deny",
+            read: "allow",
+            glob: "allow",
+            grep: "allow",
+            list: "allow",
+            edit: "allow",
+            write: "allow",
+            apply_patch: "allow",
+            bash: "allow",
+            invalid: "allow",
+            external_directory: "allow",
+            task_ready: "allow",
+            // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
+            // turn with an error instead.
+            doom_loop: "allow",
+          }),
+          options: {},
+          ...model,
+        }
+        agents[TaskHooks.VERIFIER] = {
+          name: TaskHooks.VERIFIER,
+          description: "Judges the obligations of a task for the task harness.",
+          mode: "primary",
+          native: true,
+          hidden: true,
+          prompt: PROMPT_TASK_VERIFIER,
+          // Deny by default, as for the builder: the verifier reads, searches and runs the tests.
+          permission: Permission.fromConfig({
+            "*": "deny",
+            read: "allow",
+            glob: "allow",
+            grep: "allow",
+            list: "allow",
+            bash: "allow",
+            invalid: "allow",
+            external_directory: "allow",
+            verdict: "allow",
+            doom_loop: "allow",
+          }),
+          options: {},
+          ...model,
         }
 
         for (const [key, value] of Object.entries(cfg.agent ?? {})) {

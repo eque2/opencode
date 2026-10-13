@@ -8,10 +8,10 @@ import { TaskCommand } from "@/task/core/command"
 import { TaskRunner } from "@/task/core/runner"
 import type { Plan, ScenarioState, State, TaskState } from "@/task/core/model"
 import { TaskStatus } from "@/task/core/status"
-import { TableEngine } from "@/task/engine-table"
+import { TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
 
-// The status projection of the in-core harness (harness contract, section 3): `waitingOn` and the projected
+// The status projection of the task harness (harness contract, section 3): `waitingOn` and the projected
 // `waiting` run state, on the real release-notes and T2 specs. No server, no model.
 
 const it = testEffect(NodeServices.layer)
@@ -51,14 +51,13 @@ const withScenarios = (state: State, scenarios: Record<string, ScenarioState>): 
 })
 
 const project = (plan: Plan, state: State, outside: ReadonlyArray<string> = []) =>
-  TaskStatus.project({ harness: "o1", plan, state, outside })
+  TaskStatus.project({ plan, state, outside })
 
 describe("the status projection", () => {
   it.live("a new run waits, and each task waits on its untrusted dependencies, outside ids included", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const status = project(plan, TableEngine.initial(plan))
-      expect(status.harness).toBe("o1")
+      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
       expect(status.run).toEqual({ state: "waiting", spec: RELEASE_NOTES, path: RELEASE_NOTES })
       expect(status.tasks["T1.1"]).toEqual({ state: "waiting", attempts: 0, waitingOn: [] })
       expect(status.tasks["T1.2"]?.waitingOn).toEqual([])
@@ -77,7 +76,7 @@ describe("the status projection", () => {
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
       const trusted = Object.fromEntries(["T1.1", "T1.2", "T1.3", "T1.4"].map((id): [string, TaskState] => [id, "trusted"]))
-      const status = project(plan, withTasks(TableEngine.initial(plan), trusted), ["T9"])
+      const status = project(plan, withTasks(TaskEngineXState.XStateEngine.initial(plan), trusted), ["T9"])
       expect(status.tasks["T1.5"]?.waitingOn).toEqual([])
       expect(status.scenarios["S13"]?.waitingOn).toEqual(["T8"])
       expect(status.scenarios["S1"]?.waitingOn).toEqual([])
@@ -88,7 +87,7 @@ describe("the status projection", () => {
   it.live("the run is running while a task builds, proves or verifies, or a scenario is judged", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const initial = TableEngine.initial(plan)
+      const initial = TaskEngineXState.XStateEngine.initial(plan)
       for (const busy of ["building", "proving", "verifying"] as const) {
         expect(project(plan, withTasks(initial, { "T1.1": busy })).run.state).toBe("running")
       }
@@ -108,7 +107,7 @@ describe("the status projection", () => {
   it.live("an ended run is shown as stored", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const initial = TableEngine.initial(plan)
+      const initial = TaskEngineXState.XStateEngine.initial(plan)
       const stopped: State = { ...initial, run: { ...initial.run, state: "budget_exhausted", reason: "T1.1" } }
       expect(project(plan, stopped).run).toEqual({
         state: "budget_exhausted",
@@ -130,7 +129,7 @@ describe("the status projection", () => {
       // S4 and S12 need T1.3 alone; S1 also needs T1.1, T1.2 and T1.4, which are not in the plan.
       expect(plan.scenarios.map((scenario) => scenario.id)).toEqual(["S4", "S12"])
       expect(plan.budget("T1.3")).toBe(3)
-      const status = project(plan, TableEngine.initial(plan))
+      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
       expect(status.tasks["T1.3"]?.waitingOn).toEqual(["T1.1"])
       expect(Object.keys(status.tasks)).toEqual(["T1.3"])
     }),
@@ -142,7 +141,7 @@ describe("the status projection", () => {
       const plan = planOf(spec, T2_SPEC, { folder: "T2-services.task", root: "T2" })
       const ids = ["T2.1", "T2.2", "T2.3", "T2.4", "T2.5", "T2.6"]
       expect(plan.tasks.map((task) => task.id)).toEqual(["T2", ...ids])
-      const status = project(plan, TableEngine.initial(plan))
+      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
       const outside = Object.keys(spec.outside)
       for (const id of ids) {
         const task = status.tasks[id]
@@ -157,9 +156,8 @@ describe("the status projection", () => {
 
   it.live("a refused status names the rule and has no records", () =>
     Effect.sync(() => {
-      const status = TaskStatus.refused({ harness: "o1", spec: RELEASE_NOTES, path: RELEASE_NOTES, reason: "R7 .: cycle" })
+      const status = TaskStatus.refused({ spec: RELEASE_NOTES, path: RELEASE_NOTES, reason: "R7 .: cycle" })
       expect(status).toEqual({
-        harness: "o1",
         run: { state: "refused", reason: "R7 .: cycle", spec: RELEASE_NOTES, path: RELEASE_NOTES },
         tasks: {},
         obligations: {},
@@ -174,8 +172,8 @@ describe("the status projection", () => {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      yield* TaskStatus.write(directory, TaskStatus.refused({ harness: "o1", spec: "x", path: "x", reason: "R1" }))
-      yield* TaskStatus.write(directory, project(plan, TableEngine.initial(plan)))
+      yield* TaskStatus.write(directory, TaskStatus.refused({ spec: "x", path: "x", reason: "R1" }))
+      yield* TaskStatus.write(directory, project(plan, TaskEngineXState.XStateEngine.initial(plan)))
       const folder = path.join(directory, ".opencode", "task")
       expect(yield* fs.readDirectory(folder)).toEqual(["status.json"])
       const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(

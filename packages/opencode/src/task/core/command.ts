@@ -11,17 +11,16 @@ import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
+import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskLimits } from "@/task/limits"
-import { TaskEngines } from "./engines"
 import { TaskEvents } from "./events"
 import type { Plan } from "./model"
 import type { Ops } from "./ops"
 import { TaskRunner } from "./runner"
-import { TaskSelector } from "./selector"
 import type { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
 
-// `/task` of the in-core harness. `SessionPrompt.command` calls `run` before it reads any template, so no model
+// `/task` of the task harness. `SessionPrompt.command` calls `run` before it reads any template, so no model
 // request is made here: the command answers with a user message created with `noReply`, and the run goes on as a
 // background job tied to the root session (aborting that session cancels it).
 //
@@ -37,7 +36,7 @@ export interface CommandInput {
   readonly agent?: string
 }
 
-/** The harness cannot run: a service it needs is missing, or no in-core engine serves the selected option. */
+/** The harness cannot run: a service it needs is missing from the caller's context. */
 export class HarnessUnavailable extends Schema.TaggedError<HarnessUnavailable>()("TaskHarnessUnavailable", {
   message: Schema.String,
 }) {}
@@ -128,10 +127,6 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
       parts: [{ type: "text", text }],
       noReply: true,
     })
-  const harness = yield* TaskSelector.selected
-  if (harness !== "o1" && harness !== "o2") {
-    return yield* Effect.die(new HarnessUnavailable({ message: `no in-core task harness is selected (${harness})` }))
-  }
   const env = yield* environment(ops)
   const ctx = yield* InstanceState.context
   const directory = ctx.directory
@@ -155,7 +150,7 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
   const found = specFolder(path, directory, target)
   const refuse = (spec: string, reason: string) =>
     Effect.gen(function* () {
-      yield* TaskStatus.write(directory, TaskStatus.refused({ harness, spec, path: args, reason }))
+      yield* TaskStatus.write(directory, TaskStatus.refused({ spec, path: args, reason }))
       return yield* reply(`Task harness: refused ${args}: ${reason}`)
     })
   if (Option.isNone(found)) return yield* refuse(args, `R1 ${args}: not inside a \`<slug>.spec\` folder`)
@@ -176,17 +171,12 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
     return yield* refuse(specPath, `R2 ${path.relative(specDir, target)}: no task ${root.value} in the spec`)
   }
 
-  const engine = yield* TaskEngines.forHarness(harness)
-  if (Option.isNone(engine)) {
-    return yield* Effect.die(new HarnessUnavailable({ message: `no engine for the task harness ${harness}` }))
-  }
   const id = TaskEvents.runID(directory, specPath)
   if (TaskRunner.running(id)) return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
   const limits = yield* TaskLimits.load
   const start: TaskRunner.Start = {
     env,
-    harness,
-    engine: engine.value,
+    engine: TaskEngineXState.XStateEngine,
     directory,
     specDir,
     plan: plan({ spec, specPath, path: args, root }),
@@ -206,7 +196,7 @@ export const run: (input: CommandInput, ops: Ops) => Effect.Effect<SessionV1.Wit
     ),
   })
   return yield* reply(
-    `Task harness ${harness}: running ${args} in the background. Its status is in .opencode/task/status.json.`,
+    `Task harness: running ${args} in the background. Its status is in .opencode/task/status.json.`,
   )
 }, Effect.provide(platform))
 

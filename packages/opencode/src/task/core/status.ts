@@ -59,11 +59,7 @@ const HistoryEntry = Schema.Struct({
   reason: Reason,
 }).annotate({ identifier: "TaskStatus.History" })
 
-export const Harness = Schema.Literals(["o1", "o2", "o3"])
-export type Harness = typeof Harness.Type
-
 export const Status = Schema.Struct({
-  harness: Harness,
   run: Schema.Struct({ state: RunStateSchema, reason: Reason, spec: Text, path: Text }),
   tasks: Schema.Record(Text, TaskStatus),
   obligations: Schema.Record(Text, ObligationStatus),
@@ -78,7 +74,6 @@ const ACTIVE: ReadonlyArray<TaskState> = ["building", "proving", "verifying"]
 
 /** The input of the projection: the folded state, its plan, and the `outside` ids the store records as trusted. */
 export interface Input {
-  readonly harness: Harness
   readonly plan: Plan
   readonly state: State
   readonly outside: ReadonlyArray<string>
@@ -88,7 +83,7 @@ export interface Input {
  * Whether an id that a task or scenario depends on is trusted: a plan task by its state, an `outside` id by the
  * trusted set. An id that is neither counts as not trusted.
  */
-export const trusted = (input: Omit<Input, "harness">) => (id: string) => {
+export const trusted = (input: Input) => (id: string) => {
   const task = input.state.tasks[id]
   if (task) return task.state === "trusted"
   if (id in input.plan.spec.outside) return input.outside.includes(id)
@@ -96,7 +91,7 @@ export const trusted = (input: Omit<Input, "harness">) => (id: string) => {
 }
 
 /** The ids of `ids` that are not trusted. */
-export const waitingOn = (input: Omit<Input, "harness">, ids: ReadonlyArray<string>) =>
+export const waitingOn = (input: Input, ids: ReadonlyArray<string>) =>
   ids.filter((id) => !trusted(input)(id))
 
 const runState = (input: Input): RunState => {
@@ -115,7 +110,6 @@ export const project = (input: Input): Status => {
   const after = (id: string) => plan.tasks.find((task) => task.id === id)?.afterEffective ?? []
   const needs = (id: string) => plan.scenarios.find((scenario) => scenario.id === id)?.needs ?? []
   return {
-    harness: input.harness,
     run: { state: runState(input), reason: state.run.reason, spec: state.run.spec, path: state.run.path },
     tasks: Object.fromEntries(
       Object.values(state.tasks).map((task) => [
@@ -150,8 +144,7 @@ export const project = (input: Input): Status => {
 }
 
 /** The status of a refused `/task`: the first failing rule, and no records. */
-export const refused = (input: { harness: Harness; spec: string; path: string; reason: string }): Status => ({
-  harness: input.harness,
+export const refused = (input: { spec: string; path: string; reason: string }): Status => ({
   run: { state: "refused", reason: input.reason, spec: input.spec, path: input.path },
   tasks: {},
   obligations: {},

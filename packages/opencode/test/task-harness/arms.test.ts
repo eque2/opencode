@@ -39,7 +39,7 @@ test("a status file is absent, malformed, or the contract's shape", () => {
     expect(problem()).toStartWith("no status file at")
     write("{")
     expect(problem()).toEndWith("is malformed: not JSON")
-    const valid = { harness: "o1", run: { state: "running", spec: "s", path: "p" }, tasks: {}, obligations: {}, scenarios: {}, history: [] }
+    const valid = { run: { state: "running", spec: "s", path: "p" }, tasks: {}, obligations: {}, scenarios: {}, history: [] }
     write(JSON.stringify({ ...valid, run: { spec: "s", path: "p" } }))
     expect(problem()).toEndWith("is malformed: run.state is not a string")
     write(JSON.stringify({ ...valid, tasks: [] }))

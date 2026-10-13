@@ -59,7 +59,6 @@ import { LLMEvent } from "@opencode-ai/llm"
 import { TaskCommand } from "@/task/core/command"
 import { TaskHooks } from "@/task/core/hooks"
 import type { TaskOps } from "@/task/core/ops"
-import { TaskSelector } from "@/task/core/selector"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1211,10 +1210,9 @@ const layer = Layer.effect(
             continue
           }
 
-          // The task harness (O1, O2), when it runs: its agents get their own tools below, and a builder that
-          // repeats one call ends its turn here, without a model request.
-          const harness = yield* TaskSelector.inCore
-          if (harness) {
+          // A task harness builder that repeats one call ends its turn here, without a model request. Only the
+          // sessions the harness watches are checked, so other sessions skip the scan of their calls.
+          if (TaskHooks.watching(sessionID)) {
             const repetition = TaskHooks.checkRepetition(sessionID, completedCallsSince(msgs, lastUser.id))
             if (repetition !== undefined) {
               yield* Effect.logInfo("task harness repetition stop", { "session.id": sessionID, reason: repetition })
@@ -1286,7 +1284,8 @@ const layer = Layer.effect(
               })
             }
 
-            if (harness) Object.assign(tools, createTaskHarnessTools(agent.name, sessionID))
+            // The task harness agents get their own tools; every other agent gets none.
+            Object.assign(tools, createTaskHarnessTools(agent.name, sessionID))
 
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -1425,9 +1424,8 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         return yield* Effect.die(error)
       }
-      // The task harness (O1, O2) runs `/task` in code: no template, no model turn in this session.
-      if (input.command === Command.Default.TASK && (yield* TaskSelector.inCore))
-        return yield* TaskCommand.run(input, taskOps)
+      // The task harness runs `/task` in code: no template, no model turn in this session.
+      if (input.command === Command.Default.TASK) return yield* TaskCommand.run(input, taskOps)
       const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []

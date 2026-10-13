@@ -36,7 +36,6 @@ const History = Schema.Struct({
 }).annotate({ identifier: "TaskUi.History" })
 
 export const Status = Schema.Struct({
-  harness: Schema.String,
   run: Schema.Struct({ state: Schema.String, reason: Schema.optional(Reason), spec: Schema.String, path: Schema.String }),
   tasks: Schema.Record(Schema.String, Task),
   obligations: Schema.Record(Schema.String, Unit),

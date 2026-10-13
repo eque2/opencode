@@ -40,7 +40,6 @@ type Requirements = FileSystem.FileSystem | Path.Path
 /** Everything a run needs, resolved by the `/task` command. */
 export interface Start {
   readonly env: Env
-  readonly harness: TaskStatus.Harness
   readonly engine: Engine
   /** The instance directory: the root checkout. */
   readonly directory: string
@@ -109,7 +108,7 @@ const view = Effect.fnUntraced(function* (run: Run) {
 
 const writeStatus = Effect.fnUntraced(function* (run: Run) {
   const input = yield* view(run)
-  yield* TaskStatus.write(run.directory, TaskStatus.project({ harness: run.harness, ...input }))
+  yield* TaskStatus.write(run.directory, TaskStatus.project(input))
 })
 
 /**

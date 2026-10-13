@@ -9,11 +9,10 @@ import { SessionPrompt } from "@/session/prompt"
 import { SessionID } from "@/session/schema"
 import { TaskHooks } from "@/task/core/hooks"
 import type { Verdict } from "@/task/core/model"
-import { TaskSelector } from "@/task/core/selector"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
-// The in-core wiring of the task harness: present with OPENCODE_TASK_HARNESS=o1|o2, absent otherwise.
+// The wiring of the task harness: the `task` command, its two hidden agents and their one-turn tools.
 
 const it = testEffect(
   LayerNode.compile(LayerNode.group([Agent.node, Command.node, RuntimeFlags.node]), [
@@ -21,33 +20,11 @@ const it = testEffect(
   ]),
 )
 
-const original = process.env[TaskSelector.variable]
-const setHarness = (value: string | undefined) => {
-  if (value === undefined) delete process.env[TaskSelector.variable]
-  else process.env[TaskSelector.variable] = value
-}
-
 afterEach(async () => {
-  setHarness(original)
   await disposeAllInstances()
 })
 
 const call = { toolCallId: "call_1", messages: [] }
-
-describe("the harness selector", () => {
-  test("names o1, o2 and o3; anything else is none", async () => {
-    expect(TaskSelector.select("o1")).toBe("o1")
-    expect(TaskSelector.select("o3")).toBe("o3")
-    expect(TaskSelector.select("")).toBeUndefined()
-    expect(TaskSelector.select("baseline")).toBeUndefined()
-    setHarness("o2")
-    expect(await Effect.runPromise(TaskSelector.inCore)).toBe(true)
-    setHarness("o3")
-    expect(await Effect.runPromise(TaskSelector.inCore)).toBe(false)
-    setHarness(undefined)
-    expect(await Effect.runPromise(TaskSelector.selected)).toBeUndefined()
-  })
-})
 
 describe("the harness-only tools", () => {
   test("only the builder gets task_ready and only the verifier gets verdict", () => {
@@ -83,19 +60,8 @@ describe("the harness-only tools", () => {
 })
 
 describe("the task command and agents", () => {
-  it.instance("are absent when OPENCODE_TASK_HARNESS is unset", () =>
+  it.instance("are always present, with the harness permissions", () =>
     Effect.gen(function* () {
-      setHarness(undefined)
-      const agents = (yield* Agent.Service.use((svc) => svc.list())).map((agent) => agent.name)
-      expect(agents).not.toContain(TaskHooks.BUILDER)
-      expect(agents).not.toContain(TaskHooks.VERIFIER)
-      expect(yield* Command.Service.use((svc) => svc.get("task"))).toBeUndefined()
-    }),
-  )
-
-  it.instance("are present for o1, with the harness permissions", () =>
-    Effect.gen(function* () {
-      setHarness("o1")
       const command = yield* Command.Service.use((svc) => svc.get("task"))
       expect(command).toMatchObject({ name: "task", description: "Run a blend task tree", source: "command" })
       expect(command?.template).toBe("")

@@ -1,9 +1,8 @@
 import type { BlendModel } from "@/task/blend/model"
 
-// The task harness's state and the facts that move it. Shared by every in-core engine: O1 folds the facts through a
-// transition table (`@/task/engine-table`), O2 through an xstate-effect machine (`@/task/engine-xstate`). The runner
-// (`@/task/core/runner`) records each fact as a durable EventV2 event and never changes state any other way, so a
-// resume is the same fold over the stored events.
+// The task harness's state and the facts that move it. The engine (`@/task/engine-xstate`) folds the facts through
+// xstate-effect machines. The runner (`@/task/core/runner`) records each fact as a durable EventV2 event and never
+// changes state any other way, so a resume is the same fold over the stored events.
 
 export type RunState = "running" | "refused" | "waiting" | "done" | "cancelled" | "needs_human" | "budget_exhausted" | "failed"
 export type TaskState =
@@ -120,9 +119,9 @@ export interface Plan {
   readonly budget: (task: string) => number
 }
 
-/** A harness engine: a pure fold. O1 and O2 differ only here. */
+/** The harness engine: a pure fold of facts into state. */
 export interface Engine {
-  readonly name: "table" | "xstate"
+  readonly name: "xstate"
   readonly initial: (plan: Plan) => State
   readonly apply: (plan: Plan, state: State, fact: Fact) => State
 }

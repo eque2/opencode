@@ -1,5 +1,4 @@
 {
-  "harness": "o2",
   "run": {
     "state": "budget_exhausted",
     "reason": "T1.4: T1.4.c8: skipped: release-notes command > [T1.4.c8] runs the delivery check only with a registry",

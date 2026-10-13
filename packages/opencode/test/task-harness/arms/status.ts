@@ -22,7 +22,6 @@ export type TaskStatus = { state: TaskState; attempts: number; waitingOn: string
 export type HistoryEntry = { at: number; unit: string; from?: string; to: string; reason?: string }
 
 export interface Status {
-  harness: "o1" | "o2"
   run: { state: RunState; reason?: string; spec: string; path: string }
   tasks: Record<string, TaskStatus>
   obligations: Record<string, { state: ObligationState; reason?: string }>
