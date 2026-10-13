@@ -2,9 +2,10 @@
 title: 'Promote the spike-task-harness winner (O2) to production'
 type: 'feature'
 created: '2026-10-13'
-status: 'in-progress'
+status: 'in-review'
 route: 'dispatch'
 review_loop_iteration: 0
+baseline_commit: '6deb46357228dae670fa8046fbbc8d20378403ee'
 context:
   - '{project-root}/AGENTS.md'
   - '{project-root}/packages/opencode/AGENTS.md'
@@ -84,9 +85,63 @@ Paths are under `packages/opencode/` unless they start with `packages/` or `task
   - generic TUI used by the watch view: `ec31485090` (route `watch` param, `session_watch` slot, plugin API and spec doc), `1344b18eea` (hide a hint whose key another layer takes);
   - unrelated fix: `db6c781b4c` = spike `dbf57fe844` (`packages/app/src/i18n/desktop-native.ts`, Punjabi Nastaliq to the Arabic-script bundle; the app suite fails on Bun 1.3.14 without it).
 
+- Implementation commits (all on this branch):
+  - `dc65c9c2ac` remove the O3 plugin harness; `753835377c` make the xstate engine the only harness (selector, O1, engine registry and the `harness` status field gone; prompt hooks ask `TaskHooks.watching`; 27 contract cases moved to `engine-xstate.test.ts`).
+  - `a1a3b5d427` warn when a config or MCP `task` command is shadowed.
+  - `a88daab69e` proof env allowlist; `47fb0d50fa` read-only verifier, confined builders; `4325961f06` base branch from the repo, dirty-root and detached-HEAD refusal, merge only onto the base; `beb7e7212d` command-level refusal tests (services resolved after refusals).
+  - `e99aabc57a` engine header as product docs; `28e3d83d16` task-ui built-in (`internal:task-ui`) with a plugin-entry test; `f110a4c1a4` README as product docs, `launch.sh` deleted.
+  - `8664d7bbb1` validator messages in jsonschema's words (no exemptions, 38 cases, whole output compared).
+  - `440eb4f3ea` two-arm same-run conformance guard (baseline pinned to `55ab6b3e56`, exported and installed under `.task-conformance/`, preflight, non-zero exit).
+  - `17efbe7bef` dependency order as `bun install` writes it.
+- Surprise: the spike's baseline commit is not on dev, so the apparatus lived in the 88 commits before it (found in the contract review).
+- Surprise: `opencode run --command task` never exits after a code-answered command (no idle event without a model turn); deferred to the re-planned task-harness goal (see `deferred-work.md`).
+- Surprise: under load average 70–290 from other work on the machine, Bun's default 5 s test timeout cut the instance-based tests; the package script's `--timeout 30000` holds.
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+Review pass 1, 2026-10-13, on `6deb463572..e264d01b4f`'s first state (`review.diff`, 297 kB): blind hunter (B, 18 findings), edge-case hunter (E, 18), verification-gap reviewer (V, 8 + 2). Overlaps are merged into one row and tagged with every lens. Every survivor was patched or deferred; no finding routed to intent_gap or bad_spec.
+
+| # | Finding (lenses) | Verdict and evidence | Route | Outcome |
+|---|---|---|---|---|
+| 1 | A parent review's `restore` runs `git clean -fd` in the root checkout; untracked user files were let through and would be deleted (B) | high: `runner.ts` restores `run.directory` after a root judge; the old `uncommitted` skipped untracked files on purpose | patch | fixed `a7fa014ce0`: untracked files refuse /task |
+| 2 | The base branch is not stored; a resume after a branch switch merges into the new branch (B, E) | medium: base came from the checkout at each /task; facts held no branch | patch | fixed `4dcccc83ab`: `base` on run.started/resumed, resume on another branch refused |
+| 3 | Leaf branches and worktrees named by task id only; a second spec's T1.1 reuses the first's branch; a merged leaf restarts from an old tip (B) | high: `task/<id>` reused when present | patch | fixed `35acea8a3f`: `task/<run key>/<id>`, merged branch reset to the base head |
+| 4 | `.opencode/task/` not ignored; `git add -A` would add leaf worktrees as embedded repos (B) | high: `config.ts` gitignore lacks `task/` | patch | fixed `89424cc678`: the folder writes its own `*` .gitignore |
+| 5 | Proofs run `bun test` only; other test runners fail every proof (B) | medium, pre-existing in the format (`requires: "Bun 1.3"`) | defer | deferred-work.md |
+| 6 | Docs say every built-in can be overridden; no /task user docs (B) | low: commands.mdx:320 | patch + defer | note fixed `e264d01b4f`; a /task docs page deferred |
+| 7 | Shadow warning only in the log; a skill named task dropped silently; no off switch (B, V8) | medium for the skill path: `if (commands[item.name]) continue` | patch / defer / reject | skill fixed `a74a9ffc7a`; a visible TUI notice deferred; an off switch rejected: D2 decides "no switch" |
+| 8 | Wrong refusal reasons: no git, no commits, git status named for a git diff failure (B, E, V) | medium: every git failure mapped to "detached HEAD" | patch | fixed `a7fa014ce0` (`readiness`) |
+| 9 | Proofs get an allowlisted env, the builder's and verifier's shells the full env; proxy and CA variables missing in proofs (B, E) | medium: `tool/shell.ts` spawns with process.env, as for every opencode agent | defer | deferred-work.md |
+| 10 | GIT_ and BUN_ prefixes pass tokens; HOME lets a test read auth.json (B) | medium (security): GIT_CONFIG_PARAMETERS can carry a header token | patch + defer | prefixes fixed `4b95545df5`; HOME is needed by tools, documented as a deterrent |
+| 11 | Guard ignores the noise floor, a dirty fingerprint and sameFixture; `--arm baseline` prints passed; guard() untested (B, V7) | medium: verdict inline in a top-level script | patch | fixed `64428e097c` (`guardFailures` + tests) |
+| 12 | Nothing enforces or records the guard (B) | low: the header says it is manual (AC 23) | defer | deferred-work.md; every attempt's JSON is kept in the goal journal |
+| 13 | Baseline isolation checks core only; two runs can delete each other's export (B, E) | medium | patch | fixed `64428e097c` (`linksInside`, lock file) |
+| 14 | The random-fact fold left with O1 (B, E) | medium | patch | fixed `7e84e29332`, `5e93e76412` |
+| 15 | Design choice not persisted; keys not rebindable; plugin missing from the spec's built-in list (B) | low/medium | patch + defer | persistence and list fixed `2430bd8c3a`; keybind ids deferred |
+| 16 | All seven designs ship; the plugin polls even without runs (B) | false as a defect: the user asked "We want all the task designs! As options"; a 1 s stat is negligible | reject | — |
+| 17 | Spike wording left in runner, events and test comments (B, E) | low | patch | fixed `e264d01b4f`, `64428e097c` |
+| 18 | Python repr of floats and non-string keys is not exact (B, E) | low: not rebuildable from parsed JS values | patch (claim) | comment narrowed `c10a0811ed`; exact float repr rejected |
+| 19 | No runner-level run on a non-main base (V1) | medium | patch | fixed `64428e097c` (seed on `dev`) |
+| 20 | The /task dispatch has no normal test (V2) | medium | patch | fixed `c636108c3c` |
+| 21 | The `watching` gate has no normal test (V3) | medium | patch | fixed `c636108c3c` |
+| 22 | Most R3 message shapes unpinned (V4) | medium | patch | fixed `c10a0811ed` (27 cases checked against jsonschema 4.25.0) |
+| 23 | The uncommitted test cannot see the `.opencode/task` exclusion (V5) | low | patch | fixed `a7fa014ce0` |
+| 24 | The built-in task-ui never tested without a status file (V6) | medium | patch | fixed `2430bd8c3a` |
+| 25 | A non-string `covers` item gets the anyOf message, not jsonschema's type message (V) | low | patch | fixed `c10a0811ed` |
+| 26 | A tag named like the branch gives `heads/<name>` (E) | low | patch | fixed `a7fa014ce0` |
+| 27 | A crash mid-merge leaves the root dirty, so /task refuses its own resume (E) | medium | patch | `a7fa014ce0`: a named refusal "a merge is in progress … `git merge --abort`" |
+| 28 | An instance in a subfolder sees only its own changes (E) | medium | patch | fixed `a7fa014ce0` (from the top) |
+| 29 | Windows variable casing drops Path in proofs (E) | medium | patch | fixed `4b95545df5` |
+| 30 | The verifier's shell denies pipes and `git --no-pager` (E) | low | patch | prompt names the allowed forms `e264d01b4f` |
+| 31 | User config can override or disable the harness agents (E) | low: a deliberate user act | defer | deferred-work.md |
+| 32 | User permission deny rules are not merged into the harness agents (E) | medium, design question | defer | deferred-work.md |
+| 33 | `bun test` loads `.env` files in root-checkout proofs (E) | medium, unverified fix | defer | deferred-work.md |
+| 34 | The verifier can write through `git diff --output` or `bun test -u` (E) | low: the runner restores the judge's checkout after each round | reject | — |
+| 35 | `.spike-runs/` dropped from .gitignore (E) | low: only the spike worktree had such folders | reject | — |
+| 36 | Guard attempt 2 (o2 13/17): H4, H8, H9 passed their 16 s wall bound under load (own run) | high for the guard: same test 2.4 s, 3.4 s, 11 s | patch | fixed `9c131e5fa1` (margin 60 s) |
+| 37 | `opencode run --command task` never exits after a code-answered command (AC 18 smoke) | medium | defer | deferred-work.md (the re-planned task-harness goal holds the criterion) |
 
 ## Verification
 
