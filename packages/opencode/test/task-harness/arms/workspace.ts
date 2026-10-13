@@ -1,10 +1,14 @@
 // A fresh target repository for one conformance check: the release-notes seed plus the two blend trees, committed,
-// with dependencies installed offline from the local Bun cache. Everything lives under the run folder (D12).
+// with dependencies installed offline from the local Bun cache. Everything lives under the run folder, so a run
+// leaves nothing in the developer's checkout or home folder.
 import path from "node:path"
 import fs from "node:fs"
 
 const testRoot = path.resolve(import.meta.dir, "..")
 const repoRoot = path.resolve(testRoot, "../../../..")
+// The branch the target repository starts on, and the base the harness merges into. Not `main`, so the checks also
+// prove that the harness takes the current branch as its base instead of assuming `main`.
+export const BASE_BRANCH = "dev"
 export const seedDir = path.join(testRoot, "release-notes-repo")
 export const solutionDir = path.join(testRoot, "release-notes-solution")
 export const releaseNotesSpec = "task-formats/blend/release-notes.spec"
@@ -37,7 +41,7 @@ export function create(runDir: string, name: string): Workspace {
   for (const tree of ["release-notes.spec", "provider-ordering-admin.spec"]) {
     fs.cpSync(path.join(repoRoot, "task-formats/blend", tree), path.join(repo, "task-formats/blend", tree), { recursive: true })
   }
-  git(repo, "init", "-q", "-b", "main")
+  git(repo, "init", "-q", "-b", BASE_BRANCH)
   git(repo, "add", "-A")
   git(repo, "commit", "-q", "-m", "seed")
   // One install of the seed's frozen lockfile per lockfile, linked into every check's repository: a fresh install

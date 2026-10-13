@@ -1,7 +1,7 @@
-// The conformance runner's scoring: the checks read from Bun's JUnit report, the statistics and the comparison
-// with the baseline (D6). Plain unit tests, no server.
+// The conformance runner's scoring: the checks read from Bun's JUnit report, the statistics, the comparison with the
+// baseline and the guard's verdict. Plain unit tests, no server.
 import { describe, expect, test } from "bun:test"
-import { compare, readChecks, stats } from "./stats"
+import { CHECKS, compare, guardFailures, readChecks, stats, type CheckStatus, type GuardInput } from "./stats"
 
 // Recorded from `bun test --reporter=junit` (Bun 1.3.14) on tests titled like the conformance checks.
 const JUNIT = `<?xml version="1.0" encoding="UTF-8"?>
@@ -83,5 +83,62 @@ describe("compare", () => {
   test("sameFixture compares the fixture fingerprints", () => {
     expect(compare(summary(0), base, { spec: "a" }).sameFixture).toBe(true)
     expect(compare(summary(0), base, { spec: "b" }).sameFixture).toBe(false)
+  })
+})
+
+describe("guardFailures", () => {
+  // Every check at one status, L1 included; `changes` overrides single checks.
+  const checks = (status: CheckStatus, changes: Record<string, CheckStatus> = {}) => ({
+    ...Object.fromEntries(CHECKS.map((c) => [c, status])),
+    ...changes,
+  })
+  // Two runs per arm: the baseline fails every scripted check, o2 passes them all and clears the effect by far.
+  const passing: GuardInput = {
+    preflight: { started: true },
+    baseline: [1, 2].map((run) => ({ run, checks: checks("failed", { L1: "not-runnable" }) })),
+    o2: [1, 2].map((run) => ({ run, checks: checks("passed", { L1: "skipped" }) })),
+    comparison: compare(summary(94.118), base, base.fixture),
+    dirty: [],
+  }
+
+  test("passes when every clause holds", () => {
+    expect(guardFailures(passing)).toEqual([])
+  })
+
+  test("fails with the reason when the baseline server did not start, and judges no run", () => {
+    expect(
+      guardFailures({ ...passing, preflight: { started: false, reason: "no listening line" }, baseline: [], o2: [], comparison: undefined }),
+    ).toEqual(["the baseline server did not start: no listening line"])
+  })
+
+  test("fails when the fingerprinted paths have uncommitted changes", () => {
+    const failures = guardFailures({ ...passing, dirty: [" M packages/opencode/test/task-harness/scripts.ts"] })
+    expect(failures).toHaveLength(1)
+    expect(failures[0]).toContain("uncommitted changes")
+    expect(failures[0]).toContain("packages/opencode/test/task-harness/scripts.ts")
+  })
+
+  test("fails for each baseline check that is missing or skipped, not for one that failed", () => {
+    const baseline = [
+      { run: 1, checks: checks("failed", { H4: "missing", L1: "not-runnable" }) },
+      { run: 2, checks: checks("failed", { H7: "skipped", L1: "not-runnable" }) },
+    ]
+    expect(guardFailures({ ...passing, baseline })).toEqual(["baseline run 1: H4 is missing", "baseline run 2: H7 is skipped"])
+  })
+
+  test("fails for each o2 check that did not pass in a run, and ignores L1", () => {
+    const o2 = [
+      { run: 1, checks: checks("passed", { L1: "failed" }) },
+      { run: 2, checks: checks("passed", { H5: "failed", H16: "skipped", L1: "skipped" }) },
+    ]
+    expect(guardFailures({ ...passing, o2 })).toEqual(["o2 run 2: H5 is failed", "o2 run 2: H16 is skipped"])
+  })
+
+  test("fails when o2's median does not clear the smallest effect and the noise floor", () => {
+    const underFloor = compare(summary(60), { ...base, sd: 35 }, base.fixture)
+    expect(guardFailures({ ...passing, comparison: underFloor })).toEqual([
+      "o2's median score is 60 points above the baseline's; it must be at least 50 and above the noise floor of 70",
+    ])
+    expect(guardFailures({ ...passing, comparison: undefined })).toEqual(["o2 was not compared with the baseline"])
   })
 })

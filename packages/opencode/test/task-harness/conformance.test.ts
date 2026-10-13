@@ -235,8 +235,8 @@ function happyEnd(c: Ctx, s: Status.Status) {
   if (s13?.state !== "waiting" || !s13.waitingOn.includes("T8"))
     problems.push(`S13 is ${s13?.state ?? "absent"} waiting on [${s13?.waitingOn.join(", ") ?? ""}], expected waiting on T8`)
   for (const file of solutionSrc())
-    if (gitShow(c.ws.repo, `main:src/${file}`) !== Workspace.solutionFile(`src/${file}`))
-      problems.push(`main:src/${file} is not the solution's src/${file}`)
+    if (gitShow(c.ws.repo, `${Workspace.BASE_BRANCH}:src/${file}`) !== Workspace.solutionFile(`src/${file}`))
+      problems.push(`${Workspace.BASE_BRANCH}:src/${file} is not the solution's src/${file}`)
   for (const id of LEAVES)
     if (s.tasks[id]?.attempts !== 1) problems.push(`${id} has attempts ${s.tasks[id]?.attempts}, expected 1`)
   if ((s.tasks["T1"]?.attempts ?? 0) > 1) problems.push(`T1 has attempts ${s.tasks["T1"]?.attempts}, expected at most 1`)
@@ -481,7 +481,7 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
 
 const EDIT = "The edited text of H9. "
 
-// Idempotent: a retry after main already moved does not edit twice.
+// Idempotent: a retry after the base branch already moved does not edit twice.
 function editC2(text: string) {
   if (text.includes(EDIT)) return text
   const next = text.replace(/(\n {2}c2:\n(?: {4}.*\n)*? {4}text: ")/, `$1${EDIT}`)
@@ -489,10 +489,12 @@ function editC2(text: string) {
   return next
 }
 
-// Commit an edit of one file on top of the main branch, whatever the harness does with the root checkout: the commit
-// is built from main's tree with a private index, and main moves only if nobody moved it meanwhile. When the root
-// checkout is on main, its index entry and working file follow, as a plain commit there would leave them.
-function commitOnMain(dir: string, repo: string, file: string, edit: (text: string) => string, message: string) {
+// Commit an edit of one file on top of the base branch, whatever the harness does with the root checkout: the commit
+// is built from the branch's tree with a private index, and the branch moves only if nobody moved it meanwhile. When
+// the root checkout is on the branch, its index entry and working file follow, as a plain commit there would leave
+// them.
+function commitOnBase(dir: string, repo: string, file: string, edit: (text: string) => string, message: string) {
+  const ref = `refs/heads/${Workspace.BASE_BRANCH}`
   const env = {
     ...process.env,
     GIT_CONFIG_GLOBAL: "/dev/null",
@@ -507,9 +509,9 @@ function commitOnMain(dir: string, repo: string, file: string, edit: (text: stri
     if (out.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${out.stderr.toString()}`)
     return out.stdout.toString().trim()
   }
-  const parent = git(["rev-parse", "refs/heads/main"])
+  const parent = git(["rev-parse", ref])
   const before = gitShow(repo, `${parent}:${file}`)
-  if (before === undefined) throw new Error(`main has no ${file}`)
+  if (before === undefined) throw new Error(`${Workspace.BASE_BRANCH} has no ${file}`)
   const after = edit(before)
   const content = path.join(dir, "edit.blob")
   const index = path.join(dir, "edit.index")
@@ -519,9 +521,9 @@ function commitOnMain(dir: string, repo: string, file: string, edit: (text: stri
   git(["read-tree", parent], { GIT_INDEX_FILE: index })
   git(["update-index", "--cacheinfo", `100644,${blob},${file}`], { GIT_INDEX_FILE: index })
   const tree = git(["write-tree"], { GIT_INDEX_FILE: index })
-  if (after !== before) git(["update-ref", "refs/heads/main", git(["commit-tree", tree, "-p", parent, "-m", message]), parent])
+  if (after !== before) git(["update-ref", ref, git(["commit-tree", tree, "-p", parent, "-m", message]), parent])
   const head = Bun.spawnSync(["git", "symbolic-ref", "-q", "HEAD"], { cwd: repo }).stdout.toString().trim()
-  if (head === "refs/heads/main") {
+  if (head === ref) {
     fs.writeFileSync(path.join(repo, file), after)
     git(["update-index", "--cacheinfo", `100644,${blob},${file}`])
   }
@@ -543,10 +545,10 @@ check("H9", "stale on edit", 600_000 + SETUP_MS, async () => {
     { from: startAt },
   )
   const editAt = Date.now()
-  // Retried while the harness itself moves main or holds the index lock.
+  // Retried while the harness itself moves the base branch or holds the index lock.
   for (let tries = 0; ; tries++) {
     try {
-      commitOnMain(c.ws.dir, c.ws.repo, T11_VERIFY, editC2, "H9: edit the text of T1.1.c2")
+      commitOnBase(c.ws.dir, c.ws.repo, T11_VERIFY, editC2, "H9: edit the text of T1.1.c2")
       break
     } catch (error) {
       if (tries >= 20) throw error
@@ -920,8 +922,9 @@ check(
           const gates = await runGates(ws)
           out.gates = gates
           for (const [id, gate] of Object.entries(gates))
-            if (gate.timedOut) problems.push(`gate ${id} did not finish within ${GATE_MS / 1000} s on main`)
-            else if (gate.code !== 0) problems.push(`gate ${id} exits ${gate.code} on main`)
+            if (gate.timedOut)
+              problems.push(`gate ${id} did not finish within ${GATE_MS / 1000} s on ${Workspace.BASE_BRANCH}`)
+            else if (gate.code !== 0) problems.push(`gate ${id} exits ${gate.code} on ${Workspace.BASE_BRANCH}`)
         }
       }
       verify(problems)
@@ -935,7 +938,7 @@ check(
   !live,
 )
 
-// The four gates of SPEC.md, run by the test on a fresh clone of the main branch, each bounded at 300 s. Each gate
+// The four gates of SPEC.md, run by the test on a fresh clone of the base branch, each bounded at 300 s. Each gate
 // runs in its own process group, so the bound also stops what it started.
 const GATE_IDS = ["BUILD-1", "BUILD-2", "BUILD-3", "BUILD-4"]
 const GATE_MS = 300_000
@@ -949,7 +952,7 @@ async function runGates(ws: Workspace.Workspace): Promise<Record<string, { code:
   })
   const dir = path.join(ws.dir, "gates")
   fs.rmSync(dir, { recursive: true, force: true })
-  Workspace.git(ws.dir, "clone", "-q", "--branch", "main", ws.repo, dir)
+  Workspace.git(ws.dir, "clone", "-q", "--branch", Workspace.BASE_BRANCH, ws.repo, dir)
   const out: Record<string, { code: number | null; timedOut: boolean }> = {}
   out.install = await bounded(["bun", "install", "--frozen-lockfile"], dir, path.join(ws.dir, "gate-install.log"))
   if (out.install.code !== 0 || out.install.timedOut) return out

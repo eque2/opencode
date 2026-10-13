@@ -41,15 +41,12 @@ export function isolatedEnv(home: string): Record<string, string> {
   }
 }
 
-// The parent's environment without the retired harness selector, the forwarded live key and the test preload's
-// in-memory database: a stale OPENCODE_TASK_HARNESS in the shell must not reach either arm, only L1's server gets the
-// key, and the server keeps its database under the isolated XDG data folder, so a restart (H8) finds what the killed
-// server stored.
+// The parent's environment without the forwarded live key and the test preload's in-memory database: only L1's server
+// gets the key, and the server keeps its database under the isolated XDG data folder, so a restart (H8) finds what
+// the killed server stored.
 function inherited() {
   return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => key !== "OPENCODE_TASK_HARNESS" && key !== "OPENCODE_DB" && !key.startsWith("TASK_HARNESS_LIVE_"),
-    ),
+    Object.entries(process.env).filter(([key]) => key !== "OPENCODE_DB" && !key.startsWith("TASK_HARNESS_LIVE_")),
   )
 }
 

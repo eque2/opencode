@@ -10,17 +10,21 @@
 // The arms:
 //   - baseline: commit BASELINE_COMMIT, the code without the harness. The runner exports it with `git archive` into
 //     `.task-conformance/baseline/<commit>/`, installs it there with its own lockfile, and serves its
-//     `packages/opencode/src/index.ts`. A later invocation reuses the export when its `.installed` marker exists.
+//     `packages/opencode/src/index.ts`. A later invocation reuses the export when its `.installed` marker exists. A
+//     lock file next to the export lets one invocation at a time create or check it; a held lock fails the guard.
 //   - o2: the current tree, where /task always runs the harness.
-// `--arm o2` (the default) runs both arms; `--arm baseline` runs the baseline alone, for diagnostics.
+// `--arm o2` (the default) runs both arms and gives the verdict. `--arm baseline` runs the baseline alone: a
+// diagnostic with no verdict, which always exits 2.
 //
 // Each run executes test/task-harness/conformance.test.ts once per arm and scores it: the share of the 17 checks
 // (H1-H16 scripted, L1 live) that passed, in percent. The JSON goes to stdout and to
-// `.task-conformance/conformance/guard-<stamp>.json`. The process exits non-zero when the guard fails:
+// `.task-conformance/conformance/guard-<stamp>.json`. The process exits 1 when the guard fails (the clauses are
+// `guardFailures` in test/task-harness/stats.ts):
 //   - the baseline server did not start in the preflight (the reason is in `preflight.reason`);
+//   - the fingerprinted paths have uncommitted changes (`dirty`), so the fixture hashes do not describe the run;
 //   - a baseline check H1-H16 is `missing` or `skipped` (L1 is never run for the baseline);
 //   - an o2 check H1-H16 did not pass in every run;
-//   - o2's median score is less than 50 points above the baseline's.
+//   - o2's median score is less than 50 points above the baseline's, or not above the baseline's noise floor.
 // A pass proves that the harness meets every scripted check of the contract, and that the checks still tell it apart
 // from the code without it. A `--checks` selection skips the other checks, so it always fails the guard.
 //
@@ -31,7 +35,7 @@ import path from "node:path"
 import fs from "node:fs"
 import { BASELINE_ENTRY_ENV, config, entry, killLeft, tree, type Arm } from "../test/task-harness/arms"
 import * as Server from "../test/task-harness/arms/server"
-import { CHECKS, compare, readChecks, round, stats, type CheckStatus } from "../test/task-harness/stats"
+import { CHECKS, compare, guardFailures, readChecks, round, stats, type CheckStatus } from "../test/task-harness/stats"
 
 // The code without the /task harness. Pinned: a branch or a merge-base would move under the guard.
 const BASELINE_COMMIT = "55ab6b3e56"
@@ -49,8 +53,6 @@ const FINGERPRINT = {
 // `_bmad*` is a pathspec wildcard over the tooling folders whose names start so.
 const EXPORT_EXCLUDES = [".agents", ".claude", ".eque2-tests", "_bmad*", "state"]
 const ARMS: Arm[] = ["baseline", "o2"]
-const SCRIPTED = CHECKS.filter((c) => c !== "L1")
-const SMALLEST_EFFECT = 50
 // One child `bun test` run may take at most 4 hours; then it and every process it started get SIGKILL.
 const CHILD_BOUND_MS = 4 * 3_600_000
 const INSTALL_BOUND_MS = 20 * 60_000
@@ -88,14 +90,18 @@ if (preflight.started)
 
 const summaries = Object.fromEntries(arms.map((a) => [a, summarise(results[a])]))
 const fixture = fixtureHashes()
+// Uncommitted changes under the fingerprinted paths: a non-empty list means the hashes do not describe the run.
+const dirty = dirtyFixture()
 const comparison =
   arm === "o2" && preflight.started
     ? compare(summaries.o2.stats, { ...summaries.baseline.stats, fixture }, fixture)
     : undefined
-const failures = guard()
+// The baseline alone cannot show that the harness meets the contract, so `--arm baseline` gives no verdict.
+const failures =
+  arm === "o2" ? guardFailures({ preflight, baseline: results.baseline, o2: results.o2, comparison, dirty }) : undefined
 
 const out = {
-  guard: { passed: failures.length === 0, failures },
+  guard: failures ? { passed: failures.length === 0, failures } : { verdict: "none", reason: "--arm baseline is a diagnostic" },
   arm,
   arms,
   runs,
@@ -104,8 +110,7 @@ const out = {
   commit: git(["rev-parse", "HEAD"]),
   baselineCommit: git(["rev-parse", `${BASELINE_COMMIT}^{commit}`]),
   fixture,
-  // Uncommitted changes under the fingerprinted paths: a non-empty list means the hashes do not describe the run.
-  dirty: dirtyFixture(),
+  dirty,
   baselineExport: baseline,
   preflight,
   results: summaries,
@@ -117,9 +122,13 @@ const file = path.join(runsRoot, "conformance", `guard-${stamp}.json`)
 fs.mkdirSync(path.dirname(file), { recursive: true })
 fs.writeFileSync(file, text)
 if (args.out) fs.writeFileSync(args.out, text)
-console.error(`[task-conformance] guard ${failures.length === 0 ? "passed" : "FAILED"}; JSON in ${file}`)
+console.error(
+  !failures
+    ? `[task-conformance] --arm baseline is a diagnostic with no verdict; run --arm o2 for the guard; JSON in ${file}`
+    : `[task-conformance] guard ${failures.length === 0 ? "passed" : "FAILED"}; JSON in ${file}`,
+)
 await Bun.write(Bun.stdout, text)
-process.exit(failures.length === 0 ? 0 : 1)
+process.exit(!failures ? 2 : failures.length === 0 ? 0 : 1)
 
 type RunResult = {
   run: number
@@ -134,25 +143,6 @@ type RunResult = {
   durationMs: number
   checks: Record<string, CheckStatus>
   score: number
-}
-
-// Every clause of the guard that applies to the arms that ran; an empty list is a pass.
-function guard() {
-  if (!preflight.started) return [`the baseline server did not start: ${preflight.reason}`]
-  const baselineGaps = results.baseline.flatMap((r) =>
-    SCRIPTED.filter((c) => r.checks[c] === "missing" || r.checks[c] === "skipped").map(
-      (c) => `baseline run ${r.run}: ${c} is ${r.checks[c]}`,
-    ),
-  )
-  if (!comparison) return baselineGaps
-  const o2Gaps = results.o2.flatMap((r) =>
-    SCRIPTED.filter((c) => r.checks[c] !== "passed").map((c) => `o2 run ${r.run}: ${c} is ${r.checks[c]}`),
-  )
-  const effect =
-    comparison.change < SMALLEST_EFFECT
-      ? [`o2's median score is ${comparison.change} points above the baseline's, under ${SMALLEST_EFFECT}`]
-      : []
-  return [...baselineGaps, ...o2Gaps, ...effect]
 }
 
 // One `bun test` run of the suite for one arm, scored.
@@ -226,8 +216,23 @@ function summarise(list: RunResult[]) {
 }
 
 // The baseline tree, exported and installed once under the run folder, then reused while its marker exists. The
-// suite's servers find its entry through BASELINE_ENTRY_ENV, which every child inherits.
+// suite's servers find its entry through BASELINE_ENTRY_ENV, which every child inherits. The marker is read under
+// the lock: read before it, an invocation that starts during another one's install sees no marker, can take the lock
+// once that install is done, and then deletes the export the other invocation runs on.
 async function prepareBaseline() {
+  const lock = path.join(runsRoot, "baseline", `${BASELINE_COMMIT}.lock`)
+  fs.mkdirSync(path.dirname(lock), { recursive: true })
+  await fs.promises.writeFile(lock, `${process.pid} ${stamp}\n`, { flag: "wx" }).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST")
+      throw new Error(
+        `another guard run is creating or checking the baseline export: ${lock} exists (it holds that run's pid); wait for that run, or delete the file when no guard run is going`,
+      )
+    throw error
+  })
+  return exportBaseline().finally(() => fs.rmSync(lock, { force: true }))
+}
+
+async function exportBaseline() {
   const dir = path.join(runsRoot, "baseline", BASELINE_COMMIT)
   const marker = path.join(dir, ".installed")
   const reused = fs.existsSync(marker)
@@ -251,11 +256,11 @@ async function prepareBaseline() {
     if (exported.exitCode !== 0) throw new Error(`git archive ${BASELINE_COMMIT} | tar -x failed: ${exported.stderr.toString()}`)
     await install(dir)
   }
-  const core = coreInside(dir)
+  const links = linksInside(dir)
   if (!reused) fs.writeFileSync(marker, `${git(["rev-parse", `${BASELINE_COMMIT}^{commit}`])}\n`)
   const baselineEntry = path.join(dir, "packages/opencode/src/index.ts")
   process.env[BASELINE_ENTRY_ENV] = baselineEntry
-  return { dir, entry: entry("baseline"), reused, core }
+  return { dir, entry: entry("baseline"), reused, links }
 }
 
 async function install(dir: string) {
@@ -281,18 +286,25 @@ async function install(dir: string) {
 }
 
 // The export sits inside this worktree, so a dependency it lacks would resolve from the current tree's node_modules
-// further up. @opencode-ai/core must resolve inside the export, or the baseline would run the current tree's code.
-function coreInside(dir: string) {
+// further up. Every @opencode-ai/* package must resolve inside the export, or the baseline would run part of the
+// current tree's code; a broken link counts as outside, because resolution then goes on to the parent folders. The
+// result maps each link, relative to the export, to its target.
+function linksInside(dir: string) {
   const top = fs.realpathSync(dir)
-  const links = ["packages/opencode/node_modules/@opencode-ai/core", "node_modules/@opencode-ai/core"]
-    .map((p) => path.join(dir, p))
-    .filter((p) => fs.existsSync(p))
-  if (links.length === 0) throw new Error(`the export ${dir} has no node_modules/@opencode-ai/core`)
-  return links.map((link) => {
-    const real = fs.realpathSync(link)
-    if (!real.startsWith(top + path.sep)) throw new Error(`${link} resolves to ${real}, outside the export ${top}`)
-    return real
-  })
+  const links = ["node_modules/@opencode-ai", "packages/opencode/node_modules/@opencode-ai"].flatMap((scope) =>
+    fs.existsSync(path.join(dir, scope)) ? fs.readdirSync(path.join(dir, scope)).map((name) => `${scope}/${name}`) : [],
+  )
+  if (!links.some((link) => link.endsWith("/@opencode-ai/core")))
+    throw new Error(`the export ${dir} has no node_modules/@opencode-ai/core`)
+  return Object.fromEntries(
+    links.map((link) => {
+      const full = path.join(dir, link)
+      if (!fs.existsSync(full)) throw new Error(`${full} is a broken link, so it resolves outside the export ${top}`)
+      const real = fs.realpathSync(full)
+      if (!real.startsWith(top + path.sep)) throw new Error(`${full} resolves to ${real}, outside the export ${top}`)
+      return [link, path.relative(top, real)]
+    }),
+  )
 }
 
 // Start the baseline server once, before the suite, and require its "listening on" line. It is the export's first,
