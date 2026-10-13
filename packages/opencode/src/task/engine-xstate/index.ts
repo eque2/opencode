@@ -723,6 +723,26 @@ const cancel = (plan: Plan, state: State, fact: FactOf<"run.cancelled">) =>
     return yield* stepRun(tasks, fact)
   })
 
+// The staleness of an obligation whose task the state does not hold (a `State` the fold never makes): the
+// obligation's own machine moves it, as the table engine moves it without a task row.
+const staleAlone = (state: State, obligation: ObligationModel, fact: FactOf<"obligation.stale">) =>
+  Effect.gen(function* () {
+    const { id, state: current, hash, reason } = obligation
+    const step = yield* stepObligation({ id, state: current, hash, reason, review: false }, fact)
+    if (step.log.length === 0) return state
+    const moved: ObligationModel = {
+      ...obligation,
+      state: step.slot.state,
+      hash: step.slot.hash,
+      reason: step.slot.reason,
+    }
+    return {
+      ...state,
+      obligations: { ...state.obligations, [id]: moved },
+      history: appended(state, step.log),
+    }
+  })
+
 const stepScenario = (state: State, fact: ScenarioEvent) =>
   Effect.gen(function* () {
     const id = fact.type === "scenario.proved" ? fact.id : fact.verdict.id
@@ -815,6 +835,8 @@ export const apply = (plan: Plan, state: State, fact: Fact): State =>
         case "obligation.stale": {
           const obligation: ObligationModel | undefined = state.obligations[fact.id]
           if (obligation === undefined) return state
+          const task: TaskModel | undefined = state.tasks[obligation.task]
+          if (task === undefined) return yield* staleAlone(state, obligation, fact)
           return yield* stepTask(plan, state, obligation.task, fact)
         }
         case "scenario.proved":
