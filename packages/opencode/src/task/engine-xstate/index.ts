@@ -273,13 +273,17 @@ const taskReason = (context: TaskContext, event: TaskEvent, to: TaskState) => {
   }
 }
 
+// One obligation's machine snapshot, from its slot.
+const obligationSnapshot = (slot: Slot) =>
+  obligationMachine.resolveState({
+    value: slot.state,
+    context: { id: slot.id, hash: slot.hash, reason: slot.reason, review: slot.review, log: [] },
+  })
+
 // One obligation's move: its machine's snapshot from the slot, the pure transition, the slot and log after it.
 const stepObligation = (slot: Slot, event: TaskEvent) =>
   Effect.gen(function* () {
-    const snapshot = yield* obligationMachine.resolveState({
-      value: slot.state,
-      context: { id: slot.id, hash: slot.hash, reason: slot.reason, review: slot.review, log: [] },
-    })
+    const snapshot = yield* obligationSnapshot(slot)
     const [next] = yield* transition(obligationMachine, snapshot, event)
     if (next.context.log.length === 0) return { slot, log: [] }
     const moved: Slot = { ...slot, state: next.value, hash: next.context.hash, reason: next.context.reason }
@@ -321,6 +325,12 @@ export const taskMachine = setup({
     anyReopened: ({ context }) => slots(context).some((slot) => slot.state === "failed" || slot.state === "rejected"),
     /** Nothing is proved yet. */
     allOpen: ({ context }) => slots(context).every((slot) => slot.state === "pending"),
+    /** The machine of the obligation that the staleness fact names takes it: that obligation goes stale. */
+    staleable: ({ context, event }) => {
+      const slot = slots(context).find((item) => event.type === "obligation.stale" && item.id === event.id)
+      if (slot === undefined) return false
+      return Effect.orDie(Effect.flatMap(obligationSnapshot(slot), (snapshot) => snapshot.can(event)))
+    },
   },
   actions: {
     /** Runs the obligation machine of every slot on the fact, in plan order. */
@@ -429,8 +439,11 @@ export const taskMachine = setup({
             { target: "budget_exhausted", actions: taskMove("verifying", "budget_exhausted") },
           ],
         },
-        // Every obligation of a trusted task is trusted, so the named one has gone stale with this fact.
-        trusted: { on: { "obligation.stale": { target: "proving", actions: taskMove("trusted", "proving") } } },
+        trusted: {
+          on: {
+            "obligation.stale": { guard: "staleable", target: "proving", actions: taskMove("trusted", "proving") },
+          },
+        },
         // A state of the model that no fact enters (a stall keeps the task building), here so that every
         // `TaskState` resolves.
         stalled: {},
