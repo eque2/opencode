@@ -1,0 +1,348 @@
+{
+  "guard": {
+    "passed": false,
+    "failures": [
+      "o2 run 1: H4 is failed",
+      "o2 run 1: H8 is failed",
+      "o2 run 1: H9 is failed"
+    ]
+  },
+  "arm": "o2",
+  "arms": [
+    "baseline",
+    "o2"
+  ],
+  "runs": 1,
+  "live": false,
+  "selection": [
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "H7",
+    "H8",
+    "H9",
+    "H10",
+    "H11",
+    "H12",
+    "H13",
+    "H14",
+    "H15",
+    "H16",
+    "L1"
+  ],
+  "commit": "440eb4f3eaca448dcc46f5fce13fa1e4e366d731",
+  "baselineCommit": "55ab6b3e568678f5f26f36a6f3f906268f38e8ac",
+  "fixture": {
+    "spec": "529185a51d7b5ce10ce4c925858a5061e7b3f3e0",
+    "t2": "ab8a39f0d74ca8e9a7482487f4966140e757d53b",
+    "seed": "ecd6340a7344ec5fb82621690c6087b9d0659563",
+    "solution": "b8846187a84e7f3e219d0e745e46cba763169405",
+    "suite": "220f9629e166d96c9eca231cdc3bf89f22ee1a83",
+    "scripts": "572744ee7edf9b2a81abe19aadc8cf43f19b1619",
+    "arms": "8cf7069ae09169f9e54d50dcf7d8a2c0d9409263"
+  },
+  "dirty": [],
+  "baselineExport": {
+    "dir": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56",
+    "entry": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56/packages/opencode/src/index.ts",
+    "reused": true,
+    "core": [
+      "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56/packages/core"
+    ]
+  },
+  "preflight": {
+    "started": true,
+    "url": "http://127.0.0.1:4096",
+    "ms": 2017,
+    "log": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/conformance/preflight-2026-10-13T18-37-09-034Z/home/server-1791916629084.log",
+    "quiet": true,
+    "waitedForQuietMs": 46
+  },
+  "results": {
+    "baseline": {
+      "scores": [
+        0
+      ],
+      "stats": {
+        "median": 0,
+        "mean": 0,
+        "sd": 0,
+        "cv": null,
+        "se": 0,
+        "min": 0,
+        "max": 0
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H2": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H3": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H4": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H5": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H6": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H7": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H8": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H9": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H10": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H11": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H12": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H13": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H14": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H15": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H16": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "baseline-2026-10-13T18-37-09-034Z-r1",
+          "exitCode": 1,
+          "loadAverage": [
+            7.6142578125,
+            18.197265625,
+            31.58935546875
+          ],
+          "waitedForQuietMs": 45,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 609521,
+          "checks": {
+            "H1": "failed",
+            "H2": "failed",
+            "H3": "failed",
+            "H4": "failed",
+            "H5": "failed",
+            "H6": "failed",
+            "H7": "failed",
+            "H8": "failed",
+            "H9": "failed",
+            "H10": "failed",
+            "H11": "failed",
+            "H12": "failed",
+            "H13": "failed",
+            "H14": "failed",
+            "H15": "failed",
+            "H16": "failed",
+            "L1": "not-runnable"
+          },
+          "score": 0
+        }
+      ]
+    },
+    "o2": {
+      "scores": [
+        76.471
+      ],
+      "stats": {
+        "median": 76.471,
+        "mean": 76.471,
+        "sd": 0,
+        "cv": 0,
+        "se": 0,
+        "min": 76.471,
+        "max": 76.471
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H2": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H3": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H4": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H5": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H6": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H7": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H8": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H9": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H10": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H11": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H12": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H13": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H14": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H15": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H16": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "o2-2026-10-13T18-37-09-034Z-r1",
+          "exitCode": 1,
+          "loadAverage": [
+            15.55517578125,
+            30.75341796875,
+            33.02001953125
+          ],
+          "waitedForQuietMs": 60798,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 1321329,
+          "checks": {
+            "H1": "passed",
+            "H2": "passed",
+            "H3": "passed",
+            "H4": "failed",
+            "H5": "passed",
+            "H6": "passed",
+            "H7": "passed",
+            "H8": "failed",
+            "H9": "failed",
+            "H10": "passed",
+            "H11": "passed",
+            "H12": "passed",
+            "H13": "passed",
+            "H14": "passed",
+            "H15": "passed",
+            "H16": "passed",
+            "L1": "skipped"
+          },
+          "score": 76.471
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "baselineMedian": 0,
+    "change": 76.471,
+    "noiseFloorPoints": 0,
+    "smallestEffect": 50,
+    "clearsSmallestEffect": true,
+    "sameFixture": true
+  }
+}

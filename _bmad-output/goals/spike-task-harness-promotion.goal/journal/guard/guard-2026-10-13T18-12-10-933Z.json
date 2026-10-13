@@ -1,0 +1,266 @@
+{
+  "guard": {
+    "passed": false,
+    "failures": [
+      "the baseline server did not start: opencode serve did not start within 60000 ms; log /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/conformance/preflight-2026-10-13T18-12-10-933Z/home/server-1791915216983.log:\n"
+    ]
+  },
+  "arm": "o2",
+  "arms": [
+    "baseline",
+    "o2"
+  ],
+  "runs": 1,
+  "live": false,
+  "selection": [
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "H7",
+    "H8",
+    "H9",
+    "H10",
+    "H11",
+    "H12",
+    "H13",
+    "H14",
+    "H15",
+    "H16",
+    "L1"
+  ],
+  "commit": "4325961f0688f02bf2edd69f389b2665811ea102",
+  "baselineCommit": "55ab6b3e568678f5f26f36a6f3f906268f38e8ac",
+  "fixture": {
+    "spec": "529185a51d7b5ce10ce4c925858a5061e7b3f3e0",
+    "t2": "ab8a39f0d74ca8e9a7482487f4966140e757d53b",
+    "seed": "ecd6340a7344ec5fb82621690c6087b9d0659563",
+    "solution": "b8846187a84e7f3e219d0e745e46cba763169405",
+    "suite": "e5b07e5bd89e107f3ffd9a96eb01971766cec8cf",
+    "scripts": "572744ee7edf9b2a81abe19aadc8cf43f19b1619",
+    "arms": "3a12eb780453ff4663ed2981d8b64a6008cfb12a"
+  },
+  "dirty": [
+    " M packages/opencode/test/task-harness/arms/index.ts",
+    " M packages/opencode/test/task-harness/arms/server.ts",
+    " M packages/opencode/test/task-harness/arms/workspace.ts",
+    " M packages/opencode/test/task-harness/conformance.test.ts"
+  ],
+  "baselineExport": {
+    "dir": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56",
+    "entry": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56/packages/opencode/src/index.ts",
+    "reused": false,
+    "core": [
+      "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/baseline/55ab6b3e56/packages/core"
+    ]
+  },
+  "preflight": {
+    "started": false,
+    "reason": "opencode serve did not start within 60000 ms; log /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/spike-task-harness-promotion/.task-conformance/conformance/preflight-2026-10-13T18-12-10-933Z/home/server-1791915216983.log:\n",
+    "ms": 60091
+  },
+  "results": {
+    "baseline": {
+      "scores": [],
+      "stats": {
+        "median": null,
+        "mean": null,
+        "sd": 0,
+        "cv": null,
+        "se": 0,
+        "min": 0,
+        "max": 0
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H2": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H3": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H4": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H5": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H6": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H7": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H8": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H9": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H10": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H11": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H12": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H13": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H14": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H15": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H16": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        }
+      },
+      "runs": []
+    },
+    "o2": {
+      "scores": [],
+      "stats": {
+        "median": null,
+        "mean": null,
+        "sd": 0,
+        "cv": null,
+        "se": 0,
+        "min": 0,
+        "max": 0
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H2": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H3": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H4": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H5": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H6": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H7": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H8": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H9": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H10": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H11": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H12": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H13": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H14": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H15": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "H16": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 0,
+          "passK": 1
+        }
+      },
+      "runs": []
+    }
+  }
+}

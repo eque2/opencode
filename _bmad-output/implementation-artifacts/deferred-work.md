@@ -18,8 +18,8 @@ lists every item of the spike's `builds/deferred-work.md` that this goal does no
   summary: A shadowed `task` command, MCP prompt or skill is reported in the log only, not in the TUI.
   evidence: review row 7; the log warning meets AC 19; a TUI notice needs a host-generic notice path.
 - source_spec: (same)
-  summary: The builder's and verifier's shells get opencode's full environment (provider keys included), and proofs lack proxy and CA variables (HTTPS_PROXY, NO_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE).
-  evidence: review row 9; `tool/shell.ts` spawns every agent's shell with process.env, a host-wide behaviour; passing proxy variables could leak credentials embedded in a proxy URL.
+  summary: Proofs and the harness agents' shells lack proxy and CA variables (HTTPS_PROXY, NO_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE), so a test that needs a proxy fails.
+  evidence: review row 9 (the keys part is fixed in f15a176a58); passing proxy variables could leak credentials embedded in a proxy URL, so it needs a per-project setting.
 - source_spec: (same)
   summary: A model-written test can read files under the user's HOME (for example opencode's auth.json); the allowlist keeps keys out of the environment, it is not a sandbox.
   evidence: review row 10; HOME is needed by bun and git.
@@ -32,12 +32,6 @@ lists every item of the spike's `builds/deferred-work.md` that this goal does no
 - source_spec: (same)
   summary: A user's `agent.task-builder` or `agent.task-verifier` config can override or disable the harness agents.
   evidence: review row 31; a deliberate user act; a warning like the command shadowing would cover it.
-- source_spec: (same)
-  summary: The user's permission deny rules are not merged into the harness agents' rulesets.
-  evidence: review row 32; the agents are headless and deny by default; merging user rules could add `ask` rules that hang a run, so the merge needs a design decision.
-- source_spec: (same)
-  summary: `bun test` auto-loads `.env` files, so a root-checkout proof (parent obligations, scenarios) could pass keys from an ignored `.env` to model-written tests.
-  evidence: review row 33; leaf proofs run in fresh worktrees that hold no ignored files; the fix needs a Bun flag decision and a test.
 - source_spec: (same)
   summary: Leaf worktrees and branches are kept after a run ends.
   evidence: commit 35acea8a3f notes; they are the run's evidence, and a cleanup command needs its own design.
@@ -67,4 +61,4 @@ to their worktree, the base branch from the repository (not a hard-coded main), 
   summary: O3 hardening items.
   evidence: not applicable: O3 is removed (D2).
 
-Count: 18 deferred items (12 in part A, 6 in part B).
+Count: 16 deferred items (10 in part A, 6 in part B).
