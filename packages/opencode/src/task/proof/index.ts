@@ -132,12 +132,15 @@ export class ProofError extends Schema.TaggedError<ProofError>()("TaskProofError
 }) {}
 
 /**
- * The margin of a whole command's wall bound above the per-test timeout and the cancel deadline. The per-test
- * timeout already ends a hung test; this bound only catches a whole run that never finishes, so it can be generous.
- * ponytail: a constant, sized from the fixture: its `bun test` gate takes about 5 s at load 14 and passed 16 s at
- * load 30 on a 20-core machine. Scale it with the proof timeout if a slower fixture ever needs it.
+ * The margin of a whole command's wall bound above the per-test timeout and the cancel deadline. A test that sets
+ * its own timeout escapes the per-test one, so this bound is what ends it: a hung proof is reopened about
+ * proofTimeout + cancelDeadline + margin after task_ready, and the conformance suite (H13) needs that under 30 s at
+ * the scripted 5 s proof timeout.
+ * ponytail: a constant, sized from the fixture: its `bun test` gate takes 2–11 s and passed 16 s only at load 30 on
+ * a 20-core machine. An idle-output bound (restart on each output chunk, hard cap above it) is the upgrade if a
+ * slower fixture needs more.
  */
-export const runMargin = Duration.seconds(60)
+export const runMargin = Duration.seconds(15)
 
 /** The wall bound of one whole command (the `bun test` run, a gate): the proof timeout, plus the cancel deadline, plus the margin. */
 export const testRunBound = (limits: TaskLimits.Limits) =>
