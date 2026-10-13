@@ -13,6 +13,8 @@ export type Ctx = {
   readonly active: Accessor<boolean>
   /** How the leader key reads in this keymap, for the key hints (`ctrl+x`). */
   readonly leader: string
+  /** The root session on screen, or "" before the developer opens one. */
+  readonly root: Accessor<string>
 }
 
 /** What the view components need; tests build it from a fixture. */

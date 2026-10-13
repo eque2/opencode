@@ -11,7 +11,7 @@ import { registerLedger } from "./designs/1-ledger"
 import { registerDock } from "./designs/2-dock"
 import { registerHud } from "./designs/6-hud"
 import { registerTicker } from "./designs/7-ticker"
-import { ROUTE, SCREENS, registerScreen } from "./designs/screen"
+import { registerScreen } from "./designs/screen"
 
 const tui: TuiPlugin = (api, options) =>
   Effect.runPromise(
@@ -50,7 +50,14 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   })
 
   const view = createView({ status, now, design })
-  const base = { api, view, sessions: liveSessions(api, root), theme: () => api.theme.current, leader: leaderOf(api) }
+  const base = {
+    api,
+    view,
+    root,
+    sessions: liveSessions(api, root),
+    theme: () => api.theme.current,
+    leader: leaderOf(api),
+  }
   const ctx = (id: number): Ctx => ({ ...base, active: () => view.design() === id })
   registerLedger(ctx(1))
   registerDock(ctx(2))
@@ -59,10 +66,6 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   registerHud(ctx(6))
   registerTicker(ctx(7))
 
-  const open = () => {
-    if (!SCREENS[view.design()]) return api.ui.toast({ message: `Task UI design ${view.design()} has no full-screen view` })
-    api.route.navigate(ROUTE, { sessionID: root() })
-  }
   const cycle = () => {
     view.cycleDesign()
     api.ui.toast({ message: `Task UI design ${view.design()}: ${DESIGNS[view.design() - 1].name}` })
@@ -79,16 +82,14 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
       commands: [
         command("task_ui.next", "Select the next harness task", view.next),
         command("task_ui.previous", "Select the previous harness task", view.previous),
-        command("task_ui.peek", "Open or close the harness peek", view.togglePeek),
+        command("task_ui.expand", "Expand or collapse the task design", view.toggleExpanded),
         command("task_ui.design", "Next task UI design", cycle),
-        command("task_ui.open", "Open the full-screen task view", open),
       ],
       bindings: [
         { key: "<leader>j", cmd: "task_ui.next", desc: "Select the next harness task" },
         { key: "<leader>k", cmd: "task_ui.previous", desc: "Select the previous harness task" },
-        { key: "<leader>o", cmd: "task_ui.peek", desc: "Open or close the harness peek" },
+        { key: "<leader>o", cmd: "task_ui.expand", desc: "Expand or collapse the task design" },
         { key: "<leader>v", cmd: "task_ui.design", desc: "Next task UI design" },
-        { key: "<leader>p", cmd: "task_ui.open", desc: "Open the full-screen task view" },
       ],
     }),
   )

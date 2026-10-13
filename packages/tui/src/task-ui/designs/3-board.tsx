@@ -55,7 +55,7 @@ function Card(props: ViewProps & { row: Row; width: number }) {
       flexDirection="column"
       paddingLeft={1}
       paddingRight={1}
-      onMouseDown={() => (selected() ? props.view.togglePeek() : props.view.select(props.row.id))}
+      onMouseDown={() => (selected() ? props.view.toggleExpanded() : props.view.select(props.row.id))}
     >
       <text fg={stateColor(props.theme(), props.row.task.state)} wrapMode="none">
         <b>{cut(`${glyph(props.row.task.state)} ${props.row.id}`, inner())}</b>

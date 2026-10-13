@@ -8,7 +8,7 @@ import { Brand, TaskLine, runText, treePrefix, trustedText, type Ctx, type ViewP
 const WIDTH = 38
 
 export function LedgerView(props: ViewProps & { width: number }) {
-  const toggle = (id: string) => (props.view.selected() === id ? props.view.togglePeek() : props.view.select(id))
+  const toggle = (id: string) => (props.view.selected() === id ? props.view.toggleExpanded() : props.view.select(id))
   return (
     <Show when={props.view.status()}>
       {(status) => (
@@ -31,7 +31,7 @@ export function LedgerView(props: ViewProps & { width: number }) {
                 selected={row.id === props.view.selected()}
                 width={props.width}
                 prefix={treePrefix(row)}
-                suffix={row.id === props.view.selected() ? (props.view.peek() ? " ▾" : " ▸") : "  "}
+                suffix={row.id === props.view.selected() ? (props.view.expanded() ? " ▾" : " ▸") : "  "}
                 onClick={() => toggle(row.id)}
               />
             )}
@@ -44,7 +44,7 @@ export function LedgerView(props: ViewProps & { width: number }) {
           <text fg={props.theme().textMuted} wrapMode="none">
             {cut(`${props.leader} o peek · ${props.leader} j/k task`, props.width)}
           </text>
-          <Show when={props.view.peek() && props.view.selected()} keyed>
+          <Show when={props.view.expanded() && props.view.selected()} keyed>
             {(unit) => (
               <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={props.width} lines={3} />
             )}

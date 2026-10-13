@@ -1,5 +1,5 @@
 // The data every task-ui design shares: the harness status file, the task tree derived from it, the selection, the
-// peek toggle, and the design number. The designs only render; nothing here writes to the harness.
+// expanded toggle, and the design number. The designs only render; nothing here writes to the harness.
 import { Effect, Fiber, Option, Schedule, Schema, type Duration } from "effect"
 import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { RGBA } from "@opentui/core"
@@ -233,11 +233,15 @@ export const DESIGNS = [
 
 export type View = ReturnType<typeof createView>
 
-/** The selection, peek toggle and design number over a status accessor. Call it inside a reactive root. */
+/**
+ * The selection, the expanded toggle and the design number over a status accessor. Call it inside a reactive root.
+ * Expanded is one state for every design: what it shows (details under the tree, a full-screen view, a dialog) is the
+ * design's own, and it survives a design switch.
+ */
 export function createView(input: { status: Accessor<Status | undefined>; now: Accessor<number>; design: number }) {
   const [design, setDesign] = createSignal(input.design)
   const [chosen, setChosen] = createSignal<string>()
-  const [peek, setPeek] = createSignal(false)
+  const [expanded, setExpanded] = createSignal(false)
   const list = createMemo(() => {
     const status = input.status()
     return status ? rows(status) : []
@@ -260,9 +264,9 @@ export function createView(input: { status: Accessor<Status | undefined>; now: A
     select: setChosen,
     next: () => move(1),
     previous: () => move(-1),
-    peek,
-    setPeek,
-    togglePeek: () => setPeek((open) => !open),
+    expanded,
+    setExpanded,
+    toggleExpanded: () => setExpanded((open) => !open),
     design,
     cycleDesign: () => setDesign((id) => (id % DESIGNS.length) + 1),
   }

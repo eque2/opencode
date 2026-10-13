@@ -6,14 +6,14 @@ import { bar, counts, glyph, stateColor } from "../store"
 import { Brand, runText, stateText, trustedText, type Ctx, type ViewProps } from "../ui"
 
 export function DockView(props: ViewProps & { width: number }) {
-  const toggle = (id: string) => (props.view.selected() === id ? props.view.togglePeek() : props.view.select(id))
+  const toggle = (id: string) => (props.view.selected() === id ? props.view.toggleExpanded() : props.view.select(id))
   const selected = () => props.view.rows().find((row) => row.id === props.view.selected())
   const divider = () => <text fg={props.theme().textMuted}>│</text>
   return (
     <Show when={props.view.status()}>
       {(status) => (
         <box flexDirection="column" width={props.width} flexShrink={0}>
-          <Show when={props.view.peek() && props.view.selected()} keyed>
+          <Show when={props.view.expanded() && props.view.selected()} keyed>
             {(unit) => (
               <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={props.width} lines={4} />
             )}
@@ -56,7 +56,7 @@ export function DockView(props: ViewProps & { width: number }) {
                 <>
                   {divider()}
                   <text fg={stateColor(props.theme(), row().task.state)} wrapMode="none" flexShrink={1}>
-                    {`${props.view.peek() ? "▾" : "▸"} ${row().id} ${stateText(row())}`}
+                    {`${props.view.expanded() ? "▾" : "▸"} ${row().id} ${stateText(row())}`}
                   </text>
                 </>
               )}

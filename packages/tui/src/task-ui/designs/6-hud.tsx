@@ -25,7 +25,7 @@ export function HudView(props: ViewProps) {
             flexDirection="column"
             paddingLeft={1}
             paddingRight={1}
-            onMouseDown={props.view.togglePeek}
+            onMouseDown={props.view.toggleExpanded}
           >
             <box flexDirection="row">
               <text wrapMode="none">
@@ -42,7 +42,7 @@ export function HudView(props: ViewProps) {
             <Show when={selected()}>
               {(row) => (
                 <text fg={stateColor(props.theme(), row().task.state)} wrapMode="none">
-                  {cut(`${props.view.peek() ? "▾" : "▸"} ${glyph(row().task.state)} ${row().id} ${stateText(row())}`, inner)}
+                  {cut(`${props.view.expanded() ? "▾" : "▸"} ${glyph(row().task.state)} ${row().id} ${stateText(row())}`, inner)}
                 </text>
               )}
             </Show>
@@ -53,7 +53,7 @@ export function HudView(props: ViewProps) {
               )}
             </text>
           </box>
-          <Show when={props.view.peek() && props.view.selected()} keyed>
+          <Show when={props.view.expanded() && props.view.selected()} keyed>
             {(unit) => (
               <box backgroundColor={props.theme().backgroundPanel}>
                 <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={PEEK} lines={5} />

@@ -106,7 +106,7 @@ export function registerTicker(ctx: Ctx) {
   // The peek is a dialog: open it when the peek turns on, and turn the peek off when the dialog closes.
   let shown = false
   createEffect(() => {
-    const open = ctx.active() && ctx.view.peek()
+    const open = ctx.active() && ctx.view.expanded()
     if (open && !shown) {
       shown = true
       ctx.api.ui.dialog.replace(
@@ -126,7 +126,7 @@ export function registerTicker(ctx: Ctx) {
         },
         () => {
           shown = false
-          ctx.view.setPeek(false)
+          ctx.view.setExpanded(false)
         },
       )
       ctx.api.ui.dialog.setSize("xlarge")
