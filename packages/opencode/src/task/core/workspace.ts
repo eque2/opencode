@@ -2,8 +2,9 @@ import { Duration, Effect, FileSystem, Option, Path, Result, Schema } from "effe
 import { TaskProof } from "@/task/proof"
 import type { TaskLimits } from "@/task/limits"
 
-// The git side of the harness. Each leaf builds in its own worktree `<directory>/.opencode/task/worktrees/<id>` on
-// the branch `task/<id>`, branched from the run's base branch; a trusted leaf's verified head merges into the base
+// The git side of the harness. Each leaf builds in its own worktree `<directory>/.opencode/task/worktrees/<run>/<id>`
+// on the branch `task/<run>/<id>`, branched from the run's base branch (`<run>` is the run's key, so two specs, each
+// with a T1.1, never share a branch); a trusted leaf's verified head merges into the base
 // branch in the root checkout. The base is the branch the root checkout has checked out when `/task` starts
 // (`currentBranch`), so a repository whose default branch is not `main` works as one that is. Every git call runs
 // through `TaskProof.run`: bounded, in its own process group, killed with it on interruption.
@@ -122,10 +123,13 @@ const branchExists = Effect.fnUntraced(function* (root: string, limits: TaskLimi
   return result.exitCode === 0
 })
 
-export const worktreePath = (path: Path.Path, root: string, task: string) =>
-  path.join(root, ".opencode", "task", "worktrees", task)
+/** The short key of a run (`task_<hex>`) that names its leaves' worktrees and branches. */
+export const runKey = (runID: string) => runID.replace(/^task_/, "").slice(0, 8)
 
-export const branchOf = (task: string) => `task/${task}`
+export const worktreePath = (path: Path.Path, root: string, run: string, task: string) =>
+  path.join(root, ".opencode", "task", "worktrees", runKey(run), task)
+
+export const branchOf = (run: string, task: string) => `task/${runKey(run)}/${task}`
 
 export interface Worktree {
   readonly worktree: string
@@ -136,18 +140,21 @@ export interface Worktree {
 
 /**
  * The task's worktree: made on its branch from the current head of the base branch, or reused when it already
- * exists (a later attempt or a resume). `node_modules` links to the root checkout's, so no install runs.
+ * exists (a later attempt or a resume). A branch that the base already holds (a leaf merged earlier, now built
+ * again) restarts from the base head, so the builder never works on an older snapshot than the base. `node_modules`
+ * links to the root checkout's, so no install runs.
  */
 export const ensureWorktree = Effect.fn("TaskWorkspace.ensureWorktree")(function* (
   root: string,
+  run: string,
   task: string,
   base: string,
   limits: TaskLimits.Limits,
 ) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
-  const worktree = worktreePath(path, root, task)
-  const branch = branchOf(task)
+  const worktree = worktreePath(path, root, run, task)
+  const branch = branchOf(run, task)
   const present = yield* fs.exists(path.join(worktree, ".git")).pipe(Effect.orElseSucceed(() => false))
   const current = present
     ? yield* git(worktree, limits, "rev-parse", "--abbrev-ref", "HEAD").pipe(Effect.orElseSucceed(() => ""))
@@ -159,6 +166,10 @@ export const ensureWorktree = Effect.fn("TaskWorkspace.ensureWorktree")(function
     yield* fs.makeDirectory(path.dirname(worktree), { recursive: true }).pipe(Effect.orDie)
     if (yield* branchExists(root, limits, branch)) yield* git(root, limits, "worktree", "add", worktree, branch)
     else yield* git(root, limits, "worktree", "add", "-b", branch, worktree, `refs/heads/${base}`)
+  }
+  if (yield* merged(root, limits, base, `refs/heads/${branch}`)) {
+    yield* git(worktree, limits, "reset", "--hard", "-q", `refs/heads/${base}`)
+    yield* git(worktree, limits, "clean", "-fd", "-q")
   }
   const from = yield* git(root, limits, "merge-base", `refs/heads/${base}`, `refs/heads/${branch}`)
   const modules = path.join(root, "node_modules")

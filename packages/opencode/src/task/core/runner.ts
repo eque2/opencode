@@ -561,7 +561,7 @@ const verify = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 
 /** A leaf whose dependencies are trusted: its worktree, its builder session, `task.started`, then the first build. */
 const begin = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
-  const tree = yield* run.git.withPermit(TaskWorkspace.ensureWorktree(run.directory, task.id, run.base, run.limits))
+  const tree = yield* run.git.withPermit(TaskWorkspace.ensureWorktree(run.directory, run.id, task.id, run.base, run.limits))
   const session = yield* TaskSessions.create(run.env, tree.worktree, {
     parentID: run.root,
     title: `${task.id} builder`,

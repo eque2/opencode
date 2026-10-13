@@ -13,6 +13,7 @@ import { testEffect } from "../lib/effect"
 const it = testEffect(NodeServices.layer)
 const limits = TaskLimits.scripted
 const BASE = "dev"
+const RUN = "task_0123456789abcdef"
 
 const git = (cwd: string, ...args: ReadonlyArray<string>) => TaskWorkspace.git(cwd, limits, ...args)
 
@@ -32,8 +33,8 @@ describe("the harness workspace", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const root = yield* repository()
-      const tree = yield* TaskWorkspace.ensureWorktree(root, "T1.1", BASE, limits)
-      expect(tree.branch).toBe("task/T1.1")
+      const tree = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.1", BASE, limits)
+      expect(tree.branch).toBe("task/01234567/T1.1")
       expect(tree.base).toBe(yield* TaskWorkspace.baseHead(root, limits, BASE))
       yield* fs.writeFileString(path.join(tree.worktree, "proved.ts"), "export const proved = 1\n")
       const head = yield* TaskWorkspace.commitAll(tree.worktree, limits, "T1.1: attempt 1")
@@ -54,7 +55,7 @@ describe("the harness workspace", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const root = yield* repository()
-      const tree = yield* TaskWorkspace.ensureWorktree(root, "T1.1", BASE, limits)
+      const tree = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.1", BASE, limits)
       yield* fs.writeFileString(path.join(tree.worktree, "proved.ts"), "export const proved = 1\n")
       const head = yield* TaskWorkspace.commitAll(tree.worktree, limits, "T1.1: attempt 1")
       yield* git(root, "switch", "-q", "-c", "feature")
@@ -166,11 +167,42 @@ describe("the harness workspace", () => {
     }),
   )
 
+  it.live("gives two runs' leaves of the same id their own branches and worktrees", () =>
+    Effect.gen(function* () {
+      const root = yield* repository()
+      const first = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.1", BASE, limits)
+      const other = yield* TaskWorkspace.ensureWorktree(root, "task_fedcba9876543210", "T1.1", BASE, limits)
+      expect(other.branch).toBe("task/fedcba98/T1.1")
+      expect(other.branch).not.toBe(first.branch)
+      expect(other.worktree).not.toBe(first.worktree)
+    }),
+  )
+
+  it.live("restarts a leaf whose branch the base already holds from the base head", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* repository()
+      const tree = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.1", BASE, limits)
+      yield* fs.writeFileString(path.join(tree.worktree, "proved.ts"), "export const proved = 1\n")
+      const head = yield* TaskWorkspace.commitAll(tree.worktree, limits, "T1.1: attempt 1")
+      yield* TaskWorkspace.merge(root, limits, BASE, head)
+      // The base moves on after the merge, as when other leaves land.
+      yield* fs.writeFileString(path.join(root, "later.ts"), "export const later = 1\n")
+      yield* git(root, "add", "later.ts")
+      yield* git(root, "commit", "-q", "-m", "a later leaf")
+
+      const again = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.1", BASE, limits)
+
+      expect(again.base).toBe(yield* TaskWorkspace.baseHead(root, limits, BASE))
+      expect(yield* fs.exists(path.join(again.worktree, "later.ts"))).toBe(true)
+    }),
+  )
+
   it.live("reuses the worktree and its base on a later attempt", () =>
     Effect.gen(function* () {
       const root = yield* repository()
-      const first = yield* TaskWorkspace.ensureWorktree(root, "T1.2", BASE, limits)
-      const second = yield* TaskWorkspace.ensureWorktree(root, "T1.2", BASE, limits)
+      const first = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.2", BASE, limits)
+      const second = yield* TaskWorkspace.ensureWorktree(root, RUN, "T1.2", BASE, limits)
       expect(second).toEqual(first)
     }),
   )
