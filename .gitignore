@@ -59,3 +59,6 @@ _bmad/config.user.yaml
 # Codex project hook — contains an absolute machine-local executable path.
 /.codex/hooks.json
 # <<< eque2-code managed (do not edit this block) <<<
+
+# spike-task-harness run folders, never committed
+.spike-runs/
