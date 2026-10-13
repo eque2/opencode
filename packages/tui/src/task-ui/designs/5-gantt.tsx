@@ -64,7 +64,7 @@ export function GanttView(props: ViewProps & { width: number }) {
             <text
               wrapMode="none"
               bg={props.view.selected() === row.id ? props.theme().backgroundElement : "transparent"}
-              onMouseDown={() => (props.view.selected() === row.id ? props.view.toggleExpanded() : props.view.select(row.id))}
+              onMouseDown={() => props.view.select(row.id)}
             >
               <span style={{ fg: stateColor(props.theme(), row.task.state) }}>
                 {cut(`${treePrefix(row)}${glyph(row.task.state)} ${row.id}`, LABEL - 1).padEnd(LABEL)}
