@@ -107,9 +107,6 @@ export const handle = Effect.fn("HarnessCommand.handle")(function* (input: {
     return yield* refuse(specPath, `R2 ${path.relative(specDir, target)}: no task ${root.value} in the spec`)
   }
 
-  if (HarnessRegistry.running(HarnessRegistry.runKey(directory, specPath))) {
-    return yield* new Stop({ message: `Task harness o3: the run of ${specPath} is already going on.` })
-  }
   const start: HarnessRunner.Start = {
     client: input.client,
     directory,
@@ -118,10 +115,16 @@ export const handle = Effect.fn("HarnessCommand.handle")(function* (input: {
     root: input.session,
     limits: yield* TaskLimits.load,
   }
+  // Check and claim in one step, with nothing between the claim and the fork that can fail.
+  const key = HarnessRegistry.runKey(directory, specPath)
+  if (!HarnessRegistry.reserve(key)) {
+    return yield* new Stop({ message: `Task harness o3: the run of ${specPath} is already going on.` })
+  }
   // The run outlives this command: it ends by itself, by an abort of the root session, or with the process.
   yield* HarnessRunner.run(start).pipe(
     Effect.tap((state) => Effect.logInfo("task harness o3: the run ended", { spec: specPath, state })),
     Effect.catchCause((cause) => Effect.logError("task harness o3: the run failed", { spec: specPath, cause })),
+    Effect.ensuring(Effect.sync(() => HarnessRegistry.release(key))),
     Effect.forkDetach,
   )
   return yield* new Stop({

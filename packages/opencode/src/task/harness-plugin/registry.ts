@@ -1,4 +1,4 @@
-import { type Effect, MutableHashMap, Option, Schema } from "effect"
+import { type Effect, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
 import type { Verdict } from "@/task/core/model"
 
 // What the plugin's hooks share with the runs of this process. opencode calls the plugin once per instance
@@ -110,7 +110,21 @@ export const register = (key: string, run: ActiveRun) => MutableHashMap.set(runs
 
 export const unregister = (key: string) => MutableHashMap.remove(runs, key)
 
-export const running = (key: string) => MutableHashMap.has(runs, key)
+// The keys a `/task` has claimed for a run that has not registered yet: the run reads the log before it registers,
+// so without the claim two `/task` calls for one spec could both start a runner on one log.
+const reserved = MutableHashSet.empty<string>()
+
+export const running = (key: string) => MutableHashMap.has(runs, key) || MutableHashSet.has(reserved, key)
+
+/** Claims the key for a run about to start, in the same step as the check; false when it is taken. */
+export const reserve = (key: string) => {
+  if (running(key)) return false
+  MutableHashSet.add(reserved, key)
+  return true
+}
+
+/** Gives the claim back when the run has ended, or failed to start. */
+export const release = (key: string) => MutableHashSet.remove(reserved, key)
 
 /** The runs of a directory that go on in this process. */
 export const runsIn = (directory: string) => [...MutableHashMap.values(runs)].filter((run) => run.directory === directory)

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { NodeServices } from "@effect/platform-node"
+import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Effect, Option } from "effect"
+import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
@@ -10,8 +13,9 @@ import { HarnessLog } from "@/task/harness-plugin/log"
 import { HarnessMessages } from "@/task/harness-plugin/messages"
 import { HarnessRegistry } from "@/task/harness-plugin/registry"
 
-// The pure parts of option O3, the task harness as a plugin: its JSONL log and fold, its protocol texts, its role
-// permissions and its repetition check. The plugin's hooks and runner are covered by the conformance suite.
+// The parts of option O3, the task harness as a plugin, that need no opencode server: its JSONL log and fold, its
+// protocol texts, its role permissions, its repetition check, and how a run is claimed and learns of trust. The
+// hooks and the lifecycle are covered by the conformance suite.
 
 const fixture = path.resolve(import.meta.dir, "../../../../task-formats/blend/release-notes.spec")
 
@@ -187,5 +191,50 @@ describe("the repetition check", () => {
     HarnessRegistry.recordReady("ses_builder", { summary: "done" })
     HarnessRegistry.startTurn("ses_builder")
     expect(HarnessRegistry.takeReady("ses_builder")).toEqual(Option.none())
+  })
+})
+
+// --- runs without a server ---------------------------------------------------------------------------------------
+
+// T2 of provider-ordering-admin waits on `outside` ids, so its run makes no SDK call: the client is never reached.
+const T2_SPEC = "task-formats/blend/provider-ordering-admin.spec"
+const T2_TASK = `${T2_SPEC}/T2-services.task`
+const client = createOpencodeClient({ baseUrl: "http://127.0.0.1:9" })
+
+// A directory that holds a copy of the T2 spec.
+const scratch = () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "task-harness-o3-"))
+  fs.cpSync(path.resolve(import.meta.dir, "../../../..", T2_SPEC), path.join(directory, T2_SPEC), { recursive: true })
+  return directory
+}
+
+const registered = async (directory: string) => {
+  for (let i = 0; i < 100 && HarnessRegistry.runsIn(directory).length === 0; i++) await Bun.sleep(50)
+  return HarnessRegistry.runsIn(directory)
+}
+
+// Halts the directory's runs, then removes it.
+const close = async (directory: string) => {
+  const runs = await registered(directory)
+  await Effect.runPromise(Effect.forEach(runs, (run) => run.halt, { discard: true }))
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
+describe("the run claim", () => {
+  test("of two /task calls for one spec at once, one starts the run and the other is refused", async () => {
+    const directory = scratch()
+    try {
+      const handle = HarnessCommand.handle({ client, directory, session: "ses_root", arguments: T2_TASK }).pipe(
+        Effect.flip,
+        Effect.map((stop) => stop.message),
+      )
+      const messages = await Effect.runPromise(
+        Effect.all([handle, handle], { concurrency: "unbounded" }).pipe(Effect.provide(NodeServices.layer)),
+      )
+      expect(messages.filter((message) => message.includes("running"))).toHaveLength(1)
+      expect(messages.filter((message) => message.includes("already going on"))).toHaveLength(1)
+    } finally {
+      await close(directory)
+    }
   })
 })
