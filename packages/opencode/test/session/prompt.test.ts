@@ -2472,3 +2472,21 @@ noLLMServer.instance(
     }),
   30_000,
 )
+
+it.instance(
+  "/task answers in code: the harness refuses a path outside a spec with no model request",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const { prompt, chat } = yield* boot()
+
+      const result = yield* prompt.command({ sessionID: chat.id, command: "task", arguments: "nowhere" })
+
+      expect(result.info.role).toBe("user")
+      const text = result.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      expect(text).toStartWith("Task harness: refused nowhere: R1")
+      expect(yield* llm.calls).toBe(0)
+    }),
+  { git: true },
+  30_000,
+)

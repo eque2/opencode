@@ -59,6 +59,22 @@ describe("the harness-only tools", () => {
   })
 })
 
+describe("the repetition watch", () => {
+  test("watches a session from watch to unwatch, and stops it after the limit of identical calls", () => {
+    const sessionID = "ses_wiring_watch"
+    const call = { tool: "bash", input: { command: "ls" } }
+    expect(TaskHooks.watching(sessionID)).toBe(false)
+    TaskHooks.watch(sessionID, 3)
+    expect(TaskHooks.watching(sessionID)).toBe(true)
+    expect(TaskHooks.checkRepetition(sessionID, [call, call])).toBeUndefined()
+    expect(TaskHooks.checkRepetition(sessionID, [call, call, call])).toBe("repetition: 3 identical bash calls in a row")
+    expect(TaskHooks.takeRepeated(sessionID)).toBe("repetition: 3 identical bash calls in a row")
+    TaskHooks.unwatch(sessionID)
+    expect(TaskHooks.watching(sessionID)).toBe(false)
+    expect(TaskHooks.checkRepetition(sessionID, [call, call, call])).toBeUndefined()
+  })
+})
+
 describe("the task command and agents", () => {
   it.instance("are always present, with the harness permissions", () =>
     Effect.gen(function* () {
