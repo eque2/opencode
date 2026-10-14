@@ -834,6 +834,12 @@ describe("the outcome region (AD-4)", () => {
       expect(unitState(cancelled, "S7")).toBe("cancelled")
       const proving = step(plan, step(plan, going, f.ready("T1.2")), f.cancelled("user stop"))
       expect(unitState(proving, "T1.2")).toBe("cancelled")
+      // A waiting scenario and a ready task are unfinished too: the cancel ends them, it does not block them.
+      expect(unitState(going, "S1")).toBe("waiting")
+      expect(unitState(cancelled, "S1")).toBe("cancelled")
+      const ready = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
+      expect(unitState(ready, "T1.3")).toBe("ready")
+      expect(unitState(step(plan, ready, f.cancelled("user stop")), "T1.3")).toBe("cancelled")
       expect(unitState(cancelled, "T1.1")).toBe("trusted")
       expect(["T1.2", "T1.3", "T1.4", "T1.5", "T1"].map((id) => unitState(cancelled, id))).toEqual(
         Array(5).fill("cancelled"),
