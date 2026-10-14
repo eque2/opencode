@@ -211,6 +211,22 @@ describe("live-check folders", () => {
           ).toBeGreaterThan(0)
         for (const touch of spec.tasks.flatMap((task) => task.touches))
           expect(existsSync(path.join(seedDir, touch.path))).toBe(touch.change !== "new")
+        // Each leaf is a one-line change: one new file, a one-sentence goal, and an approach that says so, so a real
+        // builder reaches task_ready well inside the live task wall clock.
+        const leaves = spec.tasks.filter((task) => task.children.length === 0)
+        expect(leaves.length).toBeGreaterThan(0)
+        for (const leaf of leaves) {
+          expect(leaf.touches.map((touch) => touch.change)).toEqual(["new"])
+          expect(leaf.goal.trim().split("\n")).toHaveLength(1)
+          expect((leaf.approach ?? "").replace(/\s+/g, " ")).toContain("One line of code is enough.")
+        }
+        // A leaf's test path (its VERIFY.md hint) is the builder's to create, in a folder the seed already has.
+        for (const hint of leaves.flatMap((leaf) => (leaf.hint ? [leaf.hint] : []))) {
+          expect(path.isAbsolute(hint)).toBe(false)
+          expect(path.relative(seedDir, path.join(seedDir, hint)).startsWith("..")).toBe(false)
+          expect(existsSync(path.join(seedDir, hint))).toBe(false)
+          expect(existsSync(path.dirname(path.join(seedDir, hint)))).toBe(true)
+        }
       }),
     )
   }
@@ -234,7 +250,9 @@ describe("live-check folders", () => {
       const spec = yield* load("example-cascade.spec")
       const task = (id: string) => spec.tasks.find((each) => each.id === id)
       expect(spec.tasks.map((each) => each.id)).toEqual(["T1", "T1.1", "T1.2", "T1.3"])
-      expect(spec.obligations.filter((item) => item.task === "T1").map((item) => item.proof.kind)).toEqual(["review"])
+      expect(spec.obligations.filter((item) => item.task === "T1").map((item) => [item.id, item.proof.kind])).toEqual([
+        ["T1.e1", "review"],
+      ])
       const gated = spec.obligations.filter((item) => item.task === "T1.1")
       expect(gated.length).toBeGreaterThan(0)
       expect(gated.every((item) => item.proof.kind === "gate")).toBe(true)
