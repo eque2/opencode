@@ -57,6 +57,13 @@
   then started the o2 arm at load 12.5. During the arm the load rose to 91 again, and H3 and H6 failed before any
   assertion: `opencode serve did not start within 60000 ms` (each check's own server start). The other 14 checks
   passed (score 82.353, 14/17). H3 and H6 are re-run alone (`--checks H3,H6`) for their real result.
+- Update 2026-10-15 00:35: the checkpoint gate's full opencode suite. Run at 22:44 (HEAD 6c8373d2ac): 4000 pass,
+  1 fail (`run-process.test.ts` "exits nonzero promptly when the model is unknown": 15 065 ms against its 15 000 ms
+  bound). Re-run at 23:32 (HEAD 3b52c9289a, load up to 47 from other sessions, 3 444 s): 3990 pass, 11 fail, all
+  subprocess or timing tests (`run-process.test.ts` concurrent CLI runs at their 30 s bound, `prompt.test.ts` "loop
+  waits while shell runs" at 10 s, `acp/lifecycle.test.ts` "stdin EOF exits cleanly" at 7 s). None touches the task
+  harness, the full run at 21:30 passed them all, and each passes when run alone (00:34). The gate runs again from a
+  script that waits for load under 8 and no other `bun test`.
 - Status: open — the checkpoint gate must run on a quiet machine.
 
 ## D3 — BUILD-3 failed on dev: the web UI module did not resolve without the web UI
