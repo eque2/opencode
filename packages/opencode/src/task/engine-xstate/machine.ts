@@ -26,7 +26,8 @@ import type { Fact, History, Plan } from "@/task/core/model"
 // - The machine is fold-safe: its actions are `assign` and `raise` with no delay. It has no `after`, `invoke`,
 //   `spawn` or custom action, so the pure `transition` runs it exactly as a live actor does.
 // - `CLASS` is the definition of every state of every unit kind: its class tags, the name it shows, whether it is
-//   final and its phase tag. `DEAD` is the task states that block a dependant. Only this generator reads them.
+//   final and its phase tag. `DEAD` is the task states that block a dependant. Outside this generator, only the
+//   engine's `view` (the names `CLASS` shows) and the walk key (`isDead`) read them.
 // - The context keeps what each unit's history needs: its state name, reason, attempts and the facts' fields. A
 //   transition's action puts the move's `from` and reason in a slot; the target state's entry action writes it.
 
@@ -359,7 +360,6 @@ interface UnitParams {
   readonly unit: string
 }
 
-/** The params of a unit state's entry action: its status name and the name its history entries use. */
 /** The params of a unit state's entry action: its state key and the name its history entries use. */
 interface EnterParams extends UnitParams {
   readonly state: string
