@@ -19,6 +19,9 @@
   configurations in the copy without blocked rows where the full interleaving found 5), so it was dropped. The
   full-interleaving stale walk of the loaded cascade plan is now an opt-in test (`TASK_GRAPH_STALE=1`, limit 2 000 000,
   4 h timeout); its run started at 16:59 and its result is recorded here when it ends.
+- Update 17:58: that run was stopped after 49 min wall time (18 min CPU) without a result. The conformance guard
+  waits until no other `bun test` process runs, so the walk blocked the T1.14 gate. It runs again when no gate
+  needs the machine.
 - Status: open — for the T1 review and the owner's final review.
 
 ## D2 — environment: the machine's load makes timing-bound tests fail
@@ -36,4 +39,8 @@
 - Update 17:45: the owner stopped the CPU-hungry tasks (load 25–50). All 40 seeds and the coverage check pass (8
   parallel groups, 5–6 min each); RM19, RM20, RM21 and RM22 each pass inside their timeouts (whole-file times
   59.8 s, 21.5 s, 48.7 s, 42.8 s, start-up included). RM19 has little margin left under load.
+- Update 19:26: the first T1.14 guard run (`--arm o2 --runs 1`) waited 63 min in total for other sessions' tests,
+  then started the o2 arm at load 12.5. During the arm the load rose to 91 again, and H3 and H6 failed before any
+  assertion: `opencode serve did not start within 60000 ms` (each check's own server start). The other 14 checks
+  passed (score 82.353, 14/17). H3 and H6 are re-run alone (`--checks H3,H6`) for their real result.
 - Status: open — the checkpoint gate must run on a quiet machine.
