@@ -471,7 +471,7 @@ export const ACTIONS = {
       ...context.moves,
       [params.unit]: {
         from: params.from,
-        reason: `blocked by ${params.id}: ${params.state.replaceAll("_", " ")}`,
+        reason: `blocked by ${params.id}: ${label(params.state)}`,
         blockedBy: { id: params.id, state: params.state },
       },
     },
