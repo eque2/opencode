@@ -48,3 +48,14 @@
   assertion: `opencode serve did not start within 60000 ms` (each check's own server start). The other 14 checks
   passed (score 82.353, 14/17). H3 and H6 are re-run alone (`--checks H3,H6`) for their real result.
 - Status: open — the checkpoint gate must run on a quiet machine.
+
+## D3 — BUILD-3 failed on dev: the web UI module did not resolve without the web UI
+- Check: BUILD-3, `bun run --cwd packages/opencode build --single --skip-install --skip-embed-web-ui`.
+- Actual failure (21:28, HEAD fbd0e2ca1a): `error: Could not resolve: "opencode-web-ui.gen.ts"` at
+  `src/server/shared/ui.ts:55`. `script/build.ts` added that module only when it embeds the web UI, and the loader
+  imports it by name. Neither file differs from the merge base with dev, so dev fails the same way.
+- Impact: the quality gate (AC 29) at the phase-1 checkpoint.
+- Attempts: (1) a build-script stub module that throws when imported, so the loader falls back to the upstream proxy.
+- Resolution: commit "Give a build without the web UI a module that fails to import"; the build and its smoke test
+  pass (4 s).
+- Status: fixed — for the owner's final review (a change outside the task harness).
