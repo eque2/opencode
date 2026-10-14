@@ -1,9 +1,18 @@
+import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
+import { readFileSync } from "node:fs"
+import path from "path"
 import type { BlendModel } from "@/task/blend/model"
-import type { History } from "@/task/core/model"
+import type { History, Plan } from "@/task/core/model"
 import { TaskRunner } from "@/task/core/runner"
+import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import type { TaskProof } from "@/task/proof"
+import { testEffect } from "../lib/effect"
+import { facts, fail, loadPlan, observed, trustLeaf } from "./lib/machine"
+
+const fold = (plan: Plan, list: ReadonlyArray<Parameters<typeof TaskEngineXState.apply>[2]>, from?: RunSnapshot) =>
+  list.reduce((snapshot, fact) => TaskEngineXState.apply(plan, snapshot, fact), from ?? TaskEngineXState.initial(plan))
 
 // The pure parts of the task harness runner: no server, no model.
 
@@ -188,5 +197,87 @@ describe("the verdicts of a round", () => {
       { id: "T1.1.c2", verdict: "trusted" },
       { id: "T1.1.c1", verdict: "trusted" },
     ])
+  })
+})
+
+// The phase-1 seam (AD-20): the runner starts work by the run machine's phase tags, ends on its `done`, and
+// resumes only a slice that has not ended.
+describe("the phase-1 seam on the run snapshot", () => {
+  const it = testEffect(NodeServices.layer)
+  const keys = (plan: Plan, snapshot: RunSnapshot) =>
+    TaskRunner.due(plan, snapshot).map((work) => `${work.kind}:${work.key}${work.ids ? `=${work.ids.join(",")}` : ""}`)
+
+  it.live("starts each ready leaf, and only the ready ones", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      expect(keys(plan, fold(plan, [f.runStarted()]))).toEqual(["begin:T1.1", "begin:T1.2"])
+      const building = fold(plan, [f.runStarted(), f.started("T1.1")])
+      expect(keys(plan, building)).toEqual(["build:T1.1", "begin:T1.2"])
+    }),
+  )
+
+  it.live("follows the phase tags: proving, verifying, the parent's review, the scenario batch and its judges", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-scenarios.spec")
+      const f = facts()
+      expect(keys(plan, fold(plan, [f.runStarted(), f.started("T1.1"), f.ready("T1.1")]))).toEqual(["prove:T1.1"])
+      const trusted = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
+      expect(keys(plan, trusted)).toEqual(["review:T1", "scenarios:scenarios=S1"])
+      const judged = fold(plan, [f.scenarioProved("S1", "passed")], trusted)
+      expect(keys(plan, judged)).toEqual(["review:T1", "judge:S1"])
+      const verifying = fold(plan, [f.proved("T1", [])], judged)
+      expect(keys(plan, verifying)).toEqual(["verify:T1", "judge:S1"])
+    }),
+  )
+
+  it.live("RM10 keeps the independent task's worker after another task dies, until the snapshot is done", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const dead = fold(plan, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.started("T1.3"),
+        f.ready("T1.1"),
+        f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]),
+      ])
+      expect(keys(plan, dead)).toEqual(["build:T1.3"])
+      expect(TaskEngineXState.ended(dead)).toBe(false)
+      const done = fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead)
+      expect(TaskEngineXState.ended(done)).toBe(true)
+      expect(keys(plan, done)).toEqual([])
+    }),
+  )
+
+  it.live("RM8 resumes a slice that has not ended, and never one that stopped or folds to done", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const engine = TaskEngineXState.XStateEngine
+      const f = facts()
+      const open = [f.runStarted(), ...trustLeaf(plan, f, "T1.1")]
+      // An old slice with no path counts as a whole-spec slice (RM8b).
+      expect(Option.map(TaskRunner.resumable(engine, plan, open), (slice) => slice.length)).toEqual(Option.some(5))
+      // A stored stop ends the slice (RM8a).
+      expect(TaskRunner.resumable(engine, plan, [...open, f.ended("done")])).toEqual(Option.none())
+      // The observed slice with its scenario proofs folds to done: never resumed (RM8c).
+      const ready = ["S2", "S3", "S4", "S7", "S12"]
+      const done = [
+        ...observed(plan, f),
+        ...ready.flatMap((id) => [f.scenarioProved(id, "passed"), f.scenarioVerified({ id, verdict: "trusted" })]),
+      ]
+      expect(TaskRunner.resumable(engine, plan, done)).toEqual(Option.none())
+      // Only the latest slice counts.
+      expect(Option.isSome(TaskRunner.resumable(engine, plan, [...done, ...open]))).toBe(true)
+    }),
+  )
+
+  test("holds no readiness check, no done rule, no trust set and no lists of states", () => {
+    const source = readFileSync(path.resolve(import.meta.dir, "../../src/task/core/runner.ts"), "utf8")
+    expect(source).not.toMatch(/\bcheckDone\b/)
+    expect(source).not.toMatch(/\bconst (ACTIVE|JUDGED)\b/)
+    expect(source).not.toMatch(/afterEffective\.every/)
+    expect(source).not.toMatch(/readonly outside: Ref/)
+    expect(source).not.toMatch(/type: "run\.ended", at: [^,]+, state: "done"/)
   })
 })
