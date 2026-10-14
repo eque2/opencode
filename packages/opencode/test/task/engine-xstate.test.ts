@@ -675,6 +675,7 @@ describe("the run machine on the release-notes and live-check plans", () => {
       const list = observed(notes)
       const before = foldOf(notes, list.slice(0, -1))
       expect(engine.unitState(before, "T1.5")).toBe("waiting")
+      expect(before.hasTag("T1.5:ready")).toBe(false)
       const after = foldOf(notes, list.slice(-1), before)
       for (const id of ["T1.5", "T1"]) {
         expect(engine.unitState(after, id)).toBe("blocked")
@@ -802,6 +803,8 @@ describe("the run machine on the release-notes and live-check plans", () => {
           ...trustLeaf(notes, f, "T1.4"),
         ])
         expect(engine.waitingOn(tasks, "T1.5")).toEqual(["T9"])
+        // A ready task also shows waiting, so the phase tag tells them apart: T1.5 is not ready before the trust.
+        expect(tasks.hasTag("T1.5:ready")).toBe(false)
         const trusted = engine.apply(notes, tasks, f.outside("T9"))
         expect(trusted.hasTag("T1.5:ready")).toBe(true)
         expect(engine.apply(notes, trusted, f.outside("T9"))).toBe(trusted)
@@ -822,6 +825,21 @@ describe("the run machine on the release-notes and live-check plans", () => {
       expect(engine.view(snapshot).run).toMatchObject({
         state: "needs_human",
         reason: "T1.1 needs human\nT1.3 failed\nT1 blocked by T1.1\nT1.2 blocked by T1.1",
+      })
+    }),
+  )
+
+  it.live("RM11 a task.failed death decides the outcome once the independent task ends", () =>
+    Effect.gen(function* () {
+      const cascade = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const dead = foldOf(cascade, [f.runStarted(), f.started("T1.1"), f.failed("T1.1", "the merge failed")])
+      expect(engine.ended(dead)).toBe(false)
+      const done = foldOf(cascade, trustLeaf(cascade, f, "T1.3"), dead)
+      expect(engine.ended(done)).toBe(true)
+      expect(engine.view(done).run).toMatchObject({
+        state: "failed",
+        reason: "T1.1 failed\nT1 blocked by T1.1\nT1.2 blocked by T1.1",
       })
     }),
   )
