@@ -8,6 +8,7 @@ import {
   createMachine,
   not,
   or,
+  raise,
   stateIn,
 } from "@jambudipa/xstate-effect"
 import type { BlendModel } from "@/task/blend/model"
@@ -150,12 +151,23 @@ export interface RunContext {
   readonly units: Readonly<Record<string, Slot>>
   readonly moves: Readonly<Record<string, Move>>
   readonly log: ReadonlyArray<History>
+  /** A stop the run took: `run.cancelled`, or the state of `run.ended`, with its reason. */
+  readonly stop?: Stop
+}
+
+export interface Stop {
+  readonly state: "cancelled" | "done" | "failed"
+  readonly reason?: string
 }
 
 /** The machine's events: the stored facts, and the event `active` raises when every unit region is final. */
 export type RunEvent = Fact | { readonly type: "run.settled" }
 
 const RUN = "run"
+
+const natural = new Intl.Collator([], { numeric: true })
+/** The natural order of unit ids: `S2` before `S10`, `T1.2` before `T1.10`. */
+const byId = (a: string, b: string) => natural.compare(a, b)
 
 // --- reads shared by guards and actions ----------------------------------------------------------------------------
 
@@ -226,6 +238,63 @@ const withUnit = (context: RunContext, unit: string, change: Partial<Slot>) => (
   ...context.units,
   [unit]: { ...slotOf(context, unit), ...change },
 })
+
+/** The run's last logged state: the outcome toggles are not logged, so it is the state a run fact last wrote. */
+const lastRun = (context: RunContext) => context.log.findLast((entry) => entry.unit === RUN)?.to ?? "running"
+
+const label = (state: string) => state.replaceAll("_", " ")
+const isDead = (state: string) => classOf("task", state).tags.includes("dead")
+const isStopped = (kind: Kind, state: string) => classOf(kind, state).tags.includes("stopped")
+
+/** Which outcome rule settled the run (AD-4, in the AC 4 order of SD-18). */
+type Rule = "dead" | "stop" | "acceptance" | "done"
+
+interface OutcomeParams {
+  readonly rule: Rule
+  /** Each scenario's `outside` needs, for the line of a scenario that never ran. */
+  readonly waits: Readonly<Record<string, ReadonlyArray<string>>>
+}
+
+// The reason of the outcome, from the units' states in the context: one line per item, in natural id order.
+const settleReason = (context: RunContext, params: OutcomeParams): string | undefined => {
+  const units = Object.entries(context.units).toSorted(([a], [b]) => byId(a, b))
+  const tasks = units.filter(([, slot]) => slot.kind === "task")
+  const scenarios = units.filter(([, slot]) => slot.kind === "scenario")
+  // A scenario that is final and shows `waiting` is parked: it never ran.
+  const parked = scenarios
+    .filter(([, slot]) => slot.state === "waiting")
+    .map(([id]) => {
+      const untrusted = (params.waits[id] ?? []).filter((need) => context.units[need]?.state !== "trusted")
+      return `not run: ${id} waits on ${untrusted.toSorted(byId).join(", ")}`
+    })
+  const lines = (list: ReadonlyArray<string>) => {
+    if (list.length === 0) return undefined
+    return list.join("\n")
+  }
+  switch (params.rule) {
+    case "dead":
+      return lines([
+        ...tasks.filter(([, slot]) => isDead(slot.state)).map(([id, slot]) => `${id} ${label(slot.state)}`),
+        ...tasks
+          .filter(([, slot]) => slot.state === "blocked")
+          .map(([id, slot]) => `${id} blocked by ${slot.blockedBy?.id ?? "a dependency"}`),
+        ...(context.stop?.reason === undefined ? [] : [context.stop.reason]),
+      ])
+    case "stop":
+      return context.stop?.reason
+    case "acceptance":
+      return lines([
+        ...scenarios
+          .filter(([, slot]) => isStopped("scenario", slot.state))
+          .map(([id, slot]) => `acceptance not proved: ${id} ${slot.state}`),
+        ...parked,
+      ])
+    case "done":
+      return lines(parked)
+    default:
+      return undefined
+  }
+}
 
 const entryOf = (
   at: number,
@@ -311,6 +380,22 @@ export const ACTIONS = {
   reviewed: assign<RunContext, RunEvent, UnitParams, RunEvent>(({ context }, params) => ({
     units: withUnit(context, params.unit, { attempts: 1 }),
   })),
+  /** `active` is done: every unit region is final, so the outcome may settle. */
+  settled: raise<RunContext, RunEvent>({ type: "run.settled" }),
+  /** A stop is noted on the outcome; the units' own rows cancel what has not finished. */
+  stop: assign<RunContext, RunEvent, undefined, RunEvent>(({ context, event }) => {
+    if (event.type !== "run.cancelled" && event.type !== "run.ended") return {}
+    const stop: Stop = {
+      state: event.type === "run.cancelled" ? "cancelled" : event.state,
+      ...(event.reason === undefined ? {} : { reason: event.reason }),
+    }
+    const from = lastRun(context)
+    return { stop, log: [...context.log, entryOf(event.at, RUN, from, from, event.reason)] }
+  }),
+  /** The outcome's move: its reason by the rule that settled it, for the outcome state's entry action. */
+  outcome: assign<RunContext, RunEvent, OutcomeParams, RunEvent>(({ context }, params) => ({
+    moves: { ...context.moves, [RUN]: { from: lastRun(context), reason: settleReason(context, params) } },
+  })),
   /** A move to `blocked`: its cause is the dead dependency the row's guard named. */
   block: assign<RunContext, RunEvent, BlockParams, RunEvent>(({ context }, params) => ({
     moves: {
@@ -335,6 +420,12 @@ interface IdParams {
 type Facts = { readonly event: RunEvent }
 
 const GUARDS = {
+  /** The task that died first in the history died in this state. */
+  firstDead: ({ context }: { readonly context: RunContext }, params: { readonly state: string }) =>
+    context.log.find((entry) => context.units[entry.unit]?.kind === "task" && isDead(entry.to))?.to === params.state,
+  /** The run took a stop that ends it in this state. */
+  stopped: ({ context }: { readonly context: RunContext }, params: { readonly state: string }) =>
+    context.stop?.state === params.state,
   /** The fact names this task. */
   forTask: ({ event }: Facts, params: IdParams) => "task" in event && event.task === params.id,
   /** A proof result of the obligation has this status. */
@@ -367,9 +458,6 @@ const GUARDS = {
 
 // --- the config ----------------------------------------------------------------------------------------------------
 
-const natural = new Intl.Collator([], { numeric: true })
-const byId = (a: string, b: string) => natural.compare(a, b)
-
 /** A unit id as xstate holds it: `.` becomes `_`. */
 export const key = (id: string) => id.replaceAll(".", "_")
 
@@ -387,7 +475,7 @@ export interface Meta {
 
 type Guard = PortGuard<RunContext, RunEvent>
 type Named = { readonly type: keyof typeof GUARDS; readonly params: object }
-type Action = { readonly type: keyof typeof ACTIONS; readonly params: object }
+type Action = { readonly type: keyof typeof ACTIONS; readonly params?: object }
 type Row = TransitionConfig<RunContext, RunEvent, Meta>
 type StateNode = StateNodeConfig<RunContext, RunEvent, Meta>
 
@@ -587,9 +675,15 @@ const workRegion = (
     target,
     actions: [...actions, move(id, from, target)],
   })
+  // A stop finishes the task that has not ended (default 4); an ended task keeps its state.
+  const stops = (from: string) => ({
+    "run.cancelled": [to(from, "cancelled")],
+    "run.ended": [to(from, "cancelled")],
+  })
   const halts = (from: string) => ({
     "task.needs_human": [{ guard: mine, ...to(from, "needs_human") }],
     "task.failed": [{ guard: mine, ...to(from, "failed") }],
+    ...stops(from),
   })
   const underBudget = named("underBudget", { id, budget })
   const retry: Action = { type: "retry", params: { unit: id } }
@@ -606,7 +700,7 @@ const workRegion = (
   const rows: Readonly<Record<TaskWork, Rows>> = {
     waiting: {
       always: [...blockRows(plan, id, "waiting", dependencies), whenTrusted(dependencies, "ready")],
-      on: { "task.failed": [{ guard: mine, ...to("waiting", "failed") }] },
+      on: { "task.failed": [{ guard: mine, ...to("waiting", "failed") }], ...stops("waiting") },
     },
     ready: {
       always: [...blockRows(plan, id, "waiting", dependencies), ...unlessTrusted(dependencies, "waiting")],
@@ -615,6 +709,7 @@ const workRegion = (
           ? { "task.started": [{ guard: mine, ...to("waiting", "building", { type: "start", params: { unit: id } }) }] }
           : { "task.proved": [{ guard: mine, ...to("waiting", "verifying") }] }),
         "task.failed": [{ guard: mine, ...to("waiting", "failed") }],
+        ...stops("waiting"),
       },
     },
     building: {
@@ -705,11 +800,16 @@ const scenarioRegion = (plan: Plan, scenario: BlendModel.Scenario): StateNode =>
   const tasks = needs.filter((need) => isTask(plan, need))
   const regions = needs.filter((need) => !isTask(plan, need))
   const to = (from: string, target: string): Row => ({ target, actions: [move(id, from, target)] })
+  // A stop cancels a scenario that has not ended (default 4); a parked or ended one keeps its state.
+  const stops = (from: string) => ({ "run.cancelled": [to(from, "cancelled")], "run.ended": [to(from, "cancelled")] })
   // Every task it needs is trusted and an outside precondition it needs is not: it waits, final, for that trust.
   const waitsOnRegion: Guard = and([allTrusted(tasks), not(allTrusted(regions))])
   const parked: ReadonlyArray<Row> = regions.length === 0 ? [] : [{ guard: waitsOnRegion, target: "parked" }]
   const rows: Readonly<Record<ScenarioPhase, Rows>> = {
-    waiting: { always: [...blockRows(plan, id, "waiting", needs), whenTrusted(needs, "ready"), ...parked] },
+    waiting: {
+      always: [...blockRows(plan, id, "waiting", needs), whenTrusted(needs, "ready"), ...parked],
+      on: stops("waiting"),
+    },
     ready: {
       always: [...blockRows(plan, id, "waiting", needs), ...unlessTrusted(needs, "waiting")],
       on: {
@@ -717,6 +817,7 @@ const scenarioRegion = (plan: Plan, scenario: BlendModel.Scenario): StateNode =>
           { guard: named("scenarioPassed", { id }), ...to("waiting", "verifying") },
           { guard: named("scenarioProved", { id }), ...to("waiting", "failed") },
         ],
+        ...stops("waiting"),
       },
     },
     parked: {
@@ -732,6 +833,7 @@ const scenarioRegion = (plan: Plan, scenario: BlendModel.Scenario): StateNode =>
           { guard: named("scenarioTrusted", { id }), ...to("pending", "trusted") },
           { guard: named("scenarioVerified", { id }), ...to("pending", "rejected") },
         ],
+        ...stops("pending"),
       },
     },
     trusted: {},
@@ -757,7 +859,61 @@ const trustRegion = (id: string, kind: "outside" | "external", tags: (state: str
     tags,
   )
 
-const outcomeRegion = (): StateNode => unitRegion(RUN, "run", "running", {})
+const both = (left: Guard, right: Guard): Guard => and([left, right])
+
+/** The states of a kind that `CLASS` marks final, and the states that carry a phase tag. */
+const finalStates = (kind: Kind) => Object.keys(CLASS[kind]).filter((state) => classOf(kind, state).final)
+const phaseStates = (kind: Kind) => Object.keys(CLASS[kind]).filter((state) => classOf(kind, state).phase !== undefined)
+
+/**
+ * How the run ends (AD-4). `outcome` is `running` while a task or scenario has work in hand and `waiting` while none
+ * has; neither move is logged. When every unit region is final, `active` raises `run.settled`, and the first rule
+ * that holds decides, in the AC 4 order (SD-18): a dead task, a stop, a scenario that failed acceptance (owner
+ * ruling 1), then done. Each rule's row also requires every unit region to be final, because the port does not check
+ * a queued done event again; the last row ignores one that no longer holds.
+ */
+const outcomeRegion = (plan: Plan): StateNode => {
+  const units = [
+    ...plan.tasks.map((task) => ["task", task.id] as const),
+    ...plan.scenarios.map((scenario) => ["scenario", scenario.id] as const),
+  ]
+  const allFinal = and(units.map(([kind, id]) => or(finalStates(kind).map((state) => at(id, state)))))
+  const busy = or(units.flatMap(([kind, id]) => phaseStates(kind).map((state) => at(id, state))))
+  const waits = Object.fromEntries(
+    plan.scenarios.map((scenario) => [scenario.id, scenario.needs.filter((need) => !isTask(plan, need))]),
+  )
+  const settle = (rule: Rule, target: string, guard?: Guard): Row => ({
+    guard: guard === undefined ? allFinal : both(allFinal, guard),
+    target,
+    actions: [{ type: "outcome", params: { rule, waits } }],
+  })
+  const accepted = or(
+    plan.scenarios.flatMap((scenario) =>
+      finalStates("scenario")
+        .filter((state) => isStopped("scenario", state))
+        .map((state) => at(scenario.id, state)),
+    ),
+  )
+  const settled: ReadonlyArray<Row> = [
+    ...finalStates("task")
+      .filter(isDead)
+      .map((state) => settle("dead", state, named("firstDead", { state }))),
+    ...finalStates("run").map((state) => settle("stop", state, named("stopped", { state }))),
+    ...(plan.scenarios.length === 0 ? [] : [settle("acceptance", "failed", accepted)]),
+    settle("done", "done"),
+    // A queued `run.settled` whose condition no longer holds.
+    {},
+  ]
+  const live = (other: string, toggle: Guard): Rows => ({
+    always: [{ guard: toggle, target: other }],
+    on: {
+      "run.settled": settled,
+      "run.cancelled": [{ actions: [{ type: "stop" }] }],
+      "run.ended": [{ actions: [{ type: "stop" }] }],
+    },
+  })
+  return unitRegion(RUN, "run", "running", { running: live("waiting", not(busy)), waiting: live("running", busy) })
+}
 
 /** The first context: every unit in its region's first state. */
 const firstContext = (plan: Plan): RunContext => {
@@ -813,8 +969,13 @@ export const config = (plan: Plan): RunConfig => ({
   options: { maxIterations: 1000 },
   context: firstContext(plan),
   states: {
-    active: { type: "parallel", states: Object.fromEntries(regionsOf(plan).map(([, region, node]) => [region, node])) },
-    outcome: outcomeRegion(),
+    active: {
+      type: "parallel",
+      // When every unit region is final, the outcome may settle; a target here would reset every region.
+      onDone: { actions: [{ type: "settled" }] },
+      states: Object.fromEntries(regionsOf(plan).map(([, region, node]) => [region, node])),
+    },
+    outcome: outcomeRegion(plan),
   },
 })
 
@@ -920,7 +1081,8 @@ const nodeAt = (node: unknown, ...keys: ReadonlyArray<string>): Plain =>
  * cancelled task dependency reaches `blocked` with that dependency as its cause; a scenario whose tasks are trusted
  * and whose outside precondition is not reaches `parked`. A `blocked` row reads one state only, so the first dead
  * dependency in dependency order wins in any mixed combination. Only a wait on an untrusted `outside` or `external`
- * region, which a fact moves, may have no way out; every other state that is not final has a row.
+ * region, which a fact moves, may have no way out; every other state that is not final has a row. The outcome's
+ * live states hold a settle row for every combination of final unit states.
  */
 const totality = (plan: Plan, built: RunConfig): ReadonlyArray<string> => {
   const active = nodeAt(built, "active")
@@ -977,12 +1139,28 @@ const totality = (plan: Plan, built: RunConfig): ReadonlyArray<string> => {
       return [...ready, ...blocked, ...parked, ...single]
     })
   })
+  // Every combination of final unit states settles: one unit at a time in each final state, the others trusted (the
+  // settle guards are a conjunction over units, so one unit's states decide each conjunct).
+  const trusted = Object.fromEntries(units.map((unit) => [key(unit.id), "trusted"]))
+  const settles = ["running", "waiting"].flatMap((state) => {
+    const on = nodeAt(built, "outcome", state).on
+    const rows = isPlain(on) ? listOf(on["run.settled"]).filter(isPlain) : []
+    return units.flatMap((unit) =>
+      finalStates(unit.kind).flatMap((final) =>
+        rows.some(
+          (row) => row.target !== undefined && evaluate(row.guard, { ...trusted, [key(unit.id)]: final }) === true,
+        )
+          ? []
+          : [`run ${state} has no settle row for ${unit.id} ${final}`],
+      ),
+    )
+  })
   const stuck = nodesOf(built).flatMap((node) => {
     const meta = isPlain(node.meta) ? node.meta : {}
-    if ((meta.kind !== "task" && meta.kind !== "scenario") || node.type === "final") return []
+    if ((meta.kind !== "task" && meta.kind !== "scenario" && meta.kind !== "run") || node.type === "final") return []
     return rowsOf(node).length === 0 ? [`${String(meta.unit)} ${String(node.id).split("/")[1]} has no way out`] : []
   })
-  return [...gaps, ...stuck]
+  return [...gaps, ...settles, ...stuck]
 }
 
 /**

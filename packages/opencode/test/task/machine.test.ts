@@ -550,16 +550,18 @@ describe("the outcome region (AD-4)", () => {
 
   it.live("moves outcome between running and waiting with the work, and logs neither move", () =>
     Effect.gen(function* () {
-      const plan = yield* loadPlan("release-notes.spec")
+      expect(outcome(first(yield* loadPlan("release-notes.spec")))).toBe("running")
+      // The T1.5 subtree: T1.5 waits on the folder tasks T1.3 and T1.4 and on T9, and nothing else can run.
+      const plan = yield* loadPlan("release-notes.spec", "T1.5")
       const f = facts()
-      const running = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), ...trustLeaf(plan, f, "T1.2")])
-      expect(outcome(running)).toBe("running")
-      // T1.3 and T1.4 are trusted next; T1.5 then waits on T9 and nothing else can run.
-      const waiting = fold(plan, [...trustLeaf(plan, f, "T1.3"), ...trustLeaf(plan, f, "T1.4")], running)
+      const waiting = fold(plan, [f.runStarted(), f.outside("T1.3"), f.outside("T1.4")])
       expect(outcome(waiting)).toBe("waiting")
       expect(waiting.hasTag("run:waiting")).toBe(true)
-      expect(outcome(step(plan, waiting, f.outside("T9")))).toBe("running")
-      expect(waiting.context.log.filter((entry) => entry.unit === "run" && entry.to === "waiting")).toEqual([])
+      const running = step(plan, waiting, f.outside("T9"))
+      expect(unitState(running, "T1.5")).toBe("ready")
+      expect(outcome(running)).toBe("running")
+      expect(running.hasTag("run:active")).toBe(true)
+      expect(running.context.log.filter((entry) => entry.unit === "run" && entry.from !== entry.to)).toEqual([])
     }),
   )
 
@@ -632,7 +634,11 @@ describe("the outcome region (AD-4)", () => {
       const tasks = fold(plan, allTasks(plan, f))
       expect(unitState(tasks, "S13")).toBe("parked")
       const ids = Array.from({ length: 12 }, (_, index) => `S${index + 1}`)
-      const done = fold(plan, ids.flatMap((id) => scenario(f, id)), tasks)
+      const done = fold(
+        plan,
+        ids.flatMap((id) => scenario(f, id)),
+        tasks,
+      )
       expect(run(done)).toEqual({ outcome: "done", status: "done", reason: "not run: S13 waits on T8" })
     }),
   )
@@ -643,7 +649,9 @@ describe("the outcome region (AD-4)", () => {
       // S13 needs T9 as well as T8 here, so its line names both.
       const plan: Plan = {
         ...loaded,
-        scenarios: loaded.scenarios.map((each) => (each.id === "S13" ? { ...each, needs: [...each.needs, "T9"] } : each)),
+        scenarios: loaded.scenarios.map((each) =>
+          each.id === "S13" ? { ...each, needs: [...each.needs, "T9"] } : each,
+        ),
       }
       const f = facts()
       const tasks = fold(plan, [f.runStarted(), f.outside("T1.2"), f.outside("T1.3"), ...trustLeaf(plan, f, "T1.4")])
@@ -685,8 +693,8 @@ describe("the outcome region (AD-4)", () => {
     Effect.gen(function* () {
       const config = TaskMachine.config(yield* loadPlan("release-notes.spec"))
       const active = child(config, "states", "active")
-      const ancestors = [config, active, ...Object.values(states(active)).filter(isNode)]
-      for (const node of ancestors) {
+      const ancestors: ReadonlyArray<unknown> = [config, active, ...Object.values(states(active))]
+      for (const node of ancestors.filter(isNode)) {
         const on = isNode(node.on) ? node.on : {}
         expect(on["run.cancelled"]).toBeUndefined()
         expect(on["run.ended"]).toBeUndefined()
@@ -723,10 +731,14 @@ describe("the outcome region (AD-4)", () => {
       const f = facts()
       const going = fold(plan, [f.runStarted(), f.started("T1.1"), f.started("T1.3")])
       const sameTime = (fact: Fact): Fact => ({ ...fact, at: 100 })
-      const snapshot = fold(plan, [
-        sameTime(f.failed("T1.3", "the builder session died")),
-        sameTime(f.needsHuman("T1.1", "spend cap: $5.00 reached")),
-      ], going)
+      const snapshot = fold(
+        plan,
+        [
+          sameTime(f.failed("T1.3", "the builder session died")),
+          sameTime(f.needsHuman("T1.1", "spend cap: $5.00 reached")),
+        ],
+        going,
+      )
       expect(run(snapshot)).toEqual({
         outcome: "failed",
         status: "done",
