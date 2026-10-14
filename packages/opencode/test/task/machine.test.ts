@@ -2,10 +2,25 @@ import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { Effect, Exit } from "effect"
 import { initialTransition } from "@jambudipa/xstate-effect"
-import type { Plan } from "@/task/core/model"
+import type { Fact, Plan } from "@/task/core/model"
 import { TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
-import { facts, fail, fold, loadPlan, observed, step, trustLeaf, unitState } from "./lib/machine"
+import {
+  type Facts,
+  facts,
+  fail,
+  first,
+  fold,
+  loadPlan,
+  obligationState,
+  observed,
+  outcome,
+  reject,
+  step,
+  trust,
+  trustLeaf,
+  unitState,
+} from "./lib/machine"
 
 // The run machine generator (spine AD-1 to AD-5): one machine per plan, generated as plain data.
 
@@ -489,6 +504,244 @@ describe("readiness and the cascade (AD-3)", () => {
         const plan = yield* loadPlan(name, root)
         expect(() => TaskMachine.machine(plan)).not.toThrow()
       }
+    }),
+  )
+})
+
+describe("the outcome region (AD-4)", () => {
+  const run = (snapshot: ReturnType<typeof first>) => ({
+    outcome: outcome(snapshot),
+    status: snapshot.status,
+    reason: snapshot.context.units.run?.reason,
+  })
+  // Every task of the release-notes plan trusted: the leaves, T9 for T1.5, then T1's review.
+  const allTasks = (plan: Plan, f: Facts) => [
+    f.runStarted(),
+    ...trustLeaf(plan, f, "T1.1"),
+    ...trustLeaf(plan, f, "T1.2"),
+    ...trustLeaf(plan, f, "T1.3"),
+    ...trustLeaf(plan, f, "T1.4"),
+    f.outside("T9"),
+    ...trustLeaf(plan, f, "T1.5"),
+    f.proved("T1", []),
+    f.verified("T1", [trust("T1.e1")]),
+  ]
+  const scenario = (f: Facts, id: string, verdict: "trusted" | "rejected" = "trusted") => [
+    f.scenarioProved(id, "passed"),
+    f.scenarioVerified(verdict === "trusted" ? trust(id) : reject(id, `${id} does not hold`)),
+  ]
+
+  it.live("rule 4: every task and every scenario trusted gives done with no reason", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-scenarios.spec")
+      const f = facts()
+      const before = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        f.proved("T1", []),
+        f.verified("T1", [trust("T1.e1")]),
+      ])
+      expect(unitState(before, "S1")).toBe("ready")
+      expect(run(before)).toEqual({ outcome: "running", status: "active", reason: undefined })
+      const done = fold(plan, scenario(f, "S1"), before)
+      expect(run(done)).toEqual({ outcome: "done", status: "done", reason: undefined })
+    }),
+  )
+
+  it.live("moves outcome between running and waiting with the work, and logs neither move", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const running = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), ...trustLeaf(plan, f, "T1.2")])
+      expect(outcome(running)).toBe("running")
+      // T1.3 and T1.4 are trusted next; T1.5 then waits on T9 and nothing else can run.
+      const waiting = fold(plan, [...trustLeaf(plan, f, "T1.3"), ...trustLeaf(plan, f, "T1.4")], running)
+      expect(outcome(waiting)).toBe("waiting")
+      expect(waiting.hasTag("run:waiting")).toBe(true)
+      expect(outcome(step(plan, waiting, f.outside("T9")))).toBe("running")
+      expect(waiting.context.log.filter((entry) => entry.unit === "run" && entry.to === "waiting")).toEqual([])
+    }),
+  )
+
+  it.live("RM11 rule 1: the task that died first gives the outcome; lines for each dead task, then each blocked", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = fold(plan, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.needsHuman("T1.1", "spend cap: $5.00 reached"),
+        f.started("T1.3"),
+        f.failed("T1.3", "the builder session died"),
+      ])
+      expect(run(snapshot)).toEqual({
+        outcome: "needs_human",
+        status: "done",
+        reason: ["T1.1 needs human", "T1.3 failed", "T1 blocked by T1.1", "T1.2 blocked by T1.1"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("RM10 waits for an independent task that is still building before it settles", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const building = fold(plan, [f.runStarted(), f.started("T1.1"), f.started("T1.3"), f.ready("T1.1")])
+      const dead = step(plan, building, f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]))
+      expect(unitState(dead, "T1.1")).toBe("budget_exhausted")
+      expect(unitState(dead, "T1.2")).toBe("blocked")
+      expect(unitState(dead, "T1.3")).toBe("building")
+      expect(run(dead)).toEqual({ outcome: "running", status: "active", reason: undefined })
+      const done = fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead)
+      expect(unitState(done, "T1.3")).toBe("trusted")
+      expect(run(done)).toEqual({
+        outcome: "budget_exhausted",
+        status: "done",
+        reason: ["T1.1 budget exhausted", "T1 blocked by T1.1", "T1.2 blocked by T1.1"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("RM12 owner ruling 1: every task trusted and a scenario rejected or failed gives failed", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-scenarios.spec")
+      const f = facts()
+      const tasks = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        f.proved("T1", []),
+        f.verified("T1", [trust("T1.e1")]),
+      ])
+      expect(run(fold(plan, scenario(f, "S1", "rejected"), tasks))).toEqual({
+        outcome: "failed",
+        status: "done",
+        reason: "acceptance not proved: S1 rejected",
+      })
+      expect(run(step(plan, tasks, f.scenarioProved("S1", "failed", "the [S1] test failed")))).toEqual({
+        outcome: "failed",
+        status: "done",
+        reason: "acceptance not proved: S1 failed",
+      })
+    }),
+  )
+
+  it.live("RM13 rule 4 with a parked scenario: done, with the not-run line", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const tasks = fold(plan, allTasks(plan, f))
+      expect(unitState(tasks, "S13")).toBe("parked")
+      const ids = Array.from({ length: 12 }, (_, index) => `S${index + 1}`)
+      const done = fold(plan, ids.flatMap((id) => scenario(f, id)), tasks)
+      expect(run(done)).toEqual({ outcome: "done", status: "done", reason: "not run: S13 waits on T8" })
+    }),
+  )
+
+  it.live("rule 3 with parked scenarios: the acceptance line first, and every untrusted outside need named", () =>
+    Effect.gen(function* () {
+      const loaded = yield* loadPlan("release-notes.spec", "T1.4")
+      // S13 needs T9 as well as T8 here, so its line names both.
+      const plan: Plan = {
+        ...loaded,
+        scenarios: loaded.scenarios.map((each) => (each.id === "S13" ? { ...each, needs: [...each.needs, "T9"] } : each)),
+      }
+      const f = facts()
+      const tasks = fold(plan, [f.runStarted(), f.outside("T1.2"), f.outside("T1.3"), ...trustLeaf(plan, f, "T1.4")])
+      expect(unitState(tasks, "S13")).toBe("parked")
+      const done = fold(
+        plan,
+        [...scenario(f, "S6"), ...scenario(f, "S8", "rejected"), ...scenario(f, "S9"), ...scenario(f, "S11")],
+        tasks,
+      )
+      expect(run(done)).toEqual({
+        outcome: "failed",
+        status: "done",
+        reason: ["acceptance not proved: S8 rejected", "not run: S13 waits on T8, T9"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("RM14 default 4: a cancel cancels every unfinished unit, keeps the finished ones and ends cancelled", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const going = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.started("T1.2")])
+      const cancelled = step(plan, going, f.cancelled("user stop"))
+      expect(unitState(cancelled, "T1.1")).toBe("trusted")
+      expect(["T1.2", "T1.3", "T1.4", "T1.5", "T1"].map((id) => unitState(cancelled, id))).toEqual(
+        Array(5).fill("cancelled"),
+      )
+      expect(cancelled.context.units["T1.2"]?.reason).toBe("user stop")
+      expect(unitState(cancelled, "S2")).toBe("cancelled")
+      expect(obligationState(cancelled, "T1.1.c1")).toBe("trusted")
+      expect(obligationState(cancelled, "T1.2.c1")).toBe("pending")
+      expect(run(cancelled)).toEqual({ outcome: "cancelled", status: "done", reason: "user stop" })
+      const ended = step(plan, going, f.ended("failed", "the run wall clock ran out"))
+      expect(run(ended)).toEqual({ outcome: "failed", status: "done", reason: "the run wall clock ran out" })
+    }),
+  )
+
+  it.live("keeps the stop rows on the units: no ancestor takes a stop, and active.onDone only raises", () =>
+    Effect.gen(function* () {
+      const config = TaskMachine.config(yield* loadPlan("release-notes.spec"))
+      const active = child(config, "states", "active")
+      const ancestors = [config, active, ...Object.values(states(active)).filter(isNode)]
+      for (const node of ancestors) {
+        const on = isNode(node.on) ? node.on : {}
+        expect(on["run.cancelled"]).toBeUndefined()
+        expect(on["run.ended"]).toBeUndefined()
+      }
+      expect(active.onDone).toEqual({ actions: [{ type: "settled" }] })
+    }),
+  )
+
+  it.live("RM27 AC 4 outranks the spine: a stop after a death ends in the dead task's state", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = fold(plan, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.started("T1.3"),
+        f.ready("T1.1"),
+        f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]),
+        f.cancelled("user stop"),
+      ])
+      expect(unitState(snapshot, "T1.3")).toBe("cancelled")
+      expect(unitState(snapshot, "T1.1")).toBe("budget_exhausted")
+      expect(run(snapshot)).toEqual({
+        outcome: "budget_exhausted",
+        status: "done",
+        reason: ["T1.1 budget exhausted", "T1 blocked by T1.1", "T1.2 blocked by T1.1", "user stop"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("picks the earliest death by history order, and lists the dead in natural order", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const going = fold(plan, [f.runStarted(), f.started("T1.1"), f.started("T1.3")])
+      const sameTime = (fact: Fact): Fact => ({ ...fact, at: 100 })
+      const snapshot = fold(plan, [
+        sameTime(f.failed("T1.3", "the builder session died")),
+        sameTime(f.needsHuman("T1.1", "spend cap: $5.00 reached")),
+      ], going)
+      expect(run(snapshot)).toEqual({
+        outcome: "failed",
+        status: "done",
+        reason: ["T1.1 needs human", "T1.3 failed", "T1 blocked by T1.3", "T1.2 blocked by T1.1"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("RM29 the totality scan requires a settle row for every final unit state", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const gap = TaskMachine.mapStates(TaskMachine.config(plan), (node) =>
+        node.id === "run/running" && node.on !== undefined ? { ...node, on: { ...node.on, "run.settled": [] } } : node,
+      )
+      expect(() => TaskMachine.fromConfig(plan, gap)).toThrow("totality: run running has no settle row for T1 trusted")
     }),
   )
 })
