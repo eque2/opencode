@@ -742,14 +742,47 @@ describe("the run machine on the release-notes and live-check plans", () => {
       const reopened = engine.apply(notes, trusted, f.stale("T1.1.c1"))
       expect(reopened.hasTag("T1.3:ready")).toBe(false)
       expect(engine.waitingOn(reopened, "T1.3")).toEqual(["T1.1"])
+      // A parent waits on its children: T1 stays waiting while T1.5 is not trusted, and is ready once it is.
+      const children = foldOf(notes, [
+        f.runStarted(),
+        ...trustLeaf(notes, f, "T1.1"),
+        ...trustLeaf(notes, f, "T1.2"),
+        ...trustLeaf(notes, f, "T1.3"),
+        ...trustLeaf(notes, f, "T1.4"),
+        f.outside("T9"),
+      ])
+      expect(engine.unitState(children, "T1")).toBe("waiting")
+      expect(engine.waitingOn(children, "T1")).toEqual(["T1.5"])
+      const parent = foldOf(notes, trustLeaf(notes, f, "T1.5"), children)
+      expect(parent.hasTag("T1:ready")).toBe(true)
     }),
   )
 
   it.live("RM16 two siblings with no after between them become ready in the same step", () =>
     Effect.gen(function* () {
-      const notes = yield* loadPlan("release-notes.spec")
-      const snapshot = engine.apply(notes, engine.initial(notes), facts().runStarted())
-      expect(snapshot.hasTag("T1.1:ready") && snapshot.hasTag("T1.2:ready")).toBe(true)
+      const loaded = yield* loadPlan("release-notes.spec")
+      // T1.2 and T1.3 both come after T1.1 here, and not after each other.
+      const notes: Plan = {
+        ...loaded,
+        tasks: loaded.tasks.map((task) => (task.id === "T1.2" ? { ...task, afterEffective: ["T1.1"] } : task)),
+      }
+      const f = facts()
+      const own = notes.spec.obligations.filter((item) => item.task === "T1.1").map((item) => item.id)
+      const verifying = foldOf(notes, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.ready("T1.1"),
+        f.proved(
+          "T1.1",
+          own.map((id) => ({ id, status: "passed" as const })),
+        ),
+      ])
+      expect(["T1.2", "T1.3"].map((id) => engine.unitState(verifying, id))).toEqual(["waiting", "waiting"])
+      expect(verifying.hasTag("T1.2:ready") || verifying.hasTag("T1.3:ready")).toBe(false)
+      // The one step that trusts T1.1 readies both.
+      const trusted = engine.apply(notes, verifying, f.verified("T1.1", []))
+      expect(engine.unitState(trusted, "T1.1")).toBe("trusted")
+      expect(trusted.hasTag("T1.2:ready") && trusted.hasTag("T1.3:ready")).toBe(true)
     }),
   )
 
@@ -807,7 +840,7 @@ describe("the run machine on the release-notes and live-check plans", () => {
     }),
   )
 
-  it.live("RM13 a parked scenario adds its not-run line, and the run still ends done", () =>
+  it.live("RM13 owner ruling 1: a parked scenario adds its not-run line, and the run still ends done", () =>
     Effect.gen(function* () {
       const subtree = yield* loadPlan("release-notes.spec", "T1.4")
       const f = facts()
