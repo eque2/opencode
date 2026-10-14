@@ -29,9 +29,11 @@
 - Update 21:31: the full-interleaving stale walk of the loaded cascade plan passed: 36 353 keys, 361 474 edges,
   0 stuck states, statuses active and done, 3 280 s (`TASK_GRAPH_STALE=1 bun test --timeout 14400000
   test/task/engine-xstate-graph.test.ts -t staleness` at HEAD f6d5bb3dc7; output in `task/T1.10-stale-walk.log`).
-  Its limit is now 1 100 000 (about 3 times the edges). The later guard change 71f2906385 does not affect it: every
-  alphabet fact names its own task and carries only that task's results, so both guard forms agree on it.
-- Status: resolved — the stale walk test case has a passing run.
+  Its limit is now 1 100 000 (about 3 times the edges). Correction (T1.10 verifier, 22:03): the later guard change
+  71f2906385 does change the walk. Under the old `unproved` guard, a child's `task.proved` moved a proving parent's
+  review obligation; the verifier found 10 such divergences in 15 401 checked steps, all of which reconverged. The
+  walk runs again at HEAD at 22:12, before the checkpoint gate.
+- Status: resolved at f6d5bb3dc7; the run at HEAD confirms it for the current guards.
 
 ## D2 — environment: the machine's load makes timing-bound tests fail
 - Check: `packages/opencode/test/task/engine-xstate-graph.test.ts` (each walk has the specified 60 s timeout) and
