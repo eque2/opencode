@@ -160,7 +160,7 @@ disagreed with approved AC 4, AC 4 wins: a task that died before a stop gives th
 
 ## Work list (from the SPEC)
 
-Four phases, 54 tasks, 98 scenarios and 5 build checks — full detail in [`./spec/tasks.md`](./spec/tasks.md):
+Four phases, 54 tasks, 108 scenarios and 5 build checks — full detail in [`./spec/tasks.md`](./spec/tasks.md):
 
 - **P1 — one run machine (T1.1–T1.15).** The two live-check folders first (T1.15, so AC 6 walks them
   before the AC 7 checkpoint), port conformance probes, the generated machine, readiness and
@@ -214,14 +214,16 @@ _Agent note — other agents: drive `state.mjs` / `tests-cli.mjs` directly again
 - **`[DS]` setup.** Answer **N** to its worktree question: this is already the goal's worktree, and a
   nested `feature/*` branch never reaches `dev`. Run without `--parallel` until one scenario has verified
   through the adapter; after that `--parallel` is allowed, with at most 5 verifiers at a time.
-- **Iteration cap.** The tasks plus 98+ scenarios exceed the default `[DS]` cap of 100 iterations.
+- **Iteration cap.** 54 tasks plus 108 scenarios exceed the default `[DS]` cap of 100 iterations.
   Re-invoke `[DS]` when it stops on the cap.
 - **No `[ET]`, no `[PR]`.** `[DS]`'s completion text suggests them; the plan declined both, and a PR
   pushes, which D26 forbids. When `[DS]` is done, go to the live check (step 3).
 
 ### Verification (owner ruling 6)
 
-- Every scenario test is a `bun test` file. Run it from its package, never the root:
+- Every scenario test is a `bun test` file in `packages/opencode/test/task/`; its `workingDirectory` is
+  `packages/opencode`. After any `[CS]` regeneration, run `python3 spec/scenario-workdir.py spec` (the
+  generator writes an empty value). Run each file from its package, never the root:
   `bun test --timeout=30000 --reporter=junit --reporter-outfile=<run dir>/junit.xml <file>`.
 - The `eque2-verifier` builds a small adapter in its own scratchpad that passes each JUnit result
   unchanged to `scenario-state-reporter.mjs`'s public Vitest hook `onTestRunEnd(files)`. Recipe and
