@@ -253,6 +253,12 @@ interface EnterParams extends UnitParams {
   readonly logs: string
 }
 
+interface BlockParams extends UnitParams {
+  readonly from: string
+  readonly id: string
+  readonly state: string
+}
+
 interface MoveParams extends UnitParams {
   readonly from?: string
   readonly to: string
@@ -304,6 +310,17 @@ export const ACTIONS = {
   /** A parent counts its one review. */
   reviewed: assign<RunContext, RunEvent, UnitParams, RunEvent>(({ context }, params) => ({
     units: withUnit(context, params.unit, { attempts: 1 }),
+  })),
+  /** A move to `blocked`: its cause is the dead dependency the row's guard named. */
+  block: assign<RunContext, RunEvent, BlockParams, RunEvent>(({ context }, params) => ({
+    moves: {
+      ...context.moves,
+      [params.unit]: {
+        from: params.from,
+        reason: `blocked by ${params.id}: ${params.state.replaceAll("_", " ")}`,
+        blockedBy: { id: params.id, state: params.state },
+      },
+    },
   })),
   rehash: assign<RunContext, RunEvent, UnitParams, RunEvent>(({ context, event }, params) => {
     if (event.type !== "obligation.stale") return {}
@@ -434,6 +451,64 @@ const again = (unit: string, kind: Kind, state: string): Action => {
   return { type: "again", params: { unit, state: shows, logs: shows } }
 }
 
+// --- dependencies (AD-3) ---------------------------------------------------------------------------------------------
+
+/** The states of a task dependency that block a dependant, in row order: `DEAD`, then a cancelled dependency. */
+const BLOCKING: ReadonlyArray<string> = [
+  ...DEAD,
+  ...Object.keys(CLASS.task).filter(
+    (state) => classOf("task", state).tags.includes("stopped") && !DEAD.some((dead) => dead === state),
+  ),
+]
+
+/** A task's dependencies: its `afterEffective` ids in plan order, then its children in natural order. */
+const dependenciesOf = (task: BlendModel.Task): ReadonlyArray<string> => [
+  ...task.afterEffective,
+  ...task.children.toSorted(byId),
+]
+
+/** Whether a dependency is a task of the plan; any other id names an `outside` or `external` region. */
+const isTask = (plan: Plan, id: string) => plan.tasks.some((task) => task.id === id)
+
+/** Each unit's dependants: the tasks and scenarios that wait on it. */
+const dependantsOf = (plan: Plan): Readonly<Record<string, ReadonlyArray<string>>> =>
+  [
+    ...plan.tasks.map((task) => [task.id, dependenciesOf(task)] as const),
+    ...plan.scenarios.map((scenario) => [scenario.id, scenario.needs] as const),
+  ].reduce<Readonly<Record<string, ReadonlyArray<string>>>>(
+    (all, [unit, dependencies]) =>
+      dependencies.reduce((each, dependency) => ({ ...each, [dependency]: [...(each[dependency] ?? []), unit] }), all),
+    {},
+  )
+
+/** The `waits:` tags of a dependency's states: every state but `trusted` names each dependant. */
+const waitsTags = (dependants: Readonly<Record<string, ReadonlyArray<string>>>, unit: string) => (state: string) =>
+  state === "trusted" ? [] : (dependants[unit] ?? []).map((dependant) => `${dependant}:waits:${unit}`)
+
+/** One `blocked` row for each task dependency and blocking state, in dependency order, then state order. */
+const blockRows = (plan: Plan, unit: string, from: string, dependencies: ReadonlyArray<string>): ReadonlyArray<Row> =>
+  dependencies
+    .filter((dependency) => isTask(plan, dependency))
+    .flatMap((dependency) =>
+      BLOCKING.map(
+        (state): Row => ({
+          guard: at(dependency, state),
+          target: "blocked",
+          actions: [{ type: "block", params: { unit, from, id: dependency, state } }],
+        }),
+      ),
+    )
+
+const allTrusted = (dependencies: ReadonlyArray<string>): Guard => and(dependencies.map((id) => at(id, "trusted")))
+
+/** A row to `target` when every dependency is trusted: with none, it has no guard. */
+const whenTrusted = (dependencies: ReadonlyArray<string>, target: string): Row =>
+  dependencies.length === 0 ? { target } : { guard: allTrusted(dependencies), target }
+
+/** A row back to `target` when a dependency is no longer trusted: with none, there is no such row. */
+const unlessTrusted = (dependencies: ReadonlyArray<string>, target: string): ReadonlyArray<Row> =>
+  dependencies.length === 0 ? [] : [{ guard: not(allTrusted(dependencies)), target }]
+
 // One obligation of a task. Its rows take the task's proof and verdict facts only while the task is in a proof
 // round (`proof`) or in verification.
 const obligationRegion = (obligation: BlendModel.Obligation, proof: Guard, review: boolean): StateNode => {
@@ -500,8 +575,10 @@ const workRegion = (
   plan: Plan,
   task: BlendModel.Task,
   obligations: ReadonlyArray<BlendModel.Obligation>,
+  tags: (state: string) => ReadonlyArray<string>,
 ): StateNode => {
   const id = task.id
+  const dependencies = dependenciesOf(task)
   const leaf = task.children.length === 0
   const budget = plan.budget(id)
   const mine = named("forTask", { id })
@@ -516,7 +593,7 @@ const workRegion = (
   })
   const underBudget = named("underBudget", { id, budget })
   const retry: Action = { type: "retry", params: { unit: id } }
-  const allTrusted = and(obligations.map((obligation) => at(obligation.id, "trusted")))
+  const proved = and(obligations.map((obligation) => at(obligation.id, "trusted")))
   const staleRows = obligations.map(
     (obligation): Row => ({
       guard: and([
@@ -527,8 +604,12 @@ const workRegion = (
     }),
   )
   const rows: Readonly<Record<TaskWork, Rows>> = {
-    waiting: { on: { "task.failed": [{ guard: mine, ...to("waiting", "failed") }] } },
+    waiting: {
+      always: [...blockRows(plan, id, "waiting", dependencies), whenTrusted(dependencies, "ready")],
+      on: { "task.failed": [{ guard: mine, ...to("waiting", "failed") }] },
+    },
     ready: {
+      always: [...blockRows(plan, id, "waiting", dependencies), ...unlessTrusted(dependencies, "waiting")],
       on: {
         ...(leaf
           ? { "task.started": [{ guard: mine, ...to("waiting", "building", { type: "start", params: { unit: id } }) }] }
@@ -570,12 +651,12 @@ const workRegion = (
     judging: {
       always: leaf
         ? [
-            { guard: allTrusted, ...to("verifying", "trusted") },
+            { guard: proved, ...to("verifying", "trusted") },
             { guard: underBudget, ...to("verifying", "building", retry) },
             { ...to("verifying", "budget_exhausted") },
           ]
         : [
-            { guard: allTrusted, ...to("verifying", "trusted", { type: "reviewed", params: { unit: id } }) },
+            { guard: proved, ...to("verifying", "trusted", { type: "reviewed", params: { unit: id } }) },
             // A parent is never rebuilt.
             { ...to("verifying", "failed") },
           ],
@@ -587,10 +668,10 @@ const workRegion = (
     blocked: {},
     cancelled: {},
   }
-  return unitRegion(id, "task", "waiting", rows)
+  return unitRegion(id, "task", "waiting", rows, tags)
 }
 
-const taskRegion = (plan: Plan, task: BlendModel.Task): StateNode => {
+const taskRegion = (plan: Plan, task: BlendModel.Task, tags: (state: string) => ReadonlyArray<string>): StateNode => {
   const obligations = plan.spec.obligations.filter((obligation) => obligation.task === task.id)
   const leaf = task.children.length === 0
   // A leaf proves in `proving`; a parent's review proof comes in `ready`, and a stale one in `proving`.
@@ -612,15 +693,25 @@ const taskRegion = (plan: Plan, task: BlendModel.Task): StateNode => {
             },
           ],
         ]
-  return { type: "parallel", states: Object.fromEntries([...evidence, ["work", workRegion(plan, task, obligations)]]) }
+  return {
+    type: "parallel",
+    states: Object.fromEntries([...evidence, ["work", workRegion(plan, task, obligations, tags)]]),
+  }
 }
 
-const scenarioRegion = (scenario: BlendModel.Scenario): StateNode => {
+const scenarioRegion = (plan: Plan, scenario: BlendModel.Scenario): StateNode => {
   const id = scenario.id
+  const needs = scenario.needs
+  const tasks = needs.filter((need) => isTask(plan, need))
+  const regions = needs.filter((need) => !isTask(plan, need))
   const to = (from: string, target: string): Row => ({ target, actions: [move(id, from, target)] })
+  // Every task it needs is trusted and an outside precondition it needs is not: it waits, final, for that trust.
+  const waitsOnRegion: Guard = and([allTrusted(tasks), not(allTrusted(regions))])
+  const parked: ReadonlyArray<Row> = regions.length === 0 ? [] : [{ guard: waitsOnRegion, target: "parked" }]
   const rows: Readonly<Record<ScenarioPhase, Rows>> = {
-    waiting: {},
+    waiting: { always: [...blockRows(plan, id, "waiting", needs), whenTrusted(needs, "ready"), ...parked] },
     ready: {
+      always: [...blockRows(plan, id, "waiting", needs), ...unlessTrusted(needs, "waiting")],
       on: {
         "scenario.proved": [
           { guard: named("scenarioPassed", { id }), ...to("waiting", "verifying") },
@@ -628,7 +719,13 @@ const scenarioRegion = (scenario: BlendModel.Scenario): StateNode => {
         ],
       },
     },
-    parked: {},
+    parked: {
+      always: [
+        ...blockRows(plan, id, "waiting", needs),
+        whenTrusted(needs, "ready"),
+        ...unlessTrusted(tasks, "waiting"),
+      ],
+    },
     verifying: {
       on: {
         "scenario.verified": [
@@ -647,12 +744,18 @@ const scenarioRegion = (scenario: BlendModel.Scenario): StateNode => {
 }
 
 /** An `outside` precondition or a folder task outside a subtree run: untrusted until a fact trusts it. */
-const trustRegion = (id: string, kind: "outside" | "external"): StateNode =>
-  unitRegion(id, kind, "untrusted", {
-    untrusted: {
-      on: { "outside.trusted": [{ guard: named("trusts", { id }), target: "trusted", actions: [trust(id)] }] },
+const trustRegion = (id: string, kind: "outside" | "external", tags: (state: string) => ReadonlyArray<string>) =>
+  unitRegion(
+    id,
+    kind,
+    "untrusted",
+    {
+      untrusted: {
+        on: { "outside.trusted": [{ guard: named("trusts", { id }), target: "trusted", actions: [trust(id)] }] },
+      },
     },
-  })
+    tags,
+  )
 
 const outcomeRegion = (): StateNode => unitRegion(RUN, "run", "running", {})
 
@@ -676,33 +779,60 @@ const firstContext = (plan: Plan): RunContext => {
 }
 
 /** The regions of `active`, keyed by unit: tasks, scenarios, `outside` preconditions, external folder tasks. */
-const regionsOf = (plan: Plan): ReadonlyArray<readonly [string, string, StateNode]> => [
-  ...plan.tasks.map((task) => [task.id, key(task.id), taskRegion(plan, task)] as const),
-  ...plan.scenarios
-    .toSorted((a, b) => byId(a.id, b.id))
-    .map((scenario) => [scenario.id, key(scenario.id), scenarioRegion(scenario)] as const),
-  ...Object.keys(plan.spec.outside)
-    .toSorted(byId)
-    .map((id) => [id, key(id), trustRegion(id, "outside")] as const),
-  ...plan.external.toSorted(byId).map((id) => [id, key(id), trustRegion(id, "external")] as const),
-]
+const regionsOf = (plan: Plan): ReadonlyArray<readonly [string, string, StateNode]> => {
+  const dependants = dependantsOf(plan)
+  return [
+    ...plan.tasks.map(
+      (task) => [task.id, key(task.id), taskRegion(plan, task, waitsTags(dependants, task.id))] as const,
+    ),
+    ...plan.scenarios
+      .toSorted((a, b) => byId(a.id, b.id))
+      .map((scenario) => [scenario.id, key(scenario.id), scenarioRegion(plan, scenario)] as const),
+    ...Object.keys(plan.spec.outside)
+      .toSorted(byId)
+      .map((id) => [id, key(id), trustRegion(id, "outside", waitsTags(dependants, id))] as const),
+    ...plan.external
+      .toSorted(byId)
+      .map((id) => [id, key(id), trustRegion(id, "external", waitsTags(dependants, id))] as const),
+  ]
+}
+
+/** A run machine's config: plain data, with the first context. */
+export interface RunConfig {
+  readonly id: string
+  readonly type: "parallel"
+  readonly options: { readonly maxIterations: number }
+  readonly context: RunContext
+  readonly states: { readonly active: StateNode; readonly outcome: StateNode }
+}
 
 /** The machine config of a plan, as plain data. */
-export const config = (plan: Plan) => ({
+export const config = (plan: Plan): RunConfig => ({
   id: "run",
-  type: "parallel" as const,
+  type: "parallel",
   options: { maxIterations: 1000 },
   context: firstContext(plan),
   states: {
-    active: {
-      type: "parallel" as const,
-      states: Object.fromEntries(regionsOf(plan).map(([, region, node]) => [region, node])),
-    },
+    active: { type: "parallel", states: Object.fromEntries(regionsOf(plan).map(([, region, node]) => [region, node])) },
     outcome: outcomeRegion(),
   },
 })
 
-export type RunConfig = ReturnType<typeof config>
+const mapNode = (node: StateNode, edit: (node: StateNode) => StateNode): StateNode =>
+  edit(
+    node.states === undefined
+      ? node
+      : {
+          ...node,
+          states: Object.fromEntries(Object.entries(node.states).map(([name, child]) => [name, mapNode(child, edit)])),
+        },
+  )
+
+/** A copy of a config with every state node passed through `edit`, children first: the negative controls' tool. */
+export const mapStates = (built: RunConfig, edit: (node: StateNode) => StateNode): RunConfig => ({
+  ...built,
+  states: { active: mapNode(built.states.active, edit), outcome: mapNode(built.states.outcome, edit) },
+})
 
 // --- the generator's checks ------------------------------------------------------------------------------------------
 
@@ -715,10 +845,10 @@ const listOf = (value: unknown): ReadonlyArray<unknown> =>
   Array.isArray(value) ? value : value === undefined ? [] : [value]
 
 // Every state node of a config, depth first.
-const nodesOf = (node: Plain): ReadonlyArray<Plain> => [
-  node,
-  ...Object.values(isPlain(node.states) ? node.states : {}).flatMap((child) => (isPlain(child) ? nodesOf(child) : [])),
-]
+const nodesOf = (node: unknown): ReadonlyArray<Plain> => {
+  if (!isPlain(node)) return []
+  return [node, ...Object.values(isPlain(node.states) ? node.states : {}).flatMap(nodesOf)]
+}
 
 // Every transition row of a state node: its event rows, its eventless rows and its done row.
 const rowsOf = (node: Plain): ReadonlyArray<Plain> =>
@@ -736,6 +866,123 @@ const stateIds = (guard: unknown): ReadonlyArray<string> => {
     return [params.stateValue.replace(/^#/, "")]
   if (Array.isArray(params.guards)) return params.guards.flatMap(stateIds)
   return stateIds(params.guard)
+}
+
+// The value of a guard when some units are in given states (by unit key): true, false, or unknown for a guard that
+// reads an event or the context. The readiness rows read states only, so they always evaluate.
+type Truth = boolean | "unknown"
+const evaluate = (guard: unknown, states: Readonly<Record<string, string>>): Truth => {
+  if (guard === undefined) return true
+  if (!isPlain(guard)) return "unknown"
+  const params = isPlain(guard.params) ? guard.params : {}
+  if (guard.type === "xstate.stateIn") {
+    const [unit = "", state] = String(params.stateValue).replace(/^#/, "").split("/")
+    return states[unit] === state
+  }
+  if (guard.type === "xstate.not") {
+    const inner = evaluate(params.guard, states)
+    return inner === "unknown" ? inner : !inner
+  }
+  const parts = listOf(params.guards).map((part) => evaluate(part, states))
+  if (guard.type === "xstate.and") return parts.includes(false) ? false : parts.includes("unknown") ? "unknown" : true
+  if (guard.type === "xstate.or") return parts.includes(true) ? true : parts.includes("unknown") ? "unknown" : false
+  return "unknown"
+}
+
+// The row a state takes first when some units are in given states: none when no row is enabled.
+const firstRow = (rows: ReadonlyArray<Plain>, states: Readonly<Record<string, string>>) =>
+  rows.find((row) => evaluate(row.guard, states) === true)
+
+// The dependency and state that a `blocked` row names in its action.
+const causeOf = (row: Plain | undefined) => {
+  const action = listOf(row?.actions)
+    .filter(isPlain)
+    .find((each) => each.type === "block")
+  const params = isPlain(action?.params) ? action.params : {}
+  return `${String(params.id)} ${String(params.state)}`
+}
+
+const empty: Plain = {}
+
+const nodeAt = (node: unknown, ...keys: ReadonlyArray<string>): Plain =>
+  keys.reduce(
+    (current, name) => {
+      const states = isPlain(current.states) ? current.states : empty
+      const next = states[name]
+      return isPlain(next) ? next : empty
+    },
+    isPlain(node) ? node : empty,
+  )
+
+/**
+ * The totality check (owner ruling 4): before any run, each state of a task or scenario that has not started has a
+ * row for every combination of final states of what it waits on. All trusted reaches `ready`; any dead, blocked or
+ * cancelled task dependency reaches `blocked` with that dependency as its cause; a scenario whose tasks are trusted
+ * and whose outside precondition is not reaches `parked`. A `blocked` row reads one state only, so the first dead
+ * dependency in dependency order wins in any mixed combination. Only a wait on an untrusted `outside` or `external`
+ * region, which a fact moves, may have no way out; every other state that is not final has a row.
+ */
+const totality = (plan: Plan, built: RunConfig): ReadonlyArray<string> => {
+  const active = nodeAt(built, "active")
+  const units: ReadonlyArray<{
+    readonly id: string
+    readonly kind: "task" | "scenario"
+    readonly dependencies: ReadonlyArray<string>
+    readonly node: (state: string) => Plain
+  }> = [
+    ...plan.tasks.map((task) => ({
+      id: task.id,
+      kind: "task" as const,
+      dependencies: dependenciesOf(task),
+      node: (state: string) => nodeAt(active, key(task.id), "work", state),
+    })),
+    ...plan.scenarios.map((scenario) => ({
+      id: scenario.id,
+      kind: "scenario" as const,
+      dependencies: scenario.needs,
+      node: (state: string) => nodeAt(active, key(scenario.id), state),
+    })),
+  ]
+  const gaps = units.flatMap((unit) => {
+    const trusted = Object.fromEntries(unit.dependencies.map((id) => [key(id), "trusted"]))
+    const tasks = unit.dependencies.filter((id) => isTask(plan, id))
+    const regions = unit.dependencies.filter((id) => !isTask(plan, id))
+    const states = unit.kind === "task" ? ["waiting", "ready"] : ["waiting", "ready", "parked"]
+    return states.flatMap((state) => {
+      const rows = listOf(unit.node(state).always).filter(isPlain)
+      const where = `${unit.id} ${state}`
+      const ready =
+        state !== "ready" && firstRow(rows, trusted)?.target !== "ready"
+          ? [`${where} has no row for all of its dependencies trusted`]
+          : []
+      const blocked = tasks.flatMap((dependency) =>
+        BLOCKING.flatMap((dead) => {
+          const row = firstRow(rows, { ...trusted, [key(dependency)]: dead })
+          return row?.target === "blocked" && causeOf(row) === `${dependency} ${dead}`
+            ? []
+            : [`${where} has no row for ${dependency} ${dead}`]
+        }),
+      )
+      const parked =
+        unit.kind === "scenario" && state === "waiting"
+          ? regions.flatMap((region) =>
+              firstRow(rows, { ...trusted, [key(region)]: "untrusted" })?.target === "parked"
+                ? []
+                : [`${where} has no row for ${region} untrusted`],
+            )
+          : []
+      const single = rows
+        .filter((row) => row.target === "blocked" && stateIds(row.guard).length !== 1)
+        .map(() => `${where} has a blocked row that reads more than one state`)
+      return [...ready, ...blocked, ...parked, ...single]
+    })
+  })
+  const stuck = nodesOf(built).flatMap((node) => {
+    const meta = isPlain(node.meta) ? node.meta : {}
+    if ((meta.kind !== "task" && meta.kind !== "scenario") || node.type === "final") return []
+    return rowsOf(node).length === 0 ? [`${String(meta.unit)} ${String(node.id).split("/")[1]} has no way out`] : []
+  })
+  return [...gaps, ...stuck]
 }
 
 /**
@@ -765,6 +1012,8 @@ export const check = (plan: Plan, built: RunConfig) => {
     .flatMap((row) => stateIds(row.guard))
     .find((id) => !HashSet.has(known, id))
   if (unknown !== undefined) return defect(`a guard names the unknown state id ${unknown}`)
+  const [gap] = totality(plan, built)
+  if (gap !== undefined) return defect(`totality: ${gap}`)
   return built
 }
 

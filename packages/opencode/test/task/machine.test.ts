@@ -24,9 +24,11 @@ const region = (config: unknown, key: string) => child(config, "states", "active
 
 // Every state node of the config with its path, depth first.
 const walk = (
-  node: Node,
+  value: unknown,
   at: ReadonlyArray<string> = [],
 ): Array<{ readonly path: ReadonlyArray<string>; readonly node: Node }> => {
+  if (!isNode(value)) return []
+  const node = value
   const nested = isNode(node.states) ? node.states : {}
   return [
     { path: at, node },
@@ -253,7 +255,7 @@ describe("readiness and the cascade (AD-3)", () => {
     if (Array.isArray(guard.params.guards)) return guard.params.guards.flatMap(guardIds)
     return guardIds(guard.params.guard)
   }
-  const always = (node: Node) => (Array.isArray(node.always) ? node.always.filter(isNode) : [])
+  const always = (node: unknown) => (isNode(node) && Array.isArray(node.always) ? node.always.filter(isNode) : [])
   const deadRows = (dependency: string) =>
     ["needs_human", "budget_exhausted", "failed", "blocked", "cancelled"].map(
       (state) => `${TaskMachine.key(dependency)}/${state}`,
@@ -408,7 +410,7 @@ describe("readiness and the cascade (AD-3)", () => {
         if (node.id === "T1_1/ready") return { ...node, always: [{ target: "waiting" }] }
         return node
       })
-      const exit = Effect.runSyncExit(initialTransition(TaskMachine.fromConfig(plan, looping, false)))
+      const exit = Effect.runSyncExit(initialTransition(TaskMachine.fromConfig(plan, looping)))
       const looped = Exit.isFailure(exit) || exit.value[0].status === "error"
       expect(looped).toBe(true)
     }),
