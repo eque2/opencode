@@ -752,6 +752,8 @@ describe("the run machine on the release-notes and live-check plans", () => {
         f.outside("T9"),
       ])
       expect(engine.unitState(children, "T1")).toBe("waiting")
+      // A ready task also shows waiting, so the phase tag tells them apart: T1 is not ready.
+      expect(children.hasTag("T1:ready")).toBe(false)
       expect(engine.waitingOn(children, "T1")).toEqual(["T1.5"])
       const parent = foldOf(notes, trustLeaf(notes, f, "T1.5"), children)
       expect(parent.hasTag("T1:ready")).toBe(true)
