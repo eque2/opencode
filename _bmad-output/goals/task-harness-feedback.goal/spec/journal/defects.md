@@ -26,7 +26,12 @@
   with a property test that two snapshots with one key move alike in both key modes). The full stale walk of the
   cascade plan was started again at 20:36 on the fixed key (HEAD f6d5bb3dc7), with no gate run waiting on the
   machine; T1.10's trust waits on its result.
-- Status: open — for the T1 review and the owner's final review.
+- Update 21:31: the full-interleaving stale walk of the loaded cascade plan passed: 36 353 keys, 361 474 edges,
+  0 stuck states, statuses active and done, 3 280 s (`TASK_GRAPH_STALE=1 bun test --timeout 14400000
+  test/task/engine-xstate-graph.test.ts -t staleness` at HEAD f6d5bb3dc7; output in `task/T1.10-stale-walk.log`).
+  Its limit is now 1 100 000 (about 3 times the edges). The later guard change 71f2906385 does not affect it: every
+  alphabet fact names its own task and carries only that task's results, so both guard forms agree on it.
+- Status: resolved — the stale walk test case has a passing run.
 
 ## D2 — environment: the machine's load makes timing-bound tests fail
 - Check: `packages/opencode/test/task/engine-xstate-graph.test.ts` (each walk has the specified 60 s timeout) and
