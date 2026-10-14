@@ -19,6 +19,9 @@ const engine = TaskEngineXState
 
 const SEEDS = 40
 const STEPS = 100
+// Random facts that each slice keeps after its run is done: the fold, the live actor and the restored actor all get
+// them, and each must leave the done snapshot as it is (AD-6).
+const AFTER_DONE = 6
 // Each seed folds its facts three times on the real machine, which takes seconds under load.
 const PER_SEED = 600_000
 
@@ -179,19 +182,22 @@ const moveOf = (plan: Plan, item: History) => {
   return `${kind}:${item.from}>${item.to}`
 }
 
-// The slices of one seed: 100 random facts, a new slice after each run that is done.
+// The slices of one seed: 100 random facts; a slice whose run is done keeps AFTER_DONE more, then the next starts.
 const slicesOf = (plan: Plan, seed: number) => {
   const random = generator(seed)
   const slices: Array<ReadonlyArray<Fact>> = []
   let snapshot = engine.initial(plan)
   let slice: Array<Fact> = []
+  let after = 0
   for (let step = 1; step <= STEPS; step++) {
     const fact = randomFact(plan, snapshot, random, step)
     snapshot = engine.apply(plan, snapshot, fact)
     slice.push(fact)
     if (!engine.ended(snapshot)) continue
+    if (after++ < AFTER_DONE) continue
     slices.push(slice)
     slice = []
+    after = 0
     snapshot = engine.initial(plan)
   }
   if (slice.length > 0) slices.push(slice)
@@ -229,11 +235,11 @@ describe("XStateEngine on random facts", () => {
               if (changed) expect(added.length).toBeGreaterThan(0)
               if (!changed) expect(added.filter((item) => item.from !== item.to)).toEqual([])
               if (added.length === 0) expect(next).toBe(folded)
+              if (engine.ended(folded)) expect(next).toBe(folded)
               folded = next
               if (index + 1 === prefix) half = folded
             }
-            // A fact after the run is done changes nothing.
-            if (engine.ended(folded)) expect(engine.apply(plan, folded, { type: "run.resumed", at: 1_000 })).toBe(folded)
+            // A fact after the run is done changes nothing: the step above returned the done snapshot itself.
 
             // A live actor sent the same facts.
             const live = yield* Effect.scoped(
@@ -269,11 +275,29 @@ describe("XStateEngine on random facts", () => {
       Effect.gen(function* () {
         const plan = yield* loadPlan("release-notes.spec")
         const moves = new Set<string>()
+        const ids = new Set<string>()
+        let afterDone = 0
         for (let seed = 1; seed <= SEEDS; seed++)
           for (const slice of slicesOf(plan, seed)) {
-            const folded = slice.reduce((snapshot, fact) => engine.apply(plan, snapshot, fact), engine.initial(plan))
+            let folded = engine.initial(plan)
+            for (const fact of slice) {
+              if (engine.ended(folded)) afterDone++
+              folded = engine.apply(plan, folded, fact)
+              ids.add(
+                "task" in fact
+                  ? fact.task
+                  : fact.type === "scenario.verified"
+                    ? fact.verdict.id
+                    : "id" in fact
+                      ? fact.id
+                      : "",
+              )
+            }
             for (const item of folded.context.log) moves.add(moveOf(plan, item))
           }
+        // The folds met facts after a run was done, and facts for ids in no plan.
+        expect(afterDone).toBeGreaterThan(SEEDS)
+        for (const id of ["T7", "T7.c1", "S99"]) expect([...ids]).toContain(id)
         for (const move of [
           "task:waiting>blocked",
           "task:verifying>trusted",
