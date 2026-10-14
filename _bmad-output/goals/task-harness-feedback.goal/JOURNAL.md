@@ -7,3 +7,4 @@
 - [Phase B — bmad-ux](./journal/2026-10-14-05-ux.md)
 - [Phase B — `[CS]` create-spec](./journal/2026-10-14-06-create-spec.md)
 - [Phase E — charter, criteria, auto-start files](./journal/2026-10-14-07-charter.md)
+- [Phase R — contract review](./journal/2026-10-14-08-review.md)
