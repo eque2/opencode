@@ -252,7 +252,8 @@ const withUnit = (context: RunContext, unit: string, change: Partial<Slot>) => (
 const lastRun = (context: RunContext) => context.log.findLast((entry) => entry.unit === RUN)?.to ?? "running"
 
 const label = (state: string) => state.replaceAll("_", " ")
-const isDead = (state: string) => classOf("task", state).tags.includes("dead")
+/** A task state of the dead class (D2): it blocks every dependant. */
+export const isDead = (state: string) => classOf("task", state).tags.includes("dead")
 const isStopped = (kind: Kind, state: string) => classOf(kind, state).tags.includes("stopped")
 
 /** Which outcome rule settled the run (AD-4, in the AC 4 order of SD-18). */

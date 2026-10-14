@@ -214,9 +214,9 @@ describe("the graph proof", () => {
         const brokenFull = yield* walk(plan, broken, start, full, LIMIT.reductionFull)
         console.log("reduction", canonicalWalk.edges, fullWalk.edges, brokenCanonical.stuck.length, brokenFull.stuck.length)
         expect(brokenCanonical.stuck.length).toBeGreaterThan(0)
-        // A stuck state is the same configuration in both walks. The key's `dead:` part records which task died
-        // first, an order the canonical interleaving fixes; it changes only the outcome a run settles to, never
-        // whether a state can move.
+        // A stuck state is the same configuration in both walks. The key's `dead:` part holds the state of the first
+        // death (what the outcome's firstDead guard reads), and the order of deaths is what the canonical interleaving
+        // fixes; it changes only the outcome a run settles to, never whether a state can move.
         const configurations = (stuck: ReadonlyArray<string>) =>
           [...new Set(stuck.map((name) => name.replace(/\|dead:[^|]*/, "")))].toSorted()
         expect(configurations(brokenCanonical.stuck)).toEqual(configurations(brokenFull.stuck))

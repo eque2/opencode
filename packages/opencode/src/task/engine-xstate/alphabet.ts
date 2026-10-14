@@ -122,7 +122,8 @@ export const alphabet = (snapshot: RunSnapshot): ReadonlyArray<Fact> => {
 
 /**
  * The key of a snapshot in the walk: each unit in plan order by its machine state; a task that has not ended adds
- * its attempts and its obligations' states; the first dead task and the noted stop, which the outcome's guards read.
+ * its attempts and its obligations' states; the state of the first death and the noted stop, which the outcome's
+ * guards read.
  * The main walk keys an ended task by its state alone. The stale walk (`stale`) keeps an ended task's full key and
  * keys the obligations of a dead or blocked task as `-`.
  */
@@ -143,15 +144,14 @@ export const walkKey =
         .map(([obligation, each]) => (stopped ? "-" : machineState(snapshot, obligation, each)))
       return [`${id}:${state}@${slot.attempts ?? 0}[${obligations.join(",")}]`]
     })
-    const dead = context.log.find(
-      (entry) => context.units[entry.unit]?.kind === "task" && snapshot.hasTag(`${entry.unit}:dead`),
-    )
+    // What the outcome's `firstDead` guard reads: the state of the first log entry that moved a task into a dead state.
+    const dead = context.log.find((entry) => context.units[entry.unit]?.kind === "task" && TaskMachine.isDead(entry.to))
     const outcome = String(valueAt(snapshot.value, "outcome"))
     return [
       plan.path,
       ...parts,
       `run:${outcome}`,
-      `dead:${dead?.unit ?? "-"}`,
+      `dead:${dead?.to ?? "-"}`,
       `stop:${context.stop?.state ?? "-"}`,
     ].join("|")
   }
