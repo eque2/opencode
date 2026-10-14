@@ -1,29 +1,15 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, Option } from "effect"
-import path from "path"
+import { Effect, Exit } from "effect"
 import { initialTransition } from "@jambudipa/xstate-effect"
-import { Blend } from "@/task/blend"
-import { TaskCommand } from "@/task/core/command"
 import type { Plan } from "@/task/core/model"
 import { TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
+import { facts, fail, fold, loadPlan, observed, step, trustLeaf, unitState } from "./lib/machine"
 
 // The run machine generator (spine AD-1 to AD-5): one machine per plan, generated as plain data.
 
 const it = testEffect(NodeServices.layer)
-
-const formatDir = path.resolve(import.meta.dir, "../../../../task-formats/blend")
-
-// The plan of `/task task-formats/blend/<name>`, or of the task folder `root` inside it.
-const loadPlan = (name: string, root?: string) =>
-  Effect.gen(function* () {
-    const loaded = yield* Blend.load(path.join(formatDir, name))
-    expect(loaded.failures).toEqual([])
-    if (!loaded.spec) return yield* Effect.die(`${name} did not load`)
-    const specPath = `task-formats/blend/${name}`
-    return TaskCommand.plan({ spec: loaded.spec, specPath, path: specPath, root: Option.fromNullishOr(root) })
-  })
 
 // The plain-data config, read as JSON-like records.
 type Node = { readonly [key: string]: unknown }
@@ -238,6 +224,251 @@ describe("TaskMachine.machine", () => {
       expect(TaskMachine.machine(plan)).toBe(TaskMachine.machine(plan))
       const [snapshot] = yield* initialTransition(TaskMachine.machine(plan))
       expect(snapshot.status).toBe("active")
+    }),
+  )
+})
+
+describe("readiness and the cascade (AD-3)", () => {
+  const work = (config: unknown, id: string, state: string) =>
+    child(region(config, TaskMachine.key(id)), "states", "work", "states", state)
+  const guardIds = (guard: unknown): ReadonlyArray<string> => {
+    if (!isNode(guard) || !isNode(guard.params)) return []
+    if (guard.type === "xstate.stateIn") return [String(guard.params.stateValue).replace(/^#/, "")]
+    if (Array.isArray(guard.params.guards)) return guard.params.guards.flatMap(guardIds)
+    return guardIds(guard.params.guard)
+  }
+  const always = (node: Node) => (Array.isArray(node.always) ? node.always.filter(isNode) : [])
+  const deadRows = (dependency: string) =>
+    ["needs_human", "budget_exhausted", "failed", "blocked", "cancelled"].map(
+      (state) => `${TaskMachine.key(dependency)}/${state}`,
+    )
+
+  it.live("RM7 blocks T1.5 and T1 in the macrostep that exhausts T1.4, with the named cause", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const list = observed(plan)
+      const before = fold(plan, list.slice(0, -1))
+      expect(unitState(before, "T1.4")).toBe("proving")
+      expect(unitState(before, "T1.5")).toBe("waiting")
+      expect(unitState(before, "T1")).toBe("waiting")
+      const after = fold(plan, list.slice(-1), before)
+      expect(after.status).toBe("active")
+      expect(["T1.1", "T1.2", "T1.3"].map((id) => unitState(after, id))).toEqual(["trusted", "trusted", "trusted"])
+      expect(unitState(after, "T1.4")).toBe("budget_exhausted")
+      for (const id of ["T1.5", "T1"]) {
+        expect(unitState(after, id)).toBe("blocked")
+        expect(after.context.units[id]?.blockedBy).toEqual({ id: "T1.4", state: "budget_exhausted" })
+        expect(after.context.units[id]?.reason).toBe("blocked by T1.4: budget exhausted")
+      }
+    }),
+  )
+
+  it.live("RM15 orders a waiting task's rows: one blocked row per dependency and dead state, then ready", () =>
+    Effect.gen(function* () {
+      const config = TaskMachine.config(yield* loadPlan("release-notes.spec"))
+      const waiting = always(work(config, "T1.5", "waiting"))
+      expect(waiting.map((row) => guardIds(row.guard)[0])).toEqual([
+        ...deadRows("T1.3"),
+        ...deadRows("T1.4"),
+        "T1_3/trusted",
+      ])
+      expect(waiting.map((row) => row.target)).toEqual([...Array(10).fill("blocked"), "ready"])
+      expect(guardIds(waiting.at(-1)?.guard)).toEqual(["T1_3/trusted", "T1_4/trusted", "T9/trusted"])
+      const ready = always(work(config, "T1.5", "ready"))
+      expect(ready.map((row) => row.target)).toEqual([...Array(10).fill("blocked"), "waiting"])
+      // A parent depends on its children, in natural order.
+      const parent = always(work(config, "T1", "waiting"))
+      expect(parent.map((row) => guardIds(row.guard)[0])).toEqual([
+        ...["T1.1", "T1.2", "T1.3", "T1.4", "T1.5"].flatMap(deadRows),
+        "T1_1/trusted",
+      ])
+    }),
+  )
+
+  it.live("RM9 cascades a death down the chain, and each dependant names its first dead dependency", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const snapshot = fold(plan, [f.runStarted(), f.started("T1.2"), f.failed("T1.2", "the builder session died")])
+      expect(unitState(snapshot, "T1.2")).toBe("failed")
+      expect(unitState(snapshot, "T1.4")).toBe("blocked")
+      expect(snapshot.context.units["T1.4"]?.blockedBy).toEqual({ id: "T1.2", state: "failed" })
+      expect(unitState(snapshot, "T1.5")).toBe("blocked")
+      expect(snapshot.context.units["T1.5"]?.blockedBy).toEqual({ id: "T1.4", state: "blocked" })
+      expect(unitState(snapshot, "T1")).toBe("blocked")
+      expect(snapshot.context.units.T1?.blockedBy).toEqual({ id: "T1.2", state: "failed" })
+      expect(unitState(snapshot, "T1.3")).toBe("waiting")
+    }),
+  )
+
+  it.live("RM16 makes two siblings with no order between them ready in the same snapshot", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const snapshot = fold(plan, [facts().runStarted()])
+      expect(["T1.1", "T1.2", "T1.3", "T1.4", "T1.5", "T1"].map((id) => unitState(snapshot, id))).toEqual([
+        "ready",
+        "ready",
+        "waiting",
+        "waiting",
+        "waiting",
+        "waiting",
+      ])
+      expect(snapshot.hasTag("T1.1:ready")).toBe(true)
+      expect(snapshot.hasTag("T1.2:ready")).toBe(true)
+    }),
+  )
+
+  it.live("RM17 keeps a task after an untrusted outside id waiting, and readies it on the trust", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const tasks = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        ...trustLeaf(plan, f, "T1.2"),
+        ...trustLeaf(plan, f, "T1.3"),
+        ...trustLeaf(plan, f, "T1.4"),
+      ])
+      expect(unitState(tasks, "T1.5")).toBe("waiting")
+      expect(tasks.hasTag("T1.5:waits:T9")).toBe(true)
+      expect(tasks.hasTag("T1.5:waits:T1.4")).toBe(false)
+      const trusted = step(plan, tasks, f.outside("T9"))
+      expect(unitState(trusted, "T1.5")).toBe("ready")
+      expect(unitState(trusted, "T9")).toBe("trusted")
+      expect(step(plan, trusted, f.outside("T9"))).toBe(trusted)
+    }),
+  )
+
+  it.live("RM13 moves a scenario to ready, to parked on an outside need, and back on a trust or a reopen", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const tasks = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        ...trustLeaf(plan, f, "T1.2"),
+        ...trustLeaf(plan, f, "T1.3"),
+        ...trustLeaf(plan, f, "T1.4"),
+      ])
+      expect(unitState(tasks, "S2")).toBe("ready")
+      expect(unitState(tasks, "S13")).toBe("parked")
+      expect(unitState(step(plan, tasks, f.outside("T8")), "S13")).toBe("ready")
+      // A need that leaves trusted sends a parked scenario back to waiting.
+      const reopened = step(plan, tasks, f.stale("T1.4.c1"))
+      expect(unitState(reopened, "T1.4")).toBe("proving")
+      expect(unitState(reopened, "S13")).toBe("waiting")
+      expect(unitState(reopened, "S8")).toBe("waiting")
+    }),
+  )
+
+  it.live("tags every state of a dependency other than trusted with its dependants' waits tags", () =>
+    Effect.gen(function* () {
+      const config = TaskMachine.config(yield* loadPlan("release-notes.spec"))
+      const states = child(region(config, "T1_4"), "states", "work", "states")
+      for (const [state, node] of Object.entries(states)) {
+        const tags = isNode(node) && Array.isArray(node.tags) ? node.tags : []
+        const waits = ["T1:waits:T1.4", "T1.5:waits:T1.4", "S13:waits:T1.4"]
+        for (const tag of waits) expect(tags.includes(tag)).toBe(state !== "trusted")
+      }
+      expect(child(region(config, "T9"), "states", "untrusted").tags).toContain("T1.5:waits:T9")
+      expect(child(region(config, "T9"), "states", "trusted").tags).toEqual(["T9:ended"])
+    }),
+  )
+
+  it.live("has no row that targets its own state, and an oscillating copy fails instead of hanging", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const config = TaskMachine.config(plan)
+      for (const { path: at, node } of walk(config)) {
+        const rows = [
+          ...(Array.isArray(node.always) ? node.always : []),
+          ...Object.values(isNode(node.on) ? node.on : {}).flatMap((value) => (Array.isArray(value) ? value : [])),
+        ].filter(isNode)
+        for (const row of rows) expect(row.target === undefined || row.target !== at.at(-1)).toBe(true)
+      }
+      // ready → waiting and waiting → ready with no guard: an eventless loop that maxIterations stops.
+      const looping = TaskMachine.mapStates(config, (node) => {
+        if (node.id === "T1_1/waiting") return { ...node, always: [{ target: "ready" }] }
+        if (node.id === "T1_1/ready") return { ...node, always: [{ target: "waiting" }] }
+        return node
+      })
+      const exit = Effect.runSyncExit(initialTransition(TaskMachine.fromConfig(plan, looping, false)))
+      const looped = Exit.isFailure(exit) || exit.value[0].status === "error"
+      expect(looped).toBe(true)
+    }),
+  )
+
+  it.live("RM28 names no dead state of an outside id, and folds the observed facts to an active snapshot", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const config = TaskMachine.config(plan)
+      const ids = walk(config).flatMap(({ node }) =>
+        [...(Array.isArray(node.always) ? node.always : [])].filter(isNode).flatMap((row) => guardIds(row.guard)),
+      )
+      expect(ids.filter((id) => id.startsWith("T9/") || id.startsWith("T8/"))).toEqual(
+        ids.filter((id) => id === "T9/trusted" || id === "T8/trusted"),
+      )
+      expect(fold(plan, observed(plan)).status).toBe("active")
+    }),
+  )
+
+  it.live("ignores outside.trusted that names a task: the identical snapshot", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const snapshot = fold(plan, [f.runStarted()])
+      expect(step(plan, snapshot, f.outside("T1.4"))).toBe(snapshot)
+    }),
+  )
+
+  it.live("leaves a dependant that is building alone when its dependency is reopened and then dies", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const building = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.started("T1.3")])
+      expect(unitState(building, "T1.3")).toBe("building")
+      const dead = fold(
+        plan,
+        [
+          f.stale("T1.1.c1"),
+          f.proved("T1.1", [fail("T1.1.c1", "red")]),
+          f.ready("T1.1"),
+          f.proved("T1.1", [fail("T1.1.c1", "red")]),
+          f.ready("T1.1"),
+          f.proved("T1.1", [fail("T1.1.c1", "red")]),
+        ],
+        building,
+      )
+      expect(unitState(dead, "T1.1")).toBe("budget_exhausted")
+      expect(unitState(dead, "T1.3")).toBe("building")
+      expect(unitState(fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead), "T1.3")).toBe("trusted")
+    }),
+  )
+
+  it.live("RM29 refuses a config with T1.5's row for T1.4 budget_exhausted removed, before any fact", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const gap = TaskMachine.mapStates(TaskMachine.config(plan), (node) =>
+        node.id === "T1_5/waiting"
+          ? { ...node, always: always(node).filter((row) => guardIds(row.guard)[0] !== "T1_4/budget_exhausted") }
+          : node,
+      )
+      expect(() => TaskMachine.fromConfig(plan, gap)).toThrow("totality: T1.5 waiting has no row for T1.4 budget_exhausted")
+    }),
+  )
+
+  it.live("RM29 passes the totality scan for every plan that loads", () =>
+    Effect.gen(function* () {
+      for (const [name, root] of [
+        ["release-notes.spec", undefined],
+        ["release-notes.spec", "T1.5"],
+        ["provider-ordering-admin.spec", undefined],
+        ["example-scenarios.spec", undefined],
+        ["example-cascade.spec", undefined],
+      ] as const) {
+        const plan = yield* loadPlan(name, root)
+        expect(() => TaskMachine.machine(plan)).not.toThrow()
+      }
     }),
   )
 })
