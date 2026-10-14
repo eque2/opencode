@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { Effect, Exit } from "effect"
-import { initialTransition } from "@jambudipa/xstate-effect"
+import { initialTransition, transition } from "@jambudipa/xstate-effect"
 import type { Fact, Plan } from "@/task/core/model"
 import { TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
@@ -12,9 +12,11 @@ import {
   fail,
   first,
   fold,
+  judge,
   loadPlan,
   obligationState,
   observed,
+  obligationsOf,
   outcome,
   reject,
   step,
@@ -217,6 +219,10 @@ describe("TaskMachine.config", () => {
         spec: { ...plan.spec, obligations: plan.spec.obligations.filter((item) => item.task !== "T1.3") },
       }
       expect(Object.keys(states(region(TaskMachine.config(bare), "T1_3")))).toEqual(["work"])
+      // With no obligation to prove, its empty proof and its empty verdicts still make it trusted.
+      const f = facts()
+      const trusted = fold(bare, [f.runStarted(), ...trustLeaf(bare, f, "T1.3")])
+      expect(unitState(trusted, "T1.3")).toBe("trusted")
     }),
   )
 
@@ -229,6 +235,7 @@ describe("TaskMachine.config", () => {
       const external = region(config, "T1_3")
       expect(Object.keys(states(external))).toEqual(["untrusted", "trusted"])
       expect(child(external, "states", "untrusted").type).toBe("final")
+      expect(child(external, "states", "trusted").type).toBe("final")
       expect(child(external, "states", "trusted", "meta")).toEqual({ unit: "T1.3", kind: "external", state: "trusted" })
       const [snapshot] = yield* initialTransition(TaskMachine.machine(plan))
       expect(snapshot.status).toBe("active")
@@ -310,12 +317,29 @@ describe("readiness and the cascade (AD-3)", () => {
       expect(guardIds(waiting.at(-1)?.guard)).toEqual(["T1_3/trusted", "T1_4/trusted", "T9/trusted"])
       const ready = always(work(config, "T1.5", "ready"))
       expect(ready.map((row) => row.target)).toEqual([...Array(10).fill("blocked"), "waiting"])
+      // The way back to waiting reads every dependency's trusted state: it fires when any one leaves trusted.
+      const back = ready.at(-1)
+      expect(isNode(back?.guard) && back.guard.type).toBe("xstate.not")
+      expect(guardIds(back?.guard)).toEqual(["T1_3/trusted", "T1_4/trusted", "T9/trusted"])
       // A parent depends on its children, in natural order.
       const parent = always(work(config, "T1", "waiting"))
       expect(parent.map((row) => guardIds(row.guard)[0])).toEqual([
         ...["T1.1", "T1.2", "T1.3", "T1.4", "T1.5"].flatMap(deadRows),
         "T1_1/trusted",
       ])
+    }),
+  )
+
+  it.live("RM15 moves a ready task back to waiting when a dependency leaves trusted", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const ready = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
+      expect(unitState(ready, "T1.3")).toBe("ready")
+      const reopened = step(plan, ready, f.stale("T1.1.c1"))
+      expect(unitState(reopened, "T1.1")).toBe("proving")
+      expect(unitState(reopened, "T1.3")).toBe("waiting")
+      expect(reopened.hasTag("T1.3:waits:T1.1")).toBe(true)
     }),
   )
 
@@ -427,8 +451,11 @@ describe("readiness and the cascade (AD-3)", () => {
         return node
       })
       const exit = Effect.runSyncExit(initialTransition(TaskMachine.fromConfig(plan, looping)))
-      const looped = Exit.isFailure(exit) || exit.value[0].status === "error"
-      expect(looped).toBe(true)
+      // The port stops the loop at maxIterations with a TransitionError in an `error` snapshot.
+      if (!Exit.isSuccess(exit)) throw new Error(`the oscillating copy failed outside the machine: ${exit.cause}`)
+      const [looped] = exit.value
+      expect(looped.status).toBe("error")
+      expect(String(looped.error)).toContain("TransitionError: Infinite loop detected")
     }),
   )
 
@@ -476,6 +503,116 @@ describe("readiness and the cascade (AD-3)", () => {
       expect(unitState(dead, "T1.1")).toBe("budget_exhausted")
       expect(unitState(dead, "T1.3")).toBe("building")
       expect(unitState(fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead), "T1.3")).toBe("trusted")
+    }),
+  )
+
+  it.live("leaves a building dependant alone on the cascade plan, and the run ends budget_exhausted", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const building = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.started("T1.2")])
+      expect(unitState(building, "T1.2")).toBe("building")
+      // T1.1 has a budget of one attempt: reopened and failed once more, it is exhausted while T1.2 builds.
+      const dead = fold(plan, [f.stale("T1.1.c1"), f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")])], building)
+      expect(unitState(dead, "T1.1")).toBe("budget_exhausted")
+      expect(unitState(dead, "T1.2")).toBe("building")
+      expect(dead.status).toBe("active")
+      const ended = fold(plan, [...trustLeaf(plan, f, "T1.2").slice(1), ...trustLeaf(plan, f, "T1.3")], dead)
+      expect(unitState(ended, "T1.2")).toBe("trusted")
+      expect(unitState(ended, "T1")).toBe("blocked")
+      expect(ended.status).toBe("done")
+      expect(outcome(ended)).toBe("budget_exhausted")
+    }),
+  )
+
+  it.live("RM28 refuses a guard on an unknown state id, and every guard of a real config names a node", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const config = TaskMachine.config(plan)
+      const nodes = new Set(walk(config).flatMap(({ node }) => (typeof node.id === "string" ? [node.id] : [])))
+      const ids = walk(config).flatMap(({ node }) =>
+        [
+          ...(Array.isArray(node.always) ? node.always : []),
+          ...Object.values(isNode(node.on) ? node.on : {}).flatMap((value) => (Array.isArray(value) ? value : [])),
+        ]
+          .filter(isNode)
+          .flatMap((row) => guardIds(row.guard)),
+      )
+      expect(ids.length).toBeGreaterThan(0)
+      expect(ids.filter((id) => !nodes.has(id))).toEqual([])
+      const unknown = TaskMachine.mapStates(config, (node) => {
+        if (node.id !== "T1_5/waiting") return node
+        const rows = always(node)
+        const first = rows[0]
+        const guard = isNode(first?.guard) && isNode(first.guard.params) ? first.guard : {}
+        const params = isNode(guard.params) ? guard.params : {}
+        return {
+          ...node,
+          always: [
+            { ...first, guard: { ...guard, params: { ...params, stateValue: "#nowhere/at_all" } } },
+            ...rows.slice(1),
+          ],
+        }
+      })
+      expect(() => TaskMachine.fromConfig(plan, unknown)).toThrow("a guard names the unknown state id nowhere/at_all")
+    }),
+  )
+
+  it.live("RM29 refuses each gap of the totality scan with a line that names it", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const config = TaskMachine.config(plan)
+      type Edit = Parameters<typeof TaskMachine.mapStates>[1]
+      const edit = (id: string, change: (rows: ReadonlyArray<Node>, node: Parameters<Edit>[0]) => ReturnType<Edit>) =>
+        TaskMachine.mapStates(config, (node) => (node.id === id ? change(always(node), node) : node))
+      const without = (id: string, drop: (row: Node) => boolean) =>
+        edit(id, (rows, node) => ({ ...node, always: rows.filter((row) => !drop(row)) }))
+      const named = (row: Node) => guardIds(row.guard)[0]
+      const block = (row: Node) =>
+        (Array.isArray(row.actions) ? row.actions : []).find((action) => isNode(action) && action.type === "block")
+      // A blocked row whose action names another dependency than its guard reads.
+      const wrongCause = edit("T1_5/waiting", (rows, node) => ({
+        ...node,
+        always: rows.map((row) =>
+          named(row) === "T1_4/failed"
+            ? {
+                ...row,
+                actions: (Array.isArray(row.actions) ? row.actions : []).map((action) =>
+                  action === block(row) && isNode(action)
+                    ? { ...action, params: { id: "T1.3", state: "failed" } }
+                    : action,
+                ),
+              }
+            : row,
+        ),
+      }))
+      // A blocked row that reads two states: the scan wants one state per row, so the first dead dependency wins.
+      const twoStates = edit("T1_5/waiting", (rows, node) => {
+        const [one, two] = [rows[0]?.guard, rows[5]?.guard]
+        return {
+          ...node,
+          always: [...rows, { ...rows[0], guard: { type: "xstate.and", params: { guards: [one, two] } } }],
+        }
+      })
+      const cases: ReadonlyArray<readonly [string, ReturnType<typeof TaskMachine.config>]> = [
+        [
+          "T1.5 waiting has no row for all of its dependencies trusted",
+          without("T1_5/waiting", (row) => row.target === "ready"),
+        ],
+        ["T1.5 waiting has no row for T1.4 failed", wrongCause],
+        [
+          "T1.5 waiting has no row for T1.4 cancelled",
+          without("T1_5/waiting", (row) => named(row) === "T1_4/cancelled"),
+        ],
+        [
+          "T1.5 ready has no row for T1.3 needs_human",
+          without("T1_5/ready", (row) => named(row) === "T1_3/needs_human"),
+        ],
+        ["S13 waiting has no row for T8 untrusted", without("S13/waiting", (row) => row.target === "parked")],
+        ["T1.5 waiting has a blocked row that reads more than one state", twoStates],
+        ["T1.4 building has no way out", edit("T1_4/building", (_, node) => ({ ...node, on: {}, always: [] }))],
+      ]
+      for (const [line, copy] of cases) expect(() => TaskMachine.fromConfig(plan, copy)).toThrow(`totality: ${line}`)
     }),
   )
 
@@ -595,6 +732,9 @@ describe("the outcome region (AD-4)", () => {
       expect(unitState(dead, "T1.2")).toBe("blocked")
       expect(unitState(dead, "T1.3")).toBe("building")
       expect(run(dead)).toEqual({ outcome: "running", status: "active", reason: undefined })
+      // A run.settled that no longer holds (a unit is still building) meets only the last, targetless row.
+      const [same] = Effect.runSync(transition(TaskMachine.machine(plan), dead, { type: "run.settled" }))
+      expect(same).toBe(dead)
       const done = fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead)
       expect(unitState(done, "T1.3")).toBe("trusted")
       expect(run(done)).toEqual({
@@ -674,8 +814,25 @@ describe("the outcome region (AD-4)", () => {
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const f = facts()
-      const going = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.started("T1.2")])
+      const going = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        f.started("T1.2"),
+        f.started("T1.3"),
+        f.ready("T1.3"),
+        f.proved("T1.3", obligationsOf(plan, "T1.3").map(judge)),
+        f.scenarioProved("S7", "passed"),
+      ])
+      expect(["T1.2", "T1.3", "S2", "S7"].map((id) => unitState(going, id))).toEqual([
+        "building",
+        "verifying",
+        "ready",
+        "verifying",
+      ])
       const cancelled = step(plan, going, f.cancelled("user stop"))
+      expect(unitState(cancelled, "S7")).toBe("cancelled")
+      const proving = step(plan, step(plan, going, f.ready("T1.2")), f.cancelled("user stop"))
+      expect(unitState(proving, "T1.2")).toBe("cancelled")
       expect(unitState(cancelled, "T1.1")).toBe("trusted")
       expect(["T1.2", "T1.3", "T1.4", "T1.5", "T1"].map((id) => unitState(cancelled, id))).toEqual(
         Array(5).fill("cancelled"),
@@ -803,6 +960,8 @@ describe("history, causes, times and spans (AD-5)", () => {
         "proving>verifying",
         "verifying>trusted",
       ])
+      // T1.1 reopened sends T1.3 back to waiting: still no entry for T1.3.
+      expect(entries(step(plan, trusted, f.stale("T1.1.c1")), "T1.3")).toEqual([])
       const stalled = fold(plan, [f.started("T1.2"), f.stalled("T1.2", "no stream for 120 s")], trusted)
       expect(entries(stalled, "T1.2").at(-1)).toEqual({
         from: "building",
@@ -816,6 +975,28 @@ describe("history, causes, times and spans (AD-5)", () => {
         reason: "read src/bump.ts 5 times",
       })
       expect(repeated.context.units["T1.2"]?.attempts).toBe(2)
+    }),
+  )
+
+  it.live("logs no move of a scenario into or out of parked", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const parked = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        ...trustLeaf(plan, f, "T1.2"),
+        ...trustLeaf(plan, f, "T1.3"),
+        ...trustLeaf(plan, f, "T1.4"),
+      ])
+      expect(unitState(parked, "S13")).toBe("parked")
+      expect(entries(parked, "S13")).toEqual([])
+      const ready = step(plan, parked, f.outside("T8"))
+      expect(unitState(ready, "S13")).toBe("ready")
+      expect(entries(ready, "S13")).toEqual([])
+      const back = step(plan, parked, f.stale("T1.4.c1"))
+      expect(unitState(back, "S13")).toBe("waiting")
+      expect(entries(back, "S13")).toEqual([])
     }),
   )
 
@@ -884,6 +1065,9 @@ describe("history, causes, times and spans (AD-5)", () => {
       ])
       expect(units.run?.startedAt).toBe(1)
       expect(units.run?.endedAt).toBeUndefined()
+      // Before the slice's run.started the run has neither time.
+      expect(first(plan).context.units.run?.startedAt).toBeUndefined()
+      expect(first(plan).context.units.run?.endedAt).toBeUndefined()
     }),
   )
 
@@ -902,6 +1086,26 @@ describe("history, causes, times and spans (AD-5)", () => {
         "building",
       ])
       expect(snapshot.context.units["T1.2"]?.spans?.at(-1)?.to).toBeUndefined()
+      // A rejected verdict sends the task from verifying back to building: verifying shows again on the next attempt.
+      const own = obligationsOf(plan, "T1.2")
+      const rejected = fold(plan, [
+        f.runStarted(),
+        f.started("T1.2"),
+        f.ready("T1.2"),
+        f.proved("T1.2", own.map(judge)),
+        f.verified("T1.2", [reject(own[0] ?? "T1.2.c1", "the test proves another text")]),
+        f.ready("T1.2"),
+        f.proved("T1.2", own.map(judge)),
+      ])
+      expect(rejected.context.units["T1.2"]?.spans?.map((span) => span.state)).toEqual([
+        "waiting",
+        "building",
+        "proving",
+        "verifying",
+        "building",
+        "proving",
+        "verifying",
+      ])
     }),
   )
 
