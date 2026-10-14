@@ -209,8 +209,10 @@ _Agent note — other agents: drive `state.mjs` / `tests-cli.mjs` directly again
 ### Before you start
 
 - **The gate's turn bound.** `goal-gate-stop.sh` ends the loop WITHOUT completion after
-  `GOAL_GATE_MAX_ITERATIONS` blocked stops (default 50). This goal runs for days. If it trips, open a fresh
-  context on this folder; `[DS]` resumes from the state CLI. The owner may raise the variable first.
+  `GOAL_GATE_MAX_ITERATIONS` blocked stops (default 50). This goal runs for days, so the owner raised it
+  to 500 on 2026-10-14 in this worktree's `.claude/settings.local.json` (gitignored). It loads only in a
+  session started with the worktree as its working directory. If the bound trips, open a fresh context on
+  this folder; `[DS]` resumes from the state CLI.
 - **`[DS]` setup.** Answer **N** to its worktree question: this is already the goal's worktree, and a
   nested `feature/*` branch never reaches `dev`. Run without `--parallel` until one scenario has verified
   through the adapter; after that `--parallel` is allowed, with at most 5 verifiers at a time.
