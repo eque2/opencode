@@ -139,3 +139,19 @@ About 50 low findings across the three reviews: mock arithmetic (4/6 + 1 + 2 = 7
 - `review-rubric.md`
 - `review-decisions.md`
 - `review-structure-prose.md`
+
+## Update — architecture spine alignment (2026-10-14)
+
+The architecture spine landed, and EXPERIENCE.md went through the bmad-ux Update path. The decision-conformance lens
+re-ran on the changed sections only (`review-decisions-update.md`): 0 critical, 1 high, 5 medium, 12 low. All are
+applied.
+
+- **High** — The summary outcome line ignored AD-4 rule 1 (a stop such as the run wall clock). Fixed: the outcome
+  line takes the first AD-4 rule that applies, and State Patterns has a stop row.
+- **Medium** — The run reason line was red on a `done` run that carries "not run" lines (now warning tone). The
+  display table lacked a Board column field and the scenario and obligation rows (added). Two rules chose by state
+  names (now tags). The AC 23 and AC 25 reading of "active" was not written down (now `liveness` `live`, with
+  heartbeat-stamped fixtures). "Live" had two meanings (the `liveness` region replaces `LIVE_WINDOW`).
+- **Open for the architecture owner (non-blocking)** — widen the AD-17 `DISPLAY` description to "glyph, tone, Gantt
+  block and Board column". The AC 4 and AC 20 evidence should cite the owner answer of 2026-10-14 (AD-4 rule 3).
+- Reviewer file: `review-decisions-update.md`.
