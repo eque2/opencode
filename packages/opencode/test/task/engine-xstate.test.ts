@@ -1,38 +1,65 @@
+import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import type { BlendModel } from "@/task/blend/model"
-import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
+import type { Fact, Plan, Result, Verdict } from "@/task/core/model"
 import { TaskRunner } from "@/task/core/runner"
-import { TaskEngineXState } from "@/task/engine-xstate"
+import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
+import { testEffect } from "../lib/effect"
+import { exhaustLeaf, facts, loadPlan, observed, trustLeaf } from "./lib/machine"
 
-// A small spec: parent T1 with leaves T1.1 and T1.2. T1.1 has three test obligations and one gate obligation;
-// T1.2 has one test obligation; T1 has one review obligation. Budget 3 for every task.
+// The engine's contract as fact sequences through `initial`, `apply`, the selectors and `view` (spine AD-6). A
+// small spec: parent T1 with leaves T1.1 and T1.2. T1.1 has three test obligations and one gate obligation; T1.2
+// has one test obligation; T1 has one review obligation. Budget 3 for every task. The release-notes plan, loaded
+// with `Blend.load`, covers the observed run.
 //
-// These cases are the engine's contract: what each fact does to the folded state, history included.
+// The tests of the old engine file (owner ruling 2, "Rewrite, keep intent"), each in one class:
+//
+//  1 "is named xstate" — ported.
+//  2 "the initial state: tasks waiting, obligations pending, scenarios waiting" — ported.
+//  3 "the happy leaf path: waiting, building, proving, verifying, trusted with attempts 1" — ported.
+//  4 "a failed proof returns the task to the builder with the failed ids and reasons" — ported.
+//  5 "the proof's own reason (a structural failure) is part of the task reason" — ported.
+//  6 "budget exhaustion at the budget ends the task and the run" — re-baselined (D3): the run keeps running until
+//    the independent T1.2 and its scenario end, then ends budget_exhausted; T1 is blocked (D2).
+//  7 "a rejection reopens only the rejected id; the others stay trusted" — ported.
+//  8 "a verifier round that leaves an obligation unjudged also returns the task" — ported.
+//  9 "a rejection at the budget exhausts it" — re-baselined (D3): the run does not end at once.
+// 10 "a stall keeps the task building with its attempts and records the reason" — ported.
+// 11 "a repetition returns the task to the builder with attempts + 1, and exhausts the budget" — re-baselined
+//    (D3): the exhausted task does not end the run at once.
+// 12 "needs_human ends an active task and the run" — re-baselined (D3): the run waits for the independent work.
+// 13 "task.failed fails the task and the run" — re-baselined (D3): the run waits for the independent work.
+// 14 "cancel moves every building, proving or verifying task to cancelled, and the run" — re-baselined
+//    (default 4): the waiting parent is cancelled too, so every region is final when the run ends.
+// 15 "a stale obligation reopens its trusted task; a later round trusts it again" — ported.
+// 16 "a failed result reopens a trusted obligation with its reason; a needs-judge result leaves it trusted" — ported.
+// 17 "a parent is reviewed once: trusted with attempts 1, or failed and never rebuilt" — re-baselined (D4: the
+//    review comes once the children are trusted; D3: a failed parent does not end the run at once).
+// 18 "scenarios: proved passed then verified; a failed proof or a rejection ends the scenario" — re-baselined
+//    (D4: a scenario is proved once its needs are trusted).
+// 19 "run facts: started, resumed, outside trust and the end" — re-baselined (D3, AD-4: run.ended is a stop
+//    that cancels the unfinished units, and the outcome takes its state).
+// 20 "a fact that matches no row changes nothing and adds no history" — ported.
+// 21 "facts after the run ended change nothing" — re-baselined (D3: needs_human no longer ends the run; a cancel
+//    ends it).
+// 22 "apply is pure: it never changes the state it receives" — ported.
+// 23 "a parent's stale review obligation reopens it once; the new review trusts it (attempts 1) or fails it" —
+//    re-baselined (D4: the first review comes once the children are trusted; D3: the failure ends no run).
+// 24 "task.failed fails a waiting leaf, a waiting parent and a verifying leaf, and the run with it" — re-baselined
+//    (D3): the run does not follow the failed task.
+// 25 "obligation.stale on an obligation that is neither passed nor trusted changes nothing, its trusted task
+//    included" — retired: its input was a hand-built State. Replaced by "a fact that moves nothing returns the
+//    identical snapshot", shown here on a rejected obligation that a real fold reaches.
+// 26 "obligation.stale moves an obligation whose task the state does not hold" — retired: a snapshot holds every
+//    unit of its plan. Replaced by "an unknown id returns the identical snapshot".
+// 27 "a unit in a state its lifecycle does not name takes no fact, and no such state makes apply throw" — retired:
+//    no snapshot holds a state its machine does not name. Replaced by "a foreign snapshot dies".
+// B1 "the base of an unfinished run: is the branch its run.started recorded, until the run ends" — ported.
+// B2 "the base of an unfinished run: is unknown for a run stored before the base was recorded" — ported.
 
-// Until T1.7 and T1.8 rewrite these tests as fact sequences through the snapshot API, they read the engine through
-// `view`: this adapter keeps the snapshot behind each `State` it returns. A `State` it did not make has no snapshot.
-const snapshots = new WeakMap<State, TaskEngineXState.RunSnapshot>()
-const keep = (snapshot: TaskEngineXState.RunSnapshot): State => {
-  const state = TaskEngineXState.view(snapshot)
-  snapshots.set(state, snapshot)
-  return state
-}
-const snapshotOf = (state: State) => {
-  const snapshot = snapshots.get(state)
-  if (snapshot === undefined) throw new Error("a State the engine did not make")
-  return snapshot
-}
-const engine = {
-  name: TaskEngineXState.XStateEngine.name,
-  initial: (plan: Plan): State => keep(TaskEngineXState.initial(plan)),
-  apply: (plan: Plan, state: State, fact: Fact): State => {
-    const before = snapshotOf(state)
-    const after = TaskEngineXState.apply(plan, before, fact)
-    return after === before ? state : keep(after)
-  },
-  ended: (state: State) => TaskEngineXState.ended(snapshotOf(state)),
-}
+const it = testEffect(NodeServices.layer)
+const engine = TaskEngineXState
 const BUDGET = 3
 
 // The policy of `release-notes.spec`.
@@ -139,7 +166,7 @@ const proved = (id: string, results: ReadonlyArray<Result>, reason?: string): Fa
   at: at(),
   task: id,
   results,
-  reason,
+  ...(reason === undefined ? {} : { reason }),
 })
 const verified = (id: string, verdicts: ReadonlyArray<Verdict>): Fact => ({
   type: "task.verified",
@@ -147,6 +174,16 @@ const verified = (id: string, verdicts: ReadonlyArray<Verdict>): Fact => ({
   task: id,
   verdicts,
 })
+const failed = (id: string, reason: string): Fact => ({ type: "task.failed", at: at(), task: id, reason })
+const stale = (id: string, hash = "hash-new"): Fact => ({ type: "obligation.stale", at: at(), id, hash })
+const scenarioProved = (id: string, status: "passed" | "failed", reason?: string): Fact => ({
+  type: "scenario.proved",
+  at: at(),
+  id,
+  status,
+  ...(reason === undefined ? {} : { reason }),
+})
+const scenarioVerified = (verdict: Verdict): Fact => ({ type: "scenario.verified", at: at(), verdict })
 
 const judge = (id: string): Result => ({ id, status: "needs-judge" })
 const pass = (id: string): Result => ({ id, status: "passed" })
@@ -159,33 +196,37 @@ const happyProof = () => proved("T1.1", [judge("T1.1.c1"), judge("T1.1.c2"), jud
 const failingProof = () =>
   proved("T1.1", [fail("T1.1.c1", "expected feat"), judge("T1.1.c2"), judge("T1.1.c3"), pass("T1.1.p1")])
 const trustAll = () => verified("T1.1", [trust("T1.1.c1"), trust("T1.1.c2"), trust("T1.1.c3")])
+const trustT12 = (): ReadonlyArray<Fact> => [
+  started("T1.2"),
+  ready("T1.2"),
+  proved("T1.2", [judge("T1.2.c1")]),
+  verified("T1.2", [trust("T1.2.c1")]),
+]
+const trustT11 = (): ReadonlyArray<Fact> => [started("T1.1"), ready("T1.1"), happyProof(), trustAll()]
 
-const obligationStates = (state: State, prefix: string) =>
+const fold = (list: ReadonlyArray<Fact>, from: RunSnapshot = engine.initial(plan)) =>
+  list.reduce((snapshot, fact) => engine.apply(plan, snapshot, fact), from)
+
+// A fold of another plan, through the same engine.
+const foldOf = (other: Plan, list: ReadonlyArray<Fact>, from: RunSnapshot = engine.initial(other)) =>
+  list.reduce((snapshot, fact) => engine.apply(other, snapshot, fact), from)
+
+const obligationStates = (snapshot: RunSnapshot, task: string) =>
   Object.fromEntries(
-    Object.values(state.obligations)
-      .filter((item) => item.task === prefix)
+    Object.values(engine.view(snapshot).obligations)
+      .filter((item) => item.task === task)
       .map((item) => [item.id, item.state]),
   )
 
-const entriesOf = (state: State, unit: string) => state.history.filter((item) => item.unit === unit)
-
-// A changed copy of a state: one the fold never makes, for the cases that ask how an engine treats it.
-const altered = (state: State, change: (copy: State) => unknown): State => {
-  const copy = structuredClone(state)
-  change(copy)
-  return copy
-}
+const entriesOf = (snapshot: RunSnapshot, unit: string) => snapshot.context.log.filter((item) => item.unit === unit)
 
 describe("XStateEngine", () => {
-  const fold = (facts: ReadonlyArray<Fact>, from: State = engine.initial(plan)) =>
-    facts.reduce((state, fact) => engine.apply(plan, state, fact), from)
-
-  test("is named xstate", () => {
-    expect(engine.name).toBe("xstate")
+  test("1 ported: is named xstate", () => {
+    expect(engine.XStateEngine.name).toBe("xstate")
   })
 
-  test("the initial state: tasks waiting, obligations pending, scenarios waiting", () => {
-    const state = engine.initial(plan)
+  test("2 ported: the initial state: tasks waiting, obligations pending, scenarios waiting", () => {
+    const state = engine.view(engine.initial(plan))
     expect(state.run).toEqual({ state: "running", spec: "demo.spec", path: "demo.spec/T1-demo.task" })
     expect(state.tasks["T1"]).toEqual({ id: "T1", leaf: false, state: "waiting", attempts: 0 })
     expect(state.tasks["T1.1"]).toEqual({ id: "T1.1", leaf: true, state: "waiting", attempts: 0 })
@@ -202,9 +243,9 @@ describe("XStateEngine", () => {
     expect(state.history).toEqual([])
   })
 
-  test("the happy leaf path: waiting, building, proving, verifying, trusted with attempts 1", () => {
+  test("3 ported: the happy leaf path: waiting, building, proving, verifying, trusted with attempts 1", () => {
     const building = fold([started("T1.1")])
-    expect(building.tasks["T1.1"]).toMatchObject({
+    expect(engine.view(building).tasks["T1.1"]).toMatchObject({
       state: "building",
       attempts: 1,
       worktree: "/wt/T1.1",
@@ -213,10 +254,10 @@ describe("XStateEngine", () => {
       session: "ses_T1.1",
     })
     const proving = fold([ready("T1.1", "abc")], building)
-    expect(proving.tasks["T1.1"]).toMatchObject({ state: "proving", head: "abc", attempts: 1 })
+    expect(engine.view(proving).tasks["T1.1"]).toMatchObject({ state: "proving", head: "abc", attempts: 1 })
 
     const verifying = fold([happyProof()], proving)
-    expect(verifying.tasks["T1.1"].state).toBe("verifying")
+    expect(engine.unitState(verifying, "T1.1")).toBe("verifying")
     // needs-judge: passed; machine-judged gate: trusted at once.
     expect(obligationStates(verifying, "T1.1")).toEqual({
       "T1.1.c1": "passed",
@@ -226,9 +267,9 @@ describe("XStateEngine", () => {
     })
 
     const trusted = fold([trustAll()], verifying)
-    expect(trusted.tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    expect(engine.view(trusted).tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 1 })
     expect(Object.values(obligationStates(trusted, "T1.1"))).toEqual(["trusted", "trusted", "trusted", "trusted"])
-    expect(trusted.run.state).toBe("running")
+    expect(engine.view(trusted).run.state).toBe("running")
     expect(entriesOf(trusted, "T1.1").map((item) => [item.from, item.to])).toEqual([
       ["waiting", "building"],
       ["building", "proving"],
@@ -236,54 +277,67 @@ describe("XStateEngine", () => {
       ["verifying", "trusted"],
     ])
     // Every entry takes the fact's time, in order.
-    const times = trusted.history.map((item) => item.at)
+    const times = trusted.context.log.map((item) => item.at)
     expect(times).toEqual(times.toSorted((a, b) => a - b))
   })
 
-  test("a failed proof returns the task to the builder with the failed ids and reasons", () => {
-    const state = fold([started("T1.1"), ready("T1.1"), failingProof()])
+  test("4 ported: a failed proof returns the task to the builder with the failed ids and reasons", () => {
+    const snapshot = fold([started("T1.1"), ready("T1.1"), failingProof()])
+    const state = engine.view(snapshot)
     expect(state.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 2 })
-    expect(state.tasks["T1.1"].reason).toContain("T1.1.c1: expected feat")
+    expect(state.tasks["T1.1"]?.reason).toContain("T1.1.c1: expected feat")
     expect(state.obligations["T1.1.c1"]).toMatchObject({ state: "failed", reason: "expected feat" })
-    expect(state.obligations["T1.1.c2"].state).toBe("passed")
+    expect(state.obligations["T1.1.c2"]?.state).toBe("passed")
     // No verifier round happened, so nothing that needs a judge is trusted.
     expect(state.history.some((item) => item.unit === "T1.1.c2" && item.to === "trusted")).toBe(false)
 
-    const retried = fold([ready("T1.1"), happyProof(), trustAll()], state)
+    const retried = engine.view(fold([ready("T1.1"), happyProof(), trustAll()], snapshot))
     expect(retried.tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 2 })
-    expect(retried.tasks["T1.1"].reason).toBeUndefined()
+    expect(retried.tasks["T1.1"]?.reason).toBeUndefined()
   })
 
-  test("the proof's own reason (a structural failure) is part of the task reason", () => {
-    const state = fold([
-      started("T1.1"),
-      ready("T1.1"),
-      proved("T1.1", [fail("T1.1.c1", "tampered")], "test/verify-release-notes-S3.spec.ts holds another task's tag"),
-    ])
-    expect(state.tasks["T1.1"].reason).toContain("test/verify-release-notes-S3.spec.ts")
+  test("5 ported: the proof's own reason (a structural failure) is part of the task reason", () => {
+    const state = engine.view(
+      fold([
+        started("T1.1"),
+        ready("T1.1"),
+        proved("T1.1", [fail("T1.1.c1", "tampered")], "test/verify-release-notes-S3.spec.ts holds another task's tag"),
+      ]),
+    )
+    expect(state.tasks["T1.1"]?.reason).toContain("test/verify-release-notes-S3.spec.ts")
   })
 
-  test("budget exhaustion at the budget ends the task and the run", () => {
-    const facts: Fact[] = [started("T1.1")]
-    for (let attempt = 1; attempt <= BUDGET; attempt++) facts.push(ready("T1.1"), failingProof())
-    const state = fold(facts)
-    expect(state.tasks["T1.1"]).toMatchObject({ state: "budget_exhausted", attempts: BUDGET })
-    expect(state.run.state).toBe("budget_exhausted")
-    expect(state.run.reason).toContain("T1.1")
+  test("6 re-baselined (D3): budget exhaustion ends the task and blocks its parent; the run ends after the independent work", () => {
+    const list: Fact[] = [started("T1.1")]
+    for (let attempt = 1; attempt <= BUDGET; attempt++) list.push(ready("T1.1"), failingProof())
+    const exhausted = fold(list)
+    expect(engine.view(exhausted).tasks["T1.1"]).toMatchObject({ state: "budget_exhausted", attempts: BUDGET })
+    expect(engine.unitState(exhausted, "T1")).toBe("blocked")
+    expect(engine.blockedBy(exhausted, "T1")).toEqual({ id: "T1.1", state: "budget_exhausted" })
+    expect(engine.unitState(exhausted, "S1")).toBe("blocked")
+    // T1.2 is independent and still ready, so the run goes on (D3).
+    expect(exhausted.hasTag("T1.2:ready")).toBe(true)
+    expect(engine.view(exhausted).run.state).toBe("running")
     // Three builds: attempts 1, 2, 3; never a 4th.
-    expect(entriesOf(state, "T1.1").filter((item) => item.to === "building")).toHaveLength(BUDGET)
+    expect(entriesOf(exhausted, "T1.1").filter((item) => item.to === "building")).toHaveLength(BUDGET)
+    const ended = fold([...trustT12(), scenarioProved("S2", "passed"), scenarioVerified(trust("S2"))], exhausted)
+    expect(engine.view(ended).run).toMatchObject({
+      state: "budget_exhausted",
+      reason: "T1.1 budget exhausted\nT1 blocked by T1.1",
+    })
   })
 
-  test("a rejection reopens only the rejected id; the others stay trusted", () => {
+  test("7 ported: a rejection reopens only the rejected id; the others stay trusted", () => {
     const rejected = fold([
       started("T1.1"),
       ready("T1.1"),
       happyProof(),
       verified("T1.1", [trust("T1.1.c1"), trust("T1.1.c2"), reject("T1.1.c3", "the refs test does not cover Refs #")]),
     ])
-    expect(rejected.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 2 })
-    expect(rejected.tasks["T1.1"].reason).toBe("T1.1.c3: the refs test does not cover Refs #")
-    expect(rejected.obligations["T1.1.c3"]).toMatchObject({
+    const state = engine.view(rejected)
+    expect(state.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 2 })
+    expect(state.tasks["T1.1"]?.reason).toBe("T1.1.c3: the refs test does not cover Refs #")
+    expect(state.obligations["T1.1.c3"]).toMatchObject({
       state: "rejected",
       reason: "the refs test does not cover Refs #",
     })
@@ -298,41 +352,47 @@ describe("XStateEngine", () => {
       "T1.1.p1": "trusted",
     })
     const trusted = fold([verified("T1.1", [trust("T1.1.c3")])], reproved)
-    expect(trusted.tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 2 })
+    expect(engine.view(trusted).tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 2 })
     for (const id of ["T1.1.c1", "T1.1.c2"])
       expect(entriesOf(trusted, id).map((item) => item.to)).toEqual(["passed", "trusted"])
   })
 
-  test("a verifier round that leaves an obligation unjudged also returns the task", () => {
-    const state = fold([started("T1.1"), ready("T1.1"), happyProof(), verified("T1.1", [trust("T1.1.c1")])])
+  test("8 ported: a verifier round that leaves an obligation unjudged also returns the task", () => {
+    const state = engine.view(
+      fold([started("T1.1"), ready("T1.1"), happyProof(), verified("T1.1", [trust("T1.1.c1")])]),
+    )
     expect(state.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 2 })
-    expect(state.tasks["T1.1"].reason).toBe("T1.1.c2: not judged; T1.1.c3: not judged")
+    expect(state.tasks["T1.1"]?.reason).toBe("T1.1.c2: not judged; T1.1.c3: not judged")
   })
 
-  test("a rejection at the budget exhausts it", () => {
-    const facts: Fact[] = [started("T1.1")]
+  test("9 re-baselined (D3): a rejection at the budget exhausts it, and the run waits for the independent work", () => {
+    const list: Fact[] = [started("T1.1")]
     for (let attempt = 1; attempt <= BUDGET; attempt++)
-      facts.push(
+      list.push(
         ready("T1.1"),
         happyProof(),
         verified("T1.1", [reject("T1.1.c1", "weak"), trust("T1.1.c2"), trust("T1.1.c3")]),
       )
-    const state = fold(facts)
+    const state = engine.view(fold(list))
     expect(state.tasks["T1.1"]).toMatchObject({ state: "budget_exhausted", attempts: BUDGET })
-    expect(state.run.state).toBe("budget_exhausted")
+    expect(state.run.state).toBe("running")
   })
 
-  test("a stall keeps the task building with its attempts and records the reason", () => {
-    const state = fold([started("T1.1"), { type: "task.stalled", at: at(), task: "T1.1", reason: "stream idle 2s" }])
-    expect(state.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 1, reason: "stream idle 2s" })
-    expect(entriesOf(state, "T1.1").at(-1)).toMatchObject({
+  test("10 ported: a stall keeps the task building with its attempts and records the reason", () => {
+    const snapshot = fold([started("T1.1"), { type: "task.stalled", at: at(), task: "T1.1", reason: "stream idle 2s" }])
+    expect(engine.view(snapshot).tasks["T1.1"]).toMatchObject({
+      state: "building",
+      attempts: 1,
+      reason: "stream idle 2s",
+    })
+    expect(entriesOf(snapshot, "T1.1").at(-1)).toMatchObject({
       from: "building",
       to: "building",
       reason: "stream idle 2s",
     })
   })
 
-  test("a repetition returns the task to the builder with attempts + 1, and exhausts the budget", () => {
+  test("11 re-baselined (D3): a repetition returns the task with attempts + 1; at the budget it ends the task only", () => {
     const repeated = (): Fact => ({
       type: "task.repeated",
       at: at(),
@@ -340,62 +400,68 @@ describe("XStateEngine", () => {
       reason: "repetition: 3 identical read calls in a row",
     })
     const once = fold([started("T1.1"), repeated()])
-    expect(once.tasks["T1.1"]).toMatchObject({
+    expect(engine.view(once).tasks["T1.1"]).toMatchObject({
       state: "building",
       attempts: 2,
       reason: "repetition: 3 identical read calls in a row",
     })
     expect(entriesOf(once, "T1.1").at(-1)?.reason).toContain("repetition")
-    const spent = fold([repeated(), repeated()], once)
+    const spent = engine.view(fold([repeated(), repeated()], once))
     expect(spent.tasks["T1.1"]).toMatchObject({ state: "budget_exhausted", attempts: 3 })
-    expect(spent.run.state).toBe("budget_exhausted")
+    expect(spent.run.state).toBe("running")
   })
 
-  test("needs_human ends an active task and the run", () => {
-    const state = fold([
+  test("12 re-baselined (D3): needs_human ends an active task; the run waits for the independent work", () => {
+    const snapshot = fold([
       started("T1.1"),
       { type: "task.needs_human", at: at(), task: "T1.1", reason: "insufficient_quota" },
     ])
-    expect(state.tasks["T1.1"]).toMatchObject({ state: "needs_human", reason: "insufficient_quota" })
-    expect(state.run).toMatchObject({ state: "needs_human", reason: "T1.1: insufficient_quota" })
-    // A waiting task is not active.
-    const waiting = fold([{ type: "task.needs_human", at: at(), task: "T1.2", reason: "x" }])
-    expect(waiting).toEqual(engine.initial(plan))
+    expect(engine.view(snapshot).tasks["T1.1"]).toMatchObject({ state: "needs_human", reason: "insufficient_quota" })
+    expect(engine.view(snapshot).run.state).toBe("running")
+    const ended = fold([...trustT12(), scenarioProved("S2", "passed"), scenarioVerified(trust("S2"))], snapshot)
+    expect(engine.view(ended).run).toMatchObject({
+      state: "needs_human",
+      reason: "T1.1 needs human\nT1 blocked by T1.1",
+    })
+    // A task that has not started is not active.
+    const initial = engine.initial(plan)
+    expect(engine.apply(plan, initial, { type: "task.needs_human", at: at(), task: "T1.2", reason: "x" })).toBe(initial)
   })
 
-  test("task.failed fails the task and the run", () => {
-    const state = fold([
-      started("T1.1"),
-      ready("T1.1"),
-      { type: "task.failed", at: at(), task: "T1.1", reason: "merge conflict" },
-    ])
-    expect(state.tasks["T1.1"]).toMatchObject({ state: "failed", reason: "merge conflict" })
-    expect(state.run.state).toBe("failed")
+  test("13 re-baselined (D3): task.failed fails the task; the run waits for the independent work", () => {
+    const snapshot = fold([started("T1.1"), ready("T1.1"), failed("T1.1", "merge conflict")])
+    expect(engine.view(snapshot).tasks["T1.1"]).toMatchObject({ state: "failed", reason: "merge conflict" })
+    expect(engine.view(snapshot).run.state).toBe("running")
   })
 
-  test("cancel moves every building, proving or verifying task to cancelled, and the run", () => {
-    const state = fold([
+  test("14 re-baselined (default 4): cancel moves every unfinished task to cancelled, the waiting parent too, and the run", () => {
+    const snapshot = fold([
       started("T1.1"),
       started("T1.2"),
       ready("T1.2"),
       { type: "run.cancelled", at: at(), reason: "aborted" },
     ])
+    const state = engine.view(snapshot)
     expect(state.tasks["T1.1"]).toMatchObject({ state: "cancelled", reason: "aborted" })
     expect(state.tasks["T1.2"]).toMatchObject({ state: "cancelled", reason: "aborted" })
-    expect(state.tasks["T1"].state).toBe("waiting")
+    expect(state.tasks["T1"]).toMatchObject({ state: "cancelled", reason: "aborted" })
     expect(state.run).toMatchObject({ state: "cancelled", reason: "aborted" })
     expect(state.history.at(-1)).toMatchObject({ unit: "run", from: "running", to: "cancelled" })
   })
 
-  test("a stale obligation reopens its trusted task; a later round trusts it again", () => {
-    const trusted = fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
-    const stale = fold([{ type: "obligation.stale", at: at(), id: "T1.1.c2", hash: "hash-new" }], trusted)
-    expect(stale.obligations["T1.1.c2"]).toMatchObject({ state: "stale", hash: "hash-new" })
-    expect(stale.tasks["T1.1"]).toMatchObject({ state: "proving", reason: "stale: T1.1.c2", attempts: 1 })
-    expect(obligationStates(stale, "T1.1")).toMatchObject({ "T1.1.c1": "trusted", "T1.1.c3": "trusted" })
+  test("15 ported: a stale obligation reopens its trusted task; a later round trusts it again", () => {
+    const trusted = fold(trustT11())
+    const reopened = fold([stale("T1.1.c2")], trusted)
+    expect(engine.view(reopened).obligations["T1.1.c2"]).toMatchObject({ state: "stale", hash: "hash-new" })
+    expect(engine.view(reopened).tasks["T1.1"]).toMatchObject({
+      state: "proving",
+      reason: "stale: T1.1.c2",
+      attempts: 1,
+    })
+    expect(obligationStates(reopened, "T1.1")).toMatchObject({ "T1.1.c1": "trusted", "T1.1.c3": "trusted" })
 
-    const reproved = fold([happyProof()], stale)
-    expect(reproved.tasks["T1.1"].state).toBe("verifying")
+    const reproved = fold([happyProof()], reopened)
+    expect(engine.unitState(reproved, "T1.1")).toBe("verifying")
     expect(obligationStates(reproved, "T1.1")).toEqual({
       "T1.1.c1": "trusted",
       "T1.1.c2": "passed",
@@ -403,24 +469,24 @@ describe("XStateEngine", () => {
       "T1.1.p1": "trusted",
     })
     const again = fold([verified("T1.1", [trust("T1.1.c2")])], reproved)
-    expect(again.tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 1 })
-    expect(again.obligations["T1.1.c2"]).toMatchObject({ state: "trusted", hash: "hash-new" })
+    expect(engine.view(again).tasks["T1.1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    expect(engine.view(again).obligations["T1.1.c2"]).toMatchObject({ state: "trusted", hash: "hash-new" })
     for (const id of ["T1.1.c1", "T1.1.c3"])
       expect(entriesOf(again, id).some((item) => item.to === "stale")).toBe(false)
 
     // A pending obligation cannot go stale.
-    const pending = fold([{ type: "obligation.stale", at: at(), id: "T1.2.c1", hash: "x" }])
-    expect(pending).toEqual(engine.initial(plan))
+    const initial = engine.initial(plan)
+    expect(engine.apply(plan, initial, stale("T1.2.c1", "x"))).toBe(initial)
   })
 
-  test("a failed result reopens a trusted obligation with its reason; a needs-judge result leaves it trusted", () => {
+  test("16 ported: a failed result reopens a trusted obligation with its reason; a needs-judge result leaves it trusted", () => {
     const rejected = fold([
       started("T1.1"),
       ready("T1.1"),
       happyProof(),
       verified("T1.1", [trust("T1.1.c1"), trust("T1.1.c2"), reject("T1.1.c3", "too weak")]),
     ])
-    expect(rejected.obligations["T1.1.c1"].state).toBe("trusted")
+    expect(engine.view(rejected).obligations["T1.1.c1"]?.state).toBe("trusted")
     const reproved = fold(
       [
         ready("T1.1", "head2"),
@@ -428,67 +494,82 @@ describe("XStateEngine", () => {
       ],
       rejected,
     )
-    expect(reproved.obligations["T1.1.c1"]).toMatchObject({ state: "failed", reason: "the parser broke" })
-    expect(reproved.obligations["T1.1.c2"].state).toBe("trusted")
+    expect(engine.view(reproved).obligations["T1.1.c1"]).toMatchObject({ state: "failed", reason: "the parser broke" })
+    expect(engine.view(reproved).obligations["T1.1.c2"]?.state).toBe("trusted")
     expect(entriesOf(reproved, "T1.1.c1").at(-1)).toMatchObject({
       from: "trusted",
       to: "failed",
       reason: "the parser broke",
     })
-    expect(reproved.tasks["T1.1"]).toMatchObject({ state: "building", attempts: 3 })
+    expect(engine.view(reproved).tasks["T1.1"]).toMatchObject({ state: "building", attempts: 3 })
   })
 
-  test("a parent is reviewed once: trusted with attempts 1, or failed and never rebuilt", () => {
-    const verifying = fold([proved("T1", [])])
-    expect(verifying.tasks["T1"]).toMatchObject({ state: "verifying", attempts: 0 })
-    expect(verifying.obligations["T1.e1"].state).toBe("passed")
+  test("17 re-baselined (D3, D4): a parent is reviewed once its children are trusted; trusted with attempts 1, or failed and never rebuilt", () => {
+    const children = fold([...trustT11(), ...trustT12()])
+    expect(engine.unitState(children, "T1")).toBe("waiting")
+    expect(children.hasTag("T1:ready")).toBe(true)
+    const verifying = fold([proved("T1", [])], children)
+    expect(engine.view(verifying).tasks["T1"]).toMatchObject({ state: "verifying", attempts: 0 })
+    expect(engine.view(verifying).obligations["T1.e1"]?.state).toBe("passed")
 
     const trusted = fold([verified("T1", [trust("T1.e1")])], verifying)
-    expect(trusted.tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
-    expect(trusted.obligations["T1.e1"].state).toBe("trusted")
+    expect(engine.view(trusted).tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    expect(engine.view(trusted).obligations["T1.e1"]?.state).toBe("trusted")
 
-    const failed = fold([verified("T1", [reject("T1.e1", "the combined diff misses a test")])], verifying)
-    expect(failed.tasks["T1"]).toMatchObject({ state: "failed", reason: "T1.e1: the combined diff misses a test" })
-    expect(failed.run.state).toBe("failed")
+    const failedReview = fold([verified("T1", [reject("T1.e1", "the combined diff misses a test")])], verifying)
+    expect(engine.view(failedReview).tasks["T1"]).toMatchObject({
+      state: "failed",
+      reason: "T1.e1: the combined diff misses a test",
+    })
+    // The scenarios still run (D3).
+    expect(engine.view(failedReview).run.state).toBe("running")
 
-    // A leaf ignores task.proved while waiting, and a parent ignores task.started.
-    expect(fold([proved("T1.1", [judge("T1.1.c1")]), started("T1")])).toEqual(engine.initial(plan))
+    // A leaf ignores task.proved before it is proving, and a parent ignores task.started.
+    const initial = engine.initial(plan)
+    expect(fold([proved("T1.1", [judge("T1.1.c1")]), started("T1")], initial)).toBe(initial)
   })
 
-  test("scenarios: proved passed then verified; a failed proof or a rejection ends the scenario", () => {
-    const verifying = fold([{ type: "scenario.proved", at: at(), id: "S1", status: "passed" }])
-    expect(verifying.scenarios["S1"].state).toBe("verifying")
-    const trusted = fold([{ type: "scenario.verified", at: at(), verdict: trust("S1") }], verifying)
-    expect(trusted.scenarios["S1"].state).toBe("trusted")
-    const rejected = fold([{ type: "scenario.verified", at: at(), verdict: reject("S1", "no step 3") }], verifying)
-    expect(rejected.scenarios["S1"]).toMatchObject({ state: "rejected", reason: "no step 3" })
-    const failed = fold([{ type: "scenario.proved", at: at(), id: "S2", status: "failed", reason: "2 tests failed" }])
-    expect(failed.scenarios["S2"]).toMatchObject({ state: "failed", reason: "2 tests failed" })
+  test("18 re-baselined (D4): a scenario is proved once its needs are trusted, then verified; a failure or a rejection ends it", () => {
+    const needs = fold(trustT11())
+    expect(engine.unitState(needs, "S1")).toBe("pending")
+    const verifying = fold([scenarioProved("S1", "passed")], needs)
+    expect(engine.unitState(verifying, "S1")).toBe("pending")
+    expect(engine.tags(verifying, "S1")).toEqual(["active"])
+    const trusted = fold([scenarioVerified(trust("S1"))], verifying)
+    expect(engine.view(trusted).scenarios["S1"]?.state).toBe("trusted")
+    const rejected = fold([scenarioVerified(reject("S1", "no step 3"))], verifying)
+    expect(engine.view(rejected).scenarios["S1"]).toMatchObject({ state: "rejected", reason: "no step 3" })
+    const failedProof = fold([...trustT12(), scenarioProved("S2", "failed", "2 tests failed")])
+    expect(engine.view(failedProof).scenarios["S2"]).toMatchObject({ state: "failed", reason: "2 tests failed" })
     // A verdict for a scenario that was not proved changes nothing.
-    expect(fold([{ type: "scenario.verified", at: at(), verdict: trust("S2") }])).toEqual(engine.initial(plan))
+    expect(engine.apply(plan, needs, scenarioVerified(trust("S2")))).toBe(needs)
   })
 
-  test("run facts: started, resumed, outside trust and the end", () => {
-    const state = fold([
+  test("19 re-baselined (D3, AD-4): run facts: started, resumed, outside trust, and run.ended as a stop", () => {
+    const snapshot = fold([
       { type: "run.started", at: at() },
       { type: "outside.trusted", at: at(), id: "T9" },
       { type: "run.resumed", at: at() },
     ])
-    expect(state.run.state).toBe("running")
-    expect(state.history.map(({ at: _, ...item }) => item)).toEqual([
-      { unit: "run", from: "running", to: "running", reason: undefined },
+    expect(engine.view(snapshot).run.state).toBe("running")
+    expect(snapshot.context.log.map(({ at: _, ...item }) => item)).toEqual([
+      { unit: "run", from: "running", to: "running" },
       { unit: "T9", to: "trusted", reason: "outside" },
       { unit: "run", from: "running", to: "running", reason: "resumed" },
     ])
-    expect(state.tasks).toEqual(engine.initial(plan).tasks)
-    expect(fold([{ type: "run.ended", at: at(), state: "done" }], state).run.state).toBe("done")
-    expect(fold([{ type: "run.ended", at: at(), state: "failed", reason: "x" }], state).run).toMatchObject({
+    expect(engine.view(snapshot).tasks).toEqual(engine.view(engine.initial(plan)).tasks)
+    const done = engine.view(fold([{ type: "run.ended", at: at(), state: "done" }], snapshot))
+    expect(done.run.state).toBe("done")
+    expect(done.tasks["T1.1"]?.state).toBe("cancelled")
+    expect(
+      engine.view(fold([{ type: "run.ended", at: at(), state: "failed", reason: "x" }], snapshot)).run,
+    ).toMatchObject({
       state: "failed",
       reason: "x",
     })
   })
 
-  test("a fact that matches no row changes nothing and adds no history", () => {
+  test("20 ported: a fact that matches no row changes nothing and adds no history", () => {
     const initial = engine.initial(plan)
     for (const fact of [
       ready("T1.1"),
@@ -500,143 +581,298 @@ describe("XStateEngine", () => {
       expect(engine.apply(plan, initial, fact)).toBe(initial)
   })
 
-  test("facts after the run ended change nothing", () => {
-    const ended = fold([started("T1.1"), { type: "task.needs_human", at: at(), task: "T1.1", reason: "quota" }])
+  test("21 re-baselined (D3): facts after the run ended change nothing", () => {
+    const ended = fold([started("T1.1"), { type: "run.cancelled", at: at(), reason: "abort" }])
+    expect(engine.ended(ended)).toBe(true)
     for (const fact of [
       ready("T1.1"),
       started("T1.2"),
       { type: "run.resumed", at: at() } satisfies Fact,
       { type: "run.cancelled", at: at(), reason: "abort" } satisfies Fact,
       { type: "outside.trusted", at: at(), id: "T9" } satisfies Fact,
-      { type: "scenario.proved", at: at(), id: "S1", status: "passed" } satisfies Fact,
+      scenarioProved("S1", "passed"),
     ])
       expect(engine.apply(plan, ended, fact)).toBe(ended)
     const done = fold([{ type: "run.ended", at: at(), state: "done" }])
     expect(engine.apply(plan, done, started("T1.1"))).toBe(done)
   })
 
-  test("apply is pure: it never changes the state it receives", () => {
+  test("22 ported: apply is pure: it never changes the snapshot it receives", () => {
     const before = fold([started("T1.1"), ready("T1.1")])
-    const copy = structuredClone(before)
+    const copy = structuredClone(before.context)
     engine.apply(plan, before, failingProof())
-    expect(before).toEqual(copy)
+    expect(before.context).toEqual(copy)
   })
 
-  test("a parent's stale review obligation reopens it once; the new review trusts it (attempts 1) or fails it", () => {
-    const trusted = fold([proved("T1", []), verified("T1", [trust("T1.e1")])])
-    expect(trusted.tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
-    const stale = fold([{ type: "obligation.stale", at: at(), id: "T1.e1", hash: "hash-new" }], trusted)
-    expect(stale.obligations["T1.e1"]).toMatchObject({ state: "stale", hash: "hash-new" })
-    expect(stale.tasks["T1"]).toMatchObject({ state: "proving", attempts: 1, reason: "stale: T1.e1" })
+  test("23 re-baselined (D3, D4): a parent's stale review obligation reopens it once; the new review trusts it (attempts 1) or fails it", () => {
+    const trusted = fold([...trustT11(), ...trustT12(), proved("T1", []), verified("T1", [trust("T1.e1")])])
+    expect(engine.view(trusted).tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    const reopened = fold([stale("T1.e1")], trusted)
+    expect(engine.view(reopened).obligations["T1.e1"]).toMatchObject({ state: "stale", hash: "hash-new" })
+    expect(engine.view(reopened).tasks["T1"]).toMatchObject({ state: "proving", attempts: 1, reason: "stale: T1.e1" })
 
     // The new proof round gives the review obligation no result: it waits for the reviewer again.
-    const reproved = fold([proved("T1", [])], stale)
-    expect(reproved.tasks["T1"].state).toBe("verifying")
-    expect(reproved.obligations["T1.e1"].state).toBe("passed")
+    const reproved = fold([proved("T1", [])], reopened)
+    expect(engine.unitState(reproved, "T1")).toBe("verifying")
+    expect(engine.view(reproved).obligations["T1.e1"]?.state).toBe("passed")
 
     const again = fold([verified("T1", [trust("T1.e1")])], reproved)
-    expect(again.tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
-    expect(again.obligations["T1.e1"]).toMatchObject({ state: "trusted", hash: "hash-new" })
-    expect(again.run.state).toBe("running")
+    expect(engine.view(again).tasks["T1"]).toMatchObject({ state: "trusted", attempts: 1 })
+    expect(engine.view(again).obligations["T1.e1"]).toMatchObject({ state: "trusted", hash: "hash-new" })
+    expect(engine.view(again).run.state).toBe("running")
 
-    const failed = fold([verified("T1", [reject("T1.e1", "the new diff drops a test")])], reproved)
-    expect(failed.tasks["T1"]).toMatchObject({ state: "failed", reason: "T1.e1: the new diff drops a test" })
-    expect(failed.run).toMatchObject({ state: "failed", reason: "T1: T1.e1: the new diff drops a test" })
+    const failedReview = fold([verified("T1", [reject("T1.e1", "the new diff drops a test")])], reproved)
+    expect(engine.view(failedReview).tasks["T1"]).toMatchObject({
+      state: "failed",
+      reason: "T1.e1: the new diff drops a test",
+    })
+    expect(engine.view(failedReview).run.state).toBe("running")
   })
 
-  test("task.failed fails a waiting leaf, a waiting parent and a verifying leaf, and the run with it", () => {
-    const failure = (task: string): Fact => ({ type: "task.failed", at: at(), task, reason: "merge conflict" })
-    for (const [from, task] of [
+  test("24 re-baselined (D3): task.failed fails a waiting leaf, a waiting parent and a verifying leaf; the run does not follow", () => {
+    for (const [from, id] of [
       [engine.initial(plan), "T1.1"],
       [engine.initial(plan), "T1"],
       [fold([started("T1.1"), ready("T1.1"), happyProof()]), "T1.1"],
     ] as const) {
-      const state = fold([failure(task)], from)
-      expect(state.tasks[task]).toMatchObject({ state: "failed", reason: "merge conflict" })
-      expect(state.run).toMatchObject({ state: "failed", reason: `${task}: merge conflict` })
-      expect(state.history.slice(-2)).toMatchObject([
-        { unit: task, from: from.tasks[task].state, to: "failed", reason: "merge conflict" },
-        { unit: "run", from: "running", to: "failed", reason: `${task}: merge conflict` },
-      ])
+      const before = engine.view(from).tasks[id]?.state
+      const snapshot = fold([failed(id, "merge conflict")], from)
+      expect(engine.view(snapshot).tasks[id]).toMatchObject({ state: "failed", reason: "merge conflict" })
+      expect(engine.view(snapshot).run.state).toBe("running")
+      expect(entriesOf(snapshot, id).at(-1)).toMatchObject({ from: before, to: "failed", reason: "merge conflict" })
+      expect(entriesOf(snapshot, "run")).toEqual([])
     }
   })
 
-  test("obligation.stale on an obligation that is neither passed nor trusted changes nothing, its trusted task included", () => {
-    const trusted = fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
-    const odd = altered(trusted, (copy) => Object.assign(copy.obligations["T1.1.c2"], { state: "rejected" }))
-    expect(engine.apply(plan, odd, { type: "obligation.stale", at: at(), id: "T1.1.c2", hash: "hash-new" })).toBe(odd)
+  test("25 retired, replaced by: a fact that moves nothing returns the identical snapshot (a stale rejected obligation)", () => {
+    const rejected = fold([
+      started("T1.1"),
+      ready("T1.1"),
+      happyProof(),
+      verified("T1.1", [trust("T1.1.c1"), trust("T1.1.c2"), reject("T1.1.c3", "too weak")]),
+    ])
+    expect(engine.apply(plan, rejected, stale("T1.1.c3"))).toBe(rejected)
   })
 
-  test("obligation.stale moves an obligation whose task the state does not hold", () => {
-    const orphan = altered(engine.initial(plan), (copy) =>
-      Object.assign(copy.obligations, {
-        "T2.1.c1": { id: "T2.1.c1", task: "T2.1", state: "trusted", hash: "hash-T2.1.c1" },
+  test("26 retired, replaced by: an unknown id returns the identical snapshot", () => {
+    const initial = engine.initial(plan)
+    for (const fact of [stale("T2.1.c1"), started("T2.1"), scenarioProved("S99", "passed")])
+      expect(engine.apply(plan, initial, fact)).toBe(initial)
+  })
+
+  it.live("27 retired, replaced by: a foreign snapshot dies", () =>
+    Effect.gen(function* () {
+      const other = yield* loadPlan("example-cascade.spec")
+      expect(() => engine.apply(plan, engine.initial(other), started("T1.1"))).toThrow(/another plan/)
+    }),
+  )
+})
+
+describe("the run machine on the release-notes and live-check plans", () => {
+  it.live("RM7 blocks T1.5 and T1 in the fold step that exhausts T1.4, with the named cause", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const list = observed(notes)
+      const before = foldOf(notes, list.slice(0, -1))
+      expect(engine.unitState(before, "T1.5")).toBe("waiting")
+      const after = foldOf(notes, list.slice(-1), before)
+      for (const id of ["T1.5", "T1"]) {
+        expect(engine.unitState(after, id)).toBe("blocked")
+        expect(engine.blockedBy(after, id)).toEqual({ id: "T1.4", state: "budget_exhausted" })
+        expect(engine.view(after).tasks[id]?.reason).toBe("blocked by T1.4: budget exhausted")
+      }
+    }),
+  )
+
+  it.live("RM8c the observed slice folds to its end: done, budget exhausted, T1.5 and T1 blocked", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const stuck = foldOf(notes, observed(notes, f))
+      // The scenarios whose needs are trusted are ready: the run ends only when they end (D3).
+      const ready = ["S2", "S3", "S4", "S7", "S12"]
+      expect(ready.map((id) => engine.unitState(stuck, id))).toEqual(Array(5).fill("pending"))
+      expect(engine.ended(stuck)).toBe(false)
+      // The old runner proved a scenario as soon as its needs were trusted, so the stored slice holds those proofs.
+      const done = foldOf(
+        notes,
+        ready.flatMap((id) => [f.scenarioProved(id, "passed"), f.scenarioVerified({ id, verdict: "trusted" })]),
+        stuck,
+      )
+      expect(engine.ended(done)).toBe(true)
+      expect(engine.view(done).run).toMatchObject({
+        state: "budget_exhausted",
+        reason: "T1.4 budget exhausted\nT1 blocked by T1.4\nT1.5 blocked by T1.4",
+      })
+      expect(engine.unitState(done, "T1.5")).toBe("blocked")
+      expect(engine.unitState(done, "T1")).toBe("blocked")
+    }),
+  )
+
+  it.live("RM8a a stored old slice that ended folds with its stop's state", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const snapshot = foldOf(notes, [f.runStarted(), ...trustLeaf(notes, f, "T1.1"), f.ended("done")])
+      expect(engine.ended(snapshot)).toBe(true)
+      expect(engine.view(snapshot).run.state).toBe("done")
+      expect(engine.view(snapshot).tasks["T1.2"]?.state).toBe("cancelled")
+    }),
+  )
+
+  it.live("RM9 the cascade is transitive and names the first dead dependency", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const snapshot = foldOf(notes, [f.runStarted(), f.started("T1.2"), f.failed("T1.2", "the builder session died")])
+      expect(engine.blockedBy(snapshot, "T1.4")).toEqual({ id: "T1.2", state: "failed" })
+      expect(engine.blockedBy(snapshot, "T1.5")).toEqual({ id: "T1.4", state: "blocked" })
+      expect(engine.blockedBy(snapshot, "T1")).toEqual({ id: "T1.2", state: "failed" })
+      expect(engine.unitState(snapshot, "S1")).toBe("blocked")
+    }),
+  )
+
+  it.live("RM15 a task is ready only when every after task and child is trusted, and waits again on a stale", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const trusted = foldOf(notes, [f.runStarted(), ...trustLeaf(notes, f, "T1.1")])
+      expect(trusted.hasTag("T1.3:ready")).toBe(true)
+      expect(engine.waitingOn(trusted, "T1.4")).toEqual(["T1.2", "T1.3"])
+      const reopened = engine.apply(notes, trusted, f.stale("T1.1.c1"))
+      expect(reopened.hasTag("T1.3:ready")).toBe(false)
+      expect(engine.waitingOn(reopened, "T1.3")).toEqual(["T1.1"])
+    }),
+  )
+
+  it.live("RM16 two siblings with no after between them become ready in the same step", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const snapshot = engine.apply(notes, engine.initial(notes), facts().runStarted())
+      expect(snapshot.hasTag("T1.1:ready") && snapshot.hasTag("T1.2:ready")).toBe(true)
+    }),
+  )
+
+  it.live(
+    "RM17 a task after an untrusted outside id waits and moves on its trust; a second trust changes nothing",
+    () =>
+      Effect.gen(function* () {
+        const notes = yield* loadPlan("release-notes.spec")
+        const f = facts()
+        const tasks = foldOf(notes, [
+          f.runStarted(),
+          ...trustLeaf(notes, f, "T1.1"),
+          ...trustLeaf(notes, f, "T1.2"),
+          ...trustLeaf(notes, f, "T1.3"),
+          ...trustLeaf(notes, f, "T1.4"),
+        ])
+        expect(engine.waitingOn(tasks, "T1.5")).toEqual(["T9"])
+        const trusted = engine.apply(notes, tasks, f.outside("T9"))
+        expect(trusted.hasTag("T1.5:ready")).toBe(true)
+        expect(engine.apply(notes, trusted, f.outside("T9"))).toBe(trusted)
       }),
-    )
-    const after = engine.apply(plan, orphan, { type: "obligation.stale", at: at(), id: "T2.1.c1", hash: "hash-new" })
-    expect(after.obligations["T2.1.c1"]).toEqual({ id: "T2.1.c1", task: "T2.1", state: "stale", hash: "hash-new" })
-    expect(entriesOf(after, "T2.1.c1").map((item) => [item.from, item.to])).toEqual([["trusted", "stale"]])
-    expect(after.tasks).toEqual(orphan.tasks)
-  })
+  )
 
-  test("a unit in a state its lifecycle does not name takes no fact, and no such state makes apply throw", () => {
-    // A task: its own facts change nothing; one of its trusted obligations still goes stale.
-    const lostTask = altered(fold([started("T1.1"), ready("T1.1"), happyProof(), trustAll()]), (copy) =>
-      Object.assign(copy.tasks["T1.1"], { state: "lost" }),
-    )
-    for (const fact of [started("T1.1"), ready("T1.1"), happyProof(), trustAll()])
-      expect(engine.apply(plan, lostTask, fact)).toBe(lostTask)
-    const staled = engine.apply(plan, lostTask, { type: "obligation.stale", at: at(), id: "T1.1.c2", hash: "hash-new" })
-    expect(staled.obligations["T1.1.c2"].state).toBe("stale")
-    expect(staled.tasks["T1.1"]).toMatchObject({ state: "lost" })
+  it.live("RM11 the task that died first gives the outcome, with lines for each dead and each blocked task", () =>
+    Effect.gen(function* () {
+      const cascade = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = foldOf(cascade, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.needsHuman("T1.1", "spend cap: $5.00 reached"),
+        f.started("T1.3"),
+        f.failed("T1.3", "the builder session died"),
+      ])
+      expect(engine.view(snapshot).run).toMatchObject({
+        state: "needs_human",
+        reason: "T1.1 needs human\nT1.3 failed\nT1 blocked by T1.1\nT1.2 blocked by T1.1",
+      })
+    }),
+  )
 
-    // An obligation: a proof round moves the task's other obligations and leaves it.
-    const lostObligation = altered(fold([started("T1.1"), ready("T1.1")]), (copy) =>
-      Object.assign(copy.obligations["T1.1.c1"], { state: "lost" }),
-    )
-    const proved = engine.apply(plan, lostObligation, happyProof())
-    expect(proved.tasks["T1.1"].state).toBe("verifying")
-    expect<Record<string, string>>(obligationStates(proved, "T1.1")).toEqual({
-      "T1.1.c1": "lost",
-      "T1.1.c2": "passed",
-      "T1.1.c3": "passed",
-      "T1.1.p1": "trusted",
-    })
+  it.live("RM12 owner ruling 1: every task trusted and a scenario rejected ends the run failed", () =>
+    Effect.gen(function* () {
+      const slugs = yield* loadPlan("example-scenarios.spec")
+      const f = facts()
+      const snapshot = foldOf(slugs, [
+        f.runStarted(),
+        ...trustLeaf(slugs, f, "T1.1"),
+        f.proved("T1", []),
+        f.verified("T1", [{ id: "T1.e1", verdict: "trusted" }]),
+        f.scenarioProved("S1", "passed"),
+        f.scenarioVerified({ id: "S1", verdict: "rejected", reason: "the slug keeps the colon" }),
+      ])
+      expect(engine.view(snapshot).run).toMatchObject({ state: "failed", reason: "acceptance not proved: S1 rejected" })
+    }),
+  )
 
-    // A scenario.
-    const lostScenario = altered(engine.initial(plan), (copy) => Object.assign(copy.scenarios["S1"], { state: "lost" }))
-    expect(engine.apply(plan, lostScenario, { type: "scenario.proved", at: at(), id: "S1", status: "passed" })).toBe(
-      lostScenario,
-    )
+  it.live("RM13 a parked scenario adds its not-run line, and the run still ends done", () =>
+    Effect.gen(function* () {
+      const subtree = yield* loadPlan("release-notes.spec", "T1.4")
+      const f = facts()
+      const snapshot = foldOf(subtree, [
+        f.runStarted(),
+        f.outside("T1.2"),
+        f.outside("T1.3"),
+        ...trustLeaf(subtree, f, "T1.4"),
+        ...["S6", "S8", "S9", "S11"].flatMap((id) => [
+          f.scenarioProved(id, "passed"),
+          f.scenarioVerified({ id, verdict: "trusted" }),
+        ]),
+      ])
+      expect(engine.view(snapshot).run).toMatchObject({ state: "done", reason: "not run: S13 waits on T8" })
+    }),
+  )
 
-    // The run: its own facts change nothing; an outside trust is recorded, and it follows a task into an end state.
-    const lostRun = altered(fold([started("T1.1")]), (copy) => Object.assign(copy.run, { state: "lost" }))
-    for (const fact of [
-      { type: "run.resumed", at: at() },
-      { type: "run.cancelled", at: at(), reason: "abort" },
-      { type: "run.ended", at: at(), state: "done" },
-    ] satisfies Fact[])
-      expect(engine.apply(plan, lostRun, fact)).toBe(lostRun)
-    const outside = engine.apply(plan, lostRun, { type: "outside.trusted", at: at(), id: "T9" })
-    expect(outside.history.at(-1)).toMatchObject({ unit: "T9", to: "trusted", reason: "outside" })
-    const followed = engine.apply(plan, lostRun, { type: "task.needs_human", at: at(), task: "T1.1", reason: "quota" })
-    expect(followed.run).toMatchObject({ state: "needs_human", reason: "T1.1: quota" })
-    expect(followed.history.at(-1)).toMatchObject({ unit: "run", from: "lost", to: "needs_human" })
-  })
+  it.live("RM14 a cancel and a wall-clock stop finish the unfinished units and end the run", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const going = foldOf(notes, [f.runStarted(), ...trustLeaf(notes, f, "T1.1"), f.started("T1.2")])
+      const cancelled = engine.view(engine.apply(notes, going, f.cancelled("user stop")))
+      expect(cancelled.run).toMatchObject({ state: "cancelled", reason: "user stop" })
+      expect(cancelled.tasks["T1.1"]?.state).toBe("trusted")
+      expect(cancelled.tasks["T1.2"]?.state).toBe("cancelled")
+      const clocked = engine.view(
+        engine.apply(notes, going, f.ended("failed", "wall clock: the run took over 120 min")),
+      )
+      expect(clocked.run).toMatchObject({ state: "failed", reason: "wall clock: the run took over 120 min" })
+      expect(clocked.scenarios["S2"]?.state).toBe("cancelled")
+    }),
+  )
+
+  it.live("RM27 AC 4 outranks the spine: a stop after a death ends in the dead task's state", () =>
+    Effect.gen(function* () {
+      const cascade = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = foldOf(cascade, [
+        f.runStarted(),
+        ...exhaustLeaf(f, "T1.1", "T1.1.c1", 1),
+        f.started("T1.3"),
+        f.cancelled("user stop"),
+      ])
+      expect(engine.view(snapshot).run).toMatchObject({
+        state: "budget_exhausted",
+        reason: "T1.1 budget exhausted\nT1 blocked by T1.1\nT1.2 blocked by T1.1\nuser stop",
+      })
+      expect(engine.view(snapshot).tasks["T1.3"]?.state).toBe("cancelled")
+    }),
+  )
 })
 
 describe("the base of an unfinished run", () => {
-  test("is the branch its run.started recorded, until the run ends", () => {
-    const started: Fact[] = [{ type: "run.started", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, started)).toEqual(Option.some("dev"))
-    const resumed: Fact[] = [...started, { type: "run.resumed", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, resumed)).toEqual(Option.some("dev"))
-    const cancelled: Fact[] = [...started, { type: "run.cancelled", at: at(), reason: "stop" }]
-    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, cancelled)).toEqual(Option.none())
+  test("B1 ported: is the branch its run.started recorded, until the run ends", () => {
+    const begun: Fact[] = [{ type: "run.started", at: at(), base: "dev" }]
+    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, begun)).toEqual(Option.some("dev"))
+    const resumed: Fact[] = [...begun, { type: "run.resumed", at: at(), base: "dev" }]
+    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, resumed)).toEqual(Option.some("dev"))
+    const cancelled: Fact[] = [...begun, { type: "run.cancelled", at: at(), reason: "stop" }]
+    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, cancelled)).toEqual(Option.none())
   })
 
-  test("is unknown for a run stored before the base was recorded", () => {
-    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, [{ type: "run.started", at: at() }])).toEqual(
+  test("B2 ported: is unknown for a run stored before the base was recorded", () => {
+    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, [{ type: "run.started", at: at() }])).toEqual(
       Option.none(),
     )
   })
