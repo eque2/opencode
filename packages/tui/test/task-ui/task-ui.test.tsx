@@ -45,12 +45,7 @@ const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 const none: Sessions = { children: () => () => [], activity: () => () => [], all: () => () => [] }
 
 const view = (sessions: Sessions = none, input: Status = status, design = 1) =>
-  createRoot(() => ({
-    theme: () => theme,
-    sessions,
-    leader: "ctrl+x",
-    view: createView({ status: () => input, now: () => 0, design }),
-  }))
+  createRoot(() => ({ theme: () => theme, sessions, leader: "ctrl+x", view: createView({ status: () => input, now: () => 0, design }) }))
 
 // The first line of a captured frame that holds `text`, without the frame's padding.
 const lineWith = (captured: string, text: string) =>
@@ -86,19 +81,9 @@ test("orders the tasks as a tree and finds each task's own obligations", () => {
     "T1.5:1:true",
   ])
   expect(obligationsOf(status, "T1").map((item) => item.id)).toEqual(["T1.e1"])
-  expect(obligationsOf(status, "T1.4").map((item) => item.local)).toEqual([
-    "c1",
-    "c2",
-    "c3",
-    "c4",
-    "c5",
-    "c6",
-    "c7",
-    "c8",
-    "f1",
-    "f2",
-    "p1",
-  ])
+  expect(obligationsOf(status, "T1.4").map((item) => item.local)).toEqual(
+    ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "f1", "f2", "p1"],
+  )
   expect(counts(status)).toEqual({ total: 6, trusted: 3, active: 0, stopped: 1 })
   expect(focus(rows(status))).toBe("T1.4")
 })
@@ -147,14 +132,7 @@ test("turns harness tool calls into peek lines", () => {
     state: { status: "completed", input, title, output: "", metadata: {}, time: { start: 0, end: 0 } },
   })
   expect(
-    lines(
-      tool("verdict", {
-        verdicts: [
-          { id: "T1.1.c1", verdict: "trusted" },
-          { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
-        ],
-      }),
-    ),
+    lines(tool("verdict", { verdicts: [{ id: "T1.1.c1", verdict: "trusted" }, { id: "T1.1.c2", verdict: "rejected", reason: "weak" }] })),
   ).toEqual([
     { glyph: "✓", tone: "good", text: "T1.1.c1 trusted" },
     { glyph: "✗", tone: "bad", text: "T1.1.c2 rejected — weak" },
@@ -272,11 +250,7 @@ test("Tab in the watch view moves to the next task in work, and does nothing wit
   expect(Option.isNone(nextRunning(one, "T1.4", 1))).toBe(true)
   expect(Option.isNone(nextRunning(rows(status), "T1.4", 1))).toBe(true)
   createRoot((dispose) => {
-    const state = createView({
-      status: () => live({ "T1.2": "verifying", "T1.4": "building" }),
-      now: () => 0,
-      design: 1,
-    })
+    const state = createView({ status: () => live({ "T1.2": "verifying", "T1.4": "building" }), now: () => 0, design: 1 })
     expect(state.selected()).toBe("T1.2")
     state.nextRunning()
     expect(state.selected()).toBe("T1.4")
@@ -305,12 +279,7 @@ test("the TUI reads the proof log where the harness writes it", () => {
 })
 
 test("the watch view shows a building task's latest builder, framed by the band", () => {
-  const watch = chooseWatch({
-    status: live({ "T1.4": "building" }),
-    task: "T1.4",
-    children: builders,
-    loaded: everyLoaded,
-  })
+  const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T1.4", children: builders, loaded: everyLoaded })
   expect(watch.session).toBe("b2")
   expect(watch.proofs).toBe("")
   expect(bandText(watch)).toBe("◆ In the Flow watching T1.4 builder · attempt 3 · watch only")
@@ -330,22 +299,12 @@ test("the watch view waits for a builder session the host cannot show yet", () =
 })
 
 test("a selection that is not in the run watches the first task in work", () => {
-  const watch = chooseWatch({
-    status: live({ "T1.4": "building" }),
-    task: "T9",
-    children: builders,
-    loaded: everyLoaded,
-  })
+  const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T9", children: builders, loaded: everyLoaded })
   expect(bandText(watch)).toBe("◆ In the Flow watching T1.4 builder · attempt 3 · watch only")
 })
 
 test("the watch view shows a proving task's proofs over its last builder", () => {
-  const watch = chooseWatch({
-    status: live({ "T1.4": "proving" }),
-    task: "T1.4",
-    children: builders,
-    loaded: everyLoaded,
-  })
+  const watch = chooseWatch({ status: live({ "T1.4": "proving" }), task: "T1.4", children: builders, loaded: everyLoaded })
   expect(watch.proofs).toBe("T1.4")
   expect(watch.session).toBe("b2")
   expect(bandText(watch)).toBe("◆ In the Flow watching T1.4 proofs · attempt 3 · watch only")
@@ -395,17 +354,10 @@ test("a watched task out of work keeps its last session on screen until Tab move
 
 test("the band and the note say what is watched, that it is watch only, and how to stop the run", async () => {
   const theme = view().theme
-  const watch = chooseWatch({
-    status: live({ "T1.4": "building" }),
-    task: "T1.4",
-    children: builders,
-    loaded: everyLoaded,
-  })
+  const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T1.4", children: builders, loaded: everyLoaded })
   const band = await frame(() => <WatchBand theme={theme} watch={watch} width={120} live={true} />, 120, 3)
   expect(band).toContain("◆ In the Flow watching T1.4 builder · attempt 3 · watch only")
-  expect(band).toContain(
-    "watch only: you type to the main session · esc twice stops the run · the same /task starts it",
-  )
+  expect(band).toContain("watch only: you type to the main session · esc twice stops the run · the same /task starts it")
   // Once the run is not live, `esc` no longer stops anything, so the note does not offer it.
   const ended = await frame(() => <WatchBand theme={theme} watch={watch} width={120} live={false} />, 120, 3)
   expect(lineWith(ended, "watch only:")).toBe("watch only: you type to the main session")
