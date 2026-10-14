@@ -82,26 +82,37 @@ describe("TaskEngineXState", () => {
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const f = facts()
-      const stored: ReadonlyArray<Fact> = [
+      // Two old engine slices, stored before `run.started` had a path. Each fact meets the run while it is still
+      // active, so each one must move it. The first slice has no dead task, so its stored `run.ended { state: "done" }`
+      // stops the run with its own state. The second kills two tasks, then is cancelled: the task that died first
+      // decides the outcome (SD-18).
+      const ended: ReadonlyArray<Fact> = [
         f.runStarted(),
         f.runResumed(),
         f.outside("T9"),
         ...trustLeaf(plan, f, "T1.1"),
+        f.scenarioProved("S2", "passed"),
+        f.scenarioVerified(trust("S2")),
         f.started("T1.2"),
         f.stalled("T1.2", "no stream for 120 s"),
         f.repeated("T1.2", "read src/bump.ts 5 times"),
         f.ready("T1.2"),
         f.proved("T1.2", [fail("T1.2.c1", "red")]),
-        f.needsHuman("T1.2", "spend cap: $5.00 reached"),
         f.stale("T1.1.c1"),
         f.proved("T1.1", [fail("T1.1.c1", "red")]),
-        f.failed("T1.1", "the merge failed"),
-        f.scenarioProved("S2", "passed"),
-        f.scenarioVerified(trust("S2")),
         f.ended("done"),
       ]
-      // Every member of the stored-fact schema is here, so each decodes and folds.
-      const types: ReadonlyArray<string> = [...new Set(stored.map((fact) => fact.type))]
+      const cancelled: ReadonlyArray<Fact> = [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        f.started("T1.3"),
+        f.failed("T1.3", "the merge failed"),
+        f.started("T1.2"),
+        f.needsHuman("T1.2", "spend cap: $5.00 reached"),
+        f.cancelled("user stop"),
+      ]
+      // Every member of the stored-fact schema is in one of the two slices, so each decodes and folds.
+      const types: ReadonlyArray<string> = [...new Set([...ended, ...cancelled].map((fact) => fact.type))]
       expect(types.toSorted()).toEqual(
         [
           "run.started",
@@ -118,14 +129,35 @@ describe("TaskEngineXState", () => {
           "obligation.stale",
           "scenario.proved",
           "scenario.verified",
+          "run.cancelled",
           "run.ended",
         ].toSorted(),
       )
-      for (const fact of stored) expect(Schema.decodeUnknownSync(TaskEvents.FactSchema)(fact)).toEqual(fact)
-      const snapshot = fold(plan, stored)
-      expect(snapshot.status).toBe("done")
-      expect(engine.view(snapshot).run.state).toBe("needs_human")
-      expect(engine.ended(snapshot)).toBe(true)
+      expect(types.length).toBe(TaskEvents.FactSchema.members.length)
+      for (const fact of [...ended, ...cancelled]) {
+        expect(Schema.decodeUnknownSync(TaskEvents.FactSchema)(fact)).toEqual(fact)
+        expect("path" in fact).toBe(false)
+      }
+
+      const each = (slice: ReadonlyArray<Fact>) => {
+        let snapshot = engine.initial(plan)
+        for (const fact of slice) {
+          expect({ fact: fact.type, status: snapshot.status }).toEqual({ fact: fact.type, status: "active" })
+          const next = engine.apply(plan, snapshot, fact)
+          expect({ fact: fact.type, moved: next !== snapshot }).toEqual({ fact: fact.type, moved: true })
+          snapshot = next
+        }
+        return snapshot
+      }
+      const stopped = each(ended)
+      expect(stopped.status).toBe("done")
+      expect(engine.view(stopped).run.state).toBe("done")
+      expect(engine.ended(stopped)).toBe(true)
+
+      const stop = each(cancelled)
+      expect(stop.status).toBe("done")
+      expect(engine.view(stop).run.state).toBe("failed")
+      expect(engine.view(stop).tasks["T1.2"]?.state).toBe("needs_human")
     }),
   )
 
