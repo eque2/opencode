@@ -7,6 +7,7 @@ import { TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
 import {
   type Facts,
+  exhaustLeaf,
   facts,
   fail,
   first,
@@ -754,6 +755,170 @@ describe("the outcome region (AD-4)", () => {
         node.id === "run/running" && node.on !== undefined ? { ...node, on: { ...node.on, "run.settled": [] } } : node,
       )
       expect(() => TaskMachine.fromConfig(plan, gap)).toThrow("totality: run running has no settle row for T1 trusted")
+    }),
+  )
+})
+
+describe("history, causes, times and spans (AD-5)", () => {
+  const entries = (snapshot: ReturnType<typeof first>, unit: string) =>
+    snapshot.context.log.filter((entry) => entry.unit === unit).map(({ from, to, reason }) => ({ from, to, reason }))
+
+  it.live("RM7 appends one entry per move with status names, and the blocked entries name their cause", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const snapshot = fold(plan, observed(plan))
+      expect(entries(snapshot, "T1.5")).toEqual([
+        { from: "waiting", to: "blocked", reason: "blocked by T1.4: budget exhausted" },
+      ])
+      expect(entries(snapshot, "T1")).toEqual([{ from: "waiting", to: "blocked", reason: "blocked by T1.4: budget exhausted" }])
+      expect(entries(snapshot, "T1.4").map((entry) => `${entry.from}>${entry.to}`)).toEqual([
+        "waiting>building",
+        "building>proving",
+        "proving>building",
+        "building>proving",
+        "proving>building",
+        "building>proving",
+        "proving>budget_exhausted",
+      ])
+      expect(entries(snapshot, "T1.1.c1")).toEqual([{ from: "pending", to: "trusted", reason: undefined }])
+    }),
+  )
+
+  it.live("logs no toggle and no judging step, but the primary move and the targetless rows", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const started = fold(plan, [f.runStarted()])
+      // The first macrostep made T1.1 and T1.2 ready: no entry for them, and none for the initial macrostep.
+      expect(started.context.log.map((entry) => entry.unit)).toEqual(["run"])
+      const trusted = fold(plan, trustLeaf(plan, f, "T1.1"), started)
+      // T1.1 trusted makes T1.3 ready and S2 and S7 ready: the toggles add nothing.
+      expect(entries(trusted, "T1.3")).toEqual([])
+      expect(entries(trusted, "S2")).toEqual([])
+      expect(entries(trusted, "T1.1").map((entry) => `${entry.from}>${entry.to}`)).toEqual([
+        "waiting>building",
+        "building>proving",
+        "proving>verifying",
+        "verifying>trusted",
+      ])
+      const stalled = fold(plan, [f.started("T1.2"), f.stalled("T1.2", "no stream for 120 s")], trusted)
+      expect(entries(stalled, "T1.2").at(-1)).toEqual({ from: "building", to: "building", reason: "no stream for 120 s" })
+      const repeated = step(plan, stalled, f.repeated("T1.2", "read src/bump.ts 5 times"))
+      expect(entries(repeated, "T1.2").at(-1)).toEqual({
+        from: "building",
+        to: "building",
+        reason: "read src/bump.ts 5 times",
+      })
+      expect(repeated.context.units["T1.2"]?.attempts).toBe(2)
+    }),
+  )
+
+  it.live("stamps each entry with its fact's time, or the last entry's for a raised event", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = fold(plan, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.started("T1.3"),
+        f.ready("T1.1"),
+        f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]),
+        f.cancelled("user stop"),
+      ])
+      const times = snapshot.context.log.map((entry) => entry.at)
+      expect(times).toEqual(times.toSorted((a, b) => a - b))
+      const last = snapshot.context.log.at(-1)
+      expect(last).toEqual({
+        at: 6,
+        unit: "run",
+        from: "running",
+        to: "budget_exhausted",
+        reason: ["T1.1 budget exhausted", "T1 blocked by T1.1", "T1.2 blocked by T1.1", "user stop"].join("\n"),
+      })
+    }),
+  )
+
+  it.live("RM25 times and spans of the cascade plan, with a stale reopen restarting the clock", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const f = facts()
+      const snapshot = fold(plan, [
+        f.runStarted(), // 1
+        ...trustLeaf(plan, f, "T1.3"), // 2..5
+        f.stale("T1.3.c1"), // 6
+        f.started("T1.1"), // 7
+        f.ready("T1.1"), // 8
+        f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]), // 9
+      ])
+      const units = snapshot.context.units
+      expect(units["T1.1"]?.startedAt).toBe(7)
+      expect(units["T1.1"]?.endedAt).toBe(9)
+      expect(units["T1.1"]?.spans).toEqual([
+        { state: "waiting", from: 1, to: 7 },
+        { state: "building", from: 7, to: 8 },
+        { state: "proving", from: 8, to: 9 },
+        { state: "budget_exhausted", from: 9, to: 9 },
+      ])
+      expect(units["T1.2"]?.startedAt).toBeUndefined()
+      expect(units["T1.2"]?.endedAt).toBe(9)
+      expect(units["T1.2"]?.spans).toEqual([
+        { state: "waiting", from: 1, to: 9 },
+        { state: "blocked", from: 9, to: 9 },
+      ])
+      // T1.3 was trusted at 5, then reopened at 6: a new clock, and no end.
+      expect(units["T1.3"]?.startedAt).toBe(6)
+      expect(units["T1.3"]?.endedAt).toBeUndefined()
+      expect(units["T1.3"]?.spans?.map((span) => span.state)).toEqual([
+        "waiting",
+        "building",
+        "proving",
+        "verifying",
+        "trusted",
+        "proving",
+      ])
+      expect(units.run?.startedAt).toBe(1)
+      expect(units.run?.endedAt).toBeUndefined()
+    }),
+  )
+
+  it.live("shows a retry as building, proving and verifying spans again", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const snapshot = fold(plan, [f.runStarted(), ...exhaustLeaf(f, "T1.2", "T1.2.c1", 2)])
+      expect(snapshot.context.units["T1.2"]?.spans?.map((span) => span.state)).toEqual([
+        "waiting",
+        "building",
+        "proving",
+        "building",
+        "proving",
+      ])
+      expect(snapshot.context.units["T1.2"]?.spans?.at(-1)?.to).toBeUndefined()
+    }),
+  )
+
+  it.live("SD-14 ends the run's history with running>done or running>cancelled, and sets its end time", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-scenarios.spec")
+      const f = facts()
+      const done = fold(plan, [
+        f.runStarted(),
+        ...trustLeaf(plan, f, "T1.1"),
+        f.proved("T1", []),
+        f.verified("T1", [trust("T1.e1")]),
+        f.scenarioProved("S1", "passed"),
+        f.scenarioVerified(trust("S1")),
+      ])
+      expect(entries(done, "run").map((entry) => `${entry.from}>${entry.to}`)).toEqual(["running>running", "running>done"])
+      expect(done.context.units.run?.endedAt).toBe(done.context.log.at(-1)?.at)
+      expect(entries(done, "S1").map((entry) => `${entry.from}>${entry.to}`)).toEqual(["waiting>pending", "pending>trusted"])
+      const cancelled = fold(plan, [f.runStarted(), f.runResumed(), f.cancelled("user stop")])
+      expect(entries(cancelled, "run")).toEqual([
+        { from: "running", to: "running", reason: undefined },
+        { from: "running", to: "running", reason: "resumed" },
+        { from: "running", to: "running", reason: "user stop" },
+        { from: "running", to: "cancelled", reason: "user stop" },
+      ])
     }),
   )
 })
