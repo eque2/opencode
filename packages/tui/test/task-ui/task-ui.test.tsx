@@ -15,6 +15,7 @@ import { createTuiPluginApi } from "../fixture/tui-plugin"
 import { json } from "../fixture/tui-sdk"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
+import phase1 from "./fixture-phase1.json"
 import { Peek, lines, type Sessions } from "../../src/task-ui/peek"
 import { counts, createView, focus, obligationsOf, parse, rows, type Status } from "../../src/task-ui/store"
 import { LedgerView } from "../../src/task-ui/designs/1-ledger"
@@ -156,6 +157,22 @@ test("every design shows the stopped run", async () => {
   expect(await frame(() => <GanttView {...props} width={110} />)).toContain("budget exhausted · attempt 3")
   expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attempt 3")
   expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ In the Flow · T1.4 details · read-only")
+})
+
+// RM26: the phase-1 harness writes the status of the observed run (T1.4 budget exhausted, T1.5 and T1 blocked by it);
+// the unchanged task-ui decodes the new state as an open string and draws it in the fallback column.
+test("RM26 the Board shows the phase-1 blocked tasks in STOPPED with their cause", async () => {
+  const input = Option.getOrThrow(parse(JSON.stringify(phase1)))
+  const board = await frame(() => <BoardView {...view(none, input)} width={110} />, 110, 40)
+  expect(board).toContain("WAITING 0")
+  expect(board).toContain("STOPPED 3")
+  // Both blocked cards: the fallback glyph, the state's own label, and the reason across the card's lines.
+  expect(board).toContain("• T1.5")
+  expect(board).toMatch(/• T1 /)
+  expect(board.match(/│ blocked {2,}│/g)).toHaveLength(2)
+  expect(board.match(/│ blocked by {2,}│/g)).toHaveLength(2)
+  expect(board.match(/│ T1\.4: budget {2,}│/g)).toHaveLength(2)
+  expect(board.match(/│ exhausted {2,}│/g)).toHaveLength(2)
 })
 
 test("the peek shows the builder, the failed proof first, and the verifier", async () => {
