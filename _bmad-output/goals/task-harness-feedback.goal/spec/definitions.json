@@ -1,7 +1,7 @@
 {
   "$schema": "schemas/actor-definitions@1",
   "specSlug": "task-harness-feedback",
-  "createdAt": "2026-10-14T10:10:54.341334+00:00",
+  "createdAt": "2026-10-14T11:02:31.691424+00:00",
   "parentTasks": [
     {
       "id": "T1",
@@ -68,7 +68,8 @@
       ],
       "supportsScenarios": [
         "RM1",
-        "RM2"
+        "RM2",
+        "VF22"
       ],
       "tests": [
         {
@@ -92,7 +93,8 @@
         "RM15",
         "RM16",
         "RM17",
-        "RM28"
+        "RM28",
+        "RM29"
       ],
       "tests": [
         {
@@ -159,8 +161,9 @@
         "RM1",
         "RM3",
         "RM6",
-        "RM8",
-        "RM28"
+        "RM28",
+        "RM8a",
+        "RM8c"
       ],
       "tests": [
         {
@@ -180,7 +183,6 @@
       "supportsScenarios": [
         "RM4",
         "RM7",
-        "RM8",
         "RM9",
         "RM10",
         "RM11",
@@ -191,7 +193,9 @@
         "RM16",
         "RM17",
         "RM25",
-        "RM27"
+        "RM27",
+        "RM8a",
+        "RM8c"
       ],
       "tests": [
         {
@@ -251,7 +255,8 @@
         "RM19",
         "RM20",
         "RM21",
-        "RM22"
+        "RM22",
+        "RM29"
       ],
       "tests": [
         {
@@ -271,7 +276,10 @@
       "supportsScenarios": [
         "RM10",
         "RM17",
-        "RM18"
+        "RM18",
+        "RM8a",
+        "RM8b",
+        "RM8c"
       ],
       "tests": [
         {
@@ -411,7 +419,8 @@
       "supportsScenarios": [
         "SV7",
         "SV16",
-        "SV21"
+        "SV21",
+        "SV26"
       ],
       "tests": [
         {
@@ -495,7 +504,8 @@
         "SV13",
         "SV22",
         "SV23",
-        "SV24"
+        "SV24",
+        "SV27"
       ],
       "tests": [
         {
@@ -515,7 +525,8 @@
       "supportsScenarios": [
         "SV2",
         "SV6",
-        "SV9"
+        "SV9",
+        "SV27"
       ],
       "tests": [
         {
@@ -541,7 +552,10 @@
         "SV9",
         "SV20",
         "SV24",
-        "SV25"
+        "SV25",
+        "SV26",
+        "SV27",
+        "UI24"
       ],
       "tests": [
         {
@@ -565,7 +579,13 @@
         "SV13",
         "SV20",
         "SV21",
-        "SV25"
+        "SV25",
+        "RM8a",
+        "RM8b",
+        "RM8c",
+        "SV26",
+        "SV27",
+        "UI24"
       ],
       "tests": [
         {
@@ -666,7 +686,9 @@
       "supportsScenarios": [
         "VF1",
         "VF2",
-        "VF19"
+        "VF19",
+        "VF22",
+        "VF23"
       ],
       "tests": [
         {
@@ -710,7 +732,8 @@
         "VF14",
         "VF19",
         "VF20",
-        "VF21"
+        "VF21",
+        "VF24"
       ],
       "tests": [
         {
@@ -853,7 +876,8 @@
         "T3.7"
       ],
       "supportsScenarios": [
-        "DOC1"
+        "DOC1",
+        "VF23"
       ],
       "tests": [
         {
@@ -893,7 +917,8 @@
         "UI1",
         "UI11",
         "UI18",
-        "SV17"
+        "SV17",
+        "UI25"
       ],
       "tests": [
         {
@@ -1028,7 +1053,8 @@
         "UI18",
         "UI19",
         "UI21",
-        "UI5"
+        "UI5",
+        "UI25"
       ],
       "tests": [
         {
@@ -1089,7 +1115,8 @@
         "UI7",
         "UI8",
         "UI20",
-        "UI23"
+        "UI23",
+        "UI24"
       ],
       "tests": [
         {
@@ -1170,687 +1197,757 @@
       "id": "DOC1",
       "description": "The blend format README answers questions 1, 3 and 4 in a Validation section",
       "testFile": "packages/opencode/test/task/verify-spec-DOC1.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: DOC1 The blend format README answers questions 1, 3 and 4 in a Validation section\n    Given the blend format README\n    When a reader opens its Validation section\n    Then it says what runs before any work starts and how a refusal appears\n    And it lists every rule R1 to R13 with the place that enforces it\n    And it says how the run machine holds the order and which graph faults are refused\n    And it names the six fault folders and the two live-check folders\n\n  # ---------------------------------------------------------------------------\n  # Phase 1 \u2014 one run machine (AC 2-6)\n  # ---------------------------------------------------------------------------\n\n  @phase1 @core"
     },
     {
       "id": "RM1",
       "description": "One machine is generated for each plan with a parallel region for every unit",
       "testFile": "packages/opencode/test/task/verify-spec-RM1.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM1 One machine is generated for each plan with a parallel region for every unit\n    Given the release-notes plan\n    When the engine generates the run machine for it\n    Then its root is parallel with the regions active and outcome\n    And active holds one region for each task in plan order, then each scenario, then each outside precondition\n    And each task region is parallel with one evidence sub-region for each obligation and a work sub-region\n    And every unit state has an explicit id, a meta record of unit, kind and state, and only closed-vocabulary tags\n\n  @phase1 @negative"
     },
     {
       "id": "RM2",
       "description": "The generator refuses a machine it cannot fold safely",
       "testFile": "packages/opencode/test/task/verify-spec-RM2.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM2 The generator refuses a machine it cannot fold safely\n    Given a plan whose task ids give two equal explicit state ids\n    When the engine generates the run machine\n    Then the generation dies naming the repeated id\n    And every generated machine caps eventless iterations at 1000\n    And no generated machine for any plan has a delayed transition, an invoked actor, a spawned actor or a custom action\n\n  @phase1 @core"
     },
     {
       "id": "RM3",
       "description": "The per-unit machines and the fold code that joined them are gone",
       "testFile": "packages/opencode/test/task/verify-spec-RM3.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM3 The per-unit machines and the fold code that joined them are gone\n    Given the engine module after the change\n    When its exports and definitions are inspected\n    Then no obligation, task, scenario or run machine exists beside the generated machine\n    And no stepTask, stepRun, cancel, staleAlone or follows code exists\n    And XStateEngine keeps its name and its initial and apply members over an opaque snapshot\n\n  @phase1 @audit"
     },
     {
       "id": "RM4",
       "description": "Every old engine test is ported, re-baselined or retired with its reason (owner ruling 2)",
       "testFile": "packages/opencode/test/task/verify-spec-RM4.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM4 Every old engine test is ported, re-baselined or retired with its reason (owner ruling 2)\n    Given the engine test file after the rewrite\n    When its header list is read\n    Then every test of the old file appears once as ported, re-baselined or retired\n    And each re-baselined test names the decision or owner ruling that changed it\n    And each retired test names the guard that replaces it\n    And every listed test runs as a fact sequence through initial, apply and the selectors\n\n  @phase1 @integrity"
     },
     {
       "id": "RM5",
       "description": "A fold, a live actor and a resumed actor reach the same snapshot",
       "testFile": "packages/opencode/test/task/verify-spec-RM5.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM5 A fold, a live actor and a resumed actor reach the same snapshot\n    Given 40 seeded sequences of 100 random facts over the release-notes plan, including facts after the run ended\n    When each sequence is folded with apply and also sent to a live actor of the same machine\n    And a prefix is folded, restored into an actor, and sent the rest of the sequence\n    Then the three snapshots are equal for every sequence\n    And the log grows exactly when the state or another context field changes\n\n  @phase1 @integrity"
     },
     {
       "id": "RM6",
       "description": "Apply is pure and guards its input",
       "testFile": "packages/opencode/test/task/verify-spec-RM6.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM6 Apply is pure and guards its input\n    Given a snapshot of a running release-notes run\n    When a fact that matches no row is applied\n    Then the identical snapshot is returned and the input is not mutated\n    And a fact applied to a snapshot whose run has ended returns that snapshot unchanged\n    And a snapshot made by another machine makes apply die\n\n  @phase1 @core @critical"
     },
     {
       "id": "RM7",
       "description": "The observed stuck run blocks its dependants in the same fold step",
       "testFile": "packages/opencode/test/task/verify-spec-RM7.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM7 The observed stuck run blocks its dependants in the same fold step\n    Given the release-notes plan and the observed facts up to the second failing proof of T1.4\n    When the third failing proof of T1.4 is applied\n    Then T1.4 is budget exhausted\n    And T1.5 and T1 are blocked in the snapshot that apply returns\n    And each of T1.5 and T1 has a history entry whose reason is \"blocked by T1.4: budget exhausted\"\n    And T1.5 and T1 carry the blocked cause T1.4 in state budget_exhausted\n\n  @phase1 @compat"
     },
     {
-      "id": "RM8",
-      "description": "A run stored before the change folds and resumes with no new fact type",
-      "testFile": "packages/opencode/test/task/verify-spec-RM8.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM8 A run stored before the change folds and resumes with no new fact type\n    Given a stored slice written by the old engine, with run.started without a path and run.ended in state done\n    When the slice is folded through the new machine and the run resumes\n    Then every stored fact decodes and folds\n    And the stored run.ended folds as a stop with its own state\n    And the resume records only run.resumed, a fact type that already exists\n\n  @phase1 @core"
+      "id": "RM8a",
+      "description": "An old slice that ended folds with its stop's state, and /task starts a new slice",
+      "testFile": "packages/opencode/test/task/verify-spec-RM8a.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM8a An old slice that ended folds with its stop's state, and /task starts a new slice\n    Given a stored slice written by the old engine, with run.started without a path and run.ended in state done\n    When the slice is folded through the new machine and /task runs on the whole spec\n    Then every stored fact decodes and folds, and the stored run.ended folds as a stop with its own state\n    And /task records run.started for a new slice, because the old slice ended\n\n  @phase1 @compat"
+    },
+    {
+      "id": "RM8b",
+      "description": "An old slice with no end and no path resumes on /task of the whole spec",
+      "testFile": "packages/opencode/test/task/verify-spec-RM8b.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM8b An old slice with no end and no path resumes on /task of the whole spec\n    Given a stored slice written by the old engine, with run.started without a path, no run.ended, and a fold that is not done\n    When /task runs on the whole spec, also when the path is written ./<spec>/\n    Then the slice counts as a whole-spec slice and the run resumes\n    And the resume records only run.resumed with the path, a fact type that already exists\n\n  @phase1 @compat"
+    },
+    {
+      "id": "RM8c",
+      "description": "The observed stuck slice folds to its end and is never resumed",
+      "testFile": "packages/opencode/test/task/verify-spec-RM8c.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM8c The observed stuck slice folds to its end and is never resumed\n    Given the observed facts stored with no run.ended\n    When the slice is folded through the new machine\n    Then the fold is done with the outcome budget exhausted, and T1.5 and T1 are blocked\n    And /task on the same spec starts a new slice and never resumes a done fold\n\n  @phase1 @core"
     },
     {
       "id": "RM9",
       "description": "The cascade is transitive and names the first dead dependency",
       "testFile": "packages/opencode/test/task/verify-spec-RM9.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM9 The cascade is transitive and names the first dead dependency\n    Given a plan where T3 is after T2, T2 is after T1, and scenario S1 needs T3\n    When T1 fails\n    Then T2 is blocked by T1 and T3 is blocked by T2 in the same fold step\n    And S1 is blocked by T3\n    And a task with two dead dependencies names the first one in dependency order\n\n  @phase1 @core"
     },
     {
       "id": "RM10",
       "description": "Independent work runs to its end before the run settles",
       "testFile": "packages/opencode/test/task/verify-spec-RM10.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM10 Independent work runs to its end before the run settles\n    Given a plan with two independent leaves T1.1 and T1.2, both building\n    When T1.1 is budget exhausted\n    Then the run keeps running while T1.2 builds, proves and is verified\n    And the run settles only when T1.2 reaches a final state\n    And the run outcome is then budget exhausted\n\n  @phase1 @core @negative"
     },
     {
       "id": "RM11",
       "description": "The outcome is the state of the task that died first, and the reason lists every dead and blocked task",
       "testFile": "packages/opencode/test/task/verify-spec-RM11.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM11 The outcome is the state of the task that died first, and the reason lists every dead and blocked task\n    Given a run where T1.1 needs a human first, T1.2 fails later, and T1.3 is blocked by T1.1\n    When every region is final\n    Then the run outcome is needs human\n    And the run reason has one line for T1.1, one line for T1.2, then one line \"T1.3 blocked by T1.1\"\n\n  @phase1 @core @negative"
     },
     {
       "id": "RM12",
       "description": "A rejected runnable scenario fails a run whose tasks are all trusted (owner ruling 1)",
       "testFile": "packages/opencode/test/task/verify-spec-RM12.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM12 A rejected runnable scenario fails a run whose tasks are all trusted (owner ruling 1)\n    Given a run where every task is trusted\n    When a runnable scenario is rejected by its verifier\n    Then the run outcome is failed\n    And the run reason has the line \"acceptance not proved: <scenario id> rejected\"\n\n  @phase1 @core"
     },
     {
       "id": "RM13",
       "description": "A scenario that waits only on an outside precondition is parked and does not fail the run (owner ruling 1)",
       "testFile": "packages/opencode/test/task/verify-spec-RM13.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM13 A scenario that waits only on an outside precondition is parked and does not fail the run (owner ruling 1)\n    Given the release-notes plan with T9 trusted and T8 untrusted\n    When every task is trusted and every runnable scenario is trusted\n    Then S13 is parked and shows as waiting\n    And the run outcome is done with the reason line \"not run: S13 waits on T8\"\n    And when T8 is trusted before the run settles, S13 moves from parked to ready\n\n  @phase1 @core @edge"
     },
     {
       "id": "RM14",
       "description": "A cancel moves every unfinished unit to cancelled and keeps the finished ones (default 4)",
       "testFile": "packages/opencode/test/task/verify-spec-RM14.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM14 A cancel moves every unfinished unit to cancelled and keeps the finished ones (default 4)\n    Given a run with a trusted task, a building task, a ready task and a waiting task\n    When the run is cancelled with a reason\n    Then the building, ready and waiting tasks are cancelled with that reason\n    And the trusted task stays trusted\n    And the run outcome is cancelled with that reason\n    And a run wall-clock stop gives the run.ended state as the outcome in the same way\n\n  @phase1 @core"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM14 A cancel moves every unfinished unit to cancelled and keeps the finished ones (default 4)\n    Given a run with a trusted task, a building task, a ready task and a waiting task\n    When the run is cancelled with a reason\n    Then the building, ready and waiting tasks are cancelled with that reason\n    And the trusted task stays trusted, and every obligation keeps its state and ends with its task\n    And the run outcome is cancelled with that reason, because no task died before the stop\n    And a run wall-clock stop gives the run.ended state as the outcome in the same way\n\n  @phase1 @core"
     },
     {
       "id": "RM15",
       "description": "A task becomes ready only when every after task and every child is trusted",
       "testFile": "packages/opencode/test/task/verify-spec-RM15.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM15 A task becomes ready only when every after task and every child is trusted\n    Given the release-notes plan\n    When T1.1 is trusted and T1.2 is not\n    Then T1.3 is ready and T1.4 is waiting\n    And the parent T1 is waiting until every child is trusted\n    And when a trusted dependency goes stale, a ready dependant returns to waiting\n\n  @phase1 @core @concurrency"
     },
     {
       "id": "RM16",
       "description": "Two siblings with no order between them become ready in the same step",
       "testFile": "packages/opencode/test/task/verify-spec-RM16.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM16 Two siblings with no order between them become ready in the same step\n    Given a plan with leaves T1.1, T1.2 after T1.1, and T1.3 after T1.1\n    When the fact that makes T1.1 trusted is applied\n    Then T1.2 and T1.3 are both ready in the snapshot that apply returns\n\n  @phase1 @core @edge"
     },
     {
       "id": "RM17",
       "description": "A task waiting on an untrusted outside precondition stays waiting and moves on its trust",
       "testFile": "packages/opencode/test/task/verify-spec-RM17.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM17 A task waiting on an untrusted outside precondition stays waiting and moves on its trust\n    Given the release-notes plan with T1.1 to T1.4 trusted, every scenario whose needs are trusted also trusted, and T9 untrusted\n    When the snapshot is read\n    Then T1.5 is waiting, its waitingOn names T9, and the run is waiting, not ended\n    And when outside.trusted for T9 is applied, T1.5 becomes ready\n    And a second trust of T9 changes nothing\n\n  @phase1 @core"
     },
     {
       "id": "RM18",
       "description": "The phase-1 runner reads readiness and completion from the machine",
       "testFile": "packages/opencode/test/task/verify-spec-RM18.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM18 The phase-1 runner reads readiness and completion from the machine\n    Given the runner after phase 1\n    When a run proceeds\n    Then the runner starts a task only when the snapshot tags it ready\n    And the runner keeps no readiness check, no outside trust set and no done decision of its own\n    And the runner never records run.ended in state done\n    And the runner stops when the snapshot status is done\n\n  @phase1 @proof @ASSUMPTION:A1.a"
     },
     {
       "id": "RM19",
-      "description": "The graph walk finds no stuck state in the release-notes plan",
+      "description": "The graph walk finds no stuck state in the release-notes plan (owner ruling 4)",
       "testFile": "packages/opencode/test/task/verify-spec-RM19.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM19 The graph walk finds no stuck state in the release-notes plan\n    Given the release-notes plan and the engine's progress alphabet\n    When every state reachable with the canonical interleaving is walked within 60 seconds\n    Then no state that is not done lacks an event that changes its key\n    And every visited snapshot has status active or done\n\n  @phase1 @proof @ASSUMPTION:A1.a"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM19 The graph walk finds no stuck state in the release-notes plan (owner ruling 4)\n    Given the release-notes plan and the engine's progress alphabet\n    When every state reachable with the canonical interleaving is walked within 60 seconds\n    Then no state that is not done lacks an event that changes its key\n    And every visited snapshot has status active or done\n\n  @phase1 @proof @ASSUMPTION:A1.a"
     },
     {
       "id": "RM20",
       "description": "The graph walk finds no stuck state in the two live-check plans",
       "testFile": "packages/opencode/test/task/verify-spec-RM20.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM20 The graph walk finds no stuck state in the two live-check plans\n    Given the loaded plans of the two live-check folders, and from phase 3 the whole outside-run plan and its T1.2 subtree\n    When each plan is walked within 60 seconds\n    Then each walk finds no stuck state\n\n  @phase1 @proof @ASSUMPTION:A1.a"
     },
     {
       "id": "RM21",
       "description": "The graph walk finds the observed stuck state when the cascade rows are removed",
       "testFile": "packages/opencode/test/task/verify-spec-RM21.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM21 The graph walk finds the observed stuck state when the cascade rows are removed\n    Given a copy of the release-notes machine config without the blocked rows\n    When the copy is walked\n    Then the walk reports a stuck state with T1.1 to T1.3 trusted, T1.4 budget exhausted, and T1.5 and T1 waiting\n\n  @phase1 @proof @ASSUMPTION:A1.a"
     },
     {
       "id": "RM22",
-      "description": "The walk's reduction and key are sound",
+      "description": "The walk's reduction and key are sound (owner ruling 4)",
       "testFile": "packages/opencode/test/task/verify-spec-RM22.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM22 The walk's reduction and key are sound\n    Given a small plan\n    When the canonical walk and the full walk run with and without the blocked rows\n    Then both walks find the same set of stuck states\n    And the stale walk of the loaded example-cascade plan finds no stuck state\n    And every context path that a guard reads is part of the walk key\n\n  @phase1 @compat"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM22 The walk's reduction and key are sound (owner ruling 4)\n    Given a small plan\n    When the canonical walk and the full walk run with and without the blocked rows\n    Then both walks find the same set of stuck states\n    And the stale walk of the loaded example-cascade plan finds no stuck state\n    And every context path that a guard reads is part of the walk key\n\n  @phase1 @compat"
     },
     {
       "id": "RM23",
       "description": "The port behaves as the spine relies on",
       "testFile": "packages/opencode/test/task/verify-spec-RM23.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM23 The port behaves as the spine relies on\n    Given the pinned xstate port\n    When the 2026-10-14 probes run\n    Then a state id is split on dots, a final state inside a parallel region still takes events, and an onDone target re-enters the region\n    And a pure transition on a done snapshot still runs a microstep, and raised and done events carry no time\n    And snapshot tags are an array, an eventless loop past the iteration cap fails, and the walk limit counts edges\n\n  @phase1 @compat"
     },
     {
       "id": "RM24",
       "description": "During phase 1 the status file shows a blocked task with its cause",
       "testFile": "packages/opencode/test/task/verify-spec-RM24.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM24 During phase 1 the status file shows a blocked task with its cause\n    Given a phase-1 run that folds the observed facts\n    When the status file is written\n    Then T1.5 and T1 have the state blocked and the reason \"blocked by T1.4: budget exhausted\"\n    And the status file keeps every field it had before the change\n\n\n  @phase1 @integrity"
     },
     {
       "id": "RM25",
       "description": "Start times, end times and spans come only from machine actions",
       "testFile": "packages/opencode/test/task/verify-spec-RM25.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM25 Start times, end times and spans come only from machine actions\n    Given the loaded example-cascade plan and facts with fixed times\n    When T1.1 builds and fails its proof, and T1.3 builds and is trusted\n    Then T1.1 has its start time at task.started, its end time at the failing proof, and the spans waiting, building, proving and a zero-length budget_exhausted\n    And the blocked T1.2 has an end time and no start time\n    And a stale obligation on the trusted T1.3 clears its end time and starts its clock again\n\n  @phase1 @compat"
     },
     {
       "id": "RM26",
       "description": "The unchanged task-ui shows a phase-1 blocked task with its cause",
       "testFile": "packages/opencode/test/task/verify-spec-RM26.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: RM26 The unchanged task-ui shows a phase-1 blocked task with its cause\n    Given the phase-1 status of the observed facts\n    When the task-ui of the checkpoint renders it on the Board\n    Then T1.5 and T1 sit in STOPPED with the label blocked\n    And each card shows \"blocked by T1.4: budget exhausted\"\n\n  @phase1 @core @edge"
     },
     {
       "id": "RM27",
-      "description": "A stop outranks a dead task and cancels unfinished scenarios (default 4)",
+      "description": "A task that died before a stop gives the end state, and the stop cancels unfinished units (AC 4, default 4)",
       "testFile": "packages/opencode/test/task/verify-spec-RM27.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM27 A stop outranks a dead task and cancels unfinished scenarios (default 4)\n    Given T1.1 budget exhausted, an independent T1.2 building, and S1 waiting\n    When run.cancelled is applied with the reason \"user stop\"\n    Then the run outcome is cancelled with the reason \"user stop\"\n    And T1.2 and S1 are cancelled, and T1.1 stays budget exhausted\n\n  @phase1 @negative"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM27 A task that died before a stop gives the end state, and the stop cancels unfinished units (AC 4, default 4)\n    Given T1.1 budget exhausted, T1.4 blocked by T1.1, an independent T1.2 building, and S1 waiting\n    When run.cancelled is applied with the reason \"user stop\"\n    Then the run outcome is budget exhausted, the state of the task that died first\n    And the run reason holds the line for T1.1, then the line \"T1.4 blocked by T1.1\", then the line \"user stop\"\n    And T1.2 and S1 are cancelled, and T1.1 stays budget exhausted\n\n  @phase1 @negative"
     },
     {
       "id": "RM28",
       "description": "A machine error is a defect, never a frozen run",
       "testFile": "packages/opencode/test/task/verify-spec-RM28.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: RM28 A machine error is a defect, never a frozen run\n    Given a generated machine whose guard names a state id that does not exist, reachable only after task.started\n    When task.started is applied\n    Then apply dies with a defect that names the error\n    And apply never returns a snapshot whose status is error\n    And the generator's config scan refuses any stateIn id that names no state\n  # ---------------------------------------------------------------------------\n  # Phase 2 \u2014 live supervision as actors (AC 8-11)\n  # ---------------------------------------------------------------------------\n\n  @phase2 @core"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM28 A machine error is a defect, never a frozen run\n    Given a generated machine whose guard names a state id that does not exist, reachable only after task.started\n    When task.started is applied\n    Then apply dies with a defect that names the error\n    And apply never returns a snapshot whose status is error\n    And the generator's config scan refuses any stateIn id that names no state\n\n  @phase1 @proof"
+    },
+    {
+      "id": "RM29",
+      "description": "A gap in the generated rows fails the structural totality check before any run (owner ruling 4)",
+      "testFile": "packages/opencode/test/task/verify-spec-RM29.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: RM29 A gap in the generated rows fails the structural totality check before any run (owner ruling 4)\n    Given a copy of the release-notes machine config with the row that blocks T1.5 on T1.4 budget exhausted removed\n    When the generator's totality check scans the copy\n    Then it fails with an error that names T1.5, its waiting state and the uncovered outcome T1.4 budget exhausted\n    And the scan of every real plan passes: each non-final unit state has a row for every final outcome of what it waits on\n    And no non-final state lacks a way out except a wait on an untrusted outside or external region, and the outcome can settle once every region is final\n  # ---------------------------------------------------------------------------\n  # Phase 2 \u2014 live supervision as actors (AC 8-11)\n  # ---------------------------------------------------------------------------\n\n  @phase2 @core"
     },
     {
       "id": "SV1",
       "description": "The runner holds no hand-written lifecycle state",
       "testFile": "packages/opencode/test/task/verify-spec-SV1.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV1 The runner holds no hand-written lifecycle state\n    Given the harness source after phase 2\n    When it is inspected\n    Then it holds no polled loop, tick counter, stale cadence counter, failure map, failure limit, stopping flag, children list, worker FiberMap, judged-state list or process-wide run registry\n    And a live run is found through the actor system by its run id\n\n  @phase2 @core"
     },
     {
       "id": "SV2",
       "description": "The run supervisor starts work from the machine's tags and records every outcome as a fact",
       "testFile": "packages/opencode/test/task/verify-spec-SV2.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV2 The run supervisor starts work from the machine's tags and records every outcome as a fact\n    Given a run with a ready leaf and a verifying scenario\n    When the run supervisor reads the run actor\n    Then it spawns one task supervisor for the leaf and one scenario supervisor for the scenario\n    And each supervisor records the outcome of its phase as a fact through the Recorder\n    And a supervisor stops when its unit leaves the ready, active and verifying tags\n    And the run machine itself invokes nothing\n\n  @phase2 @core"
     },
     {
       "id": "SV3",
       "description": "A run resumes only by the same path (owner ruling 3)",
       "testFile": "packages/opencode/test/task/verify-spec-SV3.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV3 A run resumes only by the same path (owner ruling 3)\n    Given a stored slice that has not ended, started by /task with a path\n    When /task runs again with the same path\n    Then the slice is folded, run.resumed is recorded with that path, and the supervisor starts what the folded state asks for\n    And /task with a different path, or after the slice ended, starts a new slice\n\n  @phase2 @core"
     },
     {
       "id": "SV4",
       "description": "Cancelling the job records the cancel even while a stale check runs",
       "testFile": "packages/opencode/test/task/verify-spec-SV4.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV4 Cancelling the job records the cancel even while a stale check runs\n    Given a live run whose run supervisor is checking the spec under the checkout lock\n    When the background job is cancelled\n    Then run.cancelled is in the store and in the status file\n    And the run scope closes only after the run supervisor is final or stopped\n    And no session turn or proof process outlives the cancel deadline\n\n  @phase2 @ops @concurrency"
     },
     {
       "id": "SV5",
       "description": "The heartbeat, the wall clock and the stale cadence run independently",
       "testFile": "packages/opencode/test/task/verify-spec-SV5.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV5 The heartbeat, the wall clock and the stale cadence run independently\n    Given a live run whose stale check is held on the checkout lock\n    When the clock advances by 5 seconds\n    Then the status file is touched once with a newer heartbeat\n    And a touch that fails is logged and records no fact\n    And the run wall clock records run.ended in state failed when it expires\n\n  @phase2 @negative"
     },
     {
       "id": "SV6",
       "description": "Three worker failures in a row fail the unit with a harness error",
       "testFile": "packages/opencode/test/task/verify-spec-SV6.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV6 Three worker failures in a row fail the unit with a harness error\n    Given a task supervisor whose worker fails\n    When the worker fails three times in a row\n    Then the supervisor records task.failed with a reason that starts \"harness error:\"\n    And a scenario batch whose worker fails three times records its scenario fact the same way\n\n  @phase2 @integrity @concurrency"
     },
     {
       "id": "SV7",
       "description": "Facts enter only through the Recorder, in one order",
       "testFile": "packages/opencode/test/task/verify-spec-SV7.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV7 Facts enter only through the Recorder, in one order\n    Given two supervisors that record facts at the same moment\n    When the Recorder stores and folds them\n    Then the store order equals the fold order and the recorded times never decrease\n    And a record after the run is done stores nothing\n    And an interrupted record leaves either the whole fact or nothing\n\n  @phase2 @permissions"
     },
     {
       "id": "SV8",
       "description": "One run is live in a directory at a time (owner ruling 3)",
       "testFile": "packages/opencode/test/task/verify-spec-SV8.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV8 One run is live in a directory at a time (owner ruling 3)\n    Given a live run of the release-notes spec in a directory\n    When /task runs for a valid spec in the same directory\n    Then it starts nothing and answers one line that names the live run's spec and path\n    And a claim whose background job does not start is released, so the next /task is not busy\n\n  @phase2 @audit"
     },
     {
       "id": "SV9",
       "description": "Supervisors record only facts the progress alphabet allows",
       "testFile": "packages/opencode/test/task/verify-spec-SV9.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV9 Supervisors record only facts the progress alphabet allows\n    Given each unit kind in each state\n    When its supervisor records a fact\n    Then the fact is in the progress alphabet for that state, or is a stall, a nudge, a run start, a resume, a spec check, a run-level stop or a stale obligation\n\n  @phase2 @negative"
     },
     {
       "id": "SV10",
       "description": "A stalled builder stream is cancelled and prompted again in the same attempt",
       "testFile": "packages/opencode/test/task/verify-spec-SV10.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV10 A stalled builder stream is cancelled and prompted again in the same attempt\n    Given a building task whose model stream goes quiet with no tool running\n    When the stream idle time passes\n    Then the turn is cancelled and task.stalled is recorded\n    And the builder is prompted again with the continue message in the same attempt\n    And no nudge and no attempt is spent\n\n  @phase2 @negative"
     },
     {
       "id": "SV11",
       "description": "A spend cap stops the task for a human before any nudge",
       "testFile": "packages/opencode/test/task/verify-spec-SV11.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV11 A spend cap stops the task for a human before any nudge\n    Given a building task\n    When a retry status or the turn's error names the spend cap\n    Then task.needs_human is recorded with a reason that starts \"spend cap:\"\n    And no nudge is recorded\n\n  @phase2 @core"
     },
     {
       "id": "SV12",
       "description": "An idle builder is nudged twice, then the proof decides",
       "testFile": "packages/opencode/test/task/verify-spec-SV12.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV12 An idle builder is nudged twice, then the proof decides\n    Given a building task whose turn ends idle without task_ready\n    When the turn ends idle a first and a second time\n    Then task.nudged is recorded with nudge 1, then with nudge 2\n    And after the last nudge the proof runs on the builder's head, or the task records \"the builder ended without task_ready\"\n\n  @phase2 @permissions"
     },
     {
       "id": "SV13",
       "description": "Harness tool calls reach the supervisor that owns the session",
       "testFile": "packages/opencode/test/task/verify-spec-SV13.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV13 Harness tool calls reach the supervisor that owns the session\n    Given a builder session claimed by its task supervisor\n    When the builder calls task_ready, the verifier calls verdict, or the builder repeats a call past the limit\n    Then the owner receives the event and records its fact when the turn ends\n    And a session that no supervisor owns records nothing and the tool says so\n    And every claim of a run is removed when the run ends\n\n  @phase2 @core"
     },
     {
       "id": "SV14",
       "description": "The session watch and the hooks hold no state of their own",
       "testFile": "packages/opencode/test/task/verify-spec-SV14.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV14 The session watch and the hooks hold no state of their own\n    Given the session watch and hook modules after phase 2\n    When they are inspected\n    Then they hold no Ref, no MutableHashMap and no polled loop\n    And stall, idle and the spend cap are delayed transitions and guards of the task supervisor\n\n  @phase2 @core"
     },
     {
       "id": "SV15",
       "description": "The status file is a projection of the machine snapshot",
       "testFile": "packages/opencode/test/task/verify-spec-SV15.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV15 The status file is a projection of the machine snapshot\n    Given the observed facts folded through the release-notes machine\n    When the status is projected\n    Then each task, obligation and scenario carries its state, its tags, its blocked cause, its start and end times and, for a task, its spans\n    And the run carries its title, spec id, path, start and end times, and each scenario carries its loader title with no leading id\n    And the projection derives no state of its own and never emits phase or dependency tags\n    And the old run-state and waitingOn derivations from the plan no longer exist\n    And an obligation, which never blocks, carries no blocked cause\n\n  @phase2 @integrity"
     },
     {
       "id": "SV16",
       "description": "The status writer writes every committed step and stops at the end",
       "testFile": "packages/opencode/test/task/verify-spec-SV16.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV16 The status writer writes every committed step and stops at the end\n    Given a live run\n    When facts are recorded and the heartbeat touches the file\n    Then the file is written once for each committed macrostep, the final one included\n    And each write stamps the heartbeat time\n    And a touch rewrites the last consumed snapshot and never an older one\n    And nothing writes the file after the done snapshot\n\n  @phase2 @compat"
     },
     {
       "id": "SV17",
       "description": "The TUI decodes the status file that the harness writes",
       "testFile": "packages/opencode/test/task/verify-spec-SV17.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV17 The TUI decodes the status file that the harness writes\n    Given the shared status fixture written by the harness projection with a fixed clock\n    When the TUI decodes the fixture and a status file from before the change\n    Then both decode\n    And the fixture equals the projection of the observed facts byte for byte\n\n  @phase2 @audit @critical"
     },
     {
       "id": "SV18",
       "description": "The state audit fails on state held outside xstate",
       "testFile": "packages/opencode/test/task/verify-spec-SV18.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV18 The state audit fails on state held outside xstate\n    Given a source tree with one planted Ref, MutableHashMap, SynchronizedRef, FiberMap, setInterval, polled loop, module-level mutable let or list of lifecycle states\n    When the audit runs\n    Then it fails and names the file and the identifier\n    And in the task-ui it also fails on a planted Effect.sleep or Schedule\n    And on the real tree it passes with only allowlist entries, each with its written reason\n\n  @phase2 @audit"
     },
     {
       "id": "SV19",
       "description": "The allowlist holds exactly its final entries",
       "testFile": "packages/opencode/test/task/verify-spec-SV19.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV19 The allowlist holds exactly its final entries\n    Given the end of phase 2 and the end of the goal\n    When the audit's allowlist is compared with the spine's final allowlist\n    Then at the end of phase 2 the entries for the harness source equal the final entries for that tree\n    And at the end of the goal the whole allowlist equals the final allowlist and no interim entry remains\n\n\n  @phase2 @permissions"
     },
     {
       "id": "SV20",
       "description": "/task trust reaches the live run once",
       "testFile": "packages/opencode/test/task/verify-spec-SV20.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV20 /task trust reaches the live run once\n    Given a live release-notes run with T1.5 waiting on T9\n    When /task trust T9 runs in the directory\n    Then outside.trusted T9 is stored on the directory aggregate and once on the run aggregate, and T1.5 becomes ready\n    And a trust of an id with no untrusted outside region records nothing on the run aggregate\n    And a trust recorded before the run started is applied once, directly after run.started\n\n  @phase2 @permissions"
     },
     {
       "id": "SV21",
       "description": "The directory lease is released when a run ends",
       "testFile": "packages/opencode/test/task/verify-spec-SV21.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV21 The directory lease is released when a run ends\n    Given a run that ends done, and a run that is cancelled\n    When each run scope closes\n    Then the status writer stops before the lease is released\n    And the next /task in the directory is not busy\n\n  @phase2 @negative"
     },
     {
       "id": "SV22",
       "description": "The task wall clock fails only its own task",
       "testFile": "packages/opencode/test/task/verify-spec-SV22.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV22 The task wall clock fails only its own task\n    Given a building task and an independent task that also builds\n    When the first task's wall clock expires\n    Then its supervisor records task.failed with the wall-clock reason\n    And the independent task keeps building\n\n  @phase2 @edge"
     },
     {
       "id": "SV23",
       "description": "A running tool is not a stall",
       "testFile": "packages/opencode/test/task/verify-spec-SV23.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV23 A running tool is not a stall\n    Given a building task whose tool runs longer than the stream idle time\n    When the clock passes the stream idle time while the tool runs\n    Then no task.stalled is recorded\n    And the stall timer starts again when the tool ends\n\n  @phase2 @edge"
     },
     {
       "id": "SV24",
       "description": "A reused builder session is claimed again on resume",
       "testFile": "packages/opencode/test/task/verify-spec-SV24.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: SV24 A reused builder session is claimed again on resume\n    Given an unended slice whose T1.2 builder session exists\n    When the run resumes and the new task supervisor prompts that session\n    Then it claims the session and waits for the index entry before the prompt\n    And task_ready from that session reaches the new supervisor\n\n  @phase2 @integrity"
     },
     {
       "id": "SV25",
       "description": "A cancel before the new slice starts never lands in the previous slice",
       "testFile": "packages/opencode/test/task/verify-spec-SV25.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: SV25 A cancel before the new slice starts never lands in the previous slice\n    Given a stored release-notes slice that ended, and a new /task whose run supervisor has not yet stored run.started\n    When the background job is cancelled\n    Then the store holds the new slice's run.started before its run.cancelled\n    And the previous slice folds to the same snapshot as before the cancel\n  # ---------------------------------------------------------------------------\n  # Phase 3 \u2014 validation and fault folders (AC 1, AC 12-17)\n  # ---------------------------------------------------------------------------\n\n  @phase3 @negative"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: SV25 A cancel before the new slice starts never lands in the previous slice\n    Given a stored release-notes slice that ended, and a new /task whose run supervisor has not yet stored run.started\n    When the background job is cancelled\n    Then the store holds the new slice's run.started before its run.cancelled\n    And the previous slice folds to the same snapshot as before the cancel\n\n  @phase2 @negative"
+    },
+    {
+      "id": "SV26",
+      "description": "An actor error ends its unit or its run, never strands it",
+      "testFile": "packages/opencode/test/task/verify-spec-SV26.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: SV26 An actor error ends its unit or its run, never strands it\n    Given a live run whose task supervisor, run supervisor or run actor reaches the error status\n    When the error happens\n    Then a failed unit supervisor counts as three worker failures, so its unit records task.failed with \"harness error: <defect>\"\n    And a failed run supervisor or run actor ends the job's wait, the Recorder stores nothing more, the defect is logged and the directory lease is released\n    And a later /task on that spec treats a slice whose fold dies as ended, logs it, and says in its start message that it starts a new slice\n\n  @phase2 @integrity"
+    },
+    {
+      "id": "SV27",
+      "description": "A server stop leaves the run resumable",
+      "testFile": "packages/opencode/test/task/verify-spec-SV27.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: SV27 A server stop leaves the run resumable\n    Given a live run with a building task and a verifying scenario\n    When the instance scope closes without a job cancel\n    Then the store holds no run.cancelled, no task.failed and no scenario.verified from the stop, and no summary is written\n    And an interrupted worker never counts as a worker failure\n    And the next /task with the same path records run.resumed\n  # ---------------------------------------------------------------------------\n  # Phase 3 \u2014 validation and fault folders (AC 1, AC 12-17)\n  # ---------------------------------------------------------------------------\n\n  @phase3 @negative"
     },
     {
       "id": "VF1",
       "description": "A refused /task lists every failure",
       "testFile": "packages/opencode/test/task/verify-spec-VF1.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF1 A refused /task lists every failure\n    Given a spec folder with three loader failures\n    When /task runs on it\n    Then the session message has the header \"Refused <path>: 3 failures. No work started.\"\n    And the next lines are each failure as \"<rule> <path>: <message>\" in loader order, then the hint line\n    And the status run reason holds exactly those failure lines\n\n  @phase3 @negative @permissions"
     },
     {
       "id": "VF2",
       "description": "A refusal while a run is live answers in the session only (owner ruling 3)",
       "testFile": "packages/opencode/test/task/verify-spec-VF2.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF2 A refusal while a run is live answers in the session only (owner ruling 3)\n    Given a live run in a directory\n    When /task runs on a faulty spec in the same directory\n    Then the session gets the refusal message\n    And the status file still shows the live run\n\n  @phase3 @negative @compat"
     },
     {
       "id": "VF3",
       "description": "A VERIFY.md with no ensures fails rule R3",
       "testFile": "packages/opencode/test/task/verify-spec-VF3.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF3 A VERIFY.md with no ensures fails rule R3\n    Given a leaf VERIFY.md that has no ensures key\n    When the spec loads\n    Then R3 reports that ensures is a required property\n    And the JSON schema of VERIFY.md also lists ensures as required\n    And the release-notes and provider-ordering-admin specs still load with no failure\n\n  @phase3 @negative"
     },
     {
       "id": "VF4",
       "description": "A spec that stops validating during a run is reported and the run keeps its plan",
       "testFile": "packages/opencode/test/task/verify-spec-VF4.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF4 A spec that stops validating during a run is reported and the run keeps its plan\n    Given a live run of a valid spec\n    When a VERIFY.md of the spec is edited so that the spec no longer validates\n    Then the run keeps working on the plan it loaded\n    And the stale check records spec.checked with the failures, and the run gets a history entry\n    And the status run warning holds one line for each failure\n\n  @phase3 @edge"
     },
     {
       "id": "VF5",
       "description": "A valid reload clears the run warning",
       "testFile": "packages/opencode/test/task/verify-spec-VF5.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF5 A valid reload clears the run warning\n    Given a run whose warning shows two failures\n    When the spec validates again\n    Then spec.checked is recorded with no failures and the warning goes\n    And a valid reload that adds or removes an obligation id of the plan counts as a failure and the run keeps the old text\n    And a reload with the same failures as the current warning records nothing\n\n  @phase3 @negative @ASSUMPTION:A3.a"
     },
     {
       "id": "VF6",
       "description": "A subtree run after an untrusted folder task outside it is refused at the start",
       "testFile": "packages/opencode/test/task/verify-spec-VF6.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF6 A subtree run after an untrusted folder task outside it is refused at the start\n    Given the release-notes spec with no stored run\n    When /task runs on the T1.3 task folder, which is after T1.1\n    Then the run is refused before any work\n    And the refusal line names T1.3 and T1.1 as \"R12 <folder>: T1.3 is after T1.1, which is outside this run and not trusted\"\n    And the trust of T1.1 is read by folding the stored slices through their own plans\n\n  @phase3 @permissions"
     },
     {
       "id": "VF7",
       "description": "A subtree run whose outside folder task is trusted runs, and /task trust cannot trust a folder task",
       "testFile": "packages/opencode/test/task/verify-spec-VF7.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF7 A subtree run whose outside folder task is trusted runs, and /task trust cannot trust a folder task\n    Given a stored run in which T1.1 ended trusted\n    When /task runs on the T1.3 task folder\n    Then the run starts and its external region for T1.1 is trusted directly after run.started\n    And /task trust T1.1 never moves an external region\n\n  @phase3 @core"
     },
     {
       "id": "VF8",
       "description": "A subtree run names the scenarios it leaves out",
       "testFile": "packages/opencode/test/task/verify-spec-VF8.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF8 A subtree run names the scenarios it leaves out\n    Given the release-notes spec\n    When /task runs on a task folder whose scenarios need tasks outside it\n    Then the run's first message names each left-out scenario\n    And the header metadata lists the same ids\n\n  @phase3 @negative"
     },
     {
       "id": "VF9",
       "description": "The format-faults folder is refused with all three faults listed",
       "testFile": "packages/opencode/test/task/verify-spec-VF9.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF9 The format-faults folder is refused with all three faults listed\n    Given the example-format-faults spec folder with a stray file, a TASK.md with no title and an unknown front-matter key\n    When /task runs on it\n    Then the refusal lists an R1 line, an R3 line and an R4 line, in the loader's rule order\n\n  @phase3 @negative"
     },
     {
       "id": "VF10",
       "description": "The cycle folder is refused with the cycle named",
       "testFile": "packages/opencode/test/task/verify-spec-VF10.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF10 The cycle folder is refused with the cycle named\n    Given the example-cycle spec folder where T1.1 is after T1.2 and T1.2 is after T1.1\n    When /task runs on it\n    Then the refusal has an R7 line that names the cycle through T1.1 and T1.2\n\n  @phase3 @negative"
     },
     {
       "id": "VF11",
       "description": "The self-after folder is refused",
       "testFile": "packages/opencode/test/task/verify-spec-VF11.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF11 The self-after folder is refused\n    Given the example-self-after spec folder where T1.1 is after T1.1\n    When /task runs on it\n    Then the refusal has an R7 line that names the cycle T1.1 \u2192 T1.1\n\n  @phase3 @negative"
     },
     {
       "id": "VF12",
       "description": "The unknown-after folder is refused",
       "testFile": "packages/opencode/test/task/verify-spec-VF12.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF12 The unknown-after folder is refused\n    Given the example-unknown-after spec folder whose after names T7, which does not exist\n    When /task runs on it\n    Then the refusal has an R6 line that names T7\n\n  @phase3 @negative"
     },
     {
       "id": "VF13",
       "description": "The no-ensures folder is refused",
       "testFile": "packages/opencode/test/task/verify-spec-VF13.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF13 The no-ensures folder is refused\n    Given the example-no-ensures spec folder with a leaf VERIFY.md that has no ensures\n    When /task runs on it\n    Then the refusal has an R3 line for that VERIFY.md\n\n  @phase3 @negative @ASSUMPTION:A3.a"
     },
     {
       "id": "VF14",
       "description": "The outside-run folder is refused when run as the T1.2 subtree",
       "testFile": "packages/opencode/test/task/verify-spec-VF14.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF14 The outside-run folder is refused when run as the T1.2 subtree\n    Given the example-outside-run spec folder where T1.2 is after T1.1\n    When the whole spec loads\n    Then it has no failure\n    And /task on the T1.2 task folder is refused at the start with the R12 line that names T1.2 and T1.1\n\n  @phase1 @core"
     },
     {
       "id": "VF15",
       "description": "The two live-check folders load, before and after ensures becomes required",
       "testFile": "packages/opencode/test/task/verify-spec-VF15.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF15 The two live-check folders load, before and after ensures becomes required\n    Given the example-scenarios and example-cascade spec folders, built in phase 1\n    When each loads in phase 1, and again once ensures is required\n    Then each has no failure\n    And example-scenarios has a parent T1, one leaf and scenario S1 proved by a test titled with [S1]\n    And example-cascade has a parent T1, T1.1 proved only by a gate that always exits 1 with a budget of one attempt, T1.2 after T1.1, and T1.3 with no after\n\n  @phase3 @delivery"
     },
     {
       "id": "VF16",
       "description": "The demo seed copies every example folder",
       "testFile": "packages/opencode/test/task/verify-spec-VF16.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF16 The demo seed copies every example folder\n    Given an empty demo folder\n    When task-demo.sh seeds it\n    Then the seeded spec folder holds every example spec folder beside the release-notes and provider-ordering-admin specs\n    And the printed instructions name the two live-check commands\n\n  @phase3 @core @negative"
     },
     {
       "id": "VF17",
       "description": "A scripted run of the cascade folder ends with a cascade and finished independent work",
       "testFile": "packages/opencode/test/task/verify-spec-VF17.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF17 A scripted run of the cascade folder ends with a cascade and finished independent work\n    Given the example-cascade spec in a repository seeded as task-demo.sh seeds the demo folder, with the scripted model\n    When /task runs on it\n    Then T1.1 is budget exhausted after one attempt\n    And T1.2 and the parent T1 are blocked with the reason \"blocked by T1.1: budget exhausted\"\n    And T1.3 is trusted\n    And the run ends budget exhausted only after T1.3 ends, with reason lines for T1.1, then T1 and T1.2 blocked by T1.1\n\n  @phase3 @core"
     },
     {
       "id": "VF18",
       "description": "A scripted run of the scenarios folder runs its scenario",
       "testFile": "packages/opencode/test/task/verify-spec-VF18.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF18 A scripted run of the scenarios folder runs its scenario\n    Given the example-scenarios spec in a repository seeded as task-demo.sh seeds the demo folder, with the scripted model\n    When /task runs on it\n    Then T1.1 is trusted, and the parent T1 is trusted by its review\n    And S1 is proved by its [S1] test and trusted by the verifier\n    And the run ends done\n\n\n  @phase3 @negative"
     },
     {
       "id": "VF19",
       "description": "Every refusal form reads as the UX document sets",
       "testFile": "packages/opencode/test/task/verify-spec-VF19.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF19 Every refusal form reads as the UX document sets\n    Given a spec with one loader failure, a subtree run with an untrusted folder task outside it, and a checkout with an uncommitted change\n    When /task runs on each\n    Then the first reads \"Refused <path>: 1 failure. No work started.\", its line, then the hint \"Fix each line, then type /task <path> again.\"\n    And the subtree refusal ends with the hint \"Run the whole spec, or a folder that holds T1.1.\"\n    And the checkout refusal reads \"Refused <path>. No work started.\" and one plain line, with no hint\n\n  @phase3 @negative @ASSUMPTION:A3.a"
     },
     {
       "id": "VF20",
       "description": "The latest slice decides the trust of a folder task outside a subtree run",
       "testFile": "packages/opencode/test/task/verify-spec-VF20.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: VF20 The latest slice decides the trust of a folder task outside a subtree run\n    Given a slice in which T1.1 ended trusted, then a later slice in which T1.1 is budget exhausted\n    When /task runs on the T1.3 task folder\n    Then it is refused with the R12 line that names T1.3 and T1.1\n\n  @phase3 @permissions @ASSUMPTION:A3.a"
     },
     {
       "id": "VF21",
       "description": "A typed trust never stands in for a folder task's own trust",
       "testFile": "packages/opencode/test/task/verify-spec-VF21.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: VF21 A typed trust never stands in for a folder task's own trust\n    Given /task trust T1.1 was typed, and no stored slice has T1.1 trusted\n    When /task runs on the T1.3 task folder\n    Then the run is refused with the R12 line for T1.3 and T1.1\n    And with an older slice where T1.1 is trusted and a newer slice where T1.1 ended cancelled, the run is refused\n    And with an old slice that has no path and T1.1 trusted, the run starts\n  # ---------------------------------------------------------------------------\n  # Phase 4 \u2014 task UI (AC 18-26)\n  # ---------------------------------------------------------------------------\n\n  @phase4 @core"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: VF21 A typed trust never stands in for a folder task's own trust\n    Given /task trust T1.1 was typed, and no stored slice has T1.1 trusted\n    When /task runs on the T1.3 task folder\n    Then the run is refused with the R12 line for T1.3 and T1.1\n    And with an older slice where T1.1 is trusted and a newer slice where T1.1 ended cancelled, the run is refused\n    And with an old slice that has no path and T1.1 trusted, the run starts\n\n  @phase3 @negative"
+    },
+    {
+      "id": "VF22",
+      "description": "A spec with no task is refused at the start",
+      "testFile": "packages/opencode/test/task/verify-spec-VF22.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: VF22 A spec with no task is refused at the start\n    Given a spec folder that holds only SPEC.md, or only outside preconditions and scenarios\n    When /task runs on it\n    Then it reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"\n    And the generator refuses a plan with no task region\n\n  @phase3 @negative"
+    },
+    {
+      "id": "VF23",
+      "description": "A format fault hides the graph faults until every file passes",
+      "testFile": "packages/opencode/test/task/verify-spec-VF23.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: VF23 A format fault hides the graph faults until every file passes\n    Given a spec with an R3 front-matter fault and an R7 cycle\n    When /task runs on it\n    Then the refusal lists only the R3 line, because R5 to R13 run only once every file passes R1 to R4\n    And the blend README's Validation section states the two stages\n\n  @phase3 @negative @ASSUMPTION:A3.a"
+    },
+    {
+      "id": "VF24",
+      "description": "A stored slice that does not load blocks a subtree run only when it is newer than the deciding slice",
+      "testFile": "packages/opencode/test/task/verify-spec-VF24.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: VF24 A stored slice that does not load blocks a subtree run only when it is newer than the deciding slice\n    Given a newer whole-spec slice in which T1.1 is trusted and an older subtree slice whose path no longer loads\n    When /task runs on the T1.3 task folder\n    Then the trust walk starts at the newest slice, stops at the first slice that loads and holds T1.1, and the run starts\n    And when the slice that does not load is the newest, the run is refused with one plain line that names its path and says \"run the whole spec once to record a newer run\"\n  # ---------------------------------------------------------------------------\n  # Phase 4 \u2014 task UI (AC 18-26)\n  # ---------------------------------------------------------------------------\n\n  @phase4 @core"
     },
     {
       "id": "UI1",
       "description": "The task-ui classifies every unit only from the status tags",
       "testFile": "packages/opencode/test/task/verify-spec-UI1.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI1 The task-ui classifies every unit only from the status tags\n    Given a status with waiting, active, trusted, dead, blocked and cancelled tasks\n    When the Board and the counts read it\n    Then waiting tasks are in WAITING, active tasks in the column of their phase, stopped tasks in STOPPED and the other ended tasks in TRUSTED\n    And STOPPED groups dead tasks, then blocked tasks, then the rest\n    And the counts, the focus and the next running task come from the tags\n    And the task-ui keeps no list of active or ended state names\n\n  @phase4 @core"
     },
     {
       "id": "UI2",
       "description": "The task-ui view state is one machine",
       "testFile": "packages/opencode/test/task/verify-spec-UI2.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI2 The task-ui view state is one machine\n    Given the task-ui plugin started for a session\n    When the user switches design, selects a task, expands, watches and presses the stop key once\n    Then the design, the selection, the expansion, the watch target and the stop-key arming are states and context of one view machine\n    And the stop key disarms 5 seconds after it was armed\n    And the status, session list, activity lines and proof-log tail are read by delayed transitions every 1 s, 2 s, 1.5 s and 500 ms\n    And a status text that does not parse keeps the last good status\n\n  @phase4 @permissions @ops"
     },
     {
       "id": "UI3",
       "description": "Liveness comes from the status tags and the heartbeat",
       "testFile": "packages/opencode/test/task/verify-spec-UI3.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI3 Liveness comes from the status tags and the heartbeat\n    Given a status file\n    When the run lacks the ended tag and its heartbeat is at most 15 seconds old\n    Then the view is live, and Tab, esc twice and the watch keys act on the run when the session owns its harness sessions\n    And an older or absent heartbeat makes the view still, an ended run makes it ended, and no file makes it absent\n    And the run keys leave a run alone when the view is not live or the session does not own it\n\n  @phase4 @core @edge @ASSUMPTION:A2.a"
     },
     {
       "id": "UI4",
       "description": "The Gantt draws each lane from the task's spans",
       "testFile": "packages/opencode/test/task/verify-spec-UI4.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI4 The Gantt draws each lane from the task's spans\n    Given a status whose tasks carry spans\n    When the Gantt renders\n    Then each cell shows the span that holds its middle time, and the cells before the first span are blank\n    And an open span runs to now while live and to the heartbeat while still\n    And a final state with no length takes one cell, and a blocked task shows one warning cell\n\n  @phase4 @core @edge"
     },
     {
       "id": "UI5",
       "description": "An outside wait and an external wait read differently",
       "testFile": "packages/opencode/test/task/verify-spec-UI5.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI5 An outside wait and an external wait read differently\n    Given a waiting task whose waitingOn holds the untrusted outside id T9 and the external id T1.1\n    When the Board card, the Peek and the collapsed views render\n    Then the outside wait reads \"waiting on T9 (outside) \u2014 run /task trust T9\" on every design, and the shortcut bar has an outside-wait part\n    And the external wait reads \"waiting on T1.1 (not in this run)\" with no trust command\n\n  @phase4 @core"
     },
     {
       "id": "UI6",
       "description": "The run header shows the spec title",
       "testFile": "packages/opencode/test/task/verify-spec-UI6.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI6 The run header shows the spec title\n    Given the release-notes spec, whose title is \"Release notes from conventional commits\"\n    When /task starts a whole-spec run and a subtree run\n    Then the first message reads \"Implementing spec\" and the title, from structured header metadata\n    And the transcript draws \"Implementing spec\" muted and the title bold, from that metadata\n    And a subtree run reads \"Implementing\" with the task id and title, then \"from spec\" and the spec title\n    And an empty title falls back to the spec id, and the status run carries the title and, for a subtree run, the task\n    And a subtree run that leaves scenarios out adds the muted line \"Left out: <ids> \u2014 they need tasks outside this run.\"\n    And an older header in the scrollback keeps its own title when a later run starts\n\n  @phase4 @core"
     },
     {
       "id": "UI7",
       "description": "A closing summary appears in the transcript when the run ends",
       "testFile": "packages/opencode/test/task/verify-spec-UI7.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: UI7 A closing summary appears in the transcript when the run ends\n    Given a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario\n    When the run machine reaches a final state\n    Then the root session gets one assistant-role markdown message with no model call\n    And it holds the outcome line, the counts line with the duration, tokens and cost, the stopped tasks with their reasons, the scenarios that did not pass with their reasons, the scenarios not run, and a table of every task's duration\n    And it holds the run-warning line when the spec stopped validating during the run\n\n  @phase4 @core @edge"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI7 A closing summary appears in the transcript when the run ends\n    Given a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario\n    When the run machine reaches a final state\n    Then the root session gets one assistant-role markdown message with no model call\n    And it holds the outcome line, the counts line with the duration, tokens and cost, the stopped tasks with their reasons, the scenarios that did not pass with their reasons, the scenarios not run, and a table of every task's duration\n    And it holds the run-warning line when the spec stopped validating during the run\n    And a reason that holds <, *, _, a backtick or | shows each character as written, because the summary escapes model text\n\n  @phase4 @core @edge"
     },
     {
       "id": "UI8",
       "description": "The summary is written even when a turn is in flight or the run was cancelled",
       "testFile": "packages/opencode/test/task/verify-spec-UI8.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI8 The summary is written even when a turn is in flight or the run was cancelled\n    Given a root session with a turn in flight\n    When the run ends, or the user aborts the root session, or the run is cancelled\n    Then the summary waits for the turn and is then written once\n    And a later user prompt in the root session still runs a model turn\n\n  @phase4 @core"
     },
     {
       "id": "UI9",
       "description": "Failure reasons appear in every expanded view and in the Peek heading",
       "testFile": "packages/opencode/test/task/verify-spec-UI9.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI9 Failure reasons appear in every expanded view and in the Peek heading\n    Given a status with a budget-exhausted task, a failed task and a blocked task\n    When each of the seven designs is expanded\n    Then the shared region lists each stopped task with its reason or upstream cause\n    And the Peek BUILDER heading shows the selected task's reason in full, wrapped\n    And the collapsed views keep only the glyph\n\n  @phase4 @core"
     },
     {
       "id": "UI10",
       "description": "Every expanded view lists the run's scenarios",
       "testFile": "packages/opencode/test/task/verify-spec-UI10.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI10 Every expanded view lists the run's scenarios\n    Given the release-notes status with thirteen scenarios, titles, one rejected scenario and one parked scenario\n    When each of the seven designs is expanded at 120 by 40 cells\n    Then the shared region lists S1 to S13 with glyph, id, state label and title\n    And the rejected scenario shows its reason under its entry\n    And after the run ends the parked scenario reads \"not run\"\n\n  @phase4 @core"
     },
     {
       "id": "UI11",
       "description": "Each task shows its duration where the UX document places it",
       "testFile": "packages/opencode/test/task/verify-spec-UI11.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI11 Each task shows its duration where the UX document places it\n    Given a status with a running task, an ended task and a task that never started\n    When the designs render while the run is live\n    Then the running task's duration counts from its start, the ended task's is fixed, and the unstarted task's is blank\n    And durations appear in the Gantt right column, the Matrix time column, the Board card, the HUD selected-task line and the Peek heading\n    And a duration reads \"45s\", \"3m 12s\" or \"1h 4m\"\n\n  @phase4 @edge @ASSUMPTION:A2.a"
     },
     {
       "id": "UI12",
-      "description": "A run that stands still freezes its durations and its diamond (default 6, pending ruling)",
+      "description": "A run that stands still freezes its durations and its diamond (owner ruling 5)",
       "testFile": "packages/opencode/test/task/verify-spec-UI12.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: UI12 A run that stands still freezes its durations and its diamond (default 6, pending ruling)\n    Given a status whose heartbeat is older than 15 seconds and whose run has not ended\n    When the task-ui renders\n    Then a running task's duration stops at the heartbeat time\n    And the diamond is a static \u25c6\n\n  @phase4 @core"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI12 A run that stands still freezes its durations and its diamond (owner ruling 5)\n    Given a status whose heartbeat is older than 15 seconds and whose run has not ended\n    When the task-ui renders\n    Then a running task's duration stops at the heartbeat time\n    And the diamond is a static \u25c6\n\n  @phase4 @core"
     },
     {
       "id": "UI13",
       "description": "The shortcut bar no longer shows the task-design switch hint",
       "testFile": "packages/opencode/test/task/verify-spec-UI13.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI13 The shortcut bar no longer shows the task-design switch hint\n    Given a live run in any design\n    When the shortcut bar renders\n    Then it shows no \"/task-design switch\" part\n    And /task-design still switches designs from the command list\n\n  @phase4 @core @accessibility"
     },
     {
       "id": "UI14",
       "description": "The In the Flow diamond grows and melts while the run is live",
       "testFile": "packages/opencode/test/task/verify-spec-UI14.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI14 The In the Flow diamond grows and melts while the run is live\n    Given a live run\n    When any In the Flow mark renders\n    Then its diamond plays the frames \u00b7 \u2b29 \u2b2a \u2b25 \u25c6 \u2b25 \u2b2a \u2b29 at about 120 ms each through the spinner element\n    And it is a static \u25c6 when the run has ended or animations are off\n    And the Peek border title and the toast title stay static\n    And the diamond is not bold in either form\n\n  @phase4 @core"
     },
     {
       "id": "UI15",
       "description": "The run's tokens and cost are shown for a /task root session",
       "testFile": "packages/opencode/test/task/verify-spec-UI15.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI15 The run's tokens and cost are shown for a /task root session\n    Given a /task root session whose child harness sessions spent tokens\n    When the prompt footer, the sidebar and the task-ui render\n    Then each shows the summed tokens and cost of the child sessions, live\n    And nothing shows before any harness session reports tokens, and other sessions are unchanged\n    And a free model that spent tokens shows \"$0.00\", and a narrow footer drops the root's own figure, then the word tokens\n    And the closing summary repeats the run total\n\n  @phase4 @ops"
     },
     {
       "id": "UI16",
       "description": "A run warning shows in the task-ui and goes when the spec validates again",
       "testFile": "packages/opencode/test/task/verify-spec-UI16.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI16 A run warning shows in the task-ui and goes when the spec validates again\n    Given a status with a run warning of two failures\n    When the task-ui renders\n    Then every run-state surface shows \"! spec no longer validates \u00b7 2 failures\"\n    And the shared region lists each failure line\n    And a warning toast appears once, and the warning goes from every surface when the status loses it\n\n  @phase4 @negative"
     },
     {
       "id": "UI17",
       "description": "A refused run shows every reason in the task-ui",
       "testFile": "packages/opencode/test/task/verify-spec-UI17.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI17 A refused run shows every reason in the task-ui\n    Given a refused status with three failure lines\n    When the Ledger and a full-screen design render\n    Then the Ledger shows \"run: refused\" and every failure line\n    And the full-screen body reads \"No work started: the spec was refused.\" with every failure line\n\n  @phase4 @core"
     },
     {
       "id": "UI18",
       "description": "A blocked unit has its own glyph and tone",
       "testFile": "packages/opencode/test/task/verify-spec-UI18.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI18 A blocked unit has its own glyph and tone\n    Given a status with a blocked task and a blocked scenario\n    When the designs render\n    Then the blocked units show \u2296 in the warning tone\n    And the Matrix legend lists \"\u2296 blocked\"\n    And a Ticker toast for a task that turns blocked shows its reason\n\n  @phase4 @ops"
     },
     {
       "id": "UI19",
       "description": "The not-run line of a done run is muted and raises no notification",
       "testFile": "packages/opencode/test/task/verify-spec-UI19.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI19 The not-run line of a done run is muted and raises no notification\n    Given a done status whose reason is \"not run: S13 waits on T8\"\n    When the Ledger, the full-screen header and the Ticker render\n    Then the run reason line uses the muted tone, and the Ticker raises no notification for it\n    And a run with the stopped tag shows its reason line in the error tone\n\n  @phase4 @core"
     },
     {
       "id": "UI20",
       "description": "The summary outcome line follows the outcome rules (owner ruling 1)",
       "testFile": "packages/opencode/test/task/verify-spec-UI20.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: UI20 The summary outcome line follows the outcome rules (owner ruling 1)\n    Given final statuses for a cancel, a dead task, a rejected scenario with every task trusted, a done run with one parked scenario, and a subtree run\n    When each summary is built\n    Then the outcome lines read \"\u2014 cancelled: <first reason line>\", \"\u2014 budget exhausted\", \"\u2014 failed: acceptance not proved\" and \"\u2014 done \u00b7 1 scenario not run\"\n    And the subtree summary starts with the task id and title, then \"from spec\" and the spec title\n    And a spec that stopped validating and then validated again still gives the run-warning line\n\n  @phase4 @core"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI20 The summary outcome line follows the outcome rules (owner ruling 1)\n    Given final statuses for a cancel with no dead task, a cancel after a dead task, a dead task, a rejected scenario with every task trusted, a done run with one parked scenario, and a subtree run\n    When each summary is built\n    Then the outcome lines read \"\u2014 cancelled: <first reason line>\", \"\u2014 budget exhausted\", \"\u2014 budget exhausted\", \"\u2014 failed: acceptance not proved\" and \"\u2014 done \u00b7 1 scenario not run\"\n    And the subtree summary starts with the task id and title, then \"from spec\" and the spec title\n    And a spec that stopped validating and then validated again still gives the run-warning line\n\n  @phase4 @core"
     },
     {
       "id": "UI21",
       "description": "The stopped count, the idle watch band, the did-not-start Peek and the empty scenario list read as set",
       "testFile": "packages/opencode/test/task/verify-spec-UI21.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI21 The stopped count, the idle watch band, the did-not-start Peek and the empty scenario list read as set\n    Given a status with 2 stopped tasks, a run waiting only on T9, a cancelled task with no start time, and no scenarios\n    When the designs, the watch band and the Peek render\n    Then each trusted count ends with \"\u00b7 2 stopped\" in the error tone, and shows nothing at 0\n    And the watch band reads \"Nothing is running. The run is waiting on T9 (outside) \u2014 run /task trust T9.\"\n    And the Peek reads \"no builder session: the task did not start\"\n    And the SCENARIOS heading reads \"SCENARIOS none in this run\"\n\n  @phase4 @accessibility"
     },
     {
       "id": "UI22",
       "description": "Every entry of the shared region stays reachable",
       "testFile": "packages/opencode/test/task/verify-spec-UI22.spec.ts",
-      "workingDirectory": "",
+      "workingDirectory": "packages/opencode",
       "gherkin": "  Scenario: UI22 Every entry of the shared region stays reachable\n    Given a full-screen design at 120 by 24 cells with 13 scenarios and 5 stopped tasks\n    When the user presses pagedown and clicks a STOPPED line\n    Then the region keeps at least 8 rows, the Peek activity lines shrink first, and every entry is reachable by scroll\n    And the click selects the first task of the line\n    And under 149 cells the Board's right pane sits below the board\n\n  @phase4 @negative"
     },
     {
       "id": "UI23",
       "description": "A summary that cannot be written does not hold the run open",
       "testFile": "packages/opencode/test/task/verify-spec-UI23.spec.ts",
-      "workingDirectory": "",
-      "gherkin": "  Scenario: UI23 A summary that cannot be written does not hold the run open\n    Given a run whose root session was deleted before the run ends\n    When the run machine reaches a final state\n    Then the failed say is logged\n    And the run supervisor reaches closed, the job ends and the directory lease is released\n    And the next /task in the directory is not busy"
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI23 A summary that cannot be written does not hold the run open\n    Given a run whose root session was deleted before the run ends\n    When the run machine reaches a final state\n    Then the failed say is logged\n    And the run supervisor reaches closed, the job ends and the directory lease is released\n    And the next /task in the directory is not busy\n\n  @phase4 @core"
+    },
+    {
+      "id": "UI24",
+      "description": "The directory is free once the run machine is final, even while the summary waits",
+      "testFile": "packages/opencode/test/task/verify-spec-UI24.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI24 The directory is free once the run machine is final, even while the summary waits\n    Given a root session whose turn waits on a permission prompt\n    When the run actor reaches done\n    Then the lease is released after the writer writes the done snapshot and before the summary\n    And the next /task in the directory is not busy\n    And the summary is written once, when the root turn ends, or its failure is logged when the root session goes away\n\n  @phase4 @compat"
+    },
+    {
+      "id": "UI25",
+      "description": "A status file from before the change is drawn with a defined fallback",
+      "testFile": "packages/opencode/test/task/verify-spec-UI25.spec.ts",
+      "workingDirectory": "packages/opencode",
+      "gherkin": "  Scenario: UI25 A status file from before the change is drawn with a defined fallback\n    Given a status file with no tags, no title and no heartbeat, as the old harness or the phase-1 code wrote it\n    When each design renders it\n    Then the view is still, and every design shows the muted line \"status from an older harness \u2014 type /task to refresh\"\n    And the tasks show their glyph and state label from the display table, with no Board column, count or STOPPED group derived from them"
     }
   ],
   "buildChecks": [

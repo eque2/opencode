@@ -55,6 +55,8 @@ four phases, so `[DS]` builds phase 1 first.
   needs), built in phase 1 so that the graph proof walks their loaded plans before the AC 7 merge (T1.15).
 - External regions for folder tasks outside a subtree run (AD-15), so every generated guard names a state
   (context.md SD-7); a machine error is a defect, never a frozen run (SD-16).
+- The structural totality check inside `machine(plan)` (owner ruling 4): every non-final unit state covers every
+  final outcome of what it waits on, before any run (RM29).
 - The engine tests rewritten as fact sequences with a classification list (owner ruling 2); the random fold test on
   snapshots with the AD-5 fold tests.
 - The progress alphabet, the walk key and the graph proof with its negative control, reduction check and stale walk
@@ -74,6 +76,8 @@ four phases, so `[DS]` builds phase 1 first.
   event-driven builder watch (D7); task, scenario and run supervisors (D6, AD-8); resume by the same path (AD-6).
 - The command's check order, claim and release, busy reply and run scope (AD-19, AD-8).
 - The polled runner removed; H1–H16 pass on the actors.
+- An actor error ends its unit or run and never strands it (SV26); a server stop leaves the run resumable (SV27); the
+  directory lease is released once the run machine is final (SD-19).
 
 **Phase 3 — validation and fault folders (D10–D15; AC 1).**
 - `ensures` required (D11); every loader failure in the refusal and in `run.reason` (D10, AD-14); a refusal while a
@@ -84,7 +88,8 @@ four phases, so `[DS]` builds phase 1 first.
 - Six fault folders, their command test and the graph walks of the ones that load (D14); a check that the two
   live-check folders still load once `ensures` is required, and their scripted end-to-end runs (D15, SD-11);
   `task-demo.sh` copies every `example-*.spec` folder.
-- The README "Validation" section (AC 1).
+- The README "Validation" section (AC 1), with the two rule stages (VF23); a spec with no task is refused (VF22);
+  the D13 trust walk from the newest slice (VF24).
 
 **Phase 4 — task UI (D16–D24; EXPERIENCE.md).**
 - `@jambudipa/xstate-effect` in `packages/tui`; the `taskView` machine and the `fromActor` adapter; tag
@@ -95,6 +100,8 @@ four phases, so `[DS]` builds phase 1 first.
   BUILDER heading; reasons (D19); scenarios (D20); durations (D21); the `/task-design` hint removed (D22); the
   animated diamond (D23); run tokens and cost in the footer, the sidebar and the task-ui (D24).
 - The final audit with `task-ui` in scope, and the task-ui README.
+- The summary escapes model text (SD-20); the lease is free while the summary waits (UI24); an old status file is
+  drawn with a defined fallback (UI25).
 
 ### Run by the goal loop, not by [DS]
 
@@ -156,6 +163,29 @@ a ruling names the ruling in its title.
    in a directory with a live run answers one busy line that names the live run's spec and path; a resume happens
    only when the latest slice is not ended and its path equals the new path. Scenarios: SV3, SV8, VF2. Tasks: T2.5,
    T2.11, T3.2.
+4. **AC 6 and "every reachable state" — owner (2026-10-14): "it needs to be organised such that these states are
+   structurally impossible to become stuck! A linting or pre-processing should yield errors. But also fixed order +
+   check."** Two parts. (a) The canonical walk with the RM22 reduction check (`@ASSUMPTION:A1.a`) is the accepted
+   reading of "every reachable state" in AC 6. (b) A structural totality check runs in phase 1, inside `machine(plan)`,
+   before any run: each non-final unit state has a row for every combination of final states of what it waits on
+   (all trusted → `ready`; any dead, blocked or cancelled → `blocked`, with its cause); no non-final state lacks a way
+   out except a wait on an untrusted outside or external region that a fact moves; the outcome region can settle once
+   every region is final. On a gap the generator dies with an error that names the unit, the state and the uncovered
+   outcome. Scenarios: RM19, RM22, RM29. Tasks: T1.3, T1.10.
+5. **A run that stands still — owner (2026-10-14): "Show it as still".** Prepare-goal default 6 becomes this ruling:
+   the D23 diamond is static and the D21 live durations stop at `run.aliveAt` when the heartbeat is older than 15 s and
+   the run has not ended (AD-13, AD-16; `@ASSUMPTION:A2.a` is the build rule). This narrows AC 23 and AC 25.
+   Scenarios: UI12, UI3. Tasks: T4.1, T4.2, T4.5, T4.9.
+6. **Scenario evidence under `bun test` — owner (2026-10-14): the log-proxy recipe is allowed.** The verifier runs
+   `bun test --timeout=30000 --reporter=junit --reporter-outfile=<run dir>/junit.xml <file>` from the file's package
+   (`packages/opencode` for every scenario here, so `./test/task/verify-spec-<ID>.spec.ts`), and a verifier-scratchpad
+   adapter passes each JUnit result unchanged to the public Vitest hook `onTestRunEnd(files)` of
+   `scenario-state-reporter.mjs`. The adapter spawns `bun` itself, writes the JUnit report to a fresh per-run path, and
+   refuses a report for another file, a count mismatch, a green exit with no report, or a test file edited during the
+   run; a non-zero exit sets the file-level result to fail (precedent: `log-proxy.goal/spec/journal/S6.md`). The
+   reporter and the state CLI are not changed. Every scenario in `definitions.json` has `workingDirectory:
+   "packages/opencode"`; `testFile` stays relative to the repository root, because the state CLI resolves it against
+   the project root (context.md SD-21).
 
 ## Prepare-goal defaults
 
@@ -165,9 +195,9 @@ Defaults recorded by prepare-goal on 2026-10-14. They are not owner rulings; the
   every region final before the run ends (AD-4). Scenario RM14.
 - **Default 5 — the D1 and D6 shapes.** `active` stays the parallel state, the outcome follows `active.onDone`
   through `run.settled`, and the workers run inside the run supervisor's tree (AD-1, AD-4, AD-8).
-- **Default 6 — a run that stands still (pending ruling).** The D23 diamond and the D21 live durations stop when
-  `run.aliveAt` is stale (older than 15 s) and the run has not ended. This adds a static case to D23 / AC 25 and
-  stops a D21 duration (AC 23) for a run whose server stopped. Built as stated; tagged `@ASSUMPTION:A2.a` (UI12).
+- Default 6 (a run that stands still) became owner ruling 5. Default 4 keeps its scope: a cancel moves unfinished
+  tasks and scenarios to `cancelled`, and obligations keep their states (every obligation state is final, AD-2); the
+  end state follows AC 4 when a task died before the stop (SD-18).
 
 ## Defects found in the inputs
 
@@ -181,8 +211,8 @@ Against decisions, spine or EXPERIENCE. None was built to where it contradicts a
    keeps a check that both folders still load once `ensures` is required (T3.7). No owner choice remains.
 2. **AD-19 narrows D10 / AC 12.** A refusal while another run is live in the directory answers in the session only
    and does not write `status.json` `run.reason`. Covered by owner ruling 3 (AD-19 accepted). Scenario VF2.
-3. **Default 6 narrows D21 / AC 23 and D23 / AC 25** (AD-16, EXPERIENCE "In the Flow mark" and "Durations"). Pending
-   the owner's ruling; see above.
+3. **Default 6 narrows D21 / AC 23 and D23 / AC 25** (AD-16, EXPERIENCE "In the Flow mark" and "Durations").
+   Resolved by owner ruling 5 ("Show it as still").
 4. **Owner ruling 1 overrides the literal D3 / AC 4 text**, and **owner ruling 2 narrows AC 2.** Both are recorded
    above, not defects to fix.
 5. **EXPERIENCE contradicts AD-16 on the tone of a done run's "not run" line.** AD-16: a `done` run's reason line
@@ -202,16 +232,30 @@ Against decisions, spine or EXPERIENCE. None was built to where it contradicts a
    AD-12 path.
 9. **AC 10 gives obligations a blocked cause.** An obligation has no dependency, so it never blocks; AD-13 gives it no
    `blockedBy`. The projection emits none, and SV15 states it.
+10. **AD-4's rule order lets a stop outrank a task that died first; AC 4 does not.** AC 4: the end state is "the state
+    of the task that died first". The approved AC outranks the spine (as in defect 8), so the outcome rules apply in
+    this order: a dead task (with dead lines, blocked lines, then the stop's reason line), then a stop with no dead
+    task (`cancelled` or the `run.ended` state), then acceptance (ruling 1), then `done` (SD-18). Default 4 keeps
+    moving unfinished tasks and scenarios to `cancelled`. Scenarios: RM14, RM27, UI20.
+11. **AD-19's finalizer order holds the directory while the summary waits.** The lease release is the run scope's first
+    finalizer, so it runs after the summary, and a summary that waits on a root turn keeps every later `/task` busy.
+    AC 33 frees the directory when the run ends, so the run supervisor releases the lease once the run machine is final
+    and the writer has written the `done` snapshot, before the summary; the finalizer stays as an idempotent safety net
+    (SD-19). Scenario UI24.
+12. **AC 31 says a cancel moves obligations to `cancelled`.** Every obligation state is final (AD-2) and the status
+    vocabulary has no cancelled obligation, so obligations keep their states and end with their task (RM14).
 
 ## Pending owner choices
 
-- **Default 6** (above) — a run that stands still.
+None. Default 6 became owner ruling 5, and Defect 1 was resolved by prepare-goal.
 
 ## Risks for [DS]
 
-- **Scenario evidence under `bun test`.** The verify-scenario skill and `scenario-state-reporter.mjs` name Vitest and
-  Playwright; every scenario test here runs under `bun test`. Name the sanctioned evidence path for a `bun test` file
-  before `[DS]` verifies a scenario. `[CS]` cannot change the reporter (anti-tamper policy).
+- **Scenario evidence under `bun test` — resolved by owner ruling 6.** The verifier uses the log-proxy recipe (`bun test
+  --timeout=30000 --reporter=junit --reporter-outfile=<run dir>/junit.xml ./test/task/verify-spec-<ID>.spec.ts` from
+  `packages/opencode`, then a scratchpad adapter into the reporter's public `onTestRunEnd(files)` hook). UI scenario
+  files run a nested `bun test` in `packages/tui` through the delegate helper, so give each an outer timeout of at
+  least 120 s.
 - **Phase-2 cut-over.** T2.6–T2.10 build the supervisors beside the polled runner; T2.11 is the single cut-over and
   T2.12 deletes the old code, so the typecheck and H1–H16 stay green at every task.
 - **Two runs from one root session.** D24 and AD-18 define the run's sessions as the child sessions of the root, so two
@@ -222,8 +266,18 @@ Against decisions, spine or EXPERIENCE. None was built to where it contradicts a
 - **`DISPLAY` covers glyph, tone, Gantt block and Board column** (EXPERIENCE "Open Questions"; consistent with
   AD-16, "the only table keyed by state names in `task-ui` is the display table"). The AD-17 `DISPLAY` allowlist entry
   therefore covers all four fields, and the audit treats it as one presentation table (SV19).
-- **An unloadable stored slice** (context.md SD-13): the D13 check refuses with one plain line that names the slice's
-  path. The inputs do not say; this is own judgment, and the owner may overrule.
+- **An unloadable stored slice** (context.md SD-13): the D13 trust walk starts at the newest slice and stops at the
+  first slice that loads and holds the folder task; a slice that does not load refuses the run only when it is newer
+  than that deciding slice, with one plain line that names its path and ends "run the whole spec once to record a
+  newer run" (VF24). Own judgment; the owner may overrule.
+- **A status file with no tags** (SD-17): drawn with a defined fallback — liveness `still`, the muted line "status
+  from an older harness — type /task to refresh", glyphs and labels from `DISPLAY`, no classification (UI25).
+- **The outcome rule order** (SD-18, defect 10) and **the early lease release** (SD-19, defect 11).
+- **Summary escaping** (SD-20): model text in the closing summary is escaped for CommonMark, so a reason shows as
+  written (UI7).
+- **Scenario working directory** (SD-21, owner ruling 6): `definitions.json` is the output of
+  `cs-generate-definitions.py` followed by `python3 spec/scenario-workdir.py spec`, which sets each scenario's
+  `workingDirectory` from its `testFile` package. Re-run both after any regeneration.
 - **Run tokens** are input plus output plus reasoning tokens of every assistant message of the run's sessions; cache
   reads and writes are not counted, because the cost already prices them (EXPERIENCE "Assumptions"; AD-18 names the
   sum only).

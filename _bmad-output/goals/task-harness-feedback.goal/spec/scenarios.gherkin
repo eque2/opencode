@@ -1,7 +1,8 @@
 # Scenarios: task-harness-feedback
-# Sources: ../ACs.md (29 criteria), ../decisions.md (D1-D27), ../architecture/ARCHITECTURE-SPINE.md (AD-1..AD-20 and
+# Sources: ../ACs.md (46 criteria: AC 1-29 approved, AC 30-46 appended), ../decisions.md (D1-D27), ../architecture/ARCHITECTURE-SPINE.md (AD-1..AD-20 and
 # the owner answers), ../ux/EXPERIENCE.md. Coverage contract: coverage.md.
-# Scenario tests: packages/opencode/test/task/verify-spec-<ID>.spec.ts; every test title starts with the id and a space.
+# Scenario tests: packages/opencode/test/task/verify-spec-<ID>.spec.ts, run from packages/opencode (owner ruling 6); every
+# test title starts with the id and a space. Owner rulings 1-6 are in spec.md; a test that rests on one names it.
 # UI scenarios delegate to named tests in packages/tui/test/task-ui/ (context.md SD-2).
 # "The observed facts" are: run.started; T1.1, T1.2 and T1.3 built, proved and verified trusted; T1.4 built three times
 # with a failing proof each time (budget 3). "The release-notes plan" is task-formats/blend/release-notes.spec loaded by
@@ -121,12 +122,25 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     And T1.5 and T1 carry the blocked cause T1.4 in state budget_exhausted
 
   @phase1 @compat
-  Scenario: RM8 A run stored before the change folds and resumes with no new fact type
+  Scenario: RM8a An old slice that ended folds with its stop's state, and /task starts a new slice
     Given a stored slice written by the old engine, with run.started without a path and run.ended in state done
-    When the slice is folded through the new machine and the run resumes
-    Then every stored fact decodes and folds
-    And the stored run.ended folds as a stop with its own state
-    And the resume records only run.resumed, a fact type that already exists
+    When the slice is folded through the new machine and /task runs on the whole spec
+    Then every stored fact decodes and folds, and the stored run.ended folds as a stop with its own state
+    And /task records run.started for a new slice, because the old slice ended
+
+  @phase1 @compat
+  Scenario: RM8b An old slice with no end and no path resumes on /task of the whole spec
+    Given a stored slice written by the old engine, with run.started without a path, no run.ended, and a fold that is not done
+    When /task runs on the whole spec, also when the path is written ./<spec>/
+    Then the slice counts as a whole-spec slice and the run resumes
+    And the resume records only run.resumed with the path, a fact type that already exists
+
+  @phase1 @compat
+  Scenario: RM8c The observed stuck slice folds to its end and is never resumed
+    Given the observed facts stored with no run.ended
+    When the slice is folded through the new machine
+    Then the fold is done with the outcome budget exhausted, and T1.5 and T1 are blocked
+    And /task on the same spec starts a new slice and never resumes a done fold
 
   @phase1 @core
   Scenario: RM9 The cascade is transitive and names the first dead dependency
@@ -171,8 +185,8 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Given a run with a trusted task, a building task, a ready task and a waiting task
     When the run is cancelled with a reason
     Then the building, ready and waiting tasks are cancelled with that reason
-    And the trusted task stays trusted
-    And the run outcome is cancelled with that reason
+    And the trusted task stays trusted, and every obligation keeps its state and ends with its task
+    And the run outcome is cancelled with that reason, because no task died before the stop
     And a run wall-clock stop gives the run.ended state as the outcome in the same way
 
   @phase1 @core
@@ -207,7 +221,7 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     And the runner stops when the snapshot status is done
 
   @phase1 @proof @ASSUMPTION:A1.a
-  Scenario: RM19 The graph walk finds no stuck state in the release-notes plan
+  Scenario: RM19 The graph walk finds no stuck state in the release-notes plan (owner ruling 4)
     Given the release-notes plan and the engine's progress alphabet
     When every state reachable with the canonical interleaving is walked within 60 seconds
     Then no state that is not done lacks an event that changes its key
@@ -226,7 +240,7 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Then the walk reports a stuck state with T1.1 to T1.3 trusted, T1.4 budget exhausted, and T1.5 and T1 waiting
 
   @phase1 @proof @ASSUMPTION:A1.a
-  Scenario: RM22 The walk's reduction and key are sound
+  Scenario: RM22 The walk's reduction and key are sound (owner ruling 4)
     Given a small plan
     When the canonical walk and the full walk run with and without the blocked rows
     Then both walks find the same set of stuck states
@@ -265,10 +279,11 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     And each card shows "blocked by T1.4: budget exhausted"
 
   @phase1 @core @edge
-  Scenario: RM27 A stop outranks a dead task and cancels unfinished scenarios (default 4)
-    Given T1.1 budget exhausted, an independent T1.2 building, and S1 waiting
+  Scenario: RM27 A task that died before a stop gives the end state, and the stop cancels unfinished units (AC 4, default 4)
+    Given T1.1 budget exhausted, T1.4 blocked by T1.1, an independent T1.2 building, and S1 waiting
     When run.cancelled is applied with the reason "user stop"
-    Then the run outcome is cancelled with the reason "user stop"
+    Then the run outcome is budget exhausted, the state of the task that died first
+    And the run reason holds the line for T1.1, then the line "T1.4 blocked by T1.1", then the line "user stop"
     And T1.2 and S1 are cancelled, and T1.1 stays budget exhausted
 
   @phase1 @negative
@@ -278,6 +293,14 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Then apply dies with a defect that names the error
     And apply never returns a snapshot whose status is error
     And the generator's config scan refuses any stateIn id that names no state
+
+  @phase1 @proof
+  Scenario: RM29 A gap in the generated rows fails the structural totality check before any run (owner ruling 4)
+    Given a copy of the release-notes machine config with the row that blocks T1.5 on T1.4 budget exhausted removed
+    When the generator's totality check scans the copy
+    Then it fails with an error that names T1.5, its waiting state and the uncovered outcome T1.4 budget exhausted
+    And the scan of every real plan passes: each non-final unit state has a row for every final outcome of what it waits on
+    And no non-final state lacks a way out except a wait on an untrusted outside or external region, and the outcome can settle once every region is final
   # ---------------------------------------------------------------------------
   # Phase 2 — live supervision as actors (AC 8-11)
   # ---------------------------------------------------------------------------
@@ -470,6 +493,22 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     When the background job is cancelled
     Then the store holds the new slice's run.started before its run.cancelled
     And the previous slice folds to the same snapshot as before the cancel
+
+  @phase2 @negative
+  Scenario: SV26 An actor error ends its unit or its run, never strands it
+    Given a live run whose task supervisor, run supervisor or run actor reaches the error status
+    When the error happens
+    Then a failed unit supervisor counts as three worker failures, so its unit records task.failed with "harness error: <defect>"
+    And a failed run supervisor or run actor ends the job's wait, the Recorder stores nothing more, the defect is logged and the directory lease is released
+    And a later /task on that spec treats a slice whose fold dies as ended, logs it, and says in its start message that it starts a new slice
+
+  @phase2 @integrity
+  Scenario: SV27 A server stop leaves the run resumable
+    Given a live run with a building task and a verifying scenario
+    When the instance scope closes without a job cancel
+    Then the store holds no run.cancelled, no task.failed and no scenario.verified from the stop, and no summary is written
+    And an interrupted worker never counts as a worker failure
+    And the next /task with the same path records run.resumed
   # ---------------------------------------------------------------------------
   # Phase 3 — validation and fault folders (AC 1, AC 12-17)
   # ---------------------------------------------------------------------------
@@ -626,6 +665,27 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Then the run is refused with the R12 line for T1.3 and T1.1
     And with an older slice where T1.1 is trusted and a newer slice where T1.1 ended cancelled, the run is refused
     And with an old slice that has no path and T1.1 trusted, the run starts
+
+  @phase3 @negative
+  Scenario: VF22 A spec with no task is refused at the start
+    Given a spec folder that holds only SPEC.md, or only outside preconditions and scenarios
+    When /task runs on it
+    Then it reads "Refused <path>. No work started." and the one plain line "the spec holds no task"
+    And the generator refuses a plan with no task region
+
+  @phase3 @negative
+  Scenario: VF23 A format fault hides the graph faults until every file passes
+    Given a spec with an R3 front-matter fault and an R7 cycle
+    When /task runs on it
+    Then the refusal lists only the R3 line, because R5 to R13 run only once every file passes R1 to R4
+    And the blend README's Validation section states the two stages
+
+  @phase3 @negative @ASSUMPTION:A3.a
+  Scenario: VF24 A stored slice that does not load blocks a subtree run only when it is newer than the deciding slice
+    Given a newer whole-spec slice in which T1.1 is trusted and an older subtree slice whose path no longer loads
+    When /task runs on the T1.3 task folder
+    Then the trust walk starts at the newest slice, stops at the first slice that loads and holds T1.1, and the run starts
+    And when the slice that does not load is the newest, the run is refused with one plain line that names its path and says "run the whole spec once to record a newer run"
   # ---------------------------------------------------------------------------
   # Phase 4 — task UI (AC 18-26)
   # ---------------------------------------------------------------------------
@@ -689,6 +749,7 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Then the root session gets one assistant-role markdown message with no model call
     And it holds the outcome line, the counts line with the duration, tokens and cost, the stopped tasks with their reasons, the scenarios that did not pass with their reasons, the scenarios not run, and a table of every task's duration
     And it holds the run-warning line when the spec stopped validating during the run
+    And a reason that holds <, *, _, a backtick or | shows each character as written, because the summary escapes model text
 
   @phase4 @core @edge
   Scenario: UI8 The summary is written even when a turn is in flight or the run was cancelled
@@ -722,7 +783,7 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     And a duration reads "45s", "3m 12s" or "1h 4m"
 
   @phase4 @edge @ASSUMPTION:A2.a
-  Scenario: UI12 A run that stands still freezes its durations and its diamond (default 6, pending ruling)
+  Scenario: UI12 A run that stands still freezes its durations and its diamond (owner ruling 5)
     Given a status whose heartbeat is older than 15 seconds and whose run has not ended
     When the task-ui renders
     Then a running task's duration stops at the heartbeat time
@@ -785,9 +846,9 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
 
   @phase4 @core
   Scenario: UI20 The summary outcome line follows the outcome rules (owner ruling 1)
-    Given final statuses for a cancel, a dead task, a rejected scenario with every task trusted, a done run with one parked scenario, and a subtree run
+    Given final statuses for a cancel with no dead task, a cancel after a dead task, a dead task, a rejected scenario with every task trusted, a done run with one parked scenario, and a subtree run
     When each summary is built
-    Then the outcome lines read "— cancelled: <first reason line>", "— budget exhausted", "— failed: acceptance not proved" and "— done · 1 scenario not run"
+    Then the outcome lines read "— cancelled: <first reason line>", "— budget exhausted", "— budget exhausted", "— failed: acceptance not proved" and "— done · 1 scenario not run"
     And the subtree summary starts with the task id and title, then "from spec" and the spec title
     And a spec that stopped validating and then validated again still gives the run-warning line
 
@@ -815,3 +876,18 @@ Feature: The /task harness holds a whole run in one machine, supervises it with 
     Then the failed say is logged
     And the run supervisor reaches closed, the job ends and the directory lease is released
     And the next /task in the directory is not busy
+
+  @phase4 @core
+  Scenario: UI24 The directory is free once the run machine is final, even while the summary waits
+    Given a root session whose turn waits on a permission prompt
+    When the run actor reaches done
+    Then the lease is released after the writer writes the done snapshot and before the summary
+    And the next /task in the directory is not busy
+    And the summary is written once, when the root turn ends, or its failure is logged when the root session goes away
+
+  @phase4 @compat
+  Scenario: UI25 A status file from before the change is drawn with a defined fallback
+    Given a status file with no tags, no title and no heartbeat, as the old harness or the phase-1 code wrote it
+    When each design renders it
+    Then the view is still, and every design shows the muted line "status from an older harness — type /task to refresh"
+    And the tasks show their glyph and state label from the display table, with no Board column, count or STOPPED group derived from them

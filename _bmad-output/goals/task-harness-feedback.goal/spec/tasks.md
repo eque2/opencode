@@ -23,55 +23,55 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 | --- | --- | --- | --- |
 | T1.15 | Two live-check folders (built in phase 1) | VF15, RM20 | — |
 | T1.1 | Port conformance test | RM23 | — |
-| T1.2 | Machine generator skeleton | RM1, RM2 | T1.1 |
-| T1.3 | Readiness and cascade rows | RM7, RM9, RM13, RM15, RM16, RM17, RM28 | T1.2 |
+| T1.2 | Machine generator skeleton | RM1, RM2, VF22 | T1.1 |
+| T1.3 | Readiness and cascade rows | RM7, RM9, RM13, RM15, RM16, RM17, RM28, RM29 | T1.2 |
 | T1.4 | Outcome region | RM10, RM11, RM12, RM13, RM14, RM27 | T1.3 |
 | T1.5 | History, causes, times, spans | RM5, RM7, RM9, RM24, RM25 | T1.4, T1.15 |
-| T1.6 | Engine API over snapshots | RM1, RM3, RM6, RM8, RM28 | T1.5 |
-| T1.7 | Engine tests as fact sequences | RM4, RM7–RM17, RM25, RM27 | T1.6 |
+| T1.6 | Engine API over snapshots | RM1, RM3, RM6, RM28, RM8a, RM8c | T1.5 |
+| T1.7 | Engine tests as fact sequences | RM4, RM7–RM17, RM25, RM27, RM8a, RM8c | T1.6 |
 | T1.8 | Random fold and AD-5 tests | RM5 | T1.6 |
 | T1.9 | Progress alphabet and walk key | RM19, RM20, RM22 | T1.6 |
-| T1.10 | Graph proof | RM19, RM20, RM21, RM22 | T1.9, T1.15 |
-| T1.11 | Phase-1 runner seam | RM10, RM17, RM18 | T1.6 |
+| T1.10 | Graph proof | RM19, RM20, RM21, RM22, RM29 | T1.9, T1.15 |
+| T1.11 | Phase-1 runner seam | RM10, RM17, RM18, RM8a, RM8b, RM8c | T1.6 |
 | T1.12 | Phase-1 status projection | RM24 | T1.6 |
 | T1.13 | Delegate helper and phase-1 task-ui check | RM26 | T1.12 |
 | T1.14 | Conformance on the phase-1 engine | BUILD-6, RM18, BUILD-1, BUILD-2, BUILD-3, BUILD-4 | T1.7, T1.8, T1.10, T1.11, T1.12, T1.13 |
 | T2.1 | State audit with interim allowlist | SV18 | T1.14 |
 | T2.2 | Fact members for phase 2 | SV3, SV12 | T2.1 |
 | T2.3 | AD-13 status contract and shared fixture | SV15, SV17 | T2.2 |
-| T2.4 | Recorder and status writer | SV7, SV16, SV21 | T2.3 |
+| T2.4 | Recorder and status writer | SV7, SV16, SV21, SV26 | T2.3 |
 | T2.5 | TaskHarness service | SV8, SV13, SV20 | T2.4 |
 | T2.6 | HarnessHooks routing beside the maps | SV13 | T2.5 |
 | T2.7 | Stateless workers and session events | SV2, SV10, SV11 | T2.6 |
-| T2.8 | Task supervisor | SV6, SV9, SV10, SV11, SV12, SV13, SV22, SV23, SV24 | T2.7 |
-| T2.9 | Scenario supervisor | SV2, SV6, SV9 | T2.7 |
-| T2.10 | Run supervisor | SV2, SV3, SV4, SV5, SV9, SV20, SV24, SV25 | T2.8, T2.9 |
-| T2.11 | Cut-over: command, hooks, SessionPrompt | SV3, SV4, SV8, SV13, SV20, SV21, SV25 | T2.10 |
+| T2.8 | Task supervisor | SV6, SV9, SV10, SV11, SV12, SV13, SV22, SV23, SV24, SV27 | T2.7 |
+| T2.9 | Scenario supervisor | SV2, SV6, SV9, SV27 | T2.7 |
+| T2.10 | Run supervisor | SV2, SV3, SV4, SV5, SV9, SV20, SV24, SV25, SV26, SV27, UI24 | T2.8, T2.9 |
+| T2.11 | Cut-over: command, hooks, SessionPrompt | SV3, SV4, SV8, SV13, SV20, SV21, SV25, RM8a, RM8b, RM8c, SV26, SV27, UI24 | T2.10 |
 | T2.12 | Remove the polled runner, maps and watch | SV1, SV14 | T2.11 |
 | T2.13 | Final phase-2 allowlist | SV1, SV14, SV18, SV19 | T2.12 |
 | T2.14 | Conformance on the actors | BUILD-6, BUILD-1, BUILD-2, BUILD-3, BUILD-4 | T2.13 |
 | T3.1 | `ensures` required | VF3, VF13 | T2.14 |
-| T3.2 | Every failure in the refusal | VF1, VF2, VF19 | T3.1 |
+| T3.2 | Every failure in the refusal | VF1, VF2, VF19, VF22, VF23 | T3.1 |
 | T3.3 | `spec.checked` and the run warning | VF4, VF5 | T3.2 |
-| T3.4 | External regions and the subtree refusal | VF6, VF7, VF8, VF14, VF19, VF20, VF21 | T3.3, T3.5 |
+| T3.4 | External regions and the subtree refusal | VF6, VF7, VF8, VF14, VF19, VF20, VF21, VF24 | T3.3, T3.5 |
 | T3.5 | Six fault folders | VF9–VF14 | T3.1 |
 | T3.6 | Fault-folder command test | VF9–VF14 | T3.2, T3.4, T3.5 |
 | T3.7 | Live-check folders still load after D11 | VF15 | T3.1 |
 | T3.8 | Graph walks of the fault folders that load | RM20 | T3.4, T3.5 |
 | T3.9 | Scripted live-check runs | VF17, VF18 | T3.7 |
 | T3.10 | Demo seed copies the example folders | VF16 | T3.5, T3.7 |
-| T3.11 | README Validation section | DOC1 | T3.4, T3.6, T3.7 |
+| T3.11 | README Validation section | DOC1, VF23 | T3.4, T3.6, T3.7 |
 | T4.1 | taskView machine and adapter | UI2, UI3 | T3.11 |
-| T4.2 | Store on tags and AD-13 | UI1, UI11, UI18, SV17 | T4.1 |
+| T4.2 | Store on tags and AD-13 | UI1, UI11, UI18, SV17, UI25 | T4.1 |
 | T4.3 | Plugin wiring on the actor | UI2, UI3, UI21 | T4.2 |
 | T4.4 | Shared region | UI5, UI9, UI10, UI16, UI21, UI22 | T4.3 |
 | T4.5 | Peek BUILDER heading | UI5, UI9, UI11, UI21 | T4.3 |
 | T4.6 | Board and Matrix | UI1, UI5, UI11, UI18, UI22 | T4.4, T4.5 |
 | T4.7 | Gantt and HUD | UI4, UI11, UI15, UI5 | T4.4, T4.5 |
-| T4.8 | Ledger, Dock, Ticker, full screen | UI6, UI15, UI16, UI17, UI18, UI19, UI21, UI5 | T4.4, T4.5 |
+| T4.8 | Ledger, Dock, Ticker, full screen | UI6, UI15, UI16, UI17, UI18, UI19, UI21, UI5, UI25 | T4.4, T4.5 |
 | T4.9 | Shortcut bar and animated mark | UI12, UI13, UI14, UI16 | T4.3 |
 | T4.10 | Run header | UI6, VF8 | T4.2 |
-| T4.11 | Closing summary | UI7, UI8, UI20, UI23 | T4.10 |
+| T4.11 | Closing summary | UI7, UI8, UI20, UI23, UI24 | T4.10 |
 | T4.12 | Run usage | UI15 | T4.5, T4.7, T4.8, T4.11 |
 | T4.13 | Final audit and task-ui README | SV18, SV19 | T4.6, T4.7, T4.8, T4.9, T4.12 |
 | T4.14 | Final quality gate | BUILD-1, BUILD-2, BUILD-3, BUILD-4, BUILD-6 | T4.13 |
@@ -93,6 +93,8 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Boundary — each folder targets the demo seed (`test/task-harness/release-notes-repo`): its touches and test paths exist there or are created by the builder.
 - Invalid Input — the gate's command exits 1 on every run, with no model and no network (the test runs it twice).
 - Concurrency, Security Boundaries, Timing — N/A.
+- Security Boundaries — the gate command of `example-cascade.spec` is inline (for example `sh -c "exit 1"`) and names no path inside the seed, so no builder edit can make it pass; a test parses the command and asserts that it names no file.
+- Boundary — the `TASK.md` goal of each leaf is a one-line change, so a real builder reaches `task_ready` well inside the live task wall clock (10 min) in the paid check.
 **Notes:** D15, AC 6, AC 7. Two folders: `example-scenarios.spec`, `example-cascade.spec`; each `SPEC.md` has an H1 title (D17); no `.ts` file inside them. Built in phase 1 (prepare-goal ruling, from the AC 6 and AC 7 text) so that the graph proof walks the loaded plans before the checkpoint merge. The id is out of sequence because the task was added after numbering; it has no dependency, so it comes first in phase 1.
 
 ### T1.1: Write the port conformance test for the probes the spine relies on
@@ -116,7 +118,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/engine-xstate/machine.ts` (NEW)
 **Depends On:** T1.1
-**Supports:** RM1, RM2
+**Supports:** RM1, RM2, VF22
 **Tests:** packages/opencode/test/task/machine.test.ts (full suite)
 **Test Cases:**
 - Happy Path — `config(releaseNotesPlan)` has root `type: "parallel"` with exactly `active` and `outcome`; `active` regions in order T1, T1.1, T1.2, T1.3, T1.4, T1.5, then S1 … S13 in natural order (`S2` before `S10`), then T8, T9 (kind `outside`).
@@ -129,13 +131,14 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Concurrency, Timing — N/A (pure data).
 - Empty / Null — a task with no obligations (possible in phase 1, before D11 lands in T3.1) gets no `evidence` sub-region: its task region holds only `work`, and it can still reach `trusted` as today; a test pins it.
 - Boundary — an `after` id of a run task that names a folder task outside the plan (a subtree run) gets one region of kind `external` (`untrusted`, `trusted`, both final), so every `stateIn` id names a node and `initial` never returns an `error` snapshot (SD-7).
+- Invalid Input — VF22: a plan with no task region (a spec with only `SPEC.md`, or only outside preconditions and scenarios) makes `machine(plan)` die with a defect naming the spec; the command refuses such a spec before it builds a machine (T3.2).
 **Notes:** AD-1, AD-2. `machine(plan)` builds the config as plain data, exports it (`config(plan)`), then calls `setup(...).createMachine(config)`. Export `DEAD = ["needs_human", "budget_exhausted", "failed", "blocked"]` and `CLASS` (state → class tags, the AD-13 class table); they are AD-17 allowlist entries. Region order and id order use the natural collator (`Intl.Collator(undefined, { numeric: true })`, the `byId` order of `task-ui/store.ts`). Work states: `waiting`, `ready`, `building`, `proving`, `verifying`, `judging` (transient), finals `trusted`, `needs_human`, `budget_exhausted`, `failed`, `cancelled`, `blocked` (AD-2 table); `trusted` keeps its `obligation.stale` row. Scenario states: `waiting`, `ready`, `parked`, `verifying`, finals `trusted`, `rejected`, `failed`, `cancelled`, `blocked`, `parked`. Outside/external: `untrusted`, `trusted` (both final). The existing obligation and task rows of `engine-xstate/index.ts` (`obligationMachine` 174-219, `taskMachine` 319-475) give the fact rows to carry over (results, verdicts, retries, budget, review of a parent). Standards: EFX-07 (synchronous), EFX-18 (die on a broken invariant). External regions land here, in phase 1, so that a subtree plan has a node for every dependency; the D13 refusal and the trust of an external region at start land in T3.4 (SD-7).
 
 ### T1.3: Add the readiness and cascade rows and the dependency tags
 
 **File:** `packages/opencode/src/task/engine-xstate/machine.ts` (UPDATE)
 **Depends On:** T1.2
-**Supports:** RM7, RM9, RM13, RM15, RM16, RM17, RM28
+**Supports:** RM7, RM9, RM13, RM15, RM16, RM17, RM28, RM29
 **Tests:** packages/opencode/test/task/machine.test.ts (full suite)
 **Test Cases:**
 - Happy Path — with the observed facts, the macrostep of T1.4's third failing proof ends with T1.4 `budget_exhausted`, T1.5 `blocked` and T1 `blocked` in one returned snapshot (RM7).
@@ -149,7 +152,10 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Invalid Input — T1.5 (after T1.3, T1.4, T9): the config has no blocked row that names `#T9/<dead state>`, because outside and external regions have no dead state; a config scan requires every `stateIn` id to name an existing node (RM28); folding the observed facts keeps the status `active`, never `error`.
 - Invalid Input — `outside.trusted { id: "T1.4" }` (a task id) returns the identical snapshot: no task region has an `outside.trusted` row.
 - State Transitions — a dependant U already `building` when its dependency D is reopened by `obligation.stale` and then ends `budget_exhausted` is not blocked (blocked rows exist only on `waiting`, `ready` and `parked`); U may still end trusted, and the outcome is `budget_exhausted`.
-**Notes:** AD-3, AD-2. Guards are `stateIn("#<dep id>/<state>")` on explicit ids only, never tags (AD-1). A blocked row's action has static params `{ id, state }` and sets `blockedBy = { id, state }` and the reason slot `blocked by <id>: <state with _ as space>`; an action cannot read the configuration. An id that names an `outside` (or, from T3.4, `external`) region names that region's `trusted` state. External regions arrive in T3.4 (SD-7).
+- Invalid Input — RM29 (owner ruling 4): a copy of the release-notes config with the row that blocks T1.5 on `#T1_4/budget_exhausted` removed fails the totality scan with `totality: T1.5 waiting has no row for T1.4 budget_exhausted`, before any fact is applied.
+- Happy Path — RM29: the totality scan passes for the release-notes plan, the two live-check plans and every fault-folder plan that loads; it runs inside `machine(plan)`, so every run and every walk is scanned first.
+- Boundary — RM29: for each non-final unit state the scan enumerates every combination of final states of what the unit waits on: all `trusted` must reach `ready`; any `needs_human`, `budget_exhausted`, `failed`, `blocked` or `cancelled` must reach `blocked` with its cause; the only non-final state allowed no way out is a wait on an untrusted `outside` or `external` region, which a fact moves; the `outcome` live states must hold an enabled settle row for every combination of final unit classes.
+**Notes:** AD-3, AD-2. Guards are `stateIn("#<dep id>/<state>")` on explicit ids only, never tags (AD-1). A blocked row's action has static params `{ id, state }` and sets `blockedBy = { id, state }` and the reason slot `blocked by <id>: <state with _ as space>`; an action cannot read the configuration. An id that names an `outside` (or, from T3.4, `external`) region names that region's `trusted` state. External regions arrive in T3.4 (SD-7). Owner ruling 4 ("structurally impossible to become stuck … A linting or pre-processing should yield errors. But also fixed order + check"): the totality scan extends the RM28 config scan; the blocked rows also cover a `cancelled` dependency (unreachable in a live run, because a stop cancels every unfinished unit at once, but required for totality).
 
 ### T1.4: Add the outcome region driven by active.onDone
 
@@ -160,16 +166,16 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 **Test Cases:**
 - Happy Path — every task trusted and every scenario trusted gives outcome `done` with no reason (rule 4).
 - State Transitions — `outcome` moves `running` ↔ `waiting` by a generated `stateIn` guard: `waiting` when no task is `ready`/`building`/`proving`/`verifying` and no scenario is `ready`/`verifying`; the history records neither move.
-- Error Propagation — T1.1 `needs_human` first, T1.2 `failed` later, T1.3 blocked by T1.1: outcome `needs_human`, reason lines `T1.1 needs human`, `T1.2 failed`, `T1.3 blocked by T1.1` (rule 2, RM11).
+- Error Propagation — T1.1 `needs_human` first, T1.2 `failed` later, T1.3 blocked by T1.1: outcome `needs_human`, reason lines `T1.1 needs human`, `T1.2 failed`, `T1.3 blocked by T1.1` (rule 1, RM11).
 - Boundary — one dead task while an independent task is `building`: no settle until the independent task is final (RM10); the queued `run.settled` that no longer holds is ignored by the last targetless row.
 - Invalid Input — owner ruling 1: all tasks trusted, scenario S2 `rejected`: outcome `failed`, reason `acceptance not proved: S2 rejected`; a `failed` scenario gives `acceptance not proved: S3 failed` (rule 3, RM12).
 - Empty / Null — a parked scenario at settle with no history entry, or one whose last entry is `waiting`: line `not run: S13 waits on T8` (outside needs not trusted, natural order, `, ` joined); rule 4 gives `done` with that reason (RM13).
-- State Transitions — default 4: `run.cancelled` moves each non-final unit (task `waiting`, `ready`, `building`, `proving`, `verifying`; scenario `waiting`, `ready`, `verifying`) to `cancelled` with the fact's reason, final units keep their state, outcome `cancelled` (rule 1); `run.ended { state: "failed" }` gives outcome `failed` with its reason (RM14).
+- State Transitions — default 4: `run.cancelled` moves each non-final unit (task `waiting`, `ready`, `building`, `proving`, `verifying`; scenario `waiting`, `ready`, `verifying`) to `cancelled` with the fact's reason, final units keep their state, every obligation keeps its state and ends with its task, outcome `cancelled` when no task died before the stop (rule 2); `run.ended { state: "failed" }` gives outcome `failed` with its reason (RM14).
 - Security Boundaries — no ancestor (region, `active`, root) has a row for `run.cancelled` or `run.ended`; `active.onDone` has no target and only raises `run.settled` (a config scan).
-- State Transitions — RM27: T1.1 `budget_exhausted`, T1.2 `building`, S1 `waiting`, then `run.cancelled "user stop"`: outcome `cancelled` with reason `user stop` (rule 1 outranks rule 2); T1.2 and S1 `cancelled`; T1.1 stays `budget_exhausted`.
+- State Transitions — RM27 (AC 4 outranks the spine): T1.1 `budget_exhausted`, T1.4 blocked by T1.1, T1.2 `building`, S1 `waiting`, then `run.cancelled "user stop"`: T1.2 and S1 `cancelled`, T1.1 stays `budget_exhausted`, outcome `budget_exhausted` (the task that died first), reason lines `T1.1 budget exhausted`, `T1.4 blocked by T1.1`, then `user stop`.
 - Boundary — T1.2 `failed`, then T1.1 `needs_human`, both with the same `at`: the outcome is `failed` (the earliest dead entry by log index, not by `at` or id); the reason lines are in natural id order: `T1.1 needs human`, then `T1.2 failed`.
 - Invalid Input — rule 3 with a parked scenario: S2 rejected and S13 parked give `acceptance not proved: S2 rejected` then `not run: S13 waits on T8`; S13 needing T8 and T9, both untrusted, gives `waits on T8, T9`.
-**Notes:** AD-4, owner ruling 1, default 4. `outcome` live states `running`, `waiting`; finals `done`, `failed`, `needs_human`, `budget_exhausted`, `cancelled`. Every outcome row is also guarded by "every unit region is final". The reason action computes from `context.log` (last entry of each unit, `blockedBy` of a blocked entry) and static plan data; reason lines joined with `\n`. A stored `run.ended { state: "done" }` folds as a stop (rule 1, AD-6) — RM8 checks it in T1.7. The machine never takes a refusal (the command writes it).
+**Notes:** AD-4, owner ruling 1, default 4. `outcome` live states `running`, `waiting`; finals `done`, `failed`, `needs_human`, `budget_exhausted`, `cancelled`. Every outcome row is also guarded by "every unit region is final". The reason action computes from `context.log` (last entry of each unit, `blockedBy` of a blocked entry) and static plan data; reason lines joined with `\n`. A stored `run.ended { state: "done" }` folds as a stop (rule 2, AD-6) — RM8a checks it in T1.7. The rules apply in this order (spec decision SD-18; AC 4 outranks AD-4's order): 1 a task in `needs_human`, `budget_exhausted` or `failed` gives the state of the earliest such entry, with reason lines for each dead task, each blocked task, then the stop's reason line when a stop is noted; 2 a stop with no dead task gives `cancelled` or the `run.ended` state with the stop's reason; 3 acceptance (owner ruling 1); 4 `done`. The machine never takes a refusal (the command writes it).
 
 ### T1.5: Add the history, cause, time and span actions
 
@@ -193,14 +199,14 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/engine-xstate/index.ts` (UPDATE)
 **Depends On:** T1.5
-**Supports:** RM1, RM3, RM6, RM8, RM28
+**Supports:** RM1, RM3, RM6, RM28, RM8a, RM8c
 **Tests:** packages/opencode/test/task/engine-api.test.ts (full suite)
 **Test Cases:**
 - Happy Path — `initial(plan)` returns a snapshot with status `active` (it asserts so and dies otherwise); `apply(plan, snapshot, fact)` returns the next snapshot; `view(snapshot)` returns the `State` shape the status projection reads.
 - State Transitions — `apply` returns its input unchanged when the snapshot's status is not `active`, including a fact after `done` (RM6).
 - Invalid Input — `apply` with a snapshot made by another plan's machine dies (memoised `machine(plan)` by plan identity in a `WeakMap`); an unknown task id in a fact returns the identical snapshot.
 - Boundary — a fact that changes nothing returns the identical snapshot (reference equality), and the input is never mutated.
-- Error Propagation — every stored fact type of `FactSchema` folds; a stored `run.started` without `path` and a stored `run.ended { state: "done" }` fold (RM8).
+- Error Propagation — every stored fact type of `FactSchema` folds; a stored `run.started` without `path` and a stored `run.ended { state: "done" }` fold (RM8a).
 - Happy Path — selectors `unitState`, `tags`, `waitingOn`, `blockedBy`, `ended` read the snapshot through `snapshot.hasTag` and meta; `waitingOn(T1.5)` is the D of each `T1.5:waits:*` tag while T1.5 carries `waiting`.
 - Security Boundaries — the module no longer defines `obligationMachine`, `taskMachine`, `scenarioMachine`, `runMachine`, `stepTask`, `stepRun`, `cancel`, `staleAlone`, `follows`, `runSnapshot` or `settled` (a source test, RM3).
 - Error Propagation — RM28: when the port returns a snapshot with status `error` (a guard on an unknown id reachable after `task.started`), `apply` dies with a defect naming the error; `apply` given an `error` snapshot dies too (the pass-through for a non-`active` status applies to `done` only).
@@ -212,13 +218,13 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/test/task/engine-xstate.test.ts` (UPDATE)
 **Depends On:** T1.6
-**Supports:** RM4, RM7, RM8, RM9, RM10, RM11, RM12, RM13, RM14, RM15, RM16, RM17, RM25, RM27
+**Supports:** RM4, RM7, RM9, RM10, RM11, RM12, RM13, RM14, RM15, RM16, RM17, RM25, RM27, RM8a, RM8c
 **Tests:** packages/opencode/test/task/engine-xstate.test.ts (full suite)
 **Test Cases:**
 - Happy Path — the header list names each of the 27 old tests and the 2 base tests once, as ported, re-baselined or retired, with its reason (RM4).
 - State Transitions — re-baselined: the stop-at-once tests (old 6, 9, 11, 12, 13, 17, 21, 23, 24) now expect the run to keep running until every region is final (D3), with the dead task's state as the outcome; the waiting-on-cancel test (old 14) now expects the waiting parent `cancelled` (default 4); each names D3 or "default 4" in its title.
 - Invalid Input — retired: the hand-built `State` tests (old 25, 26, 27 via `altered`) each name the guard that replaces them ("a foreign snapshot dies", "an unknown id returns the identical snapshot").
-- Happy Path — RM7: the observed facts give T1.5 and T1 blocked in the returned snapshot with the named cause; RM8: a stored old-shape slice folds and a resume records only `run.resumed`.
+- Happy Path — RM7: the observed facts give T1.5 and T1 blocked in the returned snapshot with the named cause; RM8a: a stored old slice that ended folds with its stop's state; RM8c: the observed facts with no `run.ended` fold to `done` with `budget_exhausted`, T1.5 and T1 blocked.
 - Boundary — RM9 transitive cascade and first-dead-dependency; RM15 ready only when after and children trusted, back to waiting on stale; RM16 siblings ready in one step; RM17 the outside wait and a second trust ignored.
 - Error Propagation — RM11, RM12 (owner ruling 1 in the title), RM13 parked `not run` line, RM14 cancel and wall-clock stop.
 - Concurrency, Security Boundaries, Timing — N/A.
@@ -258,7 +264,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/test/task/engine-xstate-graph.test.ts` (NEW)
 **Depends On:** T1.9, T1.15
-**Supports:** RM19, RM20, RM21, RM22
+**Supports:** RM19, RM20, RM21, RM22, RM29
 **Tests:** packages/opencode/test/task/engine-xstate-graph.test.ts (full suite)
 **Test Cases:**
 - Happy Path — the release-notes main walk (canonical interleaving: only the first unit in document order with a fact gets its facts) finds 0 states that are not `done` and that no alphabet event moves; every visited snapshot has status `active` or `done` (RM19).
@@ -268,13 +274,14 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - State Transitions — the stale walk of the loaded `example-cascade.spec` plan with full interleaving adds `obligation.stale` for obligations of trusted or in-progress tasks, keys dead and blocked tasks' obligations as `-`, and finds 0 stuck states.
 - Resource Limits — the first run measures each walk's edge count; `limit` is set to about 3 times it; each test has an explicit 60 s timeout; a test lists the context paths that guards read and fails when one is missing from the key.
 - Timing — the release-notes walk finishes inside its 60 s timeout (the spine measured about 336 keys and 1 000 edges, about 8 s, on a model).
+- Happy Path — RM29 (owner ruling 4): every walked plan passes the structural totality scan first (it runs inside `machine(plan)`); the walk and the scan together are the AC 6 evidence.
 **Notes:** AD-7, D5, `@ASSUMPTION:A1.a`. `getAdjacencyMap(machine(plan), { events: alphabet, serializeState: walkKey(plan), limit })` from `@jambudipa/xstate-effect/graph` (options are required). The walk checks that the chosen unit's facts include one that changes the key. T3.8 adds the plans of the fault folders that load: the whole `example-outside-run.spec` plan and its T1.2 subtree.
 
 ### T1.11: Update the runner to the phase-1 seam on the run snapshot
 
 **File:** `packages/opencode/src/task/core/runner.ts` (UPDATE)
 **Depends On:** T1.6
-**Supports:** RM10, RM17, RM18
+**Supports:** RM10, RM17, RM18, RM8a, RM8b, RM8c
 **Tests:** packages/opencode/test/task/core-runner.test.ts (full suite)
 **Test Cases:**
 - Happy Path — `record` folds each fact with `apply` into the held snapshot; `schedule` starts a leaf (`begin`) or a parent's review proof only when the task is tagged `ready`, and a scenario batch only when scenarios are tagged `ready`; build, prove and verify follow the phase tags.
@@ -284,6 +291,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Error Propagation — the existing pure exports (`taskClockStart`, `results`, `scenarioOutcome`, `latestVerdicts`, `unfinishedBase`) keep their tests green.
 - Concurrency, Security Boundaries, Timing — the remaining phase-1 `Ref`s are allowed until T2.1 (AD-20).
 - State Transitions — the runner's `ACTIVE` (646) and `JUDGED` (684) lists go with `checkDone` and the readiness check; the runner reads tags instead.
+- State Transitions — RM8a/RM8b/RM8c: the phase-1 runner starts a new slice when the latest slice has a stored stop or folds to `done` (it never resumes a `done` fold), and resumes a slice that is not ended; an old slice with no `path` counts as a whole-spec slice.
 **Notes:** AD-20. The polled loop, `TICK`, `STALE_EVERY`, `failures`, `stopping`, `children`, `active` stay until phase 2 removes them (T2.12). `run.ended { state: "failed" }` from the run wall clock stays (AD-10). Keep `unfinishedBase` (used by `command.ts:191`).
 
 ### T1.12: Update the status projection to read the snapshot through view
@@ -331,7 +339,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Invalid Input — `arms/status.ts` accepts the states `blocked` and `cancelled` for scenarios.
 - Error Propagation — the conformance guard reports no dirty fingerprinted path (commit the spec and suite edits first).
 - Concurrency, Security Boundaries, Timing — N/A.
-**Notes:** AC 29 at the AC 7 checkpoint. This is the last task of phase 1: after its review the goal loop runs the full quality gate (BUILD-1..4, BUILD-6) and merges into `dev` (AC 7). `test/task-harness/arms/status.ts` is the second file this task touches. The Tests line runs only with `TASK_HARNESS_ARM=o2` set (the file skips every check without it); the gate itself is BUILD-6 (`bun run script/task-conformance.ts --arm o2 --runs 1`, which also runs the baseline arm as a diagnostic).
+**Notes:** AC 29 at the AC 7 checkpoint. This is the last task of phase 1: after its review the goal loop runs the full quality gate (BUILD-1..4, BUILD-6) and merges into `dev` (AC 7). `test/task-harness/arms/status.ts` is the second file this task touches. The Tests line runs only with `TASK_HARNESS_ARM=o2` set (the file skips every check without it); the gate itself is BUILD-6 (`bun run script/task-conformance.ts --arm o2 --runs 1`, which also runs the baseline arm as a diagnostic). ADV-12: every changed H-check expectation is listed with its reason (tied to D2, D3, AD-4 or AD-13) in the task journal; no check is removed, skipped or loosened.
 
 ## Phase 2 — live supervision as actors (parent T2; D6–D9, AD-8..AD-13, AD-17, AD-19)
 
@@ -390,7 +398,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/core/recorder.ts` (NEW)
 **Depends On:** T2.3
-**Supports:** SV7, SV16, SV21
+**Supports:** SV7, SV16, SV21, SV26
 **Tests:** packages/opencode/test/task/recorder.test.ts (full suite)
 **Test Cases:**
 - Happy Path — `record(fact)` stamps `at` from `Clock.currentTimeMillis`, publishes to the run aggregate, and sends to the run actor, in that order, under one permit.
@@ -405,6 +413,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Error Propagation — the EventV2 publish fails: no send to the run actor, and `record` fails to its caller (a worker failure); a `record` after the run scope closed stores nothing.
 - Empty / Null — a touch before the first `changes` emission writes the restored snapshot or nothing and never throws; one failed `TaskStatus.write` is logged and the next macrostep still writes (the writer fiber does not end).
 - Timing — on a resume whose clock reads below the last stored `at` (a new process), `at` is stamped as the larger of the clock and the last stored `at`, so the log never decreases (AD-5).
+- Error Propagation — SV26: once the run actor's status is `error`, `record` stores nothing, logs the defect, and fails to its caller; the writer writes nothing more.
 **Notes:** AD-9. The Recorder creates the run actor with `createActor(machine(plan), { snapshot: fold })` in the run scope (a root actor, no `systemId`). `record` is never called from an action, guard, delayed transition or subscribe callback: a supervisor invokes a `record` worker. Standards: EFX-24, EFX-25, EFX-26, EFX-28.
 
 ### T2.5: Create the TaskHarness service with leases and the session index
@@ -463,7 +472,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/core/supervise/task.ts` (NEW)
 **Depends On:** T2.7
-**Supports:** SV6, SV9, SV10, SV11, SV12, SV13, SV22, SV23, SV24
+**Supports:** SV6, SV9, SV10, SV11, SV12, SV13, SV22, SV23, SV24, SV27
 **Tests:** packages/opencode/test/task/supervise-task.test.ts (full suite)
 **Test Cases:**
 - Happy Path — on `unit.moved` with phase tag `ready` the leaf supervisor invokes `begin` and records `task.started`; `building` runs builder turns; `proving` runs `proof` and records `task.proved`; `verifying` runs the verifier round (`ask`, `collect`, `askMissing`, `collect`) and records `task.verified`; after recording it waits quietly until a new `entry` arrives.
@@ -478,14 +487,16 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - State Transitions — SV24: on resume, a new supervisor that reuses an existing builder session claims it and waits for the index entry before the prompt; `task_ready` from it reaches the new supervisor.
 - Concurrency — after recording `task.stalled` or `task.nudged`, the `unit.moved` for that entry (tag `building`) sends exactly one continue or nudge prompt, and no second builder turn starts.
 - State Transitions — a failed proof returns the task to `building` (attempt 2): the nudge count and the `ready` flag reset, the next idle records `nudge: 1`, and a `hook.ready` left from attempt 1 does not move attempt 2 to proving.
-- Timing — a supervisor spawned on resume for a task that started 50 min ago, with a 60-min `taskWallClock`, records `task.failed` after 10 min (counted from `taskClockStart`), not after 60.
+- Timing — across a resume, the task clock restarts at `run.resumed` (`taskClockStart`: downtime does not count), so a task that started 50 min before a stop gets the full 60-min `taskWallClock` after the resume; a supervisor spawned again inside one job keeps the remaining time.
+- Error Propagation — SV27: an interrupted worker (scope close, supervisor stop) never counts as a worker failure and records nothing.
+- Error Propagation — SV26: a task supervisor that reaches status `error` is handled by the run supervisor as three worker failures (T2.10).
 **Notes:** AD-8, AD-10, AD-11, D7. File `packages/opencode/src/task/core/supervise/task.ts` inside the NEW folder. The supervisor branches only on phase tags in `unit.moved { unit, entry, state, tags }`, never reads the run actor to choose its phase, and moves the lifecycle only by recording facts through a `record` worker. Delays come from `TaskLimits` (`streamIdle`, `taskWallClock`, `cancelDeadline`).
 
 ### T2.9: Create the scenario supervisor with its judge round
 
 **File:** `packages/opencode/src/task/core/supervise/scenario.ts` (NEW)
 **Depends On:** T2.7
-**Supports:** SV2, SV6, SV9
+**Supports:** SV2, SV6, SV9, SV27
 **Tests:** packages/opencode/test/task/supervise-scenario.test.ts (full suite)
 **Test Cases:**
 - Happy Path — a scenario in `verifying` gets a judge round; the supervisor records `scenario.verified` with the verdict.
@@ -494,13 +505,14 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Security Boundaries — it records only `scenario.verified` for a `verifying` scenario (SV9).
 - Boundary — a missing verdict id triggers `askMissing` once, then the round ends.
 - Concurrency, Timing — N/A beyond the run supervisor's batch.
+- Error Propagation — SV27: an interrupted judge worker never counts as a worker failure and records nothing.
 **Notes:** AD-8. The `scenarioProof` batch for `ready` scenarios belongs to the run supervisor (T2.10).
 
 ### T2.10: Create the run supervisor with its parallel timer regions
 
 **File:** `packages/opencode/src/task/core/supervise/run.ts` (NEW)
 **Depends On:** T2.8, T2.9
-**Supports:** SV2, SV3, SV4, SV5, SV9, SV20, SV24, SV25
+**Supports:** SV2, SV3, SV4, SV5, SV9, SV20, SV24, SV25, SV26, SV27, UI24
 **Tests:** packages/opencode/test/task/supervise-run.test.ts (full suite)
 **Test Cases:**
 - Happy Path — the first state records `run.started { path }` (or `run.resumed { path }`) through a `record` worker and defers every other event; it registers as `run:<runID>` before it reads the directory's trusts; then it records `outside.trusted` for each directory-recorded outside id.
@@ -516,13 +528,17 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Error Propagation — `staleCheck` failing 3 times in a row logs each failure, records no fact, and the cadence continues.
 - Security Boundaries — the directory aggregate holds trusts for T9 (outside), T1.1 (an external region of this run) and T1.4 (a task): at start only `outside.trusted T9` is recorded.
 - Integrity — SV25: the cancel finalizer of a job cancelled before `run.started` is stored waits until the supervisor stores `run.started` (or `run.resumed`) and records `run.cancelled` after it, so the cancel never lands in the previous slice.
+- Error Propagation — SV26: a unit supervisor in status `error` counts as three worker failures, so the run supervisor records `task.failed` (or the scenario's fact) with `harness error: <defect>`; a run actor or run supervisor in status `error` ends the job's wait as `closed` does, the defect is logged, and the lease is released.
+- State Transitions — SV27: a scope close without a job cancel stops the supervisors with no fact, no summary and no `run.cancelled`.
+- Happy Path — UI24: when the run actor is `done`, the run supervisor waits until the writer has written the `done` snapshot, sends `run.release` to the harness root, and only then (from T4.11) invokes the summary; the next `/task` is not busy while the summary waits.
+- Timing — the run wall clock counts from this job's `run.started` or `run.resumed`.
 **Notes:** AD-8, AD-12, D6. No transition in one region targets another region's state; no timer row uses `reenter`. The fold invokes nothing: invocation happens only in supervisors (D6). Scenario batch: `scenarioProof` for the `ready` scenarios records `scenario.proved`, 3 worker failures record its failure fact.
 
 ### T2.11: Wire the command, the hooks and SessionPrompt onto the harness in one cut-over
 
 **File:** `packages/opencode/src/task/core/command.ts` (UPDATE)
 **Depends On:** T2.10
-**Supports:** SV3, SV4, SV8, SV13, SV20, SV21, SV25
+**Supports:** SV3, SV4, SV8, SV13, SV20, SV21, SV25, RM8a, RM8b, RM8c, SV26, SV27, UI24
 **Tests:** packages/opencode/test/task/core-command.test.ts (full suite)
 **Test Cases:**
 - Happy Path — the checks run in the AD-19 order: usage, loader, task folder (R2), `run.live`, git readiness, unfinished base, the slot for the D13 check (filled by T3.4), `run.claim`, `BackgroundJob.start`.
@@ -538,6 +554,10 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Boundary — `/task task-formats/blend/release-notes.spec/` and `./task-formats/blend/release-notes.spec` resume the slice started with `task-formats/blend/release-notes.spec`: the path is normalised before it is compared and stored.
 - Invalid Input — a resume after the spec dropped an id that the slice's facts name folds without a throw (facts for unknown ids leave the snapshot unchanged); one plan instance feeds both the fold and the Recorder's `createActor` (memoised by identity).
 - Happy Path — the cut-over: `prompt.ts` passes a `HarnessHooks` value into `createTaskHarnessTools(agent, sessionID, hooks)` (`prompt.ts:1288, 1714-1758`) and into the repetition check (`1215-1216`); `SessionPrompt.node` depends on `TaskHarness.node`; `/task` starts every run on the harness, and the polled runner starts none.
+- Boundary — RM8b: an old slice with no end and no `path` resumes on `/task <spec>` and on `/task ./<spec>/` (normalised), recording only `run.resumed { path }`; RM8a/RM8c: a slice with a stored stop, or whose fold is `done`, starts a new slice with `run.started { path }`.
+- Error Propagation — SV26: when the fold of the latest stored slice dies (an `error` snapshot, RM28), the command treats the slice as ended, logs the defect, starts a new slice, and its start message says so; it never fails with an unhandled defect.
+- State Transitions — SV27: when the instance scope closes without a job cancel, the cancel finalizer records nothing (it records `run.cancelled` only when the job status is `cancelled`), no summary is written, and the next `/task` with the same path records `run.resumed`.
+- Concurrency — UI24: the lease release finalizer stays as the safety net and is idempotent with the early release by the run supervisor.
 **Notes:** AD-8, AD-19, AD-6. Replaces the per-run busy check (`command.ts:178-179`) with the directory lease. Fake `Ops` in `core-command.test.ts` stays three members until T4.11. This is the single cut-over point of phase 2: before it the polled runner runs every run; after it the supervisors do; T2.12 then deletes the old code.
 
 ### T2.12: Remove the polled runner, the hook maps and the polled builder watch
@@ -567,7 +587,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Boundary — no interim entry for `core/runner.ts`, `core/sessions.ts` or `core/hooks.ts` remains; the `task-ui` interim entries remain until T4.13 and each names its task.
 - Error Propagation — an entry that matches nothing fails.
 - Concurrency, Security Boundaries, Timing — N/A.
-**Notes:** AD-17, SD-8.
+**Notes:** AD-17, SD-8. ADV-17: the final allowlist holds only the AD-17 entries.
 
 ### T2.14: Update the conformance harness for the actors and pass H1–H16
 
@@ -580,7 +600,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Error Propagation — H8 (crash and resume) resumes by the same path; H12 (stall) has a stall history entry and attempts 1; H13 (hung proof) is bounded; H14 (529 retried; spend cap gives `needs_human` with at most 2 requests); H15 (repetition) stops after the third identical call; H16 (cancel) cancels T1.1, T1.2 and the run with no late requests.
 - Boundary — `arms/status.ts` reads the AD-13 fields (tags, `title`, `aliveAt`) as optional.
 - Concurrency, Security Boundaries, Timing — N/A.
-**Notes:** AC 29 at the end of phase 2. Commit the fingerprinted paths before the run. The Tests line runs only with `TASK_HARNESS_ARM=o2` set; the gate itself is BUILD-6.
+**Notes:** AC 29 at the end of phase 2. Commit the fingerprinted paths before the run. The Tests line runs only with `TASK_HARNESS_ARM=o2` set; the gate itself is BUILD-6. ADV-12: every changed H-check expectation is listed with its reason (tied to D2, D3, AD-4 or AD-13) in the task journal; no check is removed, skipped or loosened.
 
 ## Phase 3 — validation and fault folders (parent T3; D10–D15, AC 1)
 
@@ -603,7 +623,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/core/command.ts` (UPDATE)
 **Depends On:** T3.1
-**Supports:** VF1, VF2, VF19
+**Supports:** VF1, VF2, VF19, VF22, VF23
 **Tests:** packages/opencode/test/task/core-command.test.ts (full suite)
 **Test Cases:**
 - Happy Path — a spec with three loader failures: the session message is `Refused <path>: 3 failures. No work started.`, then each `R<n> <path>: <message>` in loader order, then `Fix each line, then type /task <path> again.`; `run.reason` is exactly the failure lines joined with `\n` (VF1).
@@ -614,6 +634,8 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Security Boundaries — no model request on any refusal (conformance H1, H2).
 - Concurrency, Timing — N/A.
 - Boundary — VF19: one failure reads `Refused <path>: 1 failure. No work started.`, its line, then `Fix each line, then type /task <path> again.`; a checkout refusal reads `Refused <path>. No work started.` and one plain line, with no hint.
+- Empty / Null — VF22: a spec with no task (only `SPEC.md`, or only outside preconditions and scenarios) is refused at the start with `Refused <path>. No work started.` and the one plain line `the spec holds no task`; no machine is built.
+- Boundary — VF23: a spec with an R3 front-matter fault and an R7 cycle lists only the R3 line, because the loader runs R5–R13 only once every file passes R1–R4.
 **Notes:** D10, AD-14, AD-19, SD-9; texts from EXPERIENCE "Refusal". Re-baseline the two exact strings in `core-command.test.ts:70, 85` to the new header form. `TaskStatus.refused` holds the multi-line reason.
 
 ### T3.3: Add spec.checked and the run warning for a spec that stops validating
@@ -626,8 +648,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Happy Path — a reload that does not validate keeps the plan and the spec, and records `spec.checked { failures }` once; the machine sets the run warning and adds a run history entry; `status.json` `run.warning` holds one `R<n> <path>: <message>` line per failure (VF4).
 - State Transitions — the next reload that validates records `spec.checked { failures: [] }`, which clears the warning (VF5).
 - Boundary — a reload with the same failure list as the current warning records nothing; a valid reload that adds or removes an obligation id of the plan records a `spec.checked` failure and keeps the old text.
-- Error Propagation — `staleCheck` reads under the checkout lock and records nothing itself; the run supervisor records in one transition after assigning the spec.
-- Concurrency — obligation-stale and spec-checked facts from one reload are recorded by one `record` worker in a fixed order.
+- Concurrency — the order is fixed: the stale-check worker records `spec.checked` (only when the list differs from its input warning) before it returns; then the run supervisor assigns the new spec and records `obligation.stale`; a test with a reload that changes a hash and clears a warning asserts `spec.checked` before `obligation.stale` in the store and the history.
 - Timing — N/A.
 - State Transitions — a resumed slice whose last `spec.checked` had 2 failures, with the spec now valid: the first stale check records `failures: []`; a valid reload that changes a hash and adds an obligation id records only the `spec.checked` failure (the run keeps the old text), with no `obligation.stale`.
 - Happy Path — D12 / AC 14: the stale-check worker itself records `spec.checked` through the Recorder (it receives the run's current warning as input and records only when the list differs); `obligation.stale` keeps the AD-12 path (the run supervisor assigns the new spec, then records).
@@ -638,7 +659,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `packages/opencode/src/task/core/command.ts` (UPDATE)
 **Depends On:** T3.3, T3.5
-**Supports:** VF6, VF7, VF8, VF14, VF19, VF20, VF21
+**Supports:** VF6, VF7, VF8, VF14, VF19, VF20, VF21, VF24
 **Tests:** packages/opencode/test/task/core-command.test.ts subtree
 **Test Cases:**
 - Happy Path — `/task <spec>/T1-release-notes.task/T1.3-markdown-render.task` with no stored run is refused at the start with `R12 <T1.3 folder>: T1.3 is after T1.1, which is outside this run and not trusted` and the hint `Run the whole spec, or a folder that holds T1.1.` (VF6).
@@ -652,7 +673,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Happy Path — VF19: the subtree refusal ends with the hint `Run the whole spec, or a folder that holds T1.1.`
 - Security Boundaries — VF21: T1.1 trusted only through `/task trust T1.1` (the directory aggregate) and in no slice: the T1.3 subtree is still refused with R12.
 - Boundary — VF21: slices [whole spec: T1.1 trusted] then [whole spec: T1.1 reopened and cancelled]: refused; [whole spec: T1.1 trusted] then [T1.4 subtree with no T1.1 region]: runs; an old slice with no path and T1.1 trusted: runs.
-- Error Propagation — a stored slice whose `path` no longer loads never crashes the command: it refuses with one plain line that names the slice's path (SD-13).
+- Error Propagation — VF24: the trust walk starts at the newest stored slice and stops at the first slice that loads and whose plan holds the folder task; a slice that does not load blocks the run only when it is newer than that deciding slice, and then the command refuses with one plain line that names its path and ends `run the whole spec once to record a newer run` (SD-13); it never crashes.
 - Boundary — the T1.5 subtree with T1.3 trusted and T1.4 and T9 untrusted gives one R12 line (T1.4) and T9 stays an outside wait; an `after` inherited through `afterEffective` also gets an external region; two R12 lines give the hint `Run the whole spec, or a folder that holds T1.1 and T1.2.`
 **Notes:** D13, AD-6, AD-14, AD-15, SD-7, `@ASSUMPTION:A3.a`. `TaskCommand.plan` gains `external` ids (folder tasks outside the run that a run task is after) and reports the scenarios it leaves out (today they are dropped silently at `command.ts:106`). `engine-xstate/machine.ts` has had `external` regions since T1.2. Re-baseline the T1.3 subtree test of `core-status.test.ts:121-136` (T1.1 is now an external region). Conformance H5–H7 and H10–H15 use the T1.1 subtree, which has no folder dependency, so they are unaffected. Other files: `core/supervise/run.ts` (records `outside.trusted` for each trusted external region directly after `run.started`), `core/status.ts` (already projects `external`).
 
@@ -744,7 +765,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 
 **File:** `task-formats/blend/README.md` (UPDATE)
 **Depends On:** T3.4, T3.6, T3.7
-**Supports:** DOC1
+**Supports:** DOC1, VF23
 **Tests:** packages/opencode/test/task/readme-validation.test.ts (full suite)
 **Test Cases:**
 - Happy Path — the README has a `## Validation` section that says what runs before any work starts (`Blend.load` in `TaskCommand.run`, before the git check, the plan and the job), and how a refusal appears (header, one line per failure, hint; `run.reason`).
@@ -752,6 +773,7 @@ scenario id and a space; UI scenario tests delegate through `test/task/lib/deleg
 - Happy Path — it says how the run machine holds the order (readiness and the blocked cascade in the machine) and which graph faults are refused (cycles including self-after, unknown references, ancestor and descendant order, a subtree dependency outside the run).
 - Happy Path — it names the six fault folders and the two live-check folders with their expected response; `VERIFY.md` documents `ensures` as required; the Layout tree lists the example folders.
 - Concurrency, Security Boundaries, Timing — N/A.
+- Boundary — the section states the two rule stages (R1–R4 for each file, then R5–R13 only once every file passes) and that a spec with no task is refused (VF22, VF23).
 **Notes:** AC 1 (answers questions 1, 3 and 4). Replaces `## Validating` (358-371). The test reads the file and checks the headings, every rule id, and every folder name.
 
 ## Phase 4 — task UI (parent T4; D16–D24, AD-16, AD-18, EXPERIENCE)
@@ -782,7 +804,7 @@ own in `task-ui` (AD-16).
 
 **File:** `packages/tui/src/task-ui/store.ts` (UPDATE)
 **Depends On:** T4.1
-**Supports:** UI1, UI11, UI18, SV17
+**Supports:** UI1, UI11, UI18, SV17, UI25
 **Tests:** packages/tui/test/task-ui/task-ui.test.tsx store
 **Test Cases:**
 - Happy Path — the schema decodes the AD-13 fields as optional (tags, `title`, `specId`, `path`, `task`, `warning`, `startedAt`, `endedAt`, `aliveAt`, spans, scenario `title`, `outside`, `external`) and ignores an unknown tag; an older file still parses (SV17).
@@ -792,6 +814,7 @@ own in `task-ui` (AD-16).
 - Error Propagation — `parse` still refuses `{`, `{run:{}}` and `''`.
 - Concurrency, Security Boundaries — N/A.
 - Boundary — `poll`, `LIVE_WINDOW`, the view signals and the `ACTIVE`/`ENDED` exports stay in this task so every importer (`peek.tsx:7`, `5-gantt.tsx:4`, `7-ticker.tsx:5`, `index.tsx`) still links; internal classification already reads tags. T4.3 removes `poll`, `LIVE_WINDOW` and the signals; T4.7 and T4.8 remove the last `ENDED` uses and the list definitions.
+- Backwards Compatibility — UI25: a status with no tags (older harness or phase-1 file) is drawn with the defined fallback: liveness `still`, the muted line `status from an older harness — type /task to refresh`, and each unit with its glyph and state label from `DISPLAY`, with no Board column, count or STOPPED group derived from it.
 **Notes:** D16, D21, AD-13, AD-16, EXPERIENCE "State vocabulary" and "Durations". The TUI tests move from the old `fixture-status.json` to `fixture-projected.json` (T1.5 and T1 blocked); the tests that pinned the old fixture (counts `{6,3,0,1}`, focus T1.4) are re-baselined with a header list in `task-ui.test.tsx` that classes each changed test as ported, re-baselined or retired, and the old fixture is deleted when no test reads it (SD-10).
 
 ### T4.3: Wire the plugin, the watch and the Peek polls onto the view actor
@@ -879,7 +902,7 @@ own in `task-ui` (AD-16).
 
 **File:** `packages/tui/src/task-ui/designs/1-ledger.tsx` (UPDATE)
 **Depends On:** T4.4, T4.5
-**Supports:** UI6, UI15, UI16, UI17, UI18, UI19, UI21, UI5
+**Supports:** UI6, UI15, UI16, UI17, UI18, UI19, UI21, UI5, UI25
 **Tests:** packages/tui/test/task-ui/designs.test.tsx ledger
 **Test Cases:**
 - Happy Path — the Ledger shows `run.title` on its own line (`{theme.textMuted}`, cut with `…`) where the spec folder name was; the full-screen header reads `<title> · run: <state>` (UI6).
@@ -893,6 +916,7 @@ own in `task-ui` (AD-16).
 - Boundary — UI21: every trusted count ends with `· 2 stopped` in `{theme.error}` when the count is above 0, and shows nothing at 0.
 - Boundary — the collapsed outside wait line in the Ledger and the full-screen header (under the run warning line) and as a Dock segment; with two or more outside ids it names the first and ends with ` +N` (UI5).
 - State Transitions — the Ticker no longer imports `ENDED`; the `ACTIVE` and `ENDED` definitions leave `store.ts`.
+- Backwards Compatibility — UI25: the Ledger, the Dock, the Ticker and the full-screen views show the older-status line for a status with no tags.
 **Notes:** D17, D19, D24, D12, EXPERIENCE "Design placement", "Refusal", "Run warning". Other files: `2-dock.tsx`, `7-ticker.tsx`, `screen.tsx`.
 
 ### T4.9: Update the shortcut bar and animate the In the Flow mark
@@ -910,7 +934,7 @@ own in `task-ui` (AD-16).
 - Concurrency, Security Boundaries — N/A.
 - Accessibility — the diamond is not bold in either form; the text after it does not change weight when it stops.
 - Boundary — the select key label reads `tab select task` while `liveness` is `live`, else `ctrl+x j/k select task`.
-**Notes:** D22, D23, AD-16, default 6. Use `registerOpencodeSpinner` (`component/register-spinner.ts`) and the `<spinner frames interval color>` pattern of `component/spinner.tsx`; the task-ui adds no timer of its own.
+**Notes:** D22, D23, AD-16, owner ruling 5. Use `registerOpencodeSpinner` (`component/register-spinner.ts`) and the `<spinner frames interval color>` pattern of `component/spinner.tsx`; the task-ui adds no timer of its own. Owner ruling 5 ("Show it as still"): the mark is static while `liveness` is `still`.
 
 ### T4.10: Add the run header with the spec title from structured metadata
 
@@ -933,7 +957,7 @@ own in `task-ui` (AD-16).
 
 **File:** `packages/opencode/src/task/core/ops.ts` (UPDATE)
 **Depends On:** T4.10
-**Supports:** UI7, UI8, UI20, UI23
+**Supports:** UI7, UI8, UI20, UI23, UI24
 **Tests:** packages/opencode/test/task/summary.test.ts (full suite)
 **Test Cases:**
 - Happy Path — when the run actor is `done`, the run supervisor invokes `summary` once, then enters `closed`; the root session gets one assistant-role markdown message with no model call (UI7).
@@ -946,6 +970,9 @@ own in `task-ui` (AD-16).
 - Timing — a cancel while a root turn runs past `limits.cancelDeadline`: the cancel finalizer stops the run supervisor at the deadline (AD-8), the summary is dropped and logged, and the lease is released.
 - Error Propagation — UI23: a root session deleted before the run ends makes `say` fail; the failure is logged, the run supervisor reaches `closed`, the job ends, the lease is released, and the next `/task` is not busy.
 - Boundary — rule 3 with a parked scenario gives `— failed: acceptance not proved · 1 scenario not run`.
+- Invalid Input — EDGE-11: model text in the summary (reasons, titles, scenario titles) is escaped for CommonMark: a backslash before each of `\` `*` `_` `` ` `` `|` `<` `>` `[` `]`, so a reason such as `Type 'Promise<void>' | x` renders as written (UI7).
+- Happy Path — UI24: the summary runs after the lease release; with a root turn waiting on a permission prompt the next `/task` is not busy and the summary is written once when the turn ends.
+- Boundary — UI20: a cancel after a dead task gives `— budget exhausted` (the outcome rules of SD-18).
 **Notes:** D18, AD-18, SD-6. Other files: `session/prompt.ts` (`taskOps.say`), `core/workers.ts` (`summary`), `core/supervise/run.ts` (the summary step), `core-command.test.ts` fake `Ops` gains `say`. A summary lost on a crash between the final fact and `say` is accepted (spine Deferred).
 
 ### T4.12: Add the run usage to the prompt footer, the sidebar and the task-ui
@@ -977,7 +1004,7 @@ own in `task-ui` (AD-16).
 - Error Propagation — an allowlist entry without a reason fails.
 - Concurrency, Security Boundaries, Timing — N/A.
 - Invalid Input — a planted `Effect.sleep`, `Schedule.spaced` or view-state `createSignal` in `task-ui` fails the audit.
-**Notes:** D9, AD-17, SD-8. Also update `packages/tui/src/task-ui/README.md`: tag classification, liveness from `run.aliveAt` (15 s), the `taskView` machine in the Files table, the animated mark, run usage, reasons, scenarios, durations, and that the bar no longer shows `/task-design`.
+**Notes:** D9, AD-17, SD-8. Also update `packages/tui/src/task-ui/README.md`: tag classification, liveness from `run.aliveAt` (15 s), the `taskView` machine in the Files table, the animated mark, run usage, reasons, scenarios, durations, and that the bar no longer shows `/task-design`. ADV-17: the final allowlist holds only the AD-17 entries.
 
 ### T4.14: Validate the quality gate on the final branch
 
@@ -990,4 +1017,4 @@ own in `task-ui` (AD-16).
 - Boundary — the conformance reader `arms/status.ts` accepts the AD-13 fields (`tags`, `title`, `specId`, `task`, `warning`, `aliveAt`, `spans`) as optional, and H1 still finds `R7` in `run.reason` with the new refusal format.
 - Error Propagation — the guard reports no dirty fingerprinted path (commit the spec, seed and suite edits first).
 - Concurrency, Security Boundaries, Timing — N/A.
-**Notes:** AC 29 on the final branch, after phases 3 and 4 changed the refusal text, the first message, the status contract and `Ops`. The Tests line runs only with `TASK_HARNESS_ARM=o2` set; the gate itself is BUILD-6. The goal loop then runs the paid live check (AC 27) and the final merge (AC 28).
+**Notes:** AC 29 on the final branch, after phases 3 and 4 changed the refusal text, the first message, the status contract and `Ops`. The Tests line runs only with `TASK_HARNESS_ARM=o2` set; the gate itself is BUILD-6. The goal loop then runs the paid live check (AC 27) and the final merge (AC 28). ADV-12: every changed H-check expectation is listed with its reason (tied to D2, D3, AD-4 or AD-13) in the task journal; no check is removed, skipped or loosened.

@@ -409,9 +409,10 @@ Spec decisions (SD) fill gaps the inputs leave. Each cites its source. None cont
 - **SD-12 Phase-1 TUI display.** The TUI decodes every state as an open string, so a phase-1 `blocked` task decodes,
   shows the fallback glyph `•`, the label "blocked", sits in STOPPED (the fallback column) and shows its reason on the
   Board card. The `⊖` row lands with the `DISPLAY` table in phase 4. No phase-1 TUI change.
-- **SD-13 An unloadable stored slice.** The inputs do not say what the D13 check does when a stored slice's `path`
-  no longer loads. This spec pins the conservative choice: the command refuses with one plain line that names the
-  slice's path, because without that plan it cannot know whether the slice holds the folder task (AD-15). Own
+- **SD-13 The D13 trust walk and an unloadable stored slice.** The command walks the stored slices from the newest one
+  back and stops at the first slice that loads and whose plan holds the folder task (as a task or an external region);
+  that slice decides. A slice whose `path` no longer loads refuses the run only when it is newer than the deciding
+  slice: one plain line that names its path and ends "run the whole spec once to record a newer run" (VF24). Own
   judgment; the owner may overrule.
 - **SD-14 The outcome entry's `from`.** The `running` ↔ `waiting` toggles of `outcome` are not logged (AD-4), so the
   run's final history entry has `from` equal to the run's last logged state (`running`, written by `run.started` or
@@ -423,6 +424,27 @@ Spec decisions (SD) fill gaps the inputs leave. Each cites its source. None cont
 - **SD-16 An `error` snapshot is a defect.** AD-6 says `apply` returns its input when the snapshot status is not
   `active`, and that any status other than `active` from `initial` is a defect. This spec narrows the pass-through to
   `done`: `apply` dies on an `error` snapshot (RM28), so a machine error never freezes a run.
+- **SD-17 A status file with no tags.** A file from the old harness or from the phase-1 code has no tags, so AD-16
+  classification finds nothing. The task-ui draws it with a defined fallback: liveness `still`, the muted line
+  "status from an older harness — type /task to refresh", each unit with its glyph and label from `DISPLAY` (a
+  presentation lookup, AD-17), and no Board column, count or STOPPED group derived from states (UI25).
+- **SD-18 The outcome rule order (AC 4 outranks AD-4).** The rules apply in this order: (1) a task in `needs_human`,
+  `budget_exhausted` or `failed` gives the state of the earliest such entry; its reason has one line per dead task,
+  one per blocked task, then the stop's reason line when a stop is noted; (2) a stop with no dead task gives
+  `cancelled` or the `run.ended` state, with the stop's reason; (3) acceptance (owner ruling 1); (4) `done`. Default 4
+  still cancels unfinished tasks and scenarios; obligations keep their states (AD-2).
+- **SD-19 The lease is released when the run machine is final.** The run supervisor waits until the writer has
+  written the `done` snapshot, sends `run.release`, then invokes the summary; the run-scope finalizer stays as an
+  idempotent safety net. AC 33 outranks AD-19's finalizer order (UI24).
+- **SD-20 Summary escaping.** Model text in the closing summary (reasons, task and scenario titles) is escaped for
+  CommonMark: a backslash goes before each backslash, asterisk, underscore, backtick, pipe, angle bracket and square
+  bracket, so the text renders as written (UI7).
+- **SD-21 Scenario working directory (owner ruling 6).** `cs-generate-definitions.py` writes `workingDirectory: ""`
+  for every scenario, which is the repository root, where `bunfig.toml` blocks a test run. The post-step
+  `spec/scenario-workdir.py` sets each scenario's `workingDirectory` to the package that holds its `testFile`
+  (`packages/opencode` for every scenario here). `testFile` stays relative to the repository root: the state CLI
+  resolves it with `path.resolve(projectRoot, testFile)`, and the log-proxy precedent kept the same form. The verifier
+  runs `./test/task/verify-spec-<ID>.spec.ts` from `packages/opencode`.
 
 ## Test Patterns
 
@@ -456,10 +478,11 @@ TEST_DIR: packages/opencode/test/task
   6 s. `bun test --timeout 30000 test/task` in `packages/opencode` (the filter also matches
   `test/task-harness`): 270 tests, 0 fail, 18 skipped (the conformance checks skip without `TASK_HARNESS_ARM`), 45 s.
   `packages/tui/test/task-ui`: 33 pass, 0 fail, 5.4 s.
-- **Scenario evidence (risk for `[DS]`).** The bundled `scenario-state-reporter.mjs` and the verify-scenario skill name
-  Vitest and Playwright runners; every scenario test here runs under `bun test`. The goal loop must name the
-  sanctioned evidence path for a `bun test` file before `[DS]` verifies a scenario. `[CS]` cannot change the reporter
-  (anti-tamper policy). BUILD-1 to BUILD-4 and BUILD-6 are build checks run by command, not scenario files.
+- **Scenario evidence (owner ruling 6).** Run `bun test --timeout=30000 --reporter=junit --reporter-outfile=<run
+  dir>/junit.xml ./test/task/verify-spec-<ID>.spec.ts` from `packages/opencode`; a verifier-scratchpad adapter passes
+  each JUnit result unchanged to the reporter's public Vitest hook `onTestRunEnd(files)` (precedent:
+  `log-proxy.goal/spec/journal/S6.md`). The reporter and the state CLI stay unchanged. BUILD-1 to BUILD-4 and BUILD-6
+  are build checks run by command, not scenario files.
 
 ## Coding-standards constraints by phase
 
