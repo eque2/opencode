@@ -120,7 +120,7 @@ export interface Span {
 /** What the context keeps of one unit. Only this machine's actions write it. */
 export interface Slot {
   readonly kind: Kind
-  /** The status name of the unit's state: its state's `meta.state`. */
+  /** The unit's state: its state's key in `CLASS` (its `meta.state` is that state's `shows`). */
   readonly state: string
   /** An obligation's task. */
   readonly task?: string
@@ -260,9 +260,9 @@ const settleReason = (context: RunContext, params: OutcomeParams): string | unde
   const units = Object.entries(context.units).toSorted(([a], [b]) => byId(a, b))
   const tasks = units.filter(([, slot]) => slot.kind === "task")
   const scenarios = units.filter(([, slot]) => slot.kind === "scenario")
-  // A scenario that is final and shows `waiting` is parked: it never ran.
+  // A parked scenario never ran: it waits on an outside precondition.
   const parked = scenarios
-    .filter(([, slot]) => slot.state === "waiting")
+    .filter(([, slot]) => slot.state === "parked")
     .map(([id]) => {
       const untrusted = (params.waits[id] ?? []).filter((need) => context.units[need]?.state !== "trusted")
       return `not run: ${id} waits on ${untrusted.toSorted(byId).join(", ")}`
@@ -296,13 +296,46 @@ const settleReason = (context: RunContext, params: OutcomeParams): string | unde
   }
 }
 
-const entryOf = (
-  at: number,
-  unit: string,
-  from: string | undefined,
-  to: string,
-  reason: string | undefined,
-): History => ({
+/** The name a state's history entries and spans use. */
+const loggedName = (kind: Kind, state: string) => {
+  const def = classOf(kind, state)
+  return def.logs ?? def.shows
+}
+
+const hasClass = (kind: Kind, state: string, tag: ClassTag) => classOf(kind, state).tags.includes(tag)
+
+/**
+ * A unit's slot with its start and end times after a move into `state` (AD-5): a move from a waiting-class or ended-class state into
+ * an active-class state starts its clock; a move into an ended-class state sets its end, and a move out clears it.
+ * The run's start is its `run.started`, so its own moves only set its end.
+ */
+const timed = (slot: Slot, state: string, at: number): Slot => {
+  const from = slot.state
+  const starts =
+    slot.kind !== "run" &&
+    hasClass(slot.kind, state, "active") &&
+    (hasClass(slot.kind, from, "waiting") || hasClass(slot.kind, from, "ended"))
+  const ends = hasClass(slot.kind, state, "ended") && !hasClass(slot.kind, from, "ended")
+  const reopens = hasClass(slot.kind, from, "ended") && !hasClass(slot.kind, state, "ended")
+  const { endedAt: _, ...open } = slot
+  return { ...(reopens ? open : slot), ...(starts ? { startedAt: at } : {}), ...(ends ? { endedAt: at } : {}) }
+}
+
+/**
+ * A task's spans after a move into a state: a new status name closes the open span and opens the next; an
+ * ended-class state adds a zero-length span, so no span of an ended task stays open.
+ */
+const spansAfter = (spans: ReadonlyArray<Span>, kind: Kind, params: EnterParams, at: number): ReadonlyArray<Span> => {
+  if (kind !== "task") return spans
+  const open = spans.at(-1)
+  const isOpen = open !== undefined && open.to === undefined
+  if (isOpen && open.state === params.logs) return spans
+  const closed = isOpen ? [...spans.slice(0, -1), { ...open, to: at }] : spans
+  const ended = hasClass(kind, params.state, "ended")
+  return [...closed, ended ? { state: params.logs, from: at, to: at } : { state: params.logs, from: at }]
+}
+
+const entryOf = (at: number, unit: string, from: string | undefined, to: string, reason?: string): History => ({
   at,
   unit,
   ...(from === undefined ? {} : { from }),
@@ -317,6 +350,7 @@ interface UnitParams {
 }
 
 /** The params of a unit state's entry action: its status name and the name its history entries use. */
+/** The params of a unit state's entry action: its state key and the name its history entries use. */
 interface EnterParams extends UnitParams {
   readonly state: string
   readonly logs: string
@@ -337,16 +371,41 @@ interface MoveParams extends UnitParams {
 export const ACTIONS = {
   /** A unit state's entry: its state name, and the move a transition started, written to the history. */
   enter: assign<RunContext, RunEvent, EnterParams, RunEvent>(({ context, event }, params) => {
+    const slot = slotOf(context, params.unit)
     const move = context.moves[params.unit]
-    const units = withUnit(context, params.unit, {
+    const at = atOf(context, event)
+    const next: Slot = {
+      ...(at === undefined ? slot : timed(slot, params.state, at)),
       state: params.state,
       ...(move === undefined ? {} : { reason: move.reason, blockedBy: move.blockedBy }),
-    })
+      ...(at === undefined || slot.spans === undefined ? {} : { spans: spansAfter(slot.spans, slot.kind, params, at) }),
+    }
+    const units = { ...context.units, [params.unit]: next }
     if (move === undefined) return { units }
     const { [params.unit]: _, ...moves } = context.moves
-    const at = atOf(context, event)
     if (at === undefined) return { units, moves }
     return { units, moves, log: [...context.log, entryOf(at, params.unit, move.from, params.logs, move.reason)] }
+  }),
+  /** `run.started`: the run's history entry and start time, and one open span per task in its state. */
+  begin: assign<RunContext, RunEvent, undefined, RunEvent>(({ context, event }) => {
+    if (event.type !== "run.started") return {}
+    const opened = Object.fromEntries(
+      Object.entries(context.units).map(([id, slot]): [string, Slot] => {
+        if (slot.kind !== "task" || slot.spans !== undefined) return [id, slot]
+        return [id, { ...slot, spans: [{ state: loggedName("task", slot.state), from: event.at }] }]
+      }),
+    )
+    const run = slotOf(context, RUN)
+    const from = lastRun(context)
+    return {
+      units: { ...opened, [RUN]: { ...run, startedAt: run.startedAt ?? event.at } },
+      log: [...context.log, entryOf(event.at, RUN, from, "running")],
+    }
+  }),
+  /** `run.resumed`: the run's history entry. */
+  resume: assign<RunContext, RunEvent, undefined, RunEvent>(({ context, event }) => {
+    if (event.type !== "run.resumed") return {}
+    return { log: [...context.log, entryOf(event.at, RUN, lastRun(context), "running", "resumed")] }
   }),
   /** A transition's move: its `from` and reason, for the target state's entry action. */
   move: assign<RunContext, RunEvent, MoveParams, RunEvent>(({ context, event }, params) => ({
@@ -489,9 +548,9 @@ const classOf = (kind: Kind, state: string): StateClass => {
   return states[state] ?? { tags: [], shows: state, final: false }
 }
 
-const enter = (unit: string, def: StateClass): Action => ({
+const enter = (unit: string, state: string, def: StateClass): Action => ({
   type: "enter",
-  params: { unit, state: def.shows, logs: def.logs ?? def.shows },
+  params: { unit, state, logs: def.logs ?? def.shows },
 })
 
 /** A unit state node: its id, meta, tags and entry action, with its rows. */
@@ -508,7 +567,7 @@ const unitState = (
     ...(def.final ? { type: "final" } : {}),
     meta: { unit, kind, state: def.shows },
     tags: [...def.tags.map((tag) => `${unit}:${tag}`), ...(def.phase ? [`${unit}:${def.phase}`] : []), ...extraTags],
-    entry: [enter(unit, def)],
+    entry: [enter(unit, state, def)],
     ...(rows.on === undefined ? {} : { on: rows.on }),
     ...(rows.always === undefined ? {} : { always: rows.always }),
   }
@@ -535,8 +594,8 @@ const move = (unit: string, from: string, to: string): Action => ({ type: "move"
 /** A region's trust: its history entry names no `from`, as the trust entry always has. */
 const trust = (unit: string): Action => ({ type: "move", params: { unit, to: "trusted" } })
 const again = (unit: string, kind: Kind, state: string): Action => {
-  const shows = classOf(kind, state).shows
-  return { type: "again", params: { unit, state: shows, logs: shows } }
+  const def = classOf(kind, state)
+  return { type: "again", params: { unit, state, logs: def.logs ?? def.shows } }
 }
 
 // --- dependencies (AD-3) ---------------------------------------------------------------------------------------------
@@ -910,6 +969,8 @@ const outcomeRegion = (plan: Plan): StateNode => {
       "run.settled": settled,
       "run.cancelled": [{ actions: [{ type: "stop" }] }],
       "run.ended": [{ actions: [{ type: "stop" }] }],
+      "run.started": [{ actions: [{ type: "begin" }] }],
+      "run.resumed": [{ actions: [{ type: "resume" }] }],
     },
   })
   return unitRegion(RUN, "run", "running", { running: live("waiting", not(busy)), waiting: live("running", busy) })

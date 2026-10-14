@@ -770,7 +770,9 @@ describe("history, causes, times and spans (AD-5)", () => {
       expect(entries(snapshot, "T1.5")).toEqual([
         { from: "waiting", to: "blocked", reason: "blocked by T1.4: budget exhausted" },
       ])
-      expect(entries(snapshot, "T1")).toEqual([{ from: "waiting", to: "blocked", reason: "blocked by T1.4: budget exhausted" }])
+      expect(entries(snapshot, "T1")).toEqual([
+        { from: "waiting", to: "blocked", reason: "blocked by T1.4: budget exhausted" },
+      ])
       expect(entries(snapshot, "T1.4").map((entry) => `${entry.from}>${entry.to}`)).toEqual([
         "waiting>building",
         "building>proving",
@@ -802,7 +804,11 @@ describe("history, causes, times and spans (AD-5)", () => {
         "verifying>trusted",
       ])
       const stalled = fold(plan, [f.started("T1.2"), f.stalled("T1.2", "no stream for 120 s")], trusted)
-      expect(entries(stalled, "T1.2").at(-1)).toEqual({ from: "building", to: "building", reason: "no stream for 120 s" })
+      expect(entries(stalled, "T1.2").at(-1)).toEqual({
+        from: "building",
+        to: "building",
+        reason: "no stream for 120 s",
+      })
       const repeated = step(plan, stalled, f.repeated("T1.2", "read src/bump.ts 5 times"))
       expect(entries(repeated, "T1.2").at(-1)).toEqual({
         from: "building",
@@ -886,12 +892,14 @@ describe("history, causes, times and spans (AD-5)", () => {
       const plan = yield* loadPlan("release-notes.spec")
       const f = facts()
       const snapshot = fold(plan, [f.runStarted(), ...exhaustLeaf(f, "T1.2", "T1.2.c1", 2)])
+      // Two failed proofs with a budget of 3: the task is building its third attempt.
       expect(snapshot.context.units["T1.2"]?.spans?.map((span) => span.state)).toEqual([
         "waiting",
         "building",
         "proving",
         "building",
         "proving",
+        "building",
       ])
       expect(snapshot.context.units["T1.2"]?.spans?.at(-1)?.to).toBeUndefined()
     }),
@@ -909,9 +917,15 @@ describe("history, causes, times and spans (AD-5)", () => {
         f.scenarioProved("S1", "passed"),
         f.scenarioVerified(trust("S1")),
       ])
-      expect(entries(done, "run").map((entry) => `${entry.from}>${entry.to}`)).toEqual(["running>running", "running>done"])
+      expect(entries(done, "run").map((entry) => `${entry.from}>${entry.to}`)).toEqual([
+        "running>running",
+        "running>done",
+      ])
       expect(done.context.units.run?.endedAt).toBe(done.context.log.at(-1)?.at)
-      expect(entries(done, "S1").map((entry) => `${entry.from}>${entry.to}`)).toEqual(["waiting>pending", "pending>trusted"])
+      expect(entries(done, "S1").map((entry) => `${entry.from}>${entry.to}`)).toEqual([
+        "waiting>pending",
+        "pending>trusted",
+      ])
       const cancelled = fold(plan, [f.runStarted(), f.runResumed(), f.cancelled("user stop")])
       expect(entries(cancelled, "run")).toEqual([
         { from: "running", to: "running", reason: undefined },
