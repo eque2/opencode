@@ -206,7 +206,9 @@ describe("live-check folders", () => {
         const verifies = all.filter((file) => path.basename(file) === "VERIFY.md")
         expect(verifies).toHaveLength(spec.tasks.length)
         for (const task of spec.tasks)
-          expect(spec.obligations.filter((item) => item.task === task.id && item.kind === "ensures").length).toBeGreaterThan(0)
+          expect(
+            spec.obligations.filter((item) => item.task === task.id && item.kind === "ensures").length,
+          ).toBeGreaterThan(0)
         for (const touch of spec.tasks.flatMap((task) => task.touches))
           expect(existsSync(path.join(seedDir, touch.path))).toBe(touch.change !== "new")
       }),
