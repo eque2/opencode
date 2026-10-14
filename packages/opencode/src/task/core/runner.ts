@@ -109,8 +109,7 @@ const now = Clock.currentTimeMillis
 const stateOf = (run: Run) => Effect.map(Ref.get(run.state), TaskEngineXState.view)
 
 const view = Effect.fnUntraced(function* (run: Run) {
-  const snapshot = yield* Ref.get(run.state)
-  return { plan: run.plan, snapshot, state: TaskEngineXState.view(snapshot) }
+  return { plan: run.plan, snapshot: yield* Ref.get(run.state) } satisfies TaskStatus.Input
 })
 
 const writeStatus = Effect.fnUntraced(function* (run: Run) {
