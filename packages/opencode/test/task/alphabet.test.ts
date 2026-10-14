@@ -42,21 +42,23 @@ const names = (list: ReadonlyArray<Fact>) =>
   })
 
 describe("the progress alphabet", () => {
-  it.live("gives a ready leaf its start and failure, a ready parent its review and failure, ready scenarios their proofs", () =>
-    Effect.gen(function* () {
-      const plan = yield* loadPlan("example-scenarios.spec")
-      const f = facts()
-      expect(names(TaskAlphabet.alphabet(fold(plan, [f.runStarted()])))).toEqual([
-        "task.started T1.1",
-        "task.failed T1.1",
-      ])
-      const trusted = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
-      expect(names(TaskAlphabet.alphabet(trusted))).toEqual([
-        "task.proved T1 ",
-        "task.failed T1",
-        "scenario.proved S1 passed",
-      ])
-    }),
+  it.live(
+    "gives a ready leaf its start and failure, a ready parent its review and failure, ready scenarios their proofs",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("example-scenarios.spec")
+        const f = facts()
+        expect(names(TaskAlphabet.alphabet(fold(plan, [f.runStarted()])))).toEqual([
+          "task.started T1.1",
+          "task.failed T1.1",
+        ])
+        const trusted = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
+        expect(names(TaskAlphabet.alphabet(trusted))).toEqual([
+          "task.proved T1 ",
+          "task.failed T1",
+          "scenario.proved S1 passed",
+        ])
+      }),
   )
 
   it.live("gives an active task phase its abstract outcomes, and an active scenario one success path", () =>
@@ -85,7 +87,11 @@ describe("the progress alphabet", () => {
         "task.failed T1.3",
       ])
       const scenarios = yield* loadPlan("example-scenarios.spec")
-      const judged = fold(scenarios, [f.runStarted(), ...trustLeaf(scenarios, f, "T1.1"), f.scenarioProved("S1", "passed")])
+      const judged = fold(scenarios, [
+        f.runStarted(),
+        ...trustLeaf(scenarios, f, "T1.1"),
+        f.scenarioProved("S1", "passed"),
+      ])
       expect(names(TaskAlphabet.alphabet(judged)).filter((name) => name.includes("S1"))).toEqual([
         "scenario.verified S1 trusted",
       ])
@@ -99,7 +105,7 @@ describe("the progress alphabet", () => {
       const list = TaskAlphabet.alphabet(fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")]))
       expect(names(list)).toContain("outside.trusted T8")
       expect(names(list)).toContain("outside.trusted T9")
-      const types = new Set(list.map((fact) => fact.type))
+      const types = new Set<string>(list.map((fact) => fact.type))
       for (const type of ["run.cancelled", "run.ended", "task.stalled", "obligation.stale", "run.started"])
         expect(types.has(type)).toBe(false)
       expect(new Set(list.map((fact) => fact.at))).toEqual(new Set([TaskAlphabet.AT]))
