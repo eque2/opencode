@@ -762,11 +762,11 @@ const schedule = Effect.fnUntraced(function* (run: Run, workers: Workers) {
       if (yield* FiberMap.has(workers, key)) return
       yield* FiberMap.run(workers, key, { onlyIfMissing: true })(guarded(run, key, effect, batch))
     })
-  const taskOf = (key: string) => run.plan.tasks.find((task) => task.id === key)
-  const scenarioOf = (key: string) => run.plan.scenarios.find((scenario) => scenario.id === key)
+  const planTask = (key: string) => run.plan.tasks.find((task) => task.id === key)
+  const planScenario = (key: string) => run.plan.scenarios.find((scenario) => scenario.id === key)
   for (const work of due(run.plan, yield* Ref.get(run.state))) {
-    const task = taskOf(work.key)
-    const scenario = scenarioOf(work.key)
+    const task = planTask(work.key)
+    const scenario = planScenario(work.key)
     if (work.kind === "scenarios") {
       const batch = run.plan.scenarios.filter((each) => work.ids?.includes(each.id))
       yield* spawn(work.key, proveScenarios(run, batch), work.ids)
