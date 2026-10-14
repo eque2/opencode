@@ -33,7 +33,10 @@
   71f2906385 does change the walk. Under the old `unproved` guard, a child's `task.proved` moved a proving parent's
   review obligation; the verifier found 10 such divergences in 15 401 checked steps, all of which reconverged. The
   walk runs again at HEAD at 22:12, before the checkpoint gate.
-- Status: resolved at f6d5bb3dc7; the run at HEAD confirms it for the current guards.
+- Update 23:04: the stale walk at 0ee865afbb (with the guard change; the later T1 review commits change no guard,
+  row or key) passed: 33 944 keys, 331 133 edges, 0 stuck, 3 184 s (`task/T1.10-stale-walk-head.log`). Fewer keys
+  than at f6d5bb3dc7, because a child's proof no longer moves a proving parent's review obligation.
+- Status: resolved — the stale walk passes on the current guards.
 
 ## D2 — environment: the machine's load makes timing-bound tests fail
 - Check: `packages/opencode/test/task/engine-xstate-graph.test.ts` (each walk has the specified 60 s timeout) and
