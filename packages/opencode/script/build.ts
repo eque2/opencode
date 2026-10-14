@@ -189,7 +189,9 @@ for (const item of targets) {
     },
     files: {
       [treeSitterWorkerPath]: treeSitterWorker,
-      ...(embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {}),
+      // Without an embedded web UI the module still has to resolve: its import fails, so the server falls back to the
+      // upstream proxy, as it does in development.
+      "opencode-web-ui.gen.ts": embeddedFileMap ?? 'throw new Error("this build embeds no web UI")',
     },
     entrypoints: [
       "./src/index.ts",
