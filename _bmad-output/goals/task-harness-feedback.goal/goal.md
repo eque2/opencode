@@ -256,7 +256,7 @@ verdicts add to it later.
 
 - `_bmad-output/` is gitignored, so goal-folder files need `git add -f`. A forced add also takes the
   gitignored `spec/.signer-key`: always add with the add-then-unstage form of step 2d, and check that
-  `git ls-files | grep -i -e signer -e evidence-key` is empty before each commit and merge.
+  `git ls-files | grep -E '(^|/)\.(signer|evidence)-key$'` prints nothing before each commit and merge.
 - Before each merge: the main checkout is on `dev` and clean (stop if not); merge `dev` into the branch
   first; untrack the goal folder (AC 46). Nothing is pushed.
 
