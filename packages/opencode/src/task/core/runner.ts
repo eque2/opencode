@@ -63,7 +63,6 @@ interface Run extends Start {
   readonly startedAt: number
   /** The run machine's snapshot; the phase-1 runner reads it through `view` (AD-20). */
   readonly state: Ref.Ref<RunSnapshot>
-  readonly outside: Ref.Ref<ReadonlyArray<string>>
   /** The spec as last loaded from the root checkout: the current texts and hashes. */
   readonly spec: Ref.Ref<BlendModel.Spec>
   /** Serialises record → fold → status write. */
@@ -129,9 +128,6 @@ const record = (run: Run, fact: Fact) =>
       Effect.gen(function* () {
         yield* TaskEvents.publish(run.env.events, run.id, fact)
         yield* Ref.update(run.state, (state) => run.engine.apply(run.plan, state, fact))
-        if (fact.type === "outside.trusted") {
-          yield* Ref.update(run.outside, (ids) => (ids.includes(fact.id) ? ids : [...ids, fact.id]))
-        }
         yield* writeStatus(run)
       }),
     ),
@@ -649,8 +645,6 @@ const checkStale = Effect.fnUntraced(function* (run: Run) {
   }
 })
 
-const ACTIVE = ["building", "proving", "verifying"]
-
 /**
  * When a task's wall clock started: its latest `building` entry after its latest `trusted` entry, so a trusted task
  * reopened later starts afresh; never before `runStart` (the latest start or resume), so downtime does not count.
@@ -673,9 +667,10 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
   }
   if (Option.isNone(run.limits.taskWallClock)) return
   const limit = Duration.toMillis(run.limits.taskWallClock.value)
-  const state = yield* stateOf(run)
+  const snapshot = yield* Ref.get(run.state)
+  const state = TaskEngineXState.view(snapshot)
   for (const task of Object.values(state.tasks)) {
-    if (!ACTIVE.includes(task.state)) continue
+    if (!TaskEngineXState.tags(snapshot, task.id).includes("active")) continue
     const started = taskClockStart(state.history, task.id, run.startedAt)
     if (Option.isNone(started) || at - started.value <= limit) continue
     yield* FiberMap.remove(workers, task.id)
@@ -685,36 +680,6 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
     const minutes = Math.round(limit / 60_000)
     yield* record(run, { type: "task.failed", at, task: task.id, reason: `wall clock: the task took over ${minutes} min` })
   }
-})
-
-const JUDGED = ["trusted", "rejected", "failed"]
-
-/**
- * Ends the run once every plan task is trusted and every scenario is judged or waits only on `outside`: `done` when
- * every judged scenario is trusted, `failed` (naming them) when any acceptance proof failed or was rejected — the run
- * is trusted only when every proof passed.
- */
-const checkDone = Effect.fnUntraced(function* (run: Run) {
-  const input = yield* view(run)
-  const { state } = input
-  const tasks = run.plan.tasks.every((task) => state.tasks[task.id]?.state === "trusted")
-  const scenarios = run.plan.scenarios.every((scenario) => {
-    const current = state.scenarios[scenario.id]?.state
-    if (current && JUDGED.includes(current)) return true
-    const open = TaskStatus.waitingOn(input, scenario.needs)
-    return current === "waiting" && open.length > 0 && open.every((id) => id in run.plan.spec.outside)
-  })
-  if (!tasks || !scenarios) return
-  const unproved = run.plan.scenarios.filter((scenario) => {
-    const current = state.scenarios[scenario.id]?.state
-    return current === "failed" || current === "rejected"
-  })
-  if (unproved.length === 0) {
-    yield* record(run, { type: "run.ended", at: yield* now, state: "done" })
-    return
-  }
-  const reason = `acceptance not proved: ${unproved.map((scenario) => `${scenario.id} ${state.scenarios[scenario.id]?.state}`).join(", ")}`
-  yield* record(run, { type: "run.ended", at: yield* now, state: "failed", reason })
 })
 
 // --- scheduling ------------------------------------------------------------------------------------------------------------
@@ -740,7 +705,8 @@ const guarded = (
         yield* Effect.logWarning("task harness: a worker failed", { key, count, message })
         if (count < MAX_FAILURES) return yield* Effect.sleep(Duration.seconds(1))
         const reason = `harness error: ${message}`
-        const state = yield* stateOf(run)
+        const snapshot = yield* Ref.get(run.state)
+        const state = TaskEngineXState.view(snapshot)
         if (state.tasks[key]) return yield* record(run, { type: "task.failed", at: yield* now, task: key, reason })
         if (state.scenarios[key]) {
           return yield* record(run, {
@@ -749,9 +715,9 @@ const guarded = (
             verdict: { id: key, verdict: "rejected", reason },
           })
         }
-        const waiting = batch.filter((id) => state.scenarios[id]?.state === "waiting")
+        const unproved = batch.filter((id) => snapshot.hasTag(`${id}:ready`))
         return yield* Effect.forEach(
-          waiting,
+          unproved,
           (id) => Effect.flatMap(now, (at) => record(run, { type: "scenario.proved", at, id, status: "failed", reason })),
           { discard: true },
         )
@@ -759,38 +725,60 @@ const guarded = (
     ),
   )
 
+/** One piece of work that the run machine's phase tags call for. */
+export interface Work {
+  readonly kind: "begin" | "review" | "build" | "prove" | "verify" | "scenarios" | "judge"
+  readonly key: string
+  /** The scenarios of a batch. */
+  readonly ids?: ReadonlyArray<string>
+}
+
+/**
+ * The work that the snapshot calls for (AD-20): a ready leaf begins and a ready parent's review is proved, a task
+ * builds, proves or verifies by its phase tag, the ready scenarios are proved as one batch, and a verifying scenario
+ * is judged. The machine decides readiness; this reads its tags.
+ */
+export const due = (plan: Plan, snapshot: RunSnapshot): ReadonlyArray<Work> => {
+  const tagged = (id: string, tag: string) => snapshot.hasTag(`${id}:${tag}`)
+  const tasks = plan.tasks.flatMap((task): ReadonlyArray<Work> => {
+    const key = task.id
+    const leaf = task.children.length === 0
+    if (tagged(key, "ready")) return [{ kind: leaf ? "begin" : "review", key }]
+    if (tagged(key, "building") && leaf) return [{ kind: "build", key }]
+    if (tagged(key, "proving")) return [{ kind: "prove", key }]
+    if (tagged(key, "verifying")) return [{ kind: "verify", key }]
+    return []
+  })
+  const ready = plan.scenarios.filter((scenario) => tagged(scenario.id, "ready")).map((scenario) => scenario.id)
+  const batch: ReadonlyArray<Work> = ready.length > 0 ? [{ kind: "scenarios", key: "scenarios", ids: ready }] : []
+  const judges = plan.scenarios
+    .filter((scenario) => tagged(scenario.id, "verifying"))
+    .map((scenario): Work => ({ kind: "judge", key: scenario.id }))
+  return [...tasks, ...batch, ...judges]
+}
+
 const schedule = Effect.fnUntraced(function* (run: Run, workers: Workers) {
-  const input = yield* view(run)
-  const { state } = input
-  const ok = TaskStatus.trusted(input)
   const spawn = (key: string, effect: Effect.Effect<void, unknown, Requirements>, batch: ReadonlyArray<string> = []) =>
     Effect.gen(function* () {
       if (yield* FiberMap.has(workers, key)) return
       yield* FiberMap.run(workers, key, { onlyIfMissing: true })(guarded(run, key, effect, batch))
     })
-  for (const task of run.plan.tasks) {
-    const model = state.tasks[task.id]
-    if (!model) continue
-    if (model.state === "waiting" && task.afterEffective.every(ok)) {
-      if (model.leaf) yield* spawn(task.id, begin(run, task))
-      else if (task.children.every(ok)) yield* spawn(task.id, proveOnMain(run, task))
+  const taskOf = (key: string) => run.plan.tasks.find((task) => task.id === key)
+  const scenarioOf = (key: string) => run.plan.scenarios.find((scenario) => scenario.id === key)
+  for (const work of due(run.plan, yield* Ref.get(run.state))) {
+    const task = taskOf(work.key)
+    const scenario = scenarioOf(work.key)
+    if (work.kind === "scenarios") {
+      const batch = run.plan.scenarios.filter((each) => work.ids?.includes(each.id))
+      yield* spawn(work.key, proveScenarios(run, batch), work.ids)
     }
-    if (model.state === "building" && model.leaf) yield* spawn(task.id, build(run, task))
-    if (model.state === "proving") yield* spawn(task.id, prove(run, task))
-    if (model.state === "verifying") yield* spawn(task.id, verify(run, task))
-  }
-  const ready = run.plan.scenarios.filter(
-    (scenario) => state.scenarios[scenario.id]?.state === "waiting" && scenario.needs.every(ok),
-  )
-  if (ready.length > 0) {
-    yield* spawn(
-      "scenarios",
-      proveScenarios(run, ready),
-      ready.map((scenario) => scenario.id),
-    )
-  }
-  for (const scenario of run.plan.scenarios) {
-    if (state.scenarios[scenario.id]?.state === "verifying") yield* spawn(scenario.id, judgeScenario(run, scenario))
+    if (work.kind === "judge" && scenario) yield* spawn(work.key, judgeScenario(run, scenario))
+    if (!task) continue
+    if (work.kind === "begin") yield* spawn(work.key, begin(run, task))
+    if (work.kind === "review") yield* spawn(work.key, proveOnMain(run, task))
+    if (work.kind === "build") yield* spawn(work.key, build(run, task))
+    if (work.kind === "prove") yield* spawn(work.key, prove(run, task))
+    if (work.kind === "verify") yield* spawn(work.key, verify(run, task))
   }
 })
 
@@ -803,7 +791,6 @@ const loop = Effect.fnUntraced(function* (run: Run, workers: Workers) {
     yield* checkWallClocks(run, workers)
     if (tick % STALE_EVERY === 0) yield* checkStale(run)
     yield* schedule(run, workers)
-    yield* checkDone(run)
     tick++
     yield* Effect.sleep(TICK)
   }
@@ -833,12 +820,20 @@ const interrupted = Effect.fnUntraced(function* (run: Run, workers: Workers) {
 })
 
 /**
+ * The latest slice of the stored facts when it can be resumed: it has not ended, so its fold is not `done`. A stored
+ * stop (`run.cancelled`, `run.ended`) or a fold that reached `done` ends it, and the next `/task` starts a new slice.
+ * A slice stored before `run.started` had a path counts as a whole-spec slice.
+ */
+export const resumable = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>) =>
+  Option.filter(TaskEvents.latestRun(stored), (facts) => !TaskEngineXState.ended(TaskEvents.fold(engine, plan, facts)))
+
+/**
  * The base branch the stored run started on, when it has not ended and recorded one: a resume must use the same
  * branch, because the leaves merged so far are there.
  */
 export const unfinishedBase = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>): Option.Option<string> =>
   Option.flatMap(
-    Option.filter(TaskEvents.latestRun(stored), (facts) => !TaskEngineXState.ended(TaskEvents.fold(engine, plan, facts))),
+    resumable(engine, plan, stored),
     (facts) =>
       Option.fromNullishOr(facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0]),
   )
@@ -850,10 +845,7 @@ export const unfinishedBase = (engine: Engine, plan: Plan, stored: ReadonlyArray
 export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
   const id = TaskEvents.runID(start.directory, start.plan.specPath)
   const stored = yield* TaskEvents.read(start.env.db, id)
-  const resumed = Option.filter(
-    TaskEvents.latestRun(stored),
-    (facts) => !TaskEngineXState.ended(TaskEvents.fold(start.engine, start.plan, facts)),
-  )
+  const resumed = resumable(start.engine, start.plan, stored)
   const facts = Option.getOrElse(resumed, (): ReadonlyArray<Fact> => [])
   const at = yield* now
   const self: Run = {
@@ -862,7 +854,6 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
     // The `run.started` or `run.resumed` this call records: the run clock does not count downtime.
     startedAt: at,
     state: yield* Ref.make(TaskEvents.fold(start.engine, start.plan, facts)),
-    outside: yield* Ref.make(TaskEvents.trustedOutside(facts)),
     spec: yield* Ref.make(start.plan.spec),
     lock: yield* Semaphore.make(1),
     checkout: yield* Semaphore.make(1),
@@ -871,9 +862,10 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
     failures: MutableHashMap.empty(),
     stopping: yield* Ref.make(false),
   }
+  // An `outside` trust reaches the run once: the machine's own state says whether it holds already.
   const trust = (outside: string) =>
     Effect.gen(function* () {
-      if ((yield* Ref.get(self.outside)).includes(outside)) return
+      if (TaskEngineXState.unitState(yield* Ref.get(self.state), outside) === "trusted") return
       yield* record(self, { type: "outside.trusted", at: yield* now, id: outside })
     })
   const body = Effect.gen(function* () {
