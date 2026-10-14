@@ -95,6 +95,7 @@ const plan: Plan = {
   path: "demo.spec/T1-demo.task",
   tasks,
   scenarios,
+  external: [],
   budget: () => BUDGET,
 }
 

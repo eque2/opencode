@@ -68,6 +68,8 @@ const environment = (ops: Ops) =>
     } satisfies TaskSessions.Env
   })
 
+const natural = new Intl.Collator([], { numeric: true })
+
 const TASK_FOLDER = /^(T[1-9][0-9]*(?:\.[1-9][0-9]*)*)-[a-z0-9-]+\.task$/
 
 // The `.spec` folder at or above `target`, inside `directory`.
@@ -98,12 +100,17 @@ export const plan = (input: {
     onSome: (root) => spec.tasks.filter((task) => task.id === root || task.id.startsWith(`${root}.`)),
   })
   const ids = tasks.map((task) => task.id)
+  const outsideRun = (id: string) => !ids.includes(id) && !(id in spec.outside)
   return {
     spec,
     specPath: input.specPath,
     path: input.path,
     tasks,
     scenarios: spec.scenarios.filter((scenario) => scenario.needs.every((id) => ids.includes(id) || id in spec.outside)),
+    external: tasks
+      .flatMap((task) => task.afterEffective.filter(outsideRun))
+      .filter((id, index, all) => all.indexOf(id) === index)
+      .toSorted((a, b) => natural.compare(a, b)),
     budget: (id) =>
       spec.tasks.find((task) => task.id === id)?.policy.budgets.taskAttempts ?? spec.policy.budgets.taskAttempts,
   }

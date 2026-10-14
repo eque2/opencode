@@ -116,6 +116,8 @@ export interface Plan {
   readonly tasks: ReadonlyArray<BlendModel.Task>
   /** The scenarios whose `needs` are all under the path or `outside`. */
   readonly scenarios: ReadonlyArray<BlendModel.Scenario>
+  /** The folder tasks outside the path that a task under it is after (a subtree run), in natural order. */
+  readonly external: ReadonlyArray<string>
   /** `policy.budgets.taskAttempts` of each task's effective policy. */
   readonly budget: (task: string) => number
 }
