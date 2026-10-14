@@ -226,6 +226,59 @@ describe("TaskMachine.config", () => {
     }),
   )
 
+  it.live("moves an obligation only on its own task's facts, even with two parents in the plan", () =>
+    Effect.gen(function* () {
+      const loaded = yield* loadPlan("example-scenarios.spec")
+      // A second parent T2 with one leaf T2.1, copied from T1 and T1.1.
+      const copy = (id: string) => id.replace(/^T1/, "T2")
+      const plan: Plan = {
+        ...loaded,
+        tasks: [
+          ...loaded.tasks,
+          ...loaded.tasks.map((task) => ({
+            ...task,
+            id: copy(task.id),
+            parent: task.parent === undefined ? undefined : copy(task.parent),
+            children: task.children.map(copy),
+          })),
+        ],
+        spec: {
+          ...loaded.spec,
+          obligations: [
+            ...loaded.spec.obligations,
+            ...loaded.spec.obligations.map((item) => ({ ...item, id: copy(item.id), task: copy(item.task) })),
+          ],
+        },
+      }
+      const f = facts()
+      const ready = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.started("T2.1"), f.ready("T2.1")])
+      expect(unitState(ready, "T1")).toBe("ready")
+      expect(unitState(ready, "T2.1")).toBe("proving")
+      // T2.1's proof is no review proof of T1: T1's review obligation waits for T1's own.
+      const proved = step(plan, ready, f.proved("T2.1", [fail("T2.1.c1", "red")]))
+      expect(obligationState(proved, "T2.1.c1")).toBe("failed")
+      expect(obligationState(proved, "T1.e1")).toBe("pending")
+      expect(obligationState(step(plan, proved, f.proved("T1", [])), "T1.e1")).toBe("passed")
+      // With both leaves in a proof round, then both verifying, a result or a verdict in T2.1's fact for T1.1's
+      // obligation counts for nothing.
+      const proving = fold(plan, [
+        f.runStarted(),
+        f.started("T1.1"),
+        f.ready("T1.1"),
+        f.started("T2.1"),
+        f.ready("T2.1"),
+      ])
+      const crossed = step(plan, proving, f.proved("T2.1", [judge("T2.1.c1"), fail("T1.1.c1", "not this task's")]))
+      expect(obligationState(crossed, "T1.1.c1")).toBe("pending")
+      expect(unitState(crossed, "T1.1")).toBe("proving")
+      const verifying = step(plan, crossed, f.proved("T1.1", [judge("T1.1.c1")]))
+      expect(["T1.1", "T2.1"].map((id) => unitState(verifying, id))).toEqual(["verifying", "verifying"])
+      const judged = step(plan, verifying, f.verified("T2.1", [trust("T2.1.c1"), reject("T1.1.c1", "not this task's")]))
+      expect(obligationState(judged, "T1.1.c1")).toBe("passed")
+      expect(obligationState(judged, "T2.1.c1")).toBe("trusted")
+    }),
+  )
+
   it.live("gives a subtree plan an external region for each folder task it is after", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec", "T1.5")
