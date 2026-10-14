@@ -77,8 +77,7 @@ const staleness = (snapshot: RunSnapshot): ReadonlyArray<Fact> => {
 const fullStale = (snapshot: RunSnapshot): ReadonlyArray<Fact> => [...full(snapshot), ...staleness(snapshot)]
 
 // A transition of the adjacency map: the port types its values loosely.
-const isNext = (next: unknown): next is { readonly state: RunSnapshot } =>
-  Predicate.isObject(next) && "state" in next
+const isNext = (next: unknown): next is { readonly state: RunSnapshot } => Predicate.isObject(next) && "state" in next
 
 interface Walked {
   readonly keys: number
@@ -125,7 +124,9 @@ const walk = (
       keys: values.length,
       edges: values.reduce((sum, [, value]) => sum + Object.keys(value.transitions).length, 0),
       stuck,
-      statuses: [...new Set(values.map(([, value]) => value.state.status))].toSorted(),
+      statuses: [...new Set(values.map(([, value]) => String(value.state.status)))].toSorted((a, b) =>
+        a.localeCompare(b),
+      ),
     } satisfies Walked
   })
 
@@ -212,7 +213,13 @@ describe("the graph proof", () => {
         const [start] = yield* initialTransition(broken)
         const brokenCanonical = yield* walk(plan, broken, start, canonical, LIMIT.cascade)
         const brokenFull = yield* walk(plan, broken, start, full, LIMIT.reductionFull)
-        console.log("reduction", canonicalWalk.edges, fullWalk.edges, brokenCanonical.stuck.length, brokenFull.stuck.length)
+        console.log(
+          "reduction",
+          canonicalWalk.edges,
+          fullWalk.edges,
+          brokenCanonical.stuck.length,
+          brokenFull.stuck.length,
+        )
         expect(brokenCanonical.stuck.length).toBeGreaterThan(0)
         // A stuck state is the same configuration in both walks. The key's `dead:` part holds the state of the first
         // death (what the outcome's firstDead guard reads), and the order of deaths is what the canonical interleaving
