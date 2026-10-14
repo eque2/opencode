@@ -1,8 +1,10 @@
 import { Effect, FileSystem, Path, Random, Schema } from "effect"
-import type { Plan, RunState, State, TaskState } from "./model"
+import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
+import type { Plan } from "./model"
 
-// The status file of the harness contract (section 3): a projection of the folded state, rewritten atomically
-// (temp file, then rename) after every fact. The real state lives in the durable facts (`./events`).
+// The status file of the harness contract (section 3): a projection of the run machine's snapshot through the
+// engine's `view`, rewritten atomically (temp file, then rename) after every fact. The real state lives in the
+// durable facts (`./events`).
 
 const Text = Schema.String
 const Reason = Schema.optional(Schema.String)
@@ -79,53 +81,34 @@ export type Status = typeof Status.Type
 
 const encode = Schema.encodeSync(Schema.fromJsonString(Status))
 
-const ACTIVE: ReadonlyArray<TaskState> = ["building", "proving", "verifying"]
-
-/** The input of the projection: the folded state, its plan, and the `outside` ids the store records as trusted. */
+/** The input of the projection: the run machine's snapshot and its plan. */
 export interface Input {
   readonly plan: Plan
-  readonly state: State
-  readonly outside: ReadonlyArray<string>
+  readonly snapshot: RunSnapshot
 }
 
-/**
- * Whether an id that a task or scenario depends on is trusted: a plan task by its state, an `outside` id by the
- * trusted set. An id that is neither counts as not trusted.
- */
-export const trusted = (input: Input) => (id: string) => {
-  const task = input.state.tasks[id]
-  if (task) return task.state === "trusted"
-  if (id in input.plan.spec.outside) return input.outside.includes(id)
-  return false
-}
+/** Whether a unit that a task or scenario depends on is trusted: a plan task, an `outside` or an external region. */
+export const trusted = (input: Input) => (id: string) => TaskEngineXState.unitState(input.snapshot, id) === "trusted"
 
 /** The ids of `ids` that are not trusted. */
 export const waitingOn = (input: Input, ids: ReadonlyArray<string>) => ids.filter((id) => !trusted(input)(id))
 
-const runState = (input: Input): RunState => {
-  const stored = input.state.run.state
-  if (stored !== "running") return stored
-  const tasks = Object.values(input.state.tasks)
-  const scenarios = Object.values(input.state.scenarios)
-  const busy = tasks.some((task) => ACTIVE.includes(task.state)) || scenarios.some((s) => s.state === "verifying")
-  const waits = tasks.some((task) => task.state === "waiting") || scenarios.some((s) => s.state === "waiting")
-  return !busy && waits ? "waiting" : "running"
-}
-
-/** The status of a run (contract section 3). */
+/**
+ * The status of a run (contract section 3): the snapshot read through the engine's `view`. The run's `running` or
+ * `waiting` is the machine's; a unit's `waitingOn` is the engine's selector, the dependencies it waits on.
+ */
 export const project = (input: Input): Status => {
-  const { plan, state } = input
-  const after = (id: string) => plan.tasks.find((task) => task.id === id)?.afterEffective ?? []
-  const needs = (id: string) => plan.scenarios.find((scenario) => scenario.id === id)?.needs ?? []
+  const { snapshot } = input
+  const state = TaskEngineXState.view(snapshot)
   return {
-    run: { state: runState(input), reason: state.run.reason, spec: state.run.spec, path: state.run.path },
+    run: { state: state.run.state, reason: state.run.reason, spec: state.run.spec, path: state.run.path },
     tasks: Object.fromEntries(
       Object.values(state.tasks).map((task) => [
         task.id,
         {
           state: task.state,
           attempts: task.attempts,
-          waitingOn: waitingOn(input, after(task.id)),
+          waitingOn: [...TaskEngineXState.waitingOn(snapshot, task.id)],
           worktree: task.worktree,
           reason: task.reason,
         },
@@ -142,7 +125,7 @@ export const project = (input: Input): Status => {
         scenario.id,
         {
           state: scenario.state === "verifying" ? "pending" : scenario.state,
-          waitingOn: waitingOn(input, needs(scenario.id)),
+          waitingOn: [...TaskEngineXState.waitingOn(snapshot, scenario.id)],
           reason: scenario.reason,
         },
       ]),
