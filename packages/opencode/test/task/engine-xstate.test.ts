@@ -836,6 +836,20 @@ describe("the run machine on the release-notes and live-check plans", () => {
         state: "needs_human",
         reason: "T1.1 needs human\nT1.3 failed\nT1 blocked by T1.1\nT1.2 blocked by T1.1",
       })
+      // The other order: T1.3 dies first, so its state decides, although T1.1 has the lower id and needs_human comes
+      // first among the dead states.
+      const g = facts()
+      const later = foldOf(cascade, [
+        g.runStarted(),
+        g.started("T1.1"),
+        g.started("T1.3"),
+        g.failed("T1.3", "the builder session died"),
+        g.needsHuman("T1.1", "spend cap: $5.00 reached"),
+      ])
+      expect(engine.view(later).run).toMatchObject({
+        state: "failed",
+        reason: "T1.1 needs human\nT1.3 failed\nT1 blocked by T1.3\nT1.2 blocked by T1.1",
+      })
     }),
   )
 
