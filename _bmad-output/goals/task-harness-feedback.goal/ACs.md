@@ -1,3 +1,11 @@
+> **START NOW — do not wait to be asked.** This is a prepared goal folder.
+> Invoke `eque2-code-pursue-goal` on the directory containing this file,
+> as the first thing you do. Being pointed at this charter IS the request
+> to execute it; there is nothing else one does with a `.goal` folder.
+> Do not summarise this charter back, do not ask whether to proceed, and
+> do not begin the work with no gate bound. If the starter refuses,
+> report the refusal and stop.
+
 # Acceptance criteria
 
 Goal: the `/task` harness answers the thirteen questions in `task-questions.md` — one xstate machine holds the whole
@@ -79,6 +87,27 @@ Delivery:
       - explanation: not merged yet.
 - [ ] **CRITICAL** The quality gate passes on the final branch: with the scripts in the root `package.json`, bun lint and bun typecheck exit 0; bun test exits 0 in packages/opencode and in packages/tui; and the scripted conformance suite (bun run script/task-conformance.ts --arm o2 --runs 1, no --live) still passes H1–H16 — `package.json`
       - explanation: not run yet.
+
+Added in stage 2 (prepare-goal) — each names its source; the approved AC 1–29 above are unchanged:
+
+- [ ] [D3] With every task trusted, a run whose runnable scenario is failed or rejected ends failed with the reason "acceptance not proved: <id> <state>"; a scenario that waits only on an outside precondition is parked, adds "not run: <id> waits on <ids>" to the reason, and the run can still end done — `packages/opencode/src/task/engine-xstate/machine.ts`
+      - explanation: not built yet. Appended in stage 2 from owner ruling 1 (2026-10-14), which overrides the literal "done when every task is trusted" in AC 4; spec RM12, RM13, UI20.
+- [ ] [D3] A cancel or a run wall-clock stop moves every unfinished task, obligation and scenario to cancelled and keeps the finished ones, so every region is final and the run ends; a stop outranks a task that died first — `packages/opencode/src/task/engine-xstate/machine.ts`
+      - explanation: not built yet. Appended in stage 2 from prepare-goal default 4 (spec RM14, RM27): D3 ends a run only when every region is final, so a stop must finish the units that still wait.
+- [ ] [D1] Folding the stored facts, sending the same facts to a live actor, and restoring a folded prefix into an actor give equal snapshots for 40 seeded random sequences; a machine error makes apply die with a defect that names it, and apply never returns a snapshot whose status is error — `packages/opencode/src/task/engine-xstate/index.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec (RM5, RM28; AD-5, AD-6): a machine error must never become a frozen run.
+- [ ] One run is live in a directory at a time: a second /task there starts nothing and answers one line that names the live run's spec and path; the claim is released when the background job does not start or the run ends; a run resumes only when its latest slice has not ended and the new /task path equals its path, and otherwise starts a new slice — `packages/opencode/src/task/core/harness.ts`
+      - explanation: not built yet. Appended in stage 2 from owner ruling 3 (AD-19 and AD-6 accepted 2026-10-14); spec SV3, SV8, SV21.
+- [ ] /task trust records outside.trusted once on the live run and moves only outside regions; it never moves an external region, and a typed trust never stands in for a folder task's own stored trust in the D13 subtree check — `packages/opencode/src/task/core/command.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec review (SV20, VF7, VF21).
+- [ ] The TUI decodes the shared status fixture that the harness projection writes and a status file written before this change, and the fixture equals the projection of the observed facts byte for byte — `packages/tui/src/task-ui/store.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec (SV17): the status file is the contract between the harness and the TUI.
+- [ ] Scripted runs with no paid model: the cascade folder ends with T1.1 budget exhausted after one attempt, T1 and T1.2 blocked by T1.1, T1.3 trusted, and the run budget_exhausted only after T1.3 ends; the scenarios folder ends done with T1.1 and S1 trusted — `packages/opencode/test/task/live-check-runs.test.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec (VF17, VF18): the outcome AC 27 checks live is first proved without spend.
+- [ ] The closing summary of AC 20 is written once when a turn is in flight, after an abort and after a cancel; a summary that cannot be written is logged, the run still ends, and the directory is free for the next /task — `packages/opencode/src/task/core/ops.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec review (UI8, UI23).
+- [ ] Three worker failures in a row fail the unit with a reason that starts "harness error:"; a task's wall clock fails only that task while an independent task keeps building; a tool that runs longer than the stream idle time is not a stall — `packages/opencode/src/task/core/supervise/task.ts`
+      - explanation: not built yet. Appended in stage 2 from the spec review (SV6, SV22, SV23).
 
 ## Notes
 
