@@ -59,3 +59,13 @@
 - Resolution: commit "Give a build without the web UI a module that fails to import"; the build and its smoke test
   pass (4 s).
 - Status: fixed — for the owner's final review (a change outside the task harness).
+
+## D4 — BUILD-4: five Google Vertex tests read the developer's shell
+- Check: BUILD-4, `bun run --cwd packages/opencode test` (21:30-21:40, HEAD 43b4e6f79e): 3996 pass, 41 skip, 5 fail;
+  `bun run --cwd packages/tui test`: exit 0.
+- Actual failure: `test/provider/provider.test.ts` Google Vertex tests expected `europe-west1` (or a REP endpoint) and
+  got `us-central1`: the shell sets `GOOGLE_CLOUD_LOCATION`, which outranks the `VERTEX_LOCATION` the tests set.
+  Unrelated to the task harness; it fails the same way on dev in this shell.
+- Resolution: the test preload deletes `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` and `VERTEX_LOCATION`, as it
+  already deletes the other provider settings; the provider suite passes.
+- Status: fixed — for the owner's final review (a change outside the task harness).
