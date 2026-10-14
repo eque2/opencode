@@ -22,6 +22,10 @@
 - Update 17:58: that run was stopped after 49 min wall time (18 min CPU) without a result. The conformance guard
   waits until no other `bun test` process runs, so the walk blocked the T1.14 gate. It runs again when no gate
   needs the machine.
+- Update 20:36: the T1.10 verifier found that the walk key's `dead:` part held the wrong value (fc8ab41135 fixes it,
+  with a property test that two snapshots with one key move alike in both key modes). The full stale walk of the
+  cascade plan was started again at 20:36 on the fixed key (HEAD f6d5bb3dc7), with no gate run waiting on the
+  machine; T1.10's trust waits on its result.
 - Status: open — for the T1 review and the owner's final review.
 
 ## D2 — environment: the machine's load makes timing-bound tests fail
