@@ -482,6 +482,12 @@ export const ACTIONS = {
   }),
 }
 
+/** An obligation and the task it belongs to: its proof and verdict rows read only that task's facts. */
+interface OwnParams {
+  readonly id: string
+  readonly task: string
+}
+
 interface IdParams {
   readonly id: string
 }
@@ -498,19 +504,25 @@ export const GUARDS = {
     context.stop?.state === params.state,
   /** The fact names this task. */
   forTask: ({ event }: Facts, params: IdParams) => "task" in event && event.task === params.id,
-  /** A proof result of the obligation has this status. */
-  result: ({ event }: Facts, params: IdParams & { readonly status: string }) =>
+  /** A proof of the obligation's own task gave the obligation a result with this status. */
+  result: ({ event }: Facts, params: OwnParams & { readonly status: string }) =>
     event.type === "task.proved" &&
+    event.task === params.task &&
     event.results.some((result) => result.id === params.id && result.status === params.status),
-  /** A proof round gave the obligation (a parent's review) no result: it waits for the reviewer. */
-  unproved: ({ event }: Facts, params: IdParams) =>
-    event.type === "task.proved" && !event.results.some((result) => result.id === params.id),
-  verdict: ({ event }: Facts, params: IdParams & { readonly verdict: string }) =>
+  /** A proof round of its own task gave the obligation (a parent's review) no result: it waits for the reviewer. */
+  unproved: ({ event }: Facts, params: OwnParams) =>
+    event.type === "task.proved" &&
+    event.task === params.task &&
+    !event.results.some((result) => result.id === params.id),
+  /** A verification of the obligation's own task gave it this verdict. */
+  verdict: ({ event }: Facts, params: OwnParams & { readonly verdict: string }) =>
     event.type === "task.verified" &&
+    event.task === params.task &&
     event.verdicts.some((verdict) => verdict.id === params.id && verdict.verdict === params.verdict),
-  /** A proof result failed: a leaf goes back to the builder. */
-  proofFailed: ({ event }: Facts) =>
-    event.type === "task.proved" && event.results.some((result) => result.status === "failed"),
+  /** A proof result of one of the task's own obligations failed: a leaf goes back to the builder. */
+  proofFailed: ({ event }: Facts, params: { readonly ids: ReadonlyArray<string> }) =>
+    event.type === "task.proved" &&
+    event.results.some((result) => result.status === "failed" && params.ids.includes(result.id)),
   underBudget: ({ context }: { readonly context: RunContext }, params: IdParams & { readonly budget: number }) =>
     (slotOf(context, params.id).attempts ?? 0) < params.budget,
   /** The staleness fact names this obligation. */
@@ -673,21 +685,21 @@ const obligationRegion = (obligation: BlendModel.Obligation, proof: Guard, revie
   const id = obligation.id
   const task = obligation.task
   const verification = at(task, "verifying")
-  const result = (status: string) => and([proof, named("result", { id, status })])
+  const result = (status: string) => and([proof, named("result", { id, task, status })])
   const to = (from: string, target: string): Row => ({ target, actions: [move(id, from, target)] })
   const fail = (from: string): Row => ({ guard: result("failed"), ...to(from, "failed") })
   const pass = (from: string): Row => ({ guard: result("passed"), ...to(from, "trusted") })
   const judge = (from: string): Row => ({ guard: result("needs-judge"), ...to(from, "passed") })
   const unproved = (from: string): ReadonlyArray<Row> =>
-    review ? [{ guard: and([proof, named("unproved", { id })]), ...to(from, "passed") }] : []
+    review ? [{ guard: and([proof, named("unproved", { id, task })]), ...to(from, "passed") }] : []
   const verdicts = (from: string): ReadonlyArray<Row> => [
-    { guard: and([verification, named("verdict", { id, verdict: "trusted" })]), ...to(from, "trusted") },
+    { guard: and([verification, named("verdict", { id, task, verdict: "trusted" })]), ...to(from, "trusted") },
     from === "rejected"
       ? {
-          guard: and([verification, named("verdict", { id, verdict: "rejected" })]),
+          guard: and([verification, named("verdict", { id, task, verdict: "rejected" })]),
           actions: [again(id, "obligation", "rejected")],
         }
-      : { guard: and([verification, named("verdict", { id, verdict: "rejected" })]), ...to(from, "rejected") },
+      : { guard: and([verification, named("verdict", { id, task, verdict: "rejected" })]), ...to(from, "rejected") },
   ]
   const stale = (from: string): ReadonlyArray<Row> => [
     {
@@ -756,6 +768,7 @@ const workRegion = (
     ...stops(from),
   })
   const underBudget = named("underBudget", { id, budget })
+  const proofFailed = named("proofFailed", { ids: obligations.map((obligation) => obligation.id) })
   const retry: Action = { type: "retry", params: { unit: id } }
   const proved = and(obligations.map((obligation) => at(obligation.id, "trusted")))
   const staleRows = obligations.map(
@@ -799,9 +812,9 @@ const workRegion = (
         "task.proved": [
           ...(leaf
             ? [
-                { guard: fact(and([named("proofFailed", {}), underBudget])), ...to("proving", "building", retry) },
+                { guard: fact(and([proofFailed, underBudget])), ...to("proving", "building", retry) },
                 {
-                  guard: fact(and([named("proofFailed", {}), not(underBudget)])),
+                  guard: fact(and([proofFailed, not(underBudget)])),
                   ...to("proving", "budget_exhausted"),
                 },
               ]
