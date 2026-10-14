@@ -13,6 +13,7 @@ import type {
   TaskState,
 } from "@/task/core/model"
 import {
+  byId,
   CLASS,
   type Cause,
   type Meta,
@@ -41,6 +42,7 @@ import {
 //   near a second, far below a model turn.
 
 export type { RunSnapshot }
+export { byId }
 
 /** The harness engine: a pure fold of facts into the run machine's snapshot. */
 export interface Engine {
@@ -98,8 +100,6 @@ const isMeta = (value: unknown): value is Meta =>
 
 const metas = (snapshot: RunSnapshot): ReadonlyArray<Meta> => Object.values(snapshot.getMeta()).filter(isMeta)
 
-const natural = new Intl.Collator([], { numeric: true })
-
 /** The status name of a unit's state (`run` for the outcome), from its state's meta. */
 export const unitState = (snapshot: RunSnapshot, id: string): string | undefined =>
   metas(snapshot).find((meta) => meta.unit === id)?.state
@@ -114,7 +114,7 @@ export const waitingOn = (snapshot: RunSnapshot, id: string): ReadonlyArray<stri
   return snapshot.tags
     .filter((tag) => tag.startsWith(prefix))
     .map((tag) => tag.slice(prefix.length))
-    .toSorted((a, b) => natural.compare(a, b))
+    .toSorted(byId)
 }
 
 /** The cause of a blocked unit: the dead dependency its `blocked` row named. */

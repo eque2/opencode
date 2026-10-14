@@ -175,8 +175,8 @@ export type RunEvent = Fact | { readonly type: "run.settled" }
 const RUN = "run"
 
 const natural = new Intl.Collator([], { numeric: true })
-/** The natural order of unit ids: `S2` before `S10`, `T1.2` before `T1.10`. */
-const byId = (a: string, b: string) => natural.compare(a, b)
+/** The natural order of unit ids, the harness's one id order: `S2` before `S10`, `T1.2` before `T1.10`. */
+export const byId = (a: string, b: string) => natural.compare(a, b)
 
 // --- reads shared by guards and actions ----------------------------------------------------------------------------
 
