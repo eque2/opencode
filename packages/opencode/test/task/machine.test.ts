@@ -452,7 +452,8 @@ describe("readiness and the cascade (AD-3)", () => {
       })
       const exit = Effect.runSyncExit(initialTransition(TaskMachine.fromConfig(plan, looping)))
       // The port stops the loop at maxIterations with a TransitionError in an `error` snapshot.
-      if (!Exit.isSuccess(exit)) throw new Error(`the oscillating copy failed outside the machine: ${exit.cause}`)
+      if (!Exit.isSuccess(exit))
+        throw new Error(`the oscillating copy failed outside the machine: ${String(exit.cause)}`)
       const [looped] = exit.value
       expect(looped.status).toBe("error")
       expect(String(looped.error)).toContain("TransitionError: Infinite loop detected")
