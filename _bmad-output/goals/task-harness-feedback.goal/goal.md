@@ -110,7 +110,7 @@
 - Architecture spine: [`./architecture/ARCHITECTURE-SPINE.md`](./architecture/ARCHITECTURE-SPINE.md) (AD-1..AD-20)
 - UX: [`./ux/EXPERIENCE.md`](./ux/EXPERIENCE.md)
 - Approved decisions: [`./decisions.md`](./decisions.md) (D1–D27)
-- Acceptance contract: [`./ACs.md`](./ACs.md) (38 criteria: 29 approved, AC 30–38 appended in stage 2)
+- Acceptance contract: [`./ACs.md`](./ACs.md) (46 criteria: 29 approved, AC 30–46 appended in stage 2)
 - Plan: [`./plan.md`](./plan.md) · Input: [`./task-questions.md`](./task-questions.md) (13 questions)
 - Journal: [`./JOURNAL.md`](./JOURNAL.md) · State: [`./STATE.md`](./STATE.md)
 - Contract review: [`./reviews/`](./reviews/)
@@ -135,19 +135,28 @@ linked, not restated. Phases: D1–D5 one run machine; D6–D9 actors and the au
 the fault folders; D16–D24 the task UI; D25 the live check; D26 the merges; D27 the paused
 `task-harness` goal stays separate.
 
-Owner answers in stage 2 (2026-10-14; `journal/2026-10-14-04-architecture.md`, spec "Owner rulings"):
+Owner answers in stage 2 (2026-10-14; `journal/2026-10-14-04-architecture.md`,
+`journal/2026-10-14-08-review.md`, spec "Owner rulings"):
 
 1. **D3 acceptance → "failed".** All tasks trusted but a runnable scenario failed or rejected → the run
    ends `failed`, `acceptance not proved: <id> <state>`. This overrides the literal AC 4 text "done when
-   every task is trusted"; AC 30 records the rule. Evidence for AC 4 cites the ruling.
+   every task is trusted"; AC 30 records the rule. The AC 4 evidence cites the ruling.
 2. **AC 2 tests → "Rewrite, keep intent".** The old engine tests become fact sequences. The header of
    `engine-xstate.test.ts` classes each as ported, re-baselined or retired; the AC 2 evidence cites it.
-3. **One live run per directory → "Accept"** (AD-19, AD-6). AC 33 records it. Consequence: a refusal
-   while another run is live answers in the session only and does not write that run's `status.json`
-   (it would overwrite the live run's reason) — the one case where AC 12's status-file half does not apply.
+3. **One live run per directory → "Accept"** (AD-19, AD-6). AC 33 records it. A refusal while another
+   run is live answers in the session only and does not write that run's `status.json`; the AC 12
+   evidence cites this ruling for that one case.
+4. **AC 6 → "structurally impossible to become stuck … a linting or pre-processing should yield errors
+   … fixed order + check".** The graph walk in one fixed event order with the small-plan reduction check
+   (AD-7, RM22) is the accepted reading of "every reachable state". AC 39 adds the generator's totality
+   check, which refuses a config with a gap before any run starts.
+5. **A stopped server → "Show it as still"** (was default 6). AC 40 records it; it narrows AC 23 and
+   AC 25 for a server that has stopped.
+6. **Bun scenario evidence → "Use the adapter".** See "Verification" below.
 
-Prepare-goal defaults (the owner may overrule): default 4 (a cancel finishes waiting units, AC 31),
-default 5 (the D1 and D6 shapes), and **default 6, pending the owner's ruling** — see Notes.
+Prepare-goal defaults (the owner may overrule): default 4 (a stop finishes the waiting tasks and
+scenarios, AC 31) and default 5 (the D1 and D6 shapes). Where the spine's stop-first outcome rule
+disagreed with approved AC 4, AC 4 wins: a task that died before a stop gives the end state (AC 31).
 
 ## Work list (from the SPEC)
 
@@ -176,15 +185,20 @@ scenario id; TUI tests under `packages/tui/test/task-ui/`.
 # 1. Phases 1–4, paused once after phase 1
 /eque2-code-develop-spec _bmad-output/goals/task-harness-feedback.goal/spec
 
-# 2. Checkpoint (AC 7) — when parent T1 and its review are done, before any T2.x work:
-#    AC 2–6 evidenced and the quality gate (AC 29) green on the branch, then in the main checkout:
+# 2. Checkpoint (AC 7, AC 46) — when state.mjs next first recommends a T2.x action:
+#    a. AC 2–6 evidenced and the quality gate (AC 29) green on the branch (see "The checkpoint" below).
+#    b. Merge dev into the branch first; resolve conflicts on the branch.
+#    c. Untrack the goal folder (files stay on disk), commit, then merge from the main checkout:
+git rm -r -q --cached _bmad-output/goals/task-harness-feedback.goal && git commit -m "chore(goal): untrack the goal record before the checkpoint merge"
 git -C /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode merge --no-ff goal/task-harness-feedback
-#    then re-invoke step 1; [DS] resumes from the state CLI.
+#    d. Re-add the folder without key files, commit, then re-invoke step 1:
+git add -f -- _bmad-output/goals/task-harness-feedback.goal && git rm -q --cached --ignore-unmatch -- ':(glob)**/.signer-key' ':(glob)**/.evidence-key'
+#    (an exclude pathspec with add -f silently adds nothing — tested 2026-10-14; unstage the keys instead)
 
-# 3. After every scripted criterion and the quality gate pass: the live check (AC 27)
-bash packages/opencode/script/task-demo.sh      # seeds the demo folder; drive /task in tmux
+# 3. After every scripted criterion and the quality gate pass: the live check (AC 27), in tmux
+mkdir <new empty folder> && cd <it> && bash <worktree>/packages/opencode/script/task-demo.sh
 
-# 4. After every other criterion passes: the final merge (AC 28), same command as step 2. No push.
+# 4. After every other criterion passes: the final merge (AC 28, AC 46) — repeat 2b and 2c. No push.
 ```
 
 _Agent note — other agents: drive `state.mjs` / `tests-cli.mjs` directly against
@@ -192,27 +206,78 @@ _Agent note — other agents: drive `state.mjs` / `tests-cli.mjs` directly again
 
 ## Notes for the builder
 
-- **Checkpoint timing.** `[DS]` has no phase argument. Watch `state.mjs next`: when it first recommends a
-  T2.x action, stop and run step 2 before you continue. The main checkout must be on `dev` and clean.
-- **Iteration cap.** 54 tasks plus 98 scenarios exceed the default `[DS]` cap of 100 iterations.
-  Re-invoke `[DS]` when it stops on the cap; the state CLI resumes it.
-- **Scenario evidence under `bun test`.** Every scenario test runs under `bun test`; the verify-scenario
-  skill and `scenario-state-reporter.mjs` name Vitest and Playwright. Before the first scenario verify,
-  confirm the sanctioned path that records a `bun test` result. If none exists, it is a blocker: STOP and
-  report it (⛔ block). Never edit the reporter or any enforcement program.
-- **The live check spends money.** At most 4 live runs and $5 in total, canaries and re-runs included.
-  Approving `ACs.md` approved that spend. Past the cap, stop and ask.
+### Before you start
+
+- **The gate's turn bound.** `goal-gate-stop.sh` ends the loop WITHOUT completion after
+  `GOAL_GATE_MAX_ITERATIONS` blocked stops (default 50). This goal runs for days. If it trips, open a fresh
+  context on this folder; `[DS]` resumes from the state CLI. The owner may raise the variable first.
+- **`[DS]` setup.** Answer **N** to its worktree question: this is already the goal's worktree, and a
+  nested `feature/*` branch never reaches `dev`. Run without `--parallel` until one scenario has verified
+  through the adapter; after that `--parallel` is allowed, with at most 5 verifiers at a time.
+- **Iteration cap.** The tasks plus 98+ scenarios exceed the default `[DS]` cap of 100 iterations.
+  Re-invoke `[DS]` when it stops on the cap.
+- **No `[ET]`, no `[PR]`.** `[DS]`'s completion text suggests them; the plan declined both, and a PR
+  pushes, which D26 forbids. When `[DS]` is done, go to the live check (step 3).
+
+### Verification (owner ruling 6)
+
+- Every scenario test is a `bun test` file. Run it from its package, never the root:
+  `bun test --timeout=30000 --reporter=junit --reporter-outfile=<run dir>/junit.xml <file>`.
+- The `eque2-verifier` builds a small adapter in its own scratchpad that passes each JUnit result
+  unchanged to `scenario-state-reporter.mjs`'s public Vitest hook `onTestRunEnd(files)`. Recipe and
+  refusal rules: the log-proxy goal's S6 journal,
+  `/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/log-proxy/_bmad-output/goals/log-proxy.goal/spec/journal/S6.md`.
+- Verify ONE scenario first (the canary). Scale only after it records evidence and a verdict.
+- Never edit the reporter, the state CLI or any enforcement program; never read evidence or key files.
+- Commit every `verify-spec-*.spec.ts` file the verify step writes, before AC 29 and before each merge.
+- Run long commands (BUILD-4, conformance BUILD-6, a whole package suite) in the background with a log
+  file and poll it; run conformance only when no builder or verifier is active.
+
+### The checkpoint (AC 7)
+
+`[DS]` runs build checks and scenarios only after every task is trusted, so at the checkpoint no RM
+scenario has a verdict yet. AC 2–6 count as passed at the checkpoint when: T1 and its review are trusted
+in the state CLI; the AC 2–6 test files pass in a real `bun run test` run in `packages/opencode`, quoted
+in the evidence; and the quality gate passes on the branch. Tick AC 2–6 with that evidence; the scenario
+verdicts add to it later.
+
+### The live check (AC 27)
+
+- At most 4 live runs and $5 in total, canaries and re-runs included. Approving `ACs.md` approved that
+  spend. Past the cap, stop and ask.
+- Each run gets a new empty folder and its own `tmux` session (`task-demo.sh` `exec`s the TUI; a re-run
+  in the same folder resumes the earlier run). Capture panes with `tmux capture-pane -e` so bold text shows.
+- Measure spend from the stored assistant-message costs of the run's sessions, not from the cost display
+  that AC 27 tests.
+
+### Merges and commits
+
+- `_bmad-output/` is gitignored, so goal-folder files need `git add -f`. A forced add also takes the
+  gitignored `spec/.signer-key`: always add with the add-then-unstage form of step 2d, and check that
+  `git ls-files | grep -i -e signer -e evidence-key` is empty before each commit and merge.
+- Before each merge: the main checkout is on `dev` and clean (stop if not); merge `dev` into the branch
+  first; untrack the goal folder (AC 46). Nothing is pushed.
+
+### Evidence notes per criterion
+
+- **AC 29:** run each package's `test` script (`bun run test`, which sets the timeout), not bare
+  `bun test`. A test that fails also on `dev` at the base commit is still yours to fix.
+- **AC 8, AC 14, AC 20** name `core/runner.ts`, which T2.12 deletes or empties. Evidence names the file
+  that now holds the behaviour (`core/supervise/run.ts`, `core/supervise/*`, `core/ops.ts`) and shows
+  that `runner.ts` holds no state.
+- **AC 10:** an obligation never blocks, so it carries no blocked cause (spec defect 9).
+- **AC 35:** show that the shared fixture did not change in the verifying run (no `UPDATE_FIXTURE=1`).
+- **AC 4, AC 12, AC 23, AC 25:** cite owner rulings 1, 3 and 5 where they narrow the text.
+- Backticked references in `ACs.md` evidence must not contain `mock`, `stub`, `fake`, `dummy`,
+  `surrogate`, `stand-in`, `standin`, `placeholder`, `sample`, `example`, `simulated` or `toy` (which
+  matches `destroy`). Name the live-check folders in prose, or cite the test file that loads them.
+- Read `spec/spec.md` "Defects found in the inputs" before phase 1. Each names how the SPEC builds it.
+
+### Other
+
 - Run tests only from `packages/opencode` and `packages/tui`; the root `bunfig.toml` blocks a root run.
-- `_bmad-output/` is gitignored. Commit goal-folder files with `git add -f`.
 - The conformance guard fingerprints both spec trees, the seed and the suite: commit edits there before a
   conformance run.
-- Paths in `ACs.md` avoid the word "example" (the format refuses it); the live-check folders are
-  `task-formats/blend/example-scenarios.spec` and `example-cascade.spec`.
-- Read `spec/spec.md` "Defects found in the inputs" before phase 1. Each defect names how the SPEC
-  builds it; none contradicts a decision.
-- **Default 6, pending the owner's ruling:** a run whose `run.aliveAt` is older than 15 s and that has not
-  ended shows a static diamond and frozen durations. Build it as stated (`@ASSUMPTION:A2.a`). If the owner
-  overrules it, re-spec that part with `[CS]`.
 
 ## Contract review
 
@@ -223,14 +288,14 @@ their resolution are in [`./reviews/`](./reviews/).
 
 - It did not build, test or change any product code.
 - It did not start the loop. A fresh context starts it.
-- It did not reword, remove, reorder or tick an approved criterion. AC 30–38 are appended; each names
-  its source.
+- It did not reword, remove, reorder or tick an approved criterion. AC 30–46 are appended; each names
+  its source. Phase R reworded AC 31 and AC 37, which this stage appended and nobody approved.
 - It did not merge into `dev`, push, or touch the paused `task-harness` goal (D27).
 
 ## Done when
 
 The acceptance contract for this workstream is [`./ACs.md`](./ACs.md)
-(38 criteria). It is the file the gate reads; this charter does not
+(46 criteria). It is the file the gate reads; this charter does not
 restate it. A criterion tagged `[D<n>]` proves an approved technical
 decision in [`./decisions.md`](./decisions.md) — build to the decision,
 do not re-decide it.
