@@ -33,7 +33,8 @@ export default [
   {
     // O2's task engine implements the synchronous `Engine` interface (`apply(plan, state, fact) => State`) on
     // xstate-effect, whose pure `transition` returns an Effect: `apply` is the boundary that runs it with runSync.
-    files: ["packages/opencode/src/task/engine-xstate/index.ts"],
+    // The run machine generator is synchronous too: `machine(plan)` dies through runSync on a broken invariant.
+    files: ["packages/opencode/src/task/engine-xstate/index.ts", "packages/opencode/src/task/engine-xstate/machine.ts"],
     rules: { "effect/no-effect-runsync-unguarded": "off" },
   },
   {
