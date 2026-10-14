@@ -829,13 +829,21 @@ export const trustFacts = (snapshot: RunSnapshot, ids: ReadonlyArray<string>, at
     .filter((id) => TaskEngineXState.unitState(snapshot, id) !== "trusted")
     .map((id): Fact => ({ type: "outside.trusted", at, id }))
 
+// The latest slice and its fold, when the fold is not `done`: a resume starts from this snapshot, so the slice is
+// folded once (a fold of a few hundred facts takes about a second).
+const openSlice = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>) =>
+  Option.filter(
+    Option.map(TaskEvents.latestRun(stored), (facts) => ({ facts, snapshot: TaskEvents.fold(engine, plan, facts) })),
+    (slice) => !TaskEngineXState.ended(slice.snapshot),
+  )
+
 /**
  * The latest slice of the stored facts when it can be resumed: it has not ended, so its fold is not `done`. A stored
  * stop (`run.cancelled`, `run.ended`) or a fold that reached `done` ends it, and the next `/task` starts a new slice.
  * A slice stored before `run.started` had a path counts as a whole-spec slice.
  */
 export const resumable = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>) =>
-  Option.filter(TaskEvents.latestRun(stored), (facts) => !TaskEngineXState.ended(TaskEvents.fold(engine, plan, facts)))
+  Option.map(openSlice(engine, plan, stored), (slice) => slice.facts)
 
 /**
  * The base branch the stored run started on, when it has not ended and recorded one: a resume must use the same
@@ -855,15 +863,16 @@ export const unfinishedBase = (engine: Engine, plan: Plan, stored: ReadonlyArray
 export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
   const id = TaskEvents.runID(start.directory, start.plan.specPath)
   const stored = yield* TaskEvents.read(start.env.db, id)
-  const resumed = resumable(start.engine, start.plan, stored)
-  const facts = Option.getOrElse(resumed, (): ReadonlyArray<Fact> => [])
+  const resumed = openSlice(start.engine, start.plan, stored)
   const at = yield* now
   const self: Run = {
     ...start,
     id,
     // The `run.started` or `run.resumed` this call records: the run clock does not count downtime.
     startedAt: at,
-    state: yield* Ref.make(TaskEvents.fold(start.engine, start.plan, facts)),
+    state: yield* Ref.make(
+      Option.match(resumed, { onNone: () => start.engine.initial(start.plan), onSome: (slice) => slice.snapshot }),
+    ),
     spec: yield* Ref.make(start.plan.spec),
     lock: yield* Semaphore.make(1),
     checkout: yield* Semaphore.make(1),
