@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs"
 import path from "path"
 import type { BlendModel } from "@/task/blend/model"
 import type { History, Plan } from "@/task/core/model"
+import { TaskEvents } from "@/task/core/events"
 import { TaskRunner } from "@/task/core/runner"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import type { TaskProof } from "@/task/proof"
@@ -272,9 +273,31 @@ describe("the phase-1 seam on the run snapshot", () => {
     }),
   )
 
+  it.live("RM17 records each directory trust once at the start, and none the machine already holds", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const started = fold(plan, [f.runStarted()])
+      // The directory recorded T9 twice and T8 once before this run.
+      const directory = [f.outside("T9"), f.outside("T8"), f.outside("T9")]
+      const recorded = TaskRunner.trustFacts(started, TaskEvents.trustedOutside(directory), 50)
+      expect(recorded).toEqual([
+        { type: "outside.trusted", at: 50, id: "T9" },
+        { type: "outside.trusted", at: 50, id: "T8" },
+      ])
+      // Applied, they trust both regions; the same trusts again (a forwarded /task trust) record nothing.
+      const trusted = fold(plan, recorded, started)
+      expect(TaskEngineXState.unitState(trusted, "T9")).toBe("trusted")
+      expect(TaskEngineXState.unitState(trusted, "T8")).toBe("trusted")
+      expect(TaskRunner.trustFacts(trusted, ["T9", "T8"], 60)).toEqual([])
+      expect(TaskRunner.trustFacts(trusted, ["T9"], 60)).toEqual([])
+    }),
+  )
+
   test("holds no readiness check, no done rule, no trust set and no lists of states", () => {
     const source = readFileSync(path.resolve(import.meta.dir, "../../src/task/core/runner.ts"), "utf8")
     expect(source).not.toMatch(/\bcheckDone\b/)
+    expect(source).not.toMatch(/\bfollows\b/)
     expect(source).not.toMatch(/\bconst (ACTIVE|JUDGED)\b/)
     expect(source).not.toMatch(/afterEffective\.every/)
     expect(source).not.toMatch(/readonly outside: Ref/)

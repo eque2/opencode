@@ -820,6 +820,16 @@ const interrupted = Effect.fnUntraced(function* (run: Run, workers: Workers) {
 })
 
 /**
+ * The `outside.trusted` facts to record for the given ids: one per id, and none for an id the run machine already
+ * holds trusted, so a trust reaches the run once (RM17).
+ */
+export const trustFacts = (snapshot: RunSnapshot, ids: ReadonlyArray<string>, at: number): ReadonlyArray<Fact> =>
+  ids
+    .filter((id, index) => ids.indexOf(id) === index)
+    .filter((id) => TaskEngineXState.unitState(snapshot, id) !== "trusted")
+    .map((id): Fact => ({ type: "outside.trusted", at, id }))
+
+/**
  * The latest slice of the stored facts when it can be resumed: it has not ended, so its fold is not `done`. A stored
  * stop (`run.cancelled`, `run.ended`) or a fold that reached `done` ends it, and the next `/task` starts a new slice.
  * A slice stored before `run.started` had a path counts as a whole-spec slice.
@@ -863,21 +873,21 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
     stopping: yield* Ref.make(false),
   }
   // An `outside` trust reaches the run once: the machine's own state says whether it holds already.
-  const trust = (outside: string) =>
+  const trust = (ids: ReadonlyArray<string>) =>
     Effect.gen(function* () {
-      if (TaskEngineXState.unitState(yield* Ref.get(self.state), outside) === "trusted") return
-      yield* record(self, { type: "outside.trusted", at: yield* now, id: outside })
+      const list = trustFacts(yield* Ref.get(self.state), ids, yield* now)
+      yield* Effect.forEach(list, (fact) => record(self, fact), { discard: true })
     })
   const body = Effect.gen(function* () {
     yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at, base: start.base })
-    const recorded = TaskEvents.trustedOutside(yield* TaskEvents.read(start.env.db, TaskEvents.directoryID(start.directory)))
-    yield* Effect.forEach(recorded, trust, { discard: true })
+    // The trusts the directory recorded before this run, each applied once at its start.
+    yield* trust(TaskEvents.trustedOutside(yield* TaskEvents.read(start.env.db, TaskEvents.directoryID(start.directory))))
     const workers = yield* FiberMap.make<string>()
     yield* loop(self, workers).pipe(Effect.onInterrupt(() => interrupted(self, workers)))
     yield* stopWork(self, workers)
     return TaskEngineXState.view(yield* Ref.get(self.state)).run.state
   })
-  MutableHashMap.set(active, id, { directory: start.directory, trust })
+  MutableHashMap.set(active, id, { directory: start.directory, trust: (outside) => trust([outside]) })
   return yield* Effect.scoped(body).pipe(Effect.ensuring(Effect.sync(() => MutableHashMap.remove(active, id))))
 })
 
