@@ -33,8 +33,8 @@ const LIMIT = {
   negative: 2_500,
   // measured: 1 310 edges with the blocked rows
   reductionFull: 4_000,
-  // the opt-in stale walk: set from its first full run
-  stale: 2_000_000,
+  // measured: 36 353 keys, 361 474 edges (the opt-in stale walk, 55 min at load 5-13)
+  stale: 1_100_000,
 }
 const WALK = 60_000
 const STALE_WALK = 4 * 3_600_000
