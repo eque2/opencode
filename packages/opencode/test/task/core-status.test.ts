@@ -46,7 +46,10 @@ const withTasks = (state: State, tasks: Record<string, TaskState>): State => ({
 const withScenarios = (state: State, scenarios: Record<string, ScenarioState>): State => ({
   ...state,
   scenarios: Object.fromEntries(
-    Object.entries(state.scenarios).map(([id, scenario]) => [id, { ...scenario, state: scenarios[id] ?? scenario.state }]),
+    Object.entries(state.scenarios).map(([id, scenario]) => [
+      id,
+      { ...scenario, state: scenarios[id] ?? scenario.state },
+    ]),
   ),
 })
 
@@ -57,7 +60,7 @@ describe("the status projection", () => {
   it.live("a new run waits, and each task waits on its untrusted dependencies, outside ids included", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
+      const status = project(plan, TaskEngineXState.view(TaskEngineXState.initial(plan)))
       expect(status.run).toEqual({ state: "waiting", spec: RELEASE_NOTES, path: RELEASE_NOTES })
       expect(status.tasks["T1.1"]).toEqual({ state: "waiting", attempts: 0, waitingOn: [] })
       expect(status.tasks["T1.2"]?.waitingOn).toEqual([])
@@ -75,8 +78,10 @@ describe("the status projection", () => {
   it.live("trusted tasks and trusted outside ids leave waitingOn; an untrusted outside id stays", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const trusted = Object.fromEntries(["T1.1", "T1.2", "T1.3", "T1.4"].map((id): [string, TaskState] => [id, "trusted"]))
-      const status = project(plan, withTasks(TaskEngineXState.XStateEngine.initial(plan), trusted), ["T9"])
+      const trusted = Object.fromEntries(
+        ["T1.1", "T1.2", "T1.3", "T1.4"].map((id): [string, TaskState] => [id, "trusted"]),
+      )
+      const status = project(plan, withTasks(TaskEngineXState.view(TaskEngineXState.initial(plan)), trusted), ["T9"])
       expect(status.tasks["T1.5"]?.waitingOn).toEqual([])
       expect(status.scenarios["S13"]?.waitingOn).toEqual(["T8"])
       expect(status.scenarios["S1"]?.waitingOn).toEqual([])
@@ -87,7 +92,7 @@ describe("the status projection", () => {
   it.live("the run is running while a task builds, proves or verifies, or a scenario is judged", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const initial = TaskEngineXState.XStateEngine.initial(plan)
+      const initial = TaskEngineXState.view(TaskEngineXState.initial(plan))
       for (const busy of ["building", "proving", "verifying"] as const) {
         expect(project(plan, withTasks(initial, { "T1.1": busy })).run.state).toBe("running")
       }
@@ -97,7 +102,10 @@ describe("the status projection", () => {
       expect(judged.scenarios["S2"]?.state).toBe("pending")
       // Trusted everywhere and nothing left waiting: still running until the runner records the end.
       const allTrusted = withTasks(
-        withScenarios(initial, Object.fromEntries(Object.keys(initial.scenarios).map((id): [string, ScenarioState] => [id, "trusted"]))),
+        withScenarios(
+          initial,
+          Object.fromEntries(Object.keys(initial.scenarios).map((id): [string, ScenarioState] => [id, "trusted"])),
+        ),
         Object.fromEntries(Object.keys(initial.tasks).map((id): [string, TaskState] => [id, "trusted"])),
       )
       expect(project(plan, allTrusted).run.state).toBe("running")
@@ -107,7 +115,7 @@ describe("the status projection", () => {
   it.live("an ended run is shown as stored", () =>
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      const initial = TaskEngineXState.XStateEngine.initial(plan)
+      const initial = TaskEngineXState.view(TaskEngineXState.initial(plan))
       const stopped: State = { ...initial, run: { ...initial.run, state: "budget_exhausted", reason: "T1.1" } }
       expect(project(plan, stopped).run).toEqual({
         state: "budget_exhausted",
@@ -129,7 +137,7 @@ describe("the status projection", () => {
       // S4 and S12 need T1.3 alone; S1 also needs T1.1, T1.2 and T1.4, which are not in the plan.
       expect(plan.scenarios.map((scenario) => scenario.id)).toEqual(["S4", "S12"])
       expect(plan.budget("T1.3")).toBe(3)
-      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
+      const status = project(plan, TaskEngineXState.view(TaskEngineXState.initial(plan)))
       expect(status.tasks["T1.3"]?.waitingOn).toEqual(["T1.1"])
       expect(Object.keys(status.tasks)).toEqual(["T1.3"])
     }),
@@ -141,7 +149,7 @@ describe("the status projection", () => {
       const plan = planOf(spec, T2_SPEC, { folder: "T2-services.task", root: "T2" })
       const ids = ["T2.1", "T2.2", "T2.3", "T2.4", "T2.5", "T2.6"]
       expect(plan.tasks.map((task) => task.id)).toEqual(["T2", ...ids])
-      const status = project(plan, TaskEngineXState.XStateEngine.initial(plan))
+      const status = project(plan, TaskEngineXState.view(TaskEngineXState.initial(plan)))
       const outside = Object.keys(spec.outside)
       for (const id of ids) {
         const task = status.tasks[id]
@@ -173,7 +181,7 @@ describe("the status projection", () => {
       const directory = yield* fs.makeTempDirectoryScoped()
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
       yield* TaskStatus.write(directory, TaskStatus.refused({ spec: "x", path: "x", reason: "R1" }))
-      yield* TaskStatus.write(directory, project(plan, TaskEngineXState.XStateEngine.initial(plan)))
+      yield* TaskStatus.write(directory, project(plan, TaskEngineXState.view(TaskEngineXState.initial(plan))))
       const folder = path.join(directory, ".opencode", "task")
       expect(yield* fs.readDirectory(folder)).toEqual(["status.json"])
       const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(

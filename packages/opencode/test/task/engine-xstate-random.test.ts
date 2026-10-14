@@ -4,7 +4,6 @@ import { Effect, Option } from "effect"
 import path from "path"
 import { Blend } from "@/task/blend"
 import { TaskCommand } from "@/task/core/command"
-import { TaskEvents } from "@/task/core/events"
 import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
 import { TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
@@ -165,11 +164,33 @@ const moveOf = (plan: Plan, item: State["history"][number]) => {
   return `${kind}:${item.from}>${item.to}`
 }
 
+// Until T1.7 and T1.8 rewrite these tests as fact sequences through the snapshot API, they read the engine through
+// `view`: this adapter keeps the snapshot behind each `State` it returns. A `State` it did not make has no snapshot.
+const snapshots = new WeakMap<State, TaskEngineXState.RunSnapshot>()
+const keep = (snapshot: TaskEngineXState.RunSnapshot): State => {
+  const state = TaskEngineXState.view(snapshot)
+  snapshots.set(state, snapshot)
+  return state
+}
+const snapshotOf = (state: State) => {
+  const snapshot = snapshots.get(state)
+  if (snapshot === undefined) throw new Error("a State the engine did not make")
+  return snapshot
+}
+const engine = {
+  initial: (plan: Plan): State => keep(TaskEngineXState.initial(plan)),
+  apply: (plan: Plan, state: State, fact: Fact): State => {
+    const before = snapshotOf(state)
+    const after = TaskEngineXState.apply(plan, before, fact)
+    return after === before ? state : keep(after)
+  },
+  ended: (state: State) => TaskEngineXState.ended(snapshotOf(state)),
+}
+
 describe("XStateEngine on random facts", () => {
   it.live("folds 4,000 random facts without a throw, purely, and reaches the lifecycle's later moves", () =>
     Effect.gen(function* () {
       const plan = yield* releaseNotesPlan
-      const engine = TaskEngineXState.XStateEngine
       const moves = new Set<string>()
       let facts = 0
       for (let seed = 1; seed <= 40; seed++) {
@@ -178,7 +199,7 @@ describe("XStateEngine on random facts", () => {
         let run: Fact[] = []
         for (let step = 1; step <= 100; step++) {
           // A run in an end state takes no fact: start a new one.
-          if (TaskEvents.ended(state.run.state)) {
+          if (engine.ended(state)) {
             state = engine.initial(plan)
             run = []
           }

@@ -35,7 +35,7 @@ describe("TaskEngineXState", () => {
         id: "T1.1.c1",
         task: "T1.1",
         state: "pending",
-        hash: plan.spec.obligations.find((item) => item.id === "T1.1.c1")?.hash,
+        hash: plan.spec.obligations.find((item) => item.id === "T1.1.c1")?.hash ?? "no hash",
       })
       expect(state.scenarios).toEqual({})
       expect(state.history).toEqual([{ at: 1, unit: "run", from: "running", to: "running" }])
@@ -101,8 +101,8 @@ describe("TaskEngineXState", () => {
         f.ended("done"),
       ]
       // Every member of the stored-fact schema is here, so each decodes and folds.
-      const types = new Set(stored.map((fact) => fact.type))
-      expect([...types].toSorted()).toEqual(
+      const types: ReadonlyArray<string> = [...new Set(stored.map((fact) => fact.type))]
+      expect(types.toSorted()).toEqual(
         [
           "run.started",
           "run.resumed",

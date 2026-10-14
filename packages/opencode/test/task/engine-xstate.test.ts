@@ -10,7 +10,29 @@ import { TaskEngineXState } from "@/task/engine-xstate"
 //
 // These cases are the engine's contract: what each fact does to the folded state, history included.
 
-const engine = TaskEngineXState.XStateEngine
+// Until T1.7 and T1.8 rewrite these tests as fact sequences through the snapshot API, they read the engine through
+// `view`: this adapter keeps the snapshot behind each `State` it returns. A `State` it did not make has no snapshot.
+const snapshots = new WeakMap<State, TaskEngineXState.RunSnapshot>()
+const keep = (snapshot: TaskEngineXState.RunSnapshot): State => {
+  const state = TaskEngineXState.view(snapshot)
+  snapshots.set(state, snapshot)
+  return state
+}
+const snapshotOf = (state: State) => {
+  const snapshot = snapshots.get(state)
+  if (snapshot === undefined) throw new Error("a State the engine did not make")
+  return snapshot
+}
+const engine = {
+  name: TaskEngineXState.XStateEngine.name,
+  initial: (plan: Plan): State => keep(TaskEngineXState.initial(plan)),
+  apply: (plan: Plan, state: State, fact: Fact): State => {
+    const before = snapshotOf(state)
+    const after = TaskEngineXState.apply(plan, before, fact)
+    return after === before ? state : keep(after)
+  },
+  ended: (state: State) => TaskEngineXState.ended(snapshotOf(state)),
+}
 const BUDGET = 3
 
 // The policy of `release-notes.spec`.
@@ -606,14 +628,16 @@ describe("XStateEngine", () => {
 describe("the base of an unfinished run", () => {
   test("is the branch its run.started recorded, until the run ends", () => {
     const started: Fact[] = [{ type: "run.started", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(engine, plan, started)).toEqual(Option.some("dev"))
+    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, started)).toEqual(Option.some("dev"))
     const resumed: Fact[] = [...started, { type: "run.resumed", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(engine, plan, resumed)).toEqual(Option.some("dev"))
+    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, resumed)).toEqual(Option.some("dev"))
     const cancelled: Fact[] = [...started, { type: "run.cancelled", at: at(), reason: "stop" }]
-    expect(TaskRunner.unfinishedBase(engine, plan, cancelled)).toEqual(Option.none())
+    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, cancelled)).toEqual(Option.none())
   })
 
   test("is unknown for a run stored before the base was recorded", () => {
-    expect(TaskRunner.unfinishedBase(engine, plan, [{ type: "run.started", at: at() }])).toEqual(Option.none())
+    expect(TaskRunner.unfinishedBase(TaskEngineXState.XStateEngine, plan, [{ type: "run.started", at: at() }])).toEqual(
+      Option.none(),
+    )
   })
 })

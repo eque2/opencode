@@ -1,6 +1,7 @@
 import { Effect, HashSet, Predicate } from "effect"
 import {
   type Guard as PortGuard,
+  type SnapshotFrom,
   type StateNodeConfig,
   type TransitionConfig,
   and,
@@ -30,7 +31,7 @@ import type { Fact, History, Plan } from "@/task/core/model"
 //   transition's action puts the move's `from` and reason in a slot; the target state's entry action writes it.
 
 export type Kind = "task" | "obligation" | "scenario" | "outside" | "external" | "run"
-type ClassTag = "waiting" | "active" | "ended" | "stopped" | "blocked" | "dead"
+export type ClassTag = "waiting" | "active" | "ended" | "stopped" | "blocked" | "dead"
 type PhaseTag = "ready" | "building" | "proving" | "verifying"
 
 /** One state of a unit kind: its class tags, its status name, whether it is final, and its phase tag. */
@@ -97,6 +98,9 @@ export const CLASS = {
   },
 } as const satisfies Record<Kind, Record<string, StateClass>>
 
+/** The class tags in the order the status contract lists them (spine AD-1, AD-13). */
+export const TAGS: ReadonlyArray<ClassTag> = ["waiting", "active", "ended", "stopped", "blocked", "dead"]
+
 /** The task states that block a dependant (spine AD-3), in the order of its `blocked` rows. */
 export const DEAD = ["needs_human", "budget_exhausted", "failed", "blocked"] as const
 
@@ -124,6 +128,8 @@ export interface Slot {
   readonly state: string
   /** An obligation's task. */
   readonly task?: string
+  /** Whether a task is a leaf (it has no children). */
+  readonly leaf?: boolean
   readonly reason?: string
   readonly blockedBy?: Cause
   readonly startedAt?: number
@@ -148,6 +154,9 @@ interface Move {
 }
 
 export interface RunContext {
+  /** The spec folder, relative to the session directory, and the `/task` path: static plan data for `view`. */
+  readonly spec: string
+  readonly path: string
   readonly units: Readonly<Record<string, Slot>>
   readonly moves: Readonly<Record<string, Move>>
   readonly log: ReadonlyArray<History>
@@ -478,7 +487,8 @@ interface IdParams {
 
 type Facts = { readonly event: RunEvent }
 
-const GUARDS = {
+/** The machine's named guards: each reads the fact or the context, never the configuration (that is `stateIn`). */
+export const GUARDS = {
   /** The task that died first in the history died in this state. */
   firstDead: ({ context }: { readonly context: RunContext }, params: { readonly state: string }) =>
     context.log.find((entry) => context.units[entry.unit]?.kind === "task" && isDead(entry.to))?.to === params.state,
@@ -980,7 +990,10 @@ const outcomeRegion = (plan: Plan): StateNode => {
 const firstContext = (plan: Plan): RunContext => {
   const ids = plan.tasks.map((task) => task.id)
   const slots: ReadonlyArray<[string, Slot]> = [
-    ...plan.tasks.map((task): [string, Slot] => [task.id, { kind: "task", state: "waiting", attempts: 0 }]),
+    ...plan.tasks.map((task): [string, Slot] => [
+      task.id,
+      { kind: "task", state: "waiting", leaf: task.children.length === 0, attempts: 0 },
+    ]),
     ...plan.spec.obligations
       .filter((obligation) => ids.includes(obligation.task))
       .map((obligation): [string, Slot] => [
@@ -992,7 +1005,7 @@ const firstContext = (plan: Plan): RunContext => {
     ...plan.external.map((id): [string, Slot] => [id, { kind: "external", state: "untrusted" }]),
     [RUN, { kind: "run", state: "running" }],
   ]
-  return { units: Object.fromEntries(slots), moves: {}, log: [] }
+  return { spec: plan.specPath, path: plan.path, units: Object.fromEntries(slots), moves: {}, log: [] }
 }
 
 /** The regions of `active`, keyed by unit: tasks, scenarios, `outside` preconditions, external folder tasks. */
@@ -1261,6 +1274,7 @@ export const fromConfig = (plan: Plan, built: RunConfig) =>
   createMachine(check(plan, built), { actions: ACTIONS, guards: GUARDS })
 
 export type RunMachine = ReturnType<typeof fromConfig>
+export type RunSnapshot = SnapshotFrom<RunMachine>
 
 // One machine per plan: a snapshot's nodes belong to the machine that made it, so every reader shares this one.
 const machines = new WeakMap<Plan, RunMachine>()

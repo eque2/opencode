@@ -28,10 +28,19 @@ const TaskStateSchema = Schema.Literals([
   "budget_exhausted",
   "cancelled",
   "failed",
+  "blocked",
 ])
 const ObligationStateSchema = Schema.Literals(["pending", "passed", "failed", "trusted", "rejected", "stale"])
 // The contract has no `verifying` scenario: a scenario under judgement is `pending`.
-const ScenarioStateSchema = Schema.Literals(["waiting", "pending", "trusted", "rejected", "failed"])
+const ScenarioStateSchema = Schema.Literals([
+  "waiting",
+  "pending",
+  "trusted",
+  "rejected",
+  "failed",
+  "blocked",
+  "cancelled",
+])
 
 const TaskStatus = Schema.Struct({
   state: TaskStateSchema,
@@ -91,8 +100,7 @@ export const trusted = (input: Input) => (id: string) => {
 }
 
 /** The ids of `ids` that are not trusted. */
-export const waitingOn = (input: Input, ids: ReadonlyArray<string>) =>
-  ids.filter((id) => !trusted(input)(id))
+export const waitingOn = (input: Input, ids: ReadonlyArray<string>) => ids.filter((id) => !trusted(input)(id))
 
 const runState = (input: Input): RunState => {
   const stored = input.state.run.state

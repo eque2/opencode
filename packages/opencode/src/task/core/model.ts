@@ -1,10 +1,19 @@
 import type { BlendModel } from "@/task/blend/model"
 
 // The task harness's state and the facts that move it. The engine (`@/task/engine-xstate`) folds the facts through
-// xstate-effect machines. The runner (`@/task/core/runner`) records each fact as a durable EventV2 event and never
-// changes state any other way, so a resume is the same fold over the stored events.
+// the run machine of the plan; `State` is only the shape its `view` selector reads out of the snapshot. The runner
+// (`@/task/core/runner`) records each fact as a durable EventV2 event and never changes state any other way, so a
+// resume is the same fold over the stored events.
 
-export type RunState = "running" | "refused" | "waiting" | "done" | "cancelled" | "needs_human" | "budget_exhausted" | "failed"
+export type RunState =
+  | "running"
+  | "refused"
+  | "waiting"
+  | "done"
+  | "cancelled"
+  | "needs_human"
+  | "budget_exhausted"
+  | "failed"
 export type TaskState =
   | "waiting"
   | "building"
@@ -16,8 +25,17 @@ export type TaskState =
   | "budget_exhausted"
   | "cancelled"
   | "failed"
+  | "blocked"
 export type ObligationState = "pending" | "passed" | "failed" | "trusted" | "rejected" | "stale"
-export type ScenarioState = "waiting" | "pending" | "verifying" | "trusted" | "rejected" | "failed"
+export type ScenarioState =
+  | "waiting"
+  | "pending"
+  | "verifying"
+  | "trusted"
+  | "rejected"
+  | "failed"
+  | "blocked"
+  | "cancelled"
 
 export interface History {
   readonly at: number
@@ -67,7 +85,11 @@ export interface State {
 }
 
 export type Verdict = { readonly id: string; readonly verdict: "trusted" | "rejected"; readonly reason?: string }
-export type Result = { readonly id: string; readonly status: "passed" | "failed" | "needs-judge"; readonly reason?: string }
+export type Result = {
+  readonly id: string
+  readonly status: "passed" | "failed" | "needs-judge"
+  readonly reason?: string
+}
 
 /**
  * The facts. Each is one durable event. `at` is the time the runner recorded it. The engine decides every state
@@ -90,9 +112,20 @@ export type Fact =
     }
   | { readonly type: "task.ready"; readonly at: number; readonly task: string; readonly head: string }
   /** Machine proof results of the obligations the round proved; anything failed sends the task back to the builder. */
-  | { readonly type: "task.proved"; readonly at: number; readonly task: string; readonly results: ReadonlyArray<Result>; readonly reason?: string }
+  | {
+      readonly type: "task.proved"
+      readonly at: number
+      readonly task: string
+      readonly results: ReadonlyArray<Result>
+      readonly reason?: string
+    }
   /** Verdicts of a verifier or reviewer round; the runner records this only after a passing merge, if any. */
-  | { readonly type: "task.verified"; readonly at: number; readonly task: string; readonly verdicts: ReadonlyArray<Verdict> }
+  | {
+      readonly type: "task.verified"
+      readonly at: number
+      readonly task: string
+      readonly verdicts: ReadonlyArray<Verdict>
+    }
   /** The builder's stream stalled; the runner cut it and prompts the same attempt again. */
   | { readonly type: "task.stalled"; readonly at: number; readonly task: string; readonly reason: string }
   /** The builder repeated one call; the turn was ended and the task goes back to the builder. */
@@ -101,7 +134,13 @@ export type Fact =
   | { readonly type: "task.failed"; readonly at: number; readonly task: string; readonly reason: string }
   /** An obligation's unit hash changed after it was judged: prove and judge it again. */
   | { readonly type: "obligation.stale"; readonly at: number; readonly id: string; readonly hash: string }
-  | { readonly type: "scenario.proved"; readonly at: number; readonly id: string; readonly status: "passed" | "failed"; readonly reason?: string }
+  | {
+      readonly type: "scenario.proved"
+      readonly at: number
+      readonly id: string
+      readonly status: "passed" | "failed"
+      readonly reason?: string
+    }
   | { readonly type: "scenario.verified"; readonly at: number; readonly verdict: Verdict }
   | { readonly type: "run.cancelled"; readonly at: number; readonly reason: string }
   | { readonly type: "run.ended"; readonly at: number; readonly state: "done" | "failed"; readonly reason?: string }
@@ -120,13 +159,6 @@ export interface Plan {
   readonly external: ReadonlyArray<string>
   /** `policy.budgets.taskAttempts` of each task's effective policy. */
   readonly budget: (task: string) => number
-}
-
-/** The harness engine: a pure fold of facts into state. */
-export interface Engine {
-  readonly name: "xstate"
-  readonly initial: (plan: Plan) => State
-  readonly apply: (plan: Plan, state: State, fact: Fact) => State
 }
 
 export * as TaskCoreModel from "./model"
