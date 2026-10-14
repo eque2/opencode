@@ -730,6 +730,16 @@ describe("the run machine on the release-notes and live-check plans", () => {
       expect(engine.blockedBy(snapshot, "T1.5")).toEqual({ id: "T1.4", state: "blocked" })
       expect(engine.blockedBy(snapshot, "T1")).toEqual({ id: "T1.2", state: "failed" })
       expect(engine.unitState(snapshot, "S1")).toBe("blocked")
+      // Two dead dependencies at once: with T1.2 after T1.1, T1.1's death blocks T1.2 and T1.3 together, and T1.4
+      // (after T1.2, T1.3) names the first of them in dependency order.
+      const chained: Plan = {
+        ...notes,
+        tasks: notes.tasks.map((task) => (task.id === "T1.2" ? { ...task, afterEffective: ["T1.1"] } : task)),
+      }
+      const both = foldOf(chained, [f.runStarted(), f.started("T1.1"), f.failed("T1.1", "the builder session died")])
+      expect(engine.blockedBy(both, "T1.2")).toEqual({ id: "T1.1", state: "failed" })
+      expect(engine.blockedBy(both, "T1.3")).toEqual({ id: "T1.1", state: "failed" })
+      expect(engine.blockedBy(both, "T1.4")).toEqual({ id: "T1.2", state: "blocked" })
     }),
   )
 
