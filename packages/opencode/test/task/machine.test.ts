@@ -29,7 +29,7 @@ const loadPlan = (name: string, root?: string) =>
 type Node = { readonly [key: string]: unknown }
 const isNode = (value: unknown): value is Node => typeof value === "object" && value !== null && !Array.isArray(value)
 const child = (node: unknown, ...keys: ReadonlyArray<string>): Node => {
-  const found = keys.reduce<unknown>((current, key) => (isNode(current) ? current[key] : undefined), node)
+  const found = keys.reduce((current, key) => (isNode(current) ? current[key] : undefined), node)
   if (!isNode(found)) throw new Error(`no node at ${keys.join(".")}`)
   return found
 }
@@ -108,8 +108,8 @@ describe("TaskMachine.config", () => {
         "needs_human",
         "budget_exhausted",
         "failed",
-        "cancelled",
         "blocked",
+        "cancelled",
       ])
     }),
   )
@@ -131,7 +131,7 @@ describe("TaskMachine.config", () => {
       const nodes = walk(config).map((entry) => entry.node)
       const metas = nodes.flatMap((node) => (isNode(node.meta) ? [node.meta] : []))
       expect(metas.length).toBeGreaterThan(0)
-      for (const meta of metas) expect(META_KINDS).toContain(meta.kind)
+      for (const meta of metas) expect(META_KINDS).toContain(String(meta.kind))
       // Every node with a meta has its explicit id, and no id repeats.
       const ids = nodes.flatMap((node) => (isNode(node.meta) ? [node.id] : []))
       expect(ids.every((id) => typeof id === "string" && /^[A-Za-z0-9_]+\/[a-z_]+$/.test(id))).toBe(true)
