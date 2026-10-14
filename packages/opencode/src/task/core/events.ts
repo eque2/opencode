@@ -51,12 +51,7 @@ export const FactSchema = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("scenario.verified"), at: At, verdict: Verdict }),
   Schema.Struct({ type: Schema.Literal("run.cancelled"), at: At, reason: Text }),
-  Schema.Struct({
-    type: Schema.Literal("run.ended"),
-    at: At,
-    state: Schema.Literals(["done", "failed"]),
-    reason: Reason,
-  }),
+  Schema.Struct({ type: Schema.Literal("run.ended"), at: At, state: Schema.Literals(["done", "failed"]), reason: Reason }),
 ]).annotate({ identifier: "TaskCore.Fact" })
 
 // Both directions must hold, so the stored form and the engine's type cannot drift apart.

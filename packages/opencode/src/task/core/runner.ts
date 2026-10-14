@@ -360,10 +360,7 @@ const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
     Effect.gen(function* () {
       const head = yield* TaskWorkspace.baseHead(run.directory, run.limits, run.base)
       const proof = yield* TaskProof.proveTask({
-        spec: {
-          gates: spec.gates,
-          obligations: [...spec.obligations.filter((item) => item.task !== task.id), ...targets],
-        },
+        spec: { gates: spec.gates, obligations: [...spec.obligations.filter((item) => item.task !== task.id), ...targets] },
         task: { id: task.id, touches: [], gates: [] },
         cwd: run.directory,
         base: head,
@@ -457,12 +454,7 @@ const build = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
       }),
     )
     if (turn.outcome.kind === "spend-cap") {
-      return yield* record(run, {
-        type: "task.needs_human",
-        at: yield* now,
-        task: task.id,
-        reason: turn.outcome.reason,
-      })
+      return yield* record(run, { type: "task.needs_human", at: yield* now, task: task.id, reason: turn.outcome.reason })
     }
     const repeated = Option.fromNullishOr(TaskHooks.takeRepeated(session))
     if (Option.isSome(repeated)) {
@@ -513,14 +505,12 @@ const prove = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 const mergeLeaf = Effect.fnUntraced(function* (run: Run, model: TaskModel) {
   if (!model.head) return
   const head = model.head
-  yield* run.checkout
-    .withPermit(
-      Effect.gen(function* () {
-        if (yield* TaskWorkspace.merged(run.directory, run.limits, run.base, head)) return
-        yield* TaskWorkspace.merge(run.directory, run.limits, run.base, head)
-      }),
-    )
-    .pipe(Effect.retry({ times: 3, schedule: Schedule.spaced(Duration.millis(500)) }))
+  yield* run.checkout.withPermit(
+    Effect.gen(function* () {
+      if (yield* TaskWorkspace.merged(run.directory, run.limits, run.base, head)) return
+      yield* TaskWorkspace.merge(run.directory, run.limits, run.base, head)
+    }),
+  ).pipe(Effect.retry({ times: 3, schedule: Schedule.spaced(Duration.millis(500)) }))
 })
 
 /**
@@ -577,9 +567,7 @@ const verify = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 
 /** A leaf whose dependencies are trusted: its worktree, its builder session, `task.started`, then the first build. */
 const begin = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
-  const tree = yield* run.git.withPermit(
-    TaskWorkspace.ensureWorktree(run.directory, run.id, task.id, run.base, run.limits),
-  )
+  const tree = yield* run.git.withPermit(TaskWorkspace.ensureWorktree(run.directory, run.id, task.id, run.base, run.limits))
   const session = yield* TaskSessions.create(run.env, tree.worktree, {
     parentID: run.root,
     title: `${task.id} builder`,
@@ -680,12 +668,7 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
   const at = yield* now
   if (Option.isSome(run.limits.runWallClock) && at - run.startedAt > Duration.toMillis(run.limits.runWallClock.value)) {
     const minutes = Math.round(Duration.toMinutes(run.limits.runWallClock.value))
-    yield* record(run, {
-      type: "run.ended",
-      at,
-      state: "failed",
-      reason: `wall clock: the run took over ${minutes} min`,
-    })
+    yield* record(run, { type: "run.ended", at, state: "failed", reason: `wall clock: the run took over ${minutes} min` })
     return
   }
   if (Option.isNone(run.limits.taskWallClock)) return
@@ -700,12 +683,7 @@ const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers)
       yield* TaskSessions.cancel(run.env, task.worktree, SessionID.make(task.session)).pipe(Effect.ignore)
     }
     const minutes = Math.round(limit / 60_000)
-    yield* record(run, {
-      type: "task.failed",
-      at,
-      task: task.id,
-      reason: `wall clock: the task took over ${minutes} min`,
-    })
+    yield* record(run, { type: "task.failed", at, task: task.id, reason: `wall clock: the task took over ${minutes} min` })
   }
 })
 
@@ -774,8 +752,7 @@ const guarded = (
         const waiting = batch.filter((id) => state.scenarios[id]?.state === "waiting")
         return yield* Effect.forEach(
           waiting,
-          (id) =>
-            Effect.flatMap(now, (at) => record(run, { type: "scenario.proved", at, id, status: "failed", reason })),
+          (id) => Effect.flatMap(now, (at) => record(run, { type: "scenario.proved", at, id, status: "failed", reason })),
           { discard: true },
         )
       }),
@@ -861,10 +838,7 @@ const interrupted = Effect.fnUntraced(function* (run: Run, workers: Workers) {
  */
 export const unfinishedBase = (engine: Engine, plan: Plan, stored: ReadonlyArray<Fact>): Option.Option<string> =>
   Option.flatMap(
-    Option.filter(
-      TaskEvents.latestRun(stored),
-      (facts) => !TaskEngineXState.ended(TaskEvents.fold(engine, plan, facts)),
-    ),
+    Option.filter(TaskEvents.latestRun(stored), (facts) => !TaskEngineXState.ended(TaskEvents.fold(engine, plan, facts))),
     (facts) =>
       Option.fromNullishOr(facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0]),
   )
@@ -904,9 +878,7 @@ export const run = Effect.fn("TaskRunner.run")(function* (start: Start) {
     })
   const body = Effect.gen(function* () {
     yield* record(self, { type: Option.isSome(resumed) ? "run.resumed" : "run.started", at, base: start.base })
-    const recorded = TaskEvents.trustedOutside(
-      yield* TaskEvents.read(start.env.db, TaskEvents.directoryID(start.directory)),
-    )
+    const recorded = TaskEvents.trustedOutside(yield* TaskEvents.read(start.env.db, TaskEvents.directoryID(start.directory)))
     yield* Effect.forEach(recorded, trust, { discard: true })
     const workers = yield* FiberMap.make<string>()
     yield* loop(self, workers).pipe(Effect.onInterrupt(() => interrupted(self, workers)))

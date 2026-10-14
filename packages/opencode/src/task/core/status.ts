@@ -91,7 +91,8 @@ export interface Input {
 export const trusted = (input: Input) => (id: string) => TaskEngineXState.unitState(input.snapshot, id) === "trusted"
 
 /** The ids of `ids` that are not trusted. */
-export const waitingOn = (input: Input, ids: ReadonlyArray<string>) => ids.filter((id) => !trusted(input)(id))
+export const waitingOn = (input: Input, ids: ReadonlyArray<string>) =>
+  ids.filter((id) => !trusted(input)(id))
 
 /**
  * The status of a run (contract section 3): the snapshot read through the engine's `view`. The run's `running` or
