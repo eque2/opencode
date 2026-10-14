@@ -180,7 +180,8 @@ const obligationsOf = (context: RunContext, task: string) =>
 const reasonOf = (context: RunContext, event: RunEvent, unit: string, to: string): string | undefined => {
   const slot = slotOf(context, unit)
   if (slot.kind === "obligation") {
-    if (to === "failed" && event.type === "task.proved") return event.results.find((result) => result.id === unit)?.reason
+    if (to === "failed" && event.type === "task.proved")
+      return event.results.find((result) => result.id === unit)?.reason
     if (to === "rejected" && event.type === "task.verified")
       return event.verdicts.find((verdict) => verdict.id === unit)?.reason
     return undefined
@@ -226,7 +227,13 @@ const withUnit = (context: RunContext, unit: string, change: Partial<Slot>) => (
   [unit]: { ...slotOf(context, unit), ...change },
 })
 
-const entryOf = (at: number, unit: string, from: string | undefined, to: string, reason: string | undefined): History => ({
+const entryOf = (
+  at: number,
+  unit: string,
+  from: string | undefined,
+  to: string,
+  reason: string | undefined,
+): History => ({
   at,
   unit,
   ...(from === undefined ? {} : { from }),
@@ -274,15 +281,13 @@ export const ACTIONS = {
     },
   })),
   /** A move that stays in its state (a stall, a repetition, a second failure): it writes its own entry. */
-  again: assign<RunContext, RunEvent, EnterParams, RunEvent>(
-    ({ context, event }, params) => {
-      const reason = reasonOf(context, event, params.unit, params.state)
-      const units = withUnit(context, params.unit, { reason })
-      const at = atOf(context, event)
-      if (at === undefined) return { units }
-      return { units, log: [...context.log, entryOf(at, params.unit, params.logs, params.logs, reason)] }
-    },
-  ),
+  again: assign<RunContext, RunEvent, EnterParams, RunEvent>(({ context, event }, params) => {
+    const reason = reasonOf(context, event, params.unit, params.state)
+    const units = withUnit(context, params.unit, { reason })
+    const at = atOf(context, event)
+    if (at === undefined) return { units }
+    return { units, log: [...context.log, entryOf(at, params.unit, params.logs, params.logs, reason)] }
+  }),
   start: assign<RunContext, RunEvent, UnitParams, RunEvent>(({ context, event }, params) => {
     if (event.type !== "task.started") return {}
     const { worktree, branch, base, session } = event
@@ -385,7 +390,13 @@ const enter = (unit: string, def: StateClass): Action => ({
 })
 
 /** A unit state node: its id, meta, tags and entry action, with its rows. */
-const unitState = (unit: string, kind: Kind, state: string, rows: Rows, extraTags: ReadonlyArray<string>): StateNode => {
+const unitState = (
+  unit: string,
+  kind: Kind,
+  state: string,
+  rows: Rows,
+  extraTags: ReadonlyArray<string>,
+): StateNode => {
   const def = classOf(kind, state)
   return {
     id: stateId(unit, state),
@@ -408,7 +419,10 @@ const unitRegion = (
 ): StateNode => ({
   initial,
   states: Object.fromEntries(
-    Object.keys(CLASS[kind]).map((state) => [state, unitState(unit, kind, state, table[state] ?? {}, extraTags(state))]),
+    Object.keys(CLASS[kind]).map((state) => [
+      state,
+      unitState(unit, kind, state, table[state] ?? {}, extraTags(state)),
+    ]),
   ),
 })
 
@@ -443,16 +457,33 @@ const obligationRegion = (obligation: BlendModel.Obligation, proof: Guard, revie
       : { guard: and([verification, named("verdict", { id, verdict: "rejected" })]), ...to(from, "rejected") },
   ]
   const stale = (from: string): ReadonlyArray<Row> => [
-    { guard: named("stale", { id }), target: "stale", actions: [{ type: "rehash", params: { unit: id } }, move(id, from, "stale")] },
+    {
+      guard: named("stale", { id }),
+      target: "stale",
+      actions: [{ type: "rehash", params: { unit: id } }, move(id, from, "stale")],
+    },
   ]
   const refail: Row = { guard: result("failed"), actions: [again(id, "obligation", "failed")] }
   const table: Readonly<Record<keyof typeof CLASS.obligation, Readonly<Record<string, ReadonlyArray<Row>>>>> = {
-    pending: { "task.proved": [fail("pending"), pass("pending"), judge("pending"), ...unproved("pending")], "task.verified": verdicts("pending") },
-    passed: { "task.proved": [fail("passed"), pass("passed")], "task.verified": verdicts("passed"), "obligation.stale": stale("passed") },
+    pending: {
+      "task.proved": [fail("pending"), pass("pending"), judge("pending"), ...unproved("pending")],
+      "task.verified": verdicts("pending"),
+    },
+    passed: {
+      "task.proved": [fail("passed"), pass("passed")],
+      "task.verified": verdicts("passed"),
+      "obligation.stale": stale("passed"),
+    },
     failed: { "task.proved": [refail, pass("failed"), judge("failed")], "task.verified": verdicts("failed") },
     trusted: { "task.proved": [fail("trusted")], "obligation.stale": stale("trusted") },
-    rejected: { "task.proved": [fail("rejected"), pass("rejected"), judge("rejected")], "task.verified": verdicts("rejected") },
-    stale: { "task.proved": [fail("stale"), pass("stale"), judge("stale"), ...unproved("stale")], "task.verified": verdicts("stale") },
+    rejected: {
+      "task.proved": [fail("rejected"), pass("rejected"), judge("rejected")],
+      "task.verified": verdicts("rejected"),
+    },
+    stale: {
+      "task.proved": [fail("stale"), pass("stale"), judge("stale"), ...unproved("stale")],
+      "task.verified": verdicts("stale"),
+    },
   }
   return unitRegion(id, "obligation", "pending", {
     pending: { on: table.pending },
@@ -465,7 +496,11 @@ const obligationRegion = (obligation: BlendModel.Obligation, proof: Guard, revie
 }
 
 // The work of one task: its own state, from waiting to an end state.
-const workRegion = (plan: Plan, task: BlendModel.Task, obligations: ReadonlyArray<BlendModel.Obligation>): StateNode => {
+const workRegion = (
+  plan: Plan,
+  task: BlendModel.Task,
+  obligations: ReadonlyArray<BlendModel.Obligation>,
+): StateNode => {
   const id = task.id
   const leaf = task.children.length === 0
   const budget = plan.budget(id)
@@ -484,7 +519,10 @@ const workRegion = (plan: Plan, task: BlendModel.Task, obligations: ReadonlyArra
   const allTrusted = and(obligations.map((obligation) => at(obligation.id, "trusted")))
   const staleRows = obligations.map(
     (obligation): Row => ({
-      guard: and([named("stale", { id: obligation.id }), or([at(obligation.id, "passed"), at(obligation.id, "trusted")])]),
+      guard: and([
+        named("stale", { id: obligation.id }),
+        or([at(obligation.id, "passed"), at(obligation.id, "trusted")]),
+      ]),
       ...to("trusted", "proving"),
     }),
   )
@@ -516,7 +554,10 @@ const workRegion = (plan: Plan, task: BlendModel.Task, obligations: ReadonlyArra
           ...(leaf
             ? [
                 { guard: fact(and([named("proofFailed", {}), underBudget])), ...to("proving", "building", retry) },
-                { guard: fact(and([named("proofFailed", {}), not(underBudget)])), ...to("proving", "budget_exhausted") },
+                {
+                  guard: fact(and([named("proofFailed", {}), not(underBudget)])),
+                  ...to("proving", "budget_exhausted"),
+                },
               ]
             : []),
           { guard: mine, ...to("proving", "verifying") },
@@ -670,7 +711,8 @@ const defect = (message: string): never => Effect.runSync(Effect.die(new Error(m
 
 type Plain = { readonly [key: string]: unknown }
 const isPlain = (value: unknown): value is Plain => Predicate.isObject(value)
-const listOf = (value: unknown): ReadonlyArray<unknown> => (Array.isArray(value) ? value : value === undefined ? [] : [value])
+const listOf = (value: unknown): ReadonlyArray<unknown> =>
+  Array.isArray(value) ? value : value === undefined ? [] : [value]
 
 // Every state node of a config, depth first.
 const nodesOf = (node: Plain): ReadonlyArray<Plain> => [
@@ -690,7 +732,8 @@ const rowsOf = (node: Plain): ReadonlyArray<Plain> =>
 const stateIds = (guard: unknown): ReadonlyArray<string> => {
   if (!isPlain(guard) || !isPlain(guard.params)) return []
   const params = guard.params
-  if (guard.type === "xstate.stateIn" && typeof params.stateValue === "string") return [params.stateValue.replace(/^#/, "")]
+  if (guard.type === "xstate.stateIn" && typeof params.stateValue === "string")
+    return [params.stateValue.replace(/^#/, "")]
   if (Array.isArray(params.guards)) return params.guards.flatMap(stateIds)
   return stateIds(params.guard)
 }
@@ -706,13 +749,21 @@ export const check = (plan: Plan, built: RunConfig) => {
   const keys = units.map(([, region]) => region)
   const clash = keys.find((region, index) => keys.indexOf(region) !== index)
   if (clash !== undefined)
-    return defect(`duplicate unit ${clash}: ${units.filter(([, region]) => region === clash).map(([id]) => id).join(", ")}`)
+    return defect(
+      `duplicate unit ${clash}: ${units
+        .filter(([, region]) => region === clash)
+        .map(([id]) => id)
+        .join(", ")}`,
+    )
   const nodes = nodesOf(built)
   const ids = nodes.flatMap((node) => (typeof node.id === "string" ? [node.id] : []))
   const twice = ids.find((id, index) => ids.indexOf(id) !== index)
   if (twice !== undefined) return defect(`duplicate state id ${twice}`)
   const known = HashSet.fromIterable(ids)
-  const unknown = nodes.flatMap(rowsOf).flatMap((row) => stateIds(row.guard)).find((id) => !HashSet.has(known, id))
+  const unknown = nodes
+    .flatMap(rowsOf)
+    .flatMap((row) => stateIds(row.guard))
+    .find((id) => !HashSet.has(known, id))
   if (unknown !== undefined) return defect(`a guard names the unknown state id ${unknown}`)
   return built
 }

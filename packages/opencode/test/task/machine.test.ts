@@ -23,7 +23,10 @@ const states = (node: unknown) => child(node, "states")
 const region = (config: unknown, key: string) => child(config, "states", "active", "states", key)
 
 // Every state node of the config with its path, depth first.
-const walk = (node: Node, at: ReadonlyArray<string> = []): Array<{ readonly path: ReadonlyArray<string>; readonly node: Node }> => {
+const walk = (
+  node: Node,
+  at: ReadonlyArray<string> = [],
+): Array<{ readonly path: ReadonlyArray<string>; readonly node: Node }> => {
   const nested = isNode(node.states) ? node.states : {}
   return [
     { path: at, node },
@@ -110,9 +113,21 @@ describe("TaskMachine.config", () => {
       const rejected = child(region(config, "T1_4"), "states", "evidence", "states", "T1_4_c7", "states", "rejected")
       expect(rejected.id).toBe("T1_4_c7/rejected")
       expect(rejected.meta).toEqual({ unit: "T1.4.c7", kind: "obligation", state: "rejected" })
-      expect(child(region(config, "S2"), "states", "ready", "meta")).toEqual({ unit: "S2", kind: "scenario", state: "pending" })
-      expect(child(region(config, "S2"), "states", "parked", "meta")).toEqual({ unit: "S2", kind: "scenario", state: "waiting" })
-      expect(child(config, "states", "outcome", "states", "done", "meta")).toEqual({ unit: "run", kind: "run", state: "done" })
+      expect(child(region(config, "S2"), "states", "ready", "meta")).toEqual({
+        unit: "S2",
+        kind: "scenario",
+        state: "pending",
+      })
+      expect(child(region(config, "S2"), "states", "parked", "meta")).toEqual({
+        unit: "S2",
+        kind: "scenario",
+        state: "waiting",
+      })
+      expect(child(config, "states", "outcome", "states", "done", "meta")).toEqual({
+        unit: "run",
+        kind: "run",
+        state: "done",
+      })
 
       const nodes = walk(config).map((entry) => entry.node)
       const metas = nodes.flatMap((node) => (isNode(node.meta) ? [node.meta] : []))
@@ -164,7 +179,8 @@ describe("TaskMachine.config", () => {
         expect(typeof name).toBe("string")
         expect(Object.keys(TaskMachine.ACTIONS)).toContain(String(name))
       }
-      for (const action of Object.values(TaskMachine.ACTIONS)) expect(["xstate.assign", "xstate.raise"]).toContain(action.type)
+      for (const action of Object.values(TaskMachine.ACTIONS))
+        expect(["xstate.assign", "xstate.raise"]).toContain(action.type)
     }),
   )
 
@@ -453,7 +469,9 @@ describe("readiness and the cascade (AD-3)", () => {
           ? { ...node, always: always(node).filter((row) => guardIds(row.guard)[0] !== "T1_4/budget_exhausted") }
           : node,
       )
-      expect(() => TaskMachine.fromConfig(plan, gap)).toThrow("totality: T1.5 waiting has no row for T1.4 budget_exhausted")
+      expect(() => TaskMachine.fromConfig(plan, gap)).toThrow(
+        "totality: T1.5 waiting has no row for T1.4 budget_exhausted",
+      )
     }),
   )
 

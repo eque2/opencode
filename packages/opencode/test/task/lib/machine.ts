@@ -50,7 +50,12 @@ export const facts = (start = 0) => {
       results,
       ...(reason === undefined ? {} : { reason }),
     }),
-    verified: (task: string, verdicts: ReadonlyArray<Verdict>): Fact => ({ type: "task.verified", at: at(), task, verdicts }),
+    verified: (task: string, verdicts: ReadonlyArray<Verdict>): Fact => ({
+      type: "task.verified",
+      at: at(),
+      task,
+      verdicts,
+    }),
     stalled: (task: string, reason: string): Fact => ({ type: "task.stalled", at: at(), task, reason }),
     repeated: (task: string, reason: string): Fact => ({ type: "task.repeated", at: at(), task, reason }),
     needsHuman: (task: string, reason: string): Fact => ({ type: "task.needs_human", at: at(), task, reason }),
