@@ -61,11 +61,17 @@ const errorOf = (snapshot: RunSnapshot) =>
     onSome: (error) => String(error),
   })
 
+// One first snapshot per plan, as one machine per plan: it is pure, and its first macrostep enters every unit state.
+const initials = new WeakMap<Plan, RunSnapshot>()
+
 /** The run's first snapshot: each unit in its first state, after the first macrostep's readiness rows. */
 export const initial = (plan: Plan): RunSnapshot => {
+  const found = initials.get(plan)
+  if (found !== undefined) return found
   const [snapshot] = runPure(initialTransition(TaskMachine.machine(plan)))
   if (snapshot.status !== "active")
     return defect(`the first snapshot of ${plan.path} has status ${snapshot.status}: ${errorOf(snapshot)}`)
+  initials.set(plan, snapshot)
   return snapshot
 }
 
