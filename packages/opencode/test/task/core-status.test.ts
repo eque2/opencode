@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, FileSystem, Option, Path, Schema } from "effect"
+import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect"
 import path from "path"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
@@ -98,6 +98,24 @@ describe("the status projection", () => {
       expect(judged.run.state).toBe("running")
       // The contract has no `verifying` scenario: one under judgement shows `pending`.
       expect(judged.scenarios["S2"]?.state).toBe("pending")
+      // Re-baselined: every task trusted no longer ends the run; it runs on while the scenarios are proved (D3).
+      const tasks = [
+        f.runStarted(),
+        ...["T1.1", "T1.2", "T1.3", "T1.4"].flatMap((id) => trustLeaf(plan, f, id)),
+        f.outside("T9"),
+        ...trustLeaf(plan, f, "T1.5"),
+        f.proved("T1", []),
+        f.verified(
+          "T1",
+          plan.spec.obligations
+            .filter((item) => item.task === "T1")
+            .map((item) => ({ id: item.id, verdict: "trusted" as const })),
+        ),
+      ]
+      const trusted = project(plan, tasks)
+      expect(Object.values(trusted.tasks).map((task) => task.state)).toEqual(Array(6).fill("trusted"))
+      expect(trusted.run.state).toBe("running")
+      expect(trusted.scenarios["S1"]?.state).toBe("pending")
     }),
   )
 
@@ -105,12 +123,20 @@ describe("the status projection", () => {
     Effect.gen(function* () {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
       const f = facts()
-      expect(project(plan, [f.runStarted(), f.cancelled("user stop")]).run).toEqual({
+      const cancelled = project(plan, [f.runStarted(), f.cancelled("user stop")])
+      expect(cancelled.run).toEqual({
         state: "cancelled",
         reason: "user stop",
         spec: RELEASE_NOTES,
         path: RELEASE_NOTES,
       })
+      // The cancel cancels every unfinished scenario too, and the contract's schema carries `cancelled` both ways.
+      expect(Object.values(cancelled.scenarios).map((scenario) => scenario.state)).toEqual(Array(13).fill("cancelled"))
+      const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(
+        Schema.encodeSync(Schema.fromJsonString(TaskStatus.Status))(cancelled),
+      )
+      expect(decoded.scenarios["S13"]?.state).toBe("cancelled")
+      expect(decoded.tasks["T1.5"]?.state).toBe("cancelled")
     }),
   )
 
@@ -218,6 +244,21 @@ describe("the status projection", () => {
       )
       expect(decoded.run.state).toBe("running")
       expect(decoded.tasks["T1.5"]?.waitingOn).toEqual(["T1.3", "T1.4", "T9"])
+    }),
+  )
+
+  it.live("a status write that fails is logged, not raised, and writes nothing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      // `.opencode` is a plain file, so the status folder cannot be made.
+      yield* fs.writeFileString(path.join(directory, ".opencode"), "not a folder")
+      const exit = yield* Effect.exit(
+        TaskStatus.write(directory, TaskStatus.refused({ spec: "x", path: "x", reason: "R1" })),
+      )
+      expect(Exit.isSuccess(exit)).toBe(true)
+      expect(yield* fs.readFileString(path.join(directory, ".opencode"))).toBe("not a folder")
+      expect(yield* fs.readDirectory(directory)).toEqual([".opencode"])
     }),
   )
 
