@@ -22,7 +22,6 @@ export type ObligationState = "pending" | "passed" | "failed" | "trusted" | "rej
 export type ScenarioState =
   | "waiting"
   | "pending"
-  | "verifying"
   | "trusted"
   | "rejected"
   | "failed"

@@ -121,7 +121,7 @@ export const project = (input: Input): Status => {
       Object.values(state.scenarios).map((scenario) => [
         scenario.id,
         {
-          state: scenario.state === "verifying" ? "pending" : scenario.state,
+          state: scenario.state,
           waitingOn: [...TaskEngineXState.waitingOn(snapshot, scenario.id)],
           reason: scenario.reason,
         },
