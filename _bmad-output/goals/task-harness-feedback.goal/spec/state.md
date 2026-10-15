@@ -4,7 +4,7 @@
 | Actor   | Type       | Status                                  |
 |---------|------------|-----------------------------------------|
 | T1      | parentTask | verified                                |
-| T2      | parentTask | {"buildingSubtasks":"checkingProgress"} |
+| T2      | parentTask | verifyingSubtasks                       |
 | T3      | parentTask | {"buildingSubtasks":"checkingProgress"} |
 | T4      | parentTask | {"buildingSubtasks":"checkingProgress"} |
 | T1.1    | task       | completed                               |
@@ -35,7 +35,7 @@
 | T2.11   | task       | completed                               |
 | T2.12   | task       | completed                               |
 | T2.13   | task       | completed                               |
-| T2.14   | task       | building                                |
+| T2.14   | task       | completed                               |
 | T3.1    | task       | not_started                             |
 | T3.2    | task       | not_started                             |
 | T3.3    | task       | not_started                             |
