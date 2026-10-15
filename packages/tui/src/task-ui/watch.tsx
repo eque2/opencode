@@ -145,7 +145,14 @@ export const bandText = (watch: Watch) =>
  * The band above the watch frame: the mark, what is watched in bold, its attempt in muted text, and `watch only` in
  * the mark colour; under it, the note that says where typing goes and, while the run is `live`, how to stop it.
  */
-export function WatchBand(props: { theme: Accessor<TuiThemeCurrent>; watch: Watch; width: number; live: boolean }) {
+export function WatchBand(props: {
+  theme: Accessor<TuiThemeCurrent>
+  watch: Watch
+  width: number
+  live: boolean
+  /** The host's `animations_enabled` setting; without it the mark stays still. */
+  motion?: boolean
+}) {
   const room = () => Math.max(10, props.width - 2)
   const details = () => (props.watch.band.kind === "watching" ? props.watch.band.details : [])
   return (
@@ -156,8 +163,9 @@ export function WatchBand(props: { theme: Accessor<TuiThemeCurrent>; watch: Watc
       paddingRight={1}
       backgroundColor={props.theme().backgroundPanel}
     >
-      <text wrapMode="none">
-        <Brand theme={props.theme} />
+      <box flexDirection="row">
+        <Brand theme={props.theme} moving={props.live && (props.motion ?? false)} />
+        <text wrapMode="none">
         <Show
           when={props.watch.band.kind === "watching"}
           fallback={
@@ -178,7 +186,8 @@ export function WatchBand(props: { theme: Accessor<TuiThemeCurrent>; watch: Watc
           </span>
         </Show>
         <span style={{ fg: props.theme().accent }}> · watch only</span>
-      </text>
+        </text>
+      </box>
       <text wrapMode="none">
         <span style={{ fg: props.theme().accent }}>watch only: </span>
         <span style={{ fg: props.theme().textMuted }}>{cut(noteText(props.live), room() - 12)}</span>
@@ -365,7 +374,13 @@ export function registerWatch(ctx: Ctx, listen: Listen) {
           <Show when={Option.getOrUndefined(watch())}>
             {(current) => (
               <box flexDirection="column" flexShrink={0}>
-                <WatchBand theme={ctx.theme} watch={current()} width={width()} live={view.live()} />
+                <WatchBand
+                  theme={ctx.theme}
+                  watch={current()}
+                  width={width()}
+                  live={view.live()}
+                  motion={ctx.motion?.() ?? false}
+                />
                 <Show when={current().proofs} keyed>
                   {(task) => <LiveProofPanel ctx={ctx} task={task} width={width()} height={height()} />}
                 </Show>

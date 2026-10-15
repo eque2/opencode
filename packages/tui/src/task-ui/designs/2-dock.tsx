@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { Peek } from "../peek"
 import { SharedRegion, outsideWaits, regionRows } from "../shared"
 import { OLDER_LINE, bar, costText, counts, glyph, older, runUsage, stateColor, type Status } from "../store"
-import { Brand, runText, stateText, stoppedText, trustedText, type Ctx, type ViewProps } from "../ui"
+import { Brand, moving, runText, stateText, stoppedText, trustedText, type Ctx, type ViewProps } from "../ui"
 
 /** From this width the expanded Dock puts the Peek (half the width, at most 72 cells) left of the shared region. */
 const SIDE_BY_SIDE = 110
@@ -93,9 +93,7 @@ export function DockView(props: ViewProps & { width: number; height?: number }) 
             backgroundColor={props.theme().backgroundPanel}
             overflow="hidden"
           >
-            <text wrapMode="none" flexShrink={0}>
-              <Brand theme={props.theme} />
-            </text>
+            <Brand theme={props.theme} moving={moving(props)} />
             {divider()}
             <text fg={props.theme().text} wrapMode="none" flexShrink={0}>
               {runText(status())}
@@ -177,6 +175,7 @@ export function registerDock(ctx: Ctx) {
               view={ctx.view}
               sessions={ctx.sessions}
               leader={ctx.leader}
+              motion={ctx.motion}
               width={dimensions().width}
               height={dimensions().height}
             />

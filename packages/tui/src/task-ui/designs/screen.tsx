@@ -13,6 +13,7 @@ import {
   ReasonLine,
   TrustedCount,
   WarningLines,
+  moving,
   reasonLine,
   runText,
   runTitle,
@@ -122,9 +123,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
         {(status) => (
           <>
             <box flexDirection="row" gap={1} flexShrink={0}>
-              <text wrapMode="none">
-                <Brand theme={props.theme} />
-              </text>
+              <Brand theme={props.theme} moving={moving(props)} />
               <text fg={props.theme().text} wrapMode="none">
                 <b>{name()}</b>
               </text>
@@ -251,6 +250,7 @@ export function registerScreen(ctx: Ctx) {
             view={ctx.view}
             sessions={ctx.sessions}
             leader={ctx.leader}
+            motion={ctx.motion}
             width={dimensions().width}
             height={dimensions().height}
             onScroll={(box) => (region = box)}

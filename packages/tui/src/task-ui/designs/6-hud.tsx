@@ -22,6 +22,7 @@ import {
   Brand,
   OlderLine,
   TrustedCount,
+  moving,
   runText,
   stateText,
   stoppedText,
@@ -78,9 +79,7 @@ export function HudView(props: ViewProps) {
             onMouseDown={props.view.toggleExpanded}
           >
             <box flexDirection="row">
-              <text wrapMode="none">
-                <Brand theme={props.theme} />
-              </text>
+              <Brand theme={props.theme} moving={moving(props)} />
               <box flexGrow={1} />
               <text fg={props.theme().text} wrapMode="none">
                 {runText(status())}
@@ -154,7 +153,7 @@ export function registerHud(ctx: Ctx) {
         return (
           <Show when={ctx.active()}>
             <box position="absolute" top={1} right={2} zIndex={100}>
-              <HudView theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} />
+              <HudView theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} motion={ctx.motion} />
             </box>
           </Show>
         )

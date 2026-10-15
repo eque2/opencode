@@ -90,6 +90,7 @@ function start(api: Parameters<TuiPlugin>[0], actor: ViewActor, listen: Listen) 
     logs: view.logs,
     theme: () => api.theme.current,
     leader: leaderOf(api),
+    motion: () => api.kv.get("animations_enabled", true),
   }
   const ctx = (id: number): Ctx => ({ ...base, active: () => view.design() === id })
   registerLedger(ctx(1))

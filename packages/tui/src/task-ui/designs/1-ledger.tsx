@@ -10,6 +10,7 @@ import {
   TaskLine,
   TrustedCount,
   WarningLines,
+  moving,
   runText,
   runTitle,
   treePrefix,
@@ -26,10 +27,12 @@ export function LedgerView(props: ViewProps & { width: number }) {
     <Show when={props.view.status()}>
       {(status) => (
         <box flexDirection="column" flexShrink={0} width={props.width}>
-          <text wrapMode="none">
-            <Brand theme={props.theme} />
-            <span style={{ fg: props.theme().textMuted }}> {runText(status())}</span>
-          </text>
+          <box flexDirection="row">
+            <Brand theme={props.theme} moving={moving(props)} />
+            <text fg={props.theme().textMuted} wrapMode="none">
+              {` ${runText(status())}`}
+            </text>
+          </box>
           <text fg={props.theme().textMuted} wrapMode="none">
             {cut(runTitle(status()), props.width)}
           </text>
@@ -89,7 +92,7 @@ export function registerLedger(ctx: Ctx) {
       sidebar_content() {
         return (
           <Show when={ctx.active()}>
-            <LedgerView theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} width={WIDTH} />
+            <LedgerView theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} width={WIDTH} motion={ctx.motion} />
           </Show>
         )
       },

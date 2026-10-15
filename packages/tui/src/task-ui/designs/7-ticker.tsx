@@ -6,7 +6,7 @@ import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
 import { SharedRegion, pageBy } from "../shared"
 import { MARK, NAME, label, tagged, tone, type Status } from "../store"
-import { Brand, OlderLine, TaskLine, reasonLine, type Ctx, type ViewProps } from "../ui"
+import { Brand, OlderLine, TaskLine, moving, reasonLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
 const PEEK = 72
@@ -71,10 +71,12 @@ export function TickerDialog(props: ViewProps & { onScroll?: (box: ScrollBoxRend
     <box flexDirection="column" paddingLeft={2} paddingRight={2} paddingBottom={1}>
       <box flexDirection="row" gap={2}>
         <box flexDirection="column" width={LIST} flexShrink={0}>
-          <text wrapMode="none">
-            <Brand theme={props.theme} />
-            <span style={{ fg: props.theme().textMuted }}> tasks</span>
-          </text>
+          <box flexDirection="row">
+            <Brand theme={props.theme} moving={moving(props)} />
+            <text fg={props.theme().textMuted} wrapMode="none">
+              {" tasks"}
+            </text>
+          </box>
           <Show when={props.view.status()}>
             {(status) => <OlderLine theme={props.theme} status={status()} width={LIST} />}
           </Show>
@@ -145,6 +147,7 @@ export function registerTicker(ctx: Ctx) {
               view={ctx.view}
               sessions={ctx.sessions}
               leader={ctx.leader}
+              motion={ctx.motion}
               onScroll={(box) => (region = box)}
             />
           )

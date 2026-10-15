@@ -21,7 +21,10 @@ import {
   type Status,
 } from "./store"
 import { outsideCollapsed, warningOf, wrap } from "./shared"
+import { registerOpencodeSpinner } from "../component/register-spinner"
 import type { View } from "./view"
+
+registerOpencodeSpinner()
 
 /** What a design gets: the host API, the shared view state, the peek's session source, and whether it is selected. */
 export type Ctx = {
@@ -43,6 +46,8 @@ export type Ctx = {
   readonly harness: Accessor<ReadonlyArray<Harness>>
   /** The proof logs in `.opencode/task/proofs/`, with when each was last written. */
   readonly logs: Accessor<ReadonlyArray<ProofLog>>
+  /** The host's `animations_enabled` setting: the In the Flow mark moves only with it (D23). */
+  readonly motion?: Accessor<boolean>
 }
 
 /** What the view components need; tests build it from a fixture. */
@@ -51,14 +56,37 @@ export type ViewProps = {
   readonly view: View
   readonly sessions: Sessions
   readonly leader: string
+  /** The host's `animations_enabled` setting; without it the mark stays still. */
+  readonly motion?: Accessor<boolean>
 }
 
-/** The mark every design carries (`MARK`), in bold accent. */
-export function Brand(props: { theme: Accessor<TuiThemeCurrent> }) {
+/** The diamond's frames (EXPERIENCE "In the Flow mark"): each one cell wide, so the name never moves. */
+const FRAMES = ["·", "⬩", "⬪", "⬥", "◆", "⬥", "⬪", "⬩"]
+
+/** Whether a design's mark moves: the view is live and the host allows animations (D23, owner ruling 5). */
+export const moving = (props: ViewProps) => props.view.liveness() === "live" && (props.motion?.() ?? false)
+
+/**
+ * The In the Flow mark, a row: the diamond (the spinner element while `moving`, else a static ◆; never bold, as the
+ * spinner cannot draw bold), then " In the Flow" in bold accent. The element runs its own frames: no task-ui timer.
+ */
+export function Brand(props: { theme: Accessor<TuiThemeCurrent>; moving: boolean }) {
   return (
-    <b>
-      <span style={{ fg: props.theme().accent }}>{MARK}</span>
-    </b>
+    <box flexDirection="row" flexShrink={0}>
+      <Show
+        when={props.moving}
+        fallback={
+          <text fg={props.theme().accent} wrapMode="none">
+            ◆
+          </text>
+        }
+      >
+        <spinner frames={FRAMES} interval={120} color={props.theme().accent} />
+      </Show>
+      <text fg={props.theme().accent} wrapMode="none">
+        <b>{` ${NAME}`}</b>
+      </text>
+    </box>
   )
 }
 
@@ -314,10 +342,12 @@ export function ShortcutBar(props: ViewProps & { width: number }) {
   return (
     <Show when={props.view.status()}>
       <box flexDirection="row" gap={2}>
-        <text wrapMode="none">
-          <Brand theme={props.theme} />
-          <span style={{ fg: props.theme().text }}>{` ${DESIGNS[props.view.design() - 1].name}`}</span>
-        </text>
+        <box flexDirection="row">
+          <Brand theme={props.theme} moving={moving(props)} />
+          <text fg={props.theme().text} wrapMode="none">
+            {` ${DESIGNS[props.view.design() - 1].name}`}
+          </text>
+        </box>
         <For each={parts()}>
           {(part) => (
             <text fg={part.color ?? props.theme().text} wrapMode="none">
