@@ -25,8 +25,9 @@ const statusText = (run: { tags?: ReadonlyArray<string>; aliveAt?: number; state
     history: [],
   })
 
-// The invoked read finishes on its own fiber: let it settle before the next step reads the snapshot.
-const settle = Effect.promise(() => Bun.sleep(5))
+// The invoked read finishes on its own fiber: let it settle before the next step reads the snapshot. A loaded machine
+// runs that fiber late, so the wait is 20 ms, not the 5 ms an idle one needs.
+const settle = Effect.promise(() => Bun.sleep(20))
 
 type Step = TaskView.Read | "fail"
 const file = (text: string, now = NOW): TaskView.Read => ({ exists: true, text, mtime: now, logs: [], now })
