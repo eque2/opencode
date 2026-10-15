@@ -23,11 +23,15 @@ import type { TaskLimits } from "@/task/limits"
 import { TaskProof } from "@/task/proof"
 import { TaskHooks } from "./hooks"
 import { type Engine, type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
-import type { Fact, Plan, Result as Proved, State, TaskModel, Verdict } from "./model"
+import type { Fact, Plan, Result as Proved, TaskModel, Verdict } from "./model"
 import { TaskEvents } from "./events"
 import { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
 import { TaskWorkspace } from "./workspace"
+import { latestVerdicts, NO_READY, proofLog, reopened, results, scenarioOutcome, taskClockStart } from "./workers"
+
+// The pure helpers live with the workers now; the runner re-exports them until T2.12 removes it.
+export { latestVerdicts, proofLog, results, scenarioOutcome, taskClockStart } from "./workers"
 
 // The task harness runner. One run per (directory, spec folder): it records every fact as a durable event,
 // folds it through the engine, projects the state to the status file, and drives the builders, the proofs,
@@ -174,13 +178,6 @@ const restore = (run: Run, directory: string) => {
   return directory === run.directory ? run.checkout.withPermit(reset) : reset
 }
 
-/**
- * One verdict per id: the last one the judge recorded. A judge that records an id twice (rejected, then trusted)
- * must not let the merge decision and the engine read different verdicts.
- */
-export const latestVerdicts = (verdicts: ReadonlyArray<Verdict>) =>
-  verdicts.filter((verdict, index) => verdicts.findLastIndex((other) => other.id === verdict.id) === index)
-
 // A `task_ready` or verdicts left from a turn that ended otherwise (repetition, spend cap, stall, cancel) must not
 // count for the next turn: each turn starts with none.
 const clearHooks = (session: SessionID) => {
@@ -246,38 +243,6 @@ const round = Effect.fnUntraced(function* (
 
 // --- proofs -------------------------------------------------------------------------------------------------------------------
 
-const judged = (judges: ReadonlyArray<string>) => judges.includes("verifier") || judges.includes("reviewer")
-
-/**
- * The proof results as facts: a failed proof is `failed` (a structural violation fails every test obligation and
- * names the path); a passed proof that a verifier or reviewer must judge, or a review, is `needs-judge`; a passed
- * proof the runner or engine alone judges is `passed`. A failed gate of the task (its VERIFY.md `gates`) fails every
- * test obligation that did not fail on its own, as a structural violation does, so the task goes back to the builder.
- */
-export const results = (
-  spec: Pick<BlendModel.Spec, "obligations">,
-  proof: TaskProof.TaskProof,
-  taskGates: ReadonlyArray<string>,
-) => {
-  const gates = proof.gates.flatMap((gate) =>
-    gate.status === "failed" && taskGates.includes(gate.gate) ? [`gate ${gate.gate} failed: ${gate.reason}`] : [],
-  )
-  const blocked = gates.join("; ")
-  const mapped = proof.obligations.map((item): Proved => {
-    const obligation = spec.obligations.find((candidate) => candidate.id === item.id)
-    if (item.status === "failed") return { id: item.id, status: "failed", reason: item.reason }
-    if (gates.length > 0 && item.proof === "test") return { id: item.id, status: "failed", reason: blocked }
-    if (item.status === "needs-review") return { id: item.id, status: "needs-judge" }
-    return { id: item.id, status: judged(obligation?.judges ?? []) ? "needs-judge" : "passed" }
-  })
-  const structural =
-    proof.structural.status === "failed"
-      ? [`structural: ${proof.structural.violations.map((violation) => violation.path).join(", ")}`]
-      : []
-  const reasons = [...structural, ...gates]
-  return { results: mapped, reason: reasons.length > 0 ? Option.some(reasons.join("; ")) : Option.none<string>() }
-}
-
 const failed = (items: ReadonlyArray<Proved>) => items.some((item) => item.status === "failed")
 
 const proved = (run: Run, task: string, outcome: ReturnType<typeof results>) =>
@@ -290,21 +255,6 @@ const proved = (run: Run, task: string, outcome: ReturnType<typeof results>) =>
       ...Option.match(outcome.reason, { onNone: () => ({}), onSome: (reason) => ({ reason }) }),
     }),
   )
-
-/**
- * The live output of one proving pass, `<directory>/.opencode/task/proofs/<name>.log`, emptied at the start of the
- * pass: the proof runner appends each test and gate command and its output as they arrive, so the task UI can show
- * the proofs running. It is telemetry: when the file cannot be made, the pass runs without it.
- */
-export const proofLog = Effect.fnUntraced(function* (directory: string, name: string) {
-  const fs = yield* FileSystem.FileSystem
-  const path = yield* Path.Path
-  const file = TaskStatus.proofLogFile(path, directory, name)
-  const made = yield* fs
-    .makeDirectory(path.dirname(file), { recursive: true })
-    .pipe(Effect.andThen(fs.writeFileString(file, "")), Effect.as(file), Effect.option)
-  return Option.getOrUndefined(made)
-})
 
 /**
  * The proofs of a leaf in its worktree between `base` and `head`. The tests and the structural rule run first;
@@ -367,22 +317,6 @@ const proveOnMain = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
 })
 
 // --- the leaf lifecycle -------------------------------------------------------------------------------------------------------
-
-// The obligations a later attempt reopens, with the reason of each: failed proofs, rejected verdicts, or, when the
-// attempt ended otherwise (a repetition), every obligation not yet trusted with the task's reason.
-const reopened = (spec: BlendModel.Spec, state: State, task: TaskModel): ReadonlyArray<TaskSessions.Reopen> => {
-  const own = obligationsOf(spec, task.id).flatMap((obligation) =>
-    Option.toArray(Option.fromNullishOr(state.obligations[obligation.id])),
-  )
-  const open = own.filter((obligation) => obligation.state === "failed" || obligation.state === "rejected")
-  if (open.length > 0) {
-    return open.map((obligation) => ({ id: obligation.id, reason: obligation.reason ?? obligation.state }))
-  }
-  const reason = task.reason ?? "the previous attempt did not finish"
-  return own.filter((obligation) => obligation.state !== "trusted").map((obligation) => ({ id: obligation.id, reason }))
-}
-
-const NO_READY = "the builder ended without task_ready"
 
 /**
  * A builder turn ended without `task_ready` twice after a nudge: its work is committed and proved failed, so the
@@ -581,16 +515,6 @@ const begin = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
 
 // --- scenarios -------------------------------------------------------------------------------------------------------------
 
-/** A scenario's tag result as a fact: passed stays passed; failed, and skipped (no test ran), are failed. */
-export const scenarioOutcome = (
-  proof: TaskProof.ScenarioProof,
-): { readonly status: "passed" } | { readonly status: "failed"; readonly reason: string } => {
-  const result = proof.result
-  if (result.status === "passed") return { status: "passed" }
-  if (result.status === "failed") return { status: "failed", reason: result.reason }
-  return { status: "failed", reason: `skipped: every test titled [${proof.scenario}] was skipped` }
-}
-
 /** The scenarios whose needs became trusted together: one `bun test` run on the base branch for the batch. */
 const proveScenarios = Effect.fnUntraced(function* (run: Run, batch: ReadonlyArray<BlendModel.Scenario>) {
   yield* run.checkout.withPermit(
@@ -641,19 +565,6 @@ const checkStale = Effect.fnUntraced(function* (run: Run) {
     yield* record(run, { type: "obligation.stale", at: yield* now, id: obligation.id, hash: obligation.hash })
   }
 })
-
-/**
- * When a task's wall clock started: its latest `building` entry after its latest `trusted` entry, so a trusted task
- * reopened later starts afresh; never before `runStart` (the latest start or resume), so downtime does not count.
- * None for a task with no such entry.
- */
-export const taskClockStart = (history: State["history"], task: string, runStart: number): Option.Option<number> => {
-  const own = history.filter((entry) => entry.unit === task)
-  const after = own.slice(own.findLastIndex((entry) => entry.to === "trusted") + 1)
-  return Option.map(Option.fromNullishOr(after.findLast((entry) => entry.to === "building")), (entry) =>
-    Math.max(entry.at, runStart),
-  )
-}
 
 const checkWallClocks = Effect.fnUntraced(function* (run: Run, workers: Workers) {
   const at = yield* now
