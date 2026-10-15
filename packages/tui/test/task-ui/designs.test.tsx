@@ -9,10 +9,12 @@ import { Option, Result } from "effect"
 import type { JSX } from "solid-js"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import type { Sessions } from "../../src/task-ui/peek"
-import { stoppedLines } from "../../src/task-ui/shared"
-import { parse, rows, type Status } from "../../src/task-ui/store"
+import { outsideCollapsed, stoppedLines } from "../../src/task-ui/shared"
+import { parse, rows, runSpan, runUsage, type Status } from "../../src/task-ui/store"
 import { BoardView, cardLines, cardsIn } from "../../src/task-ui/designs/3-board"
 import { MatrixView } from "../../src/task-ui/designs/4-matrix"
+import { GanttView, ganttRange, lane } from "../../src/task-ui/designs/5-gantt"
+import { HudView, hudLine } from "../../src/task-ui/designs/6-hud"
 import { Screen } from "../../src/task-ui/designs/screen"
 import projected from "./fixture-projected.json"
 import { settle, viewFor } from "./view"
@@ -359,4 +361,225 @@ test("the Matrix and the Gantt put the shared region above the Peek, at the bott
     expect({ design, regionFirst: shown.at("STOPPED 3").y < peek.y }).toEqual({ design, regionFirst: true })
     expect({ design, peekAt: peek.x }).toEqual({ design, peekAt: 1 })
   }
+})
+
+// --- the Gantt (T4.7: UI4, UI11) -------------------------------------------------------------------------------------
+
+type Span = { state: string; from: number; to?: number }
+
+// The run from 0 to 100 s, ended; T1.1 built, proved, built again, proved, verified and was trusted at 80 s; T1.5 waited
+// 50 s and was blocked then; T1.3 started at 50 s.
+const timed = statusOf((raw) => {
+  Object.assign(raw.run, {
+    state: "budget_exhausted",
+    tags: ["ended", "stopped"],
+    startedAt: 0,
+    endedAt: 100_000,
+    aliveAt: 100_000,
+  })
+  const spans: Record<string, ReadonlyArray<Span>> = {
+    "T1.1": [
+      { state: "waiting", from: 0, to: 10_000 },
+      { state: "building", from: 10_000, to: 30_000 },
+      { state: "proving", from: 30_000, to: 40_000 },
+      { state: "building", from: 40_000, to: 60_000 },
+      { state: "proving", from: 60_000, to: 70_000 },
+      { state: "verifying", from: 70_000, to: 80_000 },
+      { state: "trusted", from: 80_000, to: 80_000 },
+    ],
+    "T1.3": [{ state: "building", from: 50_000, to: 60_000 }],
+    "T1.5": [
+      { state: "waiting", from: 0, to: 50_000 },
+      { state: "blocked", from: 50_000, to: 50_000 },
+    ],
+  }
+  for (const [id, list] of Object.entries(spans)) Object.assign(tasksOf(raw)[id], { spans: list })
+  Object.assign(tasksOf(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 })
+})
+
+test("UI4 a lane cell shows the span holding its middle time; a zero-length span takes its one cell; blank outside the spans", () => {
+  // The ended run's span keeps a 3% tail: 0 to 103 s, so 103 cells are 1 s each.
+  const range = ganttRange(timed, "ended", 0)
+  expect(range).toEqual({ start: 0, end: 103_000 })
+  expect(lane(timed.tasks["T1.1"], 103, range, runSpan(timed, "ended", 0).end)).toEqual([
+    { state: "waiting", length: 10 },
+    { state: "building", length: 20 },
+    { state: "proving", length: 10 },
+    { state: "building", length: 20 },
+    { state: "proving", length: 10 },
+    { state: "verifying", length: 10 },
+    { state: "trusted", length: 1 },
+    { state: undefined, length: 22 },
+  ])
+  // Before the first span the cells are blank: the Gantt infers no state.
+  expect(lane(timed.tasks["T1.3"], 103, range, 100_000)).toEqual([
+    { state: undefined, length: 50 },
+    { state: "building", length: 10 },
+    { state: undefined, length: 43 },
+  ])
+  // The tail keeps 1 s at least.
+  const short = statusOf((raw) =>
+    Object.assign(raw.run, { state: "done", tags: ["ended"], startedAt: 0, endedAt: 10_000 }),
+  )
+  expect(ganttRange(short, "ended", 0)).toEqual({ start: 0, end: 11_000 })
+})
+
+test("UI4 an open span runs to now while live and to the heartbeat while still", () => {
+  const open = statusOf((raw) => {
+    Object.assign(raw.run, { startedAt: 0, aliveAt: 100_000 })
+    Object.assign(tasksOf(raw)["T1.2"], {
+      state: "building",
+      tags: ["active"],
+      spans: [{ state: "building", from: 90_000 }],
+    })
+  })
+  // Live, 10 s after the heartbeat: the run and the open span run to now, 110 s.
+  const live = ganttRange(open, "live", 110_000)
+  expect(live).toEqual({ start: 0, end: 110_000 })
+  expect(lane(open.tasks["T1.2"], 110, live, runSpan(open, "live", 110_000).end)).toEqual([
+    { state: undefined, length: 90 },
+    { state: "building", length: 20 },
+  ])
+  // Still: both stop at the heartbeat, 100 s.
+  const still = ganttRange(open, "still", 200_000)
+  expect(still).toEqual({ start: 0, end: 100_000 })
+  expect(lane(open.tasks["T1.2"], 100, still, runSpan(open, "still", 200_000).end)).toEqual([
+    { state: undefined, length: 90 },
+    { state: "building", length: 10 },
+  ])
+})
+
+test("UI4 a blocked task draws ░ from the run's start, then one █ in the warning tone; the legend names the blocks", async () => {
+  const { view } = await viewFor(timed, { design: 5 })
+  const shown = await render(
+    () => <GanttView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={144} />,
+    144,
+    30,
+  )
+  const line = linesOf(shown.text).find((item) => item.includes("⊖ T1.5")) ?? ""
+  // 144 cells: an 11-cell label, a 103-cell lane, the 30-cell right column.
+  expect(line.slice(11, 11 + 51)).toBe("░".repeat(50) + "█")
+  expect(line.slice(11 + 51, 11 + 103).trim()).toBe("")
+  const cells = shown.spans.lines[linesOf(shown.text).indexOf(line)].spans
+  expect(rgb(cells.find((span) => span.text.includes("█"))?.fg)).toEqual(rgb(theme.warning))
+  expect(rgb(cells.find((span) => span.text.includes("░"))?.fg)).toEqual(rgb(theme.textMuted))
+  expect(shown.text).toContain("░ waiting ▓ building ▒ proving ▞ verifying █ ended, in its state's colour")
+})
+
+test("UI11 the Gantt right column: the duration in 7 cells, a space, the state text in 21; the lane narrows first, to 10", async () => {
+  const { view } = await viewFor(timed, { design: 5 })
+  const at = async (width: number) =>
+    linesOf(
+      (
+        await render(
+          () => <GanttView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={width} />,
+          160,
+          30,
+        )
+      ).text,
+    )
+  const wide = await at(120)
+  const t14 = wide.find((line) => line.includes("⊘ T1.4")) ?? ""
+  // 120 - 11 - 30: a 79-cell lane, then " " + duration + " " + state text.
+  expect(t14.slice(11 + 79)).toBe("  6m 40s budget exhausted · a…")
+  // T1.5 never started: its duration cell is blank and the state text keeps its place.
+  expect((wide.find((line) => line.includes("⊖ T1.5")) ?? "").slice(11 + 79)).toBe("         blocked")
+  // At 51 cells the lane is 10; narrower, it stays 10 and the right column keeps its text.
+  expect(((await at(51)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe(
+    "  6m 40s budget exhausted · a…",
+  )
+  expect(((await at(40)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe(
+    "  6m 40s budget exhausted · a…",
+  )
+})
+
+test("the Gantt and the HUD read the spans and the run span, not the ENDED list or the Gantt's span", async () => {
+  const gantt = await Bun.file(new URL("../../src/task-ui/designs/5-gantt.tsx", import.meta.url)).text()
+  const hud = await Bun.file(new URL("../../src/task-ui/designs/6-hud.tsx", import.meta.url)).text()
+  expect(gantt).not.toMatch(/\bENDED\b/)
+  expect(gantt).not.toMatch(/\bBLOCK\b/)
+  expect(hud).not.toContain('from "./5-gantt"')
+})
+
+// --- the HUD (T4.7: UI15, UI5) ---------------------------------------------------------------------------------------
+
+const spent = (tokens: number, cost: number): Sessions => ({
+  ...none,
+  all: () => () => [{ id: "b", unit: "T1.4", role: "builder", again: false, created: 1, updated: 1, tokens, cost }],
+})
+
+// The run took 24m 10s.
+const hudStatus = statusOf((raw) => {
+  Object.assign(raw.run, { state: "budget_exhausted", tags: ["ended", "stopped"], startedAt: 0, endedAt: 1_450_000 })
+  Object.assign(tasksOf(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 })
+})
+
+async function hud(status: Status, sessions: Sessions = none) {
+  const { view } = await viewFor(status, { design: 6 })
+  view.select("T1.4")
+  await settle()
+  const shown = await render(
+    () => <HudView theme={() => theme} view={view} sessions={sessions} leader="ctrl+x" />,
+    80,
+    30,
+  )
+  // The panel's 40 inner cells.
+  return {
+    ...shown,
+    lines: linesOf(shown.text).map((line) => line.replace(/^.*?║ ?/, "").replace(/ *║.*$/, "")),
+  }
+}
+
+test("UI15 the HUD's selected-task line cuts the state text first, never the duration", async () => {
+  expect((await hud(hudStatus)).lines).toContain("▸ ⊘ T1.4 budget exhausted · at… · 6m 40s")
+  // With room, the whole state text shows.
+  expect(hudLine(row(hudStatus, "T1.4"), "6m 40s", false, 60)).toBe("▸ ⊘ T1.4 budget exhausted · attempt 3 · 6m 40s")
+  // With no duration, the state text takes the room.
+  expect(hudLine(row(hudStatus, "T1.5"), "", false, 40)).toBe("▸ ⊖ T1.5 blocked")
+})
+
+test("UI15 the HUD's elapsed line adds the run usage; the tokens drop first; it is hidden before any tokens", async () => {
+  expect((await hud(hudStatus, spent(1_400_000, 2.31))).lines).toContain("elapsed 24m 10s · 1.4M tokens · $2.31")
+  // 41 cells do not fit the 40-cell panel: the tokens go, the cost stays.
+  expect((await hud(hudStatus, spent(1_400_000, 1234.56))).lines).toContain("elapsed 24m 10s · $1,234.56")
+  // No session has reported tokens: the usage is hidden.
+  const none0 = (await hud(hudStatus, spent(0, 0))).lines
+  expect(none0).toContain("elapsed 24m 10s")
+  expect(none0.join("\n")).not.toContain("$")
+  // A free model that spent tokens shows $0.00 on purpose.
+  expect((await hud(hudStatus, spent(61_000, 0))).lines).toContain("elapsed 24m 10s · 61.0K tokens · $0.00")
+  expect(runUsage([{ tokens: 0, cost: 0 }])).toEqual(Option.none())
+  expect(
+    runUsage([
+      { tokens: 1000, cost: 0.5 },
+      { tokens: 400, cost: 0.25 },
+    ]),
+  ).toEqual(Option.some({ tokens: 1400, cost: 0.75 }))
+})
+
+test("UI5 the HUD panel shows the outside wait line under the run warning line; two ids name the first and end with +N", async () => {
+  const waiting = (ids: ReadonlyArray<string>) =>
+    statusOf((raw) => {
+      Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" })
+      Object.assign(tasksOf(raw)["T1.5"], {
+        state: "waiting",
+        tags: ["waiting"],
+        waitingOn: [...ids],
+        waitingOnOutside: [...ids],
+        reason: null,
+      })
+    })
+  const one = await hud(waiting(["T9"]))
+  const head = one.lines.indexOf("! spec no longer validates · 2 failures")
+  expect(head).toBeGreaterThan(0)
+  expect(rgb(fgOf(one.spans, "! spec no longer"))).toEqual(rgb(theme.warning))
+  // The line wraps at a word boundary in 40 cells and never cuts the command.
+  expect(one.lines.slice(head + 1, head + 3)).toEqual(["waiting on T9 (outside) — run /task", "trust T9"])
+  expect(rgb(fgOf(one.spans, "waiting on T9"))).toEqual(rgb(theme.warning))
+  expect(outsideCollapsed(waiting(["T9", "T8"]))).toBe("waiting on T8 (outside) — run /task trust T8 +1")
+  const two = await hud(waiting(["T9", "T8"]))
+  expect(two.lines.slice(head + 1, head + 3)).toEqual(["waiting on T8 (outside) — run /task", "trust T8 +1"])
+  // No outside wait, no line; no warning, no warning line.
+  expect(outsideCollapsed(hudStatus)).toBeUndefined()
+  expect((await hud(hudStatus)).lines.join("\n")).not.toContain("spec no longer validates")
 })

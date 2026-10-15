@@ -323,7 +323,6 @@ const interim = (file: string, until: string, reason: string, identifiers: Reado
 const INTERIM: ReadonlyArray<Entry> = [
   // The store reads the tags since T4.2; ENDED stays for its last importers, the Gantt and the Ticker.
   ...interim(ui("store.ts"), "T4.8", CLASSIFY, ["ENDED"]),
-  ...interim(ui("designs/5-gantt.tsx"), "T4.7", CLASSIFY, ["ENDED", "BLOCK"]),
   ...interim(ui("designs/7-ticker.tsx"), "T4.8", CLASSIFY, ["ENDED"]),
 ]
 

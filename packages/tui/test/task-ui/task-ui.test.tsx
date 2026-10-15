@@ -57,7 +57,7 @@ import { LedgerView } from "../../src/task-ui/designs/1-ledger"
 import { DockView } from "../../src/task-ui/designs/2-dock"
 import { BoardView } from "../../src/task-ui/designs/3-board"
 import { MatrixView } from "../../src/task-ui/designs/4-matrix"
-import { GanttView, lane, span } from "../../src/task-ui/designs/5-gantt"
+import { GanttView, lane } from "../../src/task-ui/designs/5-gantt"
 import { HudView } from "../../src/task-ui/designs/6-hud"
 import { TickerDialog, changes } from "../../src/task-ui/designs/7-ticker"
 import { ShortcutBar, registerTab, type Ctx } from "../../src/task-ui/ui"
@@ -180,14 +180,13 @@ test("moves the selection round the tree and cycles the designs", async () => {
   dispose()
 })
 
-// The Gantt draws its lane from the history until T4.7 moves it to the spans: the older file has that history.
-test("draws a lane from the history and ends it in the final state", () => {
-  const older = Option.getOrThrow(parse(JSON.stringify(fixture)))
-  const range = span(older, Date.now())
-  const runs = lane(older, "T1.4", 100, range)
-  expect(runs[0].state).toBe("waiting")
-  expect(runs.some((run) => run.state === "building")).toBe(true)
-  expect(runs.at(-1)?.state).toBe("budget_exhausted")
+// T4.7 re-baselined the lane from the history to the spans: T1.4 of the projected status waited from 1 to 14, built
+// and proved three times, and ended budget exhausted at 20 (a zero-length span, which takes its one cell).
+test("draws a lane from the spans and ends it in the final state", () => {
+  const runs = lane(status.tasks["T1.4"], 20, { start: 1, end: 21 }, 21)
+  expect(runs[0]).toEqual({ state: "waiting", length: 13 })
+  expect(runs.filter((run) => run.state === "building")).toHaveLength(3)
+  expect(runs.at(-1)).toEqual({ state: "budget_exhausted", length: 1 })
 })
 
 test("reports the run and task changes between two snapshots", () => {
