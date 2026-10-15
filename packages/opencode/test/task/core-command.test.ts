@@ -15,7 +15,7 @@ import type { Fact, Plan } from "@/task/core/model"
 import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
-import { exhaustLeaf, facts, loadPlan, trustLeaf } from "./lib/machine"
+import { exhaustLeaf, facts, fold, loadPlan, trustLeaf } from "./lib/machine"
 import {
   backgroundOf,
   git,
@@ -1115,37 +1115,31 @@ describe("the run header (T4.10: UI6, VF8)", () => {
     { git: true },
   )
 
-  it.instance(
+  it.live(
     "header: an empty H1 falls back to the spec id in the same bold style; the metadata keeps the empty title",
     () =>
       Effect.gen(function* () {
-        const directory = yield* seeded
-        const fs = yield* FileSystem.FileSystem
-        const file = path.join(directory, SPEC, "SPEC.md")
-        const text = yield* fs.readFileString(file)
-        yield* fs.writeFileString(file, text.replace("# Release notes from conventional commits", "#"))
-        yield* git(directory, "commit", "-qam", "untitled spec")
-        const [reply] = yield* runTaskInputs(yield* TaskHarness.make, SPEC)
-        expect(reply?.parts[0]?.text).toBe("Implementing spec **release-notes.spec**")
-        expect(reply?.parts[0]?.metadata).toEqual({
+        // The loader refuses an empty H1 (R4), so only a plan built another way reaches this fallback.
+        const whole = yield* loadPlan("release-notes.spec")
+        const untitled = TaskCommand.header({ ...whole, spec: { ...whole.spec, title: "" } })
+        expect(untitled.text).toBe("Implementing spec **release-notes.spec**")
+        expect(untitled.metadata).toEqual({
           taskHarness: { header: { spec: { id: "release-notes.spec", title: "" }, leftOut: [] } },
         })
       }),
-    { git: true },
   )
 
   it.live("header: status.json carries the title, the spec id when it is empty, and a subtree run's task", () =>
     Effect.gen(function* () {
       const whole = yield* loadPlan("release-notes.spec")
       const started = facts().runStarted()
-      const status = TaskStatus.project(whole, [started])
+      const project = (plan: Plan) => TaskStatus.project(plan, fold(plan, [started]))
+      const status = project(whole)
       expect(status.run.title).toBe("Release notes from conventional commits")
       expect("task" in status.run).toBe(false)
-      expect(TaskStatus.project({ ...whole, spec: { ...whole.spec, title: "" } }, [started]).run.title).toBe(
-        "release-notes.spec",
-      )
+      expect(project({ ...whole, spec: { ...whole.spec, title: "" } }).run.title).toBe("release-notes.spec")
       const subtree = yield* loadPlan("release-notes.spec", "T1.2")
-      expect(TaskStatus.project(subtree, [started]).run.task).toEqual({ id: "T1.2", title: "Compute the next version" })
+      expect(project(subtree).run.task).toEqual({ id: "T1.2", title: "Compute the next version" })
       expect(TaskCommand.header(subtree).text).toStartWith(
         "Implementing **T1.2 Compute the next version** from spec **Release notes from conventional commits**",
       )
