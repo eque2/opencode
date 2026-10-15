@@ -18,8 +18,8 @@ The run's liveness comes from the file alone:
 - **live** when the harness's heartbeat `run.aliveAt` is at most 15 s old;
 - **still** otherwise: the job stopped writing (it was killed, or the machine slept).
 
-Tab, `esc` twice and the watch view act only on a live run, in the session that owns the run's harness sessions
-(titled like `T1.4 builder`).
+Tab and `esc` twice act only on a live run, in the session that owns the run's harness sessions (titled like
+`T1.4 builder`). The watch view needs only that session: it also shows a still or ended run.
 
 ## What it shows
 
