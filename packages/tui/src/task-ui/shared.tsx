@@ -38,6 +38,26 @@ export const outsideWaits = (status: Status): ReadonlyArray<string> => {
 
 export const outsideLine = (id: string) => `waiting on ${id} (outside) — run /task trust ${id}`
 
+/**
+ * A waiting unit's wait sentences (EXPERIENCE "Board card"): the plan ids muted, each untrusted outside id with its
+ * trust command in the warning tone, then each id not in this run muted.
+ */
+export const waitSentences = (
+  status: Status,
+  unit: { readonly waitingOn: ReadonlyArray<string>; readonly waitingOnOutside?: ReadonlyArray<string> },
+): ReadonlyArray<Piece> => {
+  const outside = unit.waitingOnOutside ?? []
+  const external = unit.waitingOn.filter((id) => status.external?.[id] !== undefined)
+  const plan = unit.waitingOn.filter((id) => !outside.includes(id) && !external.includes(id))
+  return [
+    ...(plan.length > 0 ? [{ text: `waiting on ${plan.join(", ")}`, tone: "muted" as const }] : []),
+    ...outside
+      .filter((id) => status.outside?.[id]?.state === "untrusted")
+      .map((id) => ({ text: outsideLine(id), tone: "warning" as const })),
+    ...external.map((id) => ({ text: `waiting on ${id} (not in this run)`, tone: "muted" as const })),
+  ]
+}
+
 // --- the STOPPED list (D19, UI9) --------------------------------------------------------------------------------------
 
 /** One STOPPED line: the tasks with one state and one reason, ids in natural order. */
@@ -85,6 +105,23 @@ export const fit = (pieces: ReadonlyArray<Piece>, width: number): ReadonlyArray<
     },
     { room: width, out: [] },
   ).out
+}
+
+/** `text` in lines of at most `width` cells, broken at word boundaries with no line limit; a longer word is split. */
+export const wrap = (text: string, width: number): ReadonlyArray<string> => {
+  const room = Math.max(1, width)
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap((word) =>
+      Array.from({ length: Math.ceil(word.length / room) }, (_, i) => word.slice(i * room, (i + 1) * room)),
+    )
+    .reduce<string[]>((acc, word) => {
+      const last = acc.at(-1)
+      return last !== undefined && `${last} ${word}`.length <= room
+        ? [...acc.slice(0, -1), `${last} ${word}`]
+        : [...acc, word]
+    }, [])
 }
 
 /** The text of pieces, for a test or a width count. */
@@ -229,7 +266,7 @@ export const pageBy = (box: ScrollBoxRenderable | undefined, by: 1 | -1) =>
 
 // --- the component ----------------------------------------------------------------------------------------------------
 
-const pieceColor = (theme: TuiThemeCurrent, piece: Piece): RGBA =>
+export const pieceColor = (theme: TuiThemeCurrent, piece: Piece): RGBA =>
   piece.tone === "warning"
     ? theme.warning
     : piece.tone === "muted"

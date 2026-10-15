@@ -4,7 +4,23 @@ import type { Part } from "@opencode-ai/sdk/v2"
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { Effect } from "effect"
 import { For, Show, createMemo, createResource, type Accessor } from "solid-js"
-import { MARK, bySeverity, color, cut, glyph, label, obligationsOf, stateColor, tone, type Tone } from "./store"
+import {
+  MARK,
+  bySeverity,
+  color,
+  cut,
+  durationOf,
+  glyph,
+  label,
+  obligationsOf,
+  stateColor,
+  tagged,
+  tone,
+  type Liveness,
+  type Status,
+  type Tone,
+} from "./store"
+import { pieceColor, waitSentences, wrap, type Piece } from "./shared"
 import type { View } from "./view"
 
 /** A builder, verifier or reviewer session the harness made for a unit (`T1.4 builder`, `S3 verifier (again)`). */
@@ -140,6 +156,26 @@ const describe = (input: Record<string, unknown>) =>
   ) ?? ""
 
 /**
+ * The BUILDER heading's paragraphs (EXPERIENCE "Peek BUILDER heading"; D19, D21): a blocked task's reason in the
+ * warning tone; a waiting task's wait sentences; else the state, "attempt N" and the duration, then a reason in the
+ * error tone with the `dead` tag and muted without it. A blocked or waiting task's attempt and duration follow.
+ */
+export const builderHeading = (status: Status, id: string, liveness: Liveness, now: number): ReadonlyArray<Piece> => {
+  const task = status.tasks[id]
+  if (!task) return []
+  const meta = [task.attempts > 0 ? `attempt ${task.attempts}` : "", durationOf(task, status.run, liveness, now)].filter(
+    Boolean,
+  )
+  const after: ReadonlyArray<Piece> = meta.length > 0 ? [{ text: meta.join(" · "), tone: "text" }] : []
+  if (tagged(task, "blocked")) return [{ text: task.reason ?? label(task.state), tone: "warning" }, ...after]
+  if (tagged(task, "waiting") && task.waitingOn.length > 0) return [...waitSentences(status, task), ...after]
+  return [
+    { text: [label(task.state), ...meta].join(" · "), tone: "text" },
+    ...(task.reason ? [{ text: task.reason, tone: tagged(task, "dead") ? ("bad" as const) : ("muted" as const) }] : []),
+  ]
+}
+
+/**
  * A task's details: what its builder did, what its proofs found, what its verifier decided. `width` is the outer
  * width; `lines` is how many lines each section shows. The double accent border and the In the Flow title are the
  * distinction from opencode's own subagent rows.
@@ -165,6 +201,19 @@ export function Peek(props: {
     return status ? obligationsOf(status, props.unit) : []
   })
   const open = createMemo(() => proofs().toSorted(bySeverity))
+  // The heading's lines: each paragraph wrapped under the heading text, 9 cells in, with no line limit.
+  const heading = createMemo(() => {
+    const status = props.view.status()
+    const pieces = status ? builderHeading(status, props.unit, props.view.liveness(), props.view.now()) : []
+    return pieces.flatMap((piece) => wrap(piece.text, inner() - 9).map((text) => ({ ...piece, text })))
+  })
+  // The builder's activity lines shrink first to make room for the heading's lines.
+  const activityLines = () => Math.max(1, props.lines - Math.max(0, heading().length - 1))
+  // A task that ended without starting has no sessions.
+  const missing = () => {
+    const current = task()
+    return current?.endedAt !== undefined && current.startedAt === undefined ? ": the task did not start" : " yet"
+  }
   // opentui drops a border title that does not fit, so a narrow panel gets the short one; both say read-only.
   const title = () =>
     props.width >= 48 ? ` ${MARK} · ${props.unit} details · read-only ` : ` ◆ ${props.unit} details · read-only `
@@ -182,14 +231,23 @@ export function Peek(props: {
       flexShrink={0}
       alignSelf="flex-start"
     >
-      <Heading theme={props.theme} name="BUILDER" text={builderText()} width={inner()} />
+      <For each={heading().length > 0 ? heading() : [{ text: "", tone: "text" as const }]}>
+        {(line, index) => (
+          <text wrapMode="none">
+            <b>
+              <span style={{ fg: props.theme().accent }}>{index() === 0 ? "BUILDER".padEnd(9) : " ".repeat(9)}</span>
+            </b>
+            <span style={{ fg: pieceColor(props.theme(), line) }}>{line.text}</span>
+          </text>
+        )}
+      </For>
       <Show
         when={builderID()}
         keyed
-        fallback={<Muted theme={props.theme} text="no builder session yet" width={inner()} />}
+        fallback={<Muted theme={props.theme} text={`no builder session${missing()}`} width={inner()} />}
       >
         {(id) => (
-          <Activity theme={props.theme} sessions={props.sessions} sessionID={id} width={inner()} lines={props.lines} />
+          <Activity theme={props.theme} sessions={props.sessions} sessionID={id} width={inner()} lines={activityLines()} />
         )}
       </Show>
       <Heading theme={props.theme} name="PROOFS" text={proofText()} width={inner()} />
@@ -204,7 +262,7 @@ export function Peek(props: {
       <Show
         when={verifierID()}
         keyed
-        fallback={<Muted theme={props.theme} text="no verifier session yet" width={inner()} />}
+        fallback={<Muted theme={props.theme} text={`no verifier session${missing()}`} width={inner()} />}
       >
         {(id) => (
           <Activity theme={props.theme} sessions={props.sessions} sessionID={id} width={inner()} lines={props.lines} />
@@ -212,12 +270,6 @@ export function Peek(props: {
       </Show>
     </box>
   )
-
-  function builderText() {
-    const current = task()
-    if (!current) return ""
-    return [current.attempts > 0 ? `attempt ${current.attempts}` : "", label(current.state)].filter(Boolean).join(" · ")
-  }
 
   // A parent task is judged by a reviewer; a verifier asked a second time is marked.
   function verifierText() {
