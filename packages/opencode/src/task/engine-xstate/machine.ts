@@ -947,6 +947,14 @@ const both = (left: Guard, right: Guard): Guard => and([left, right])
 /** The states of a kind that `CLASS` marks final, and the states that carry a phase tag. */
 const finalStates = (kind: Kind) => Object.keys(CLASS[kind]).filter((state) => classOf(kind, state).final)
 const phaseStates = (kind: Kind) => Object.keys(CLASS[kind]).filter((state) => classOf(kind, state).phase !== undefined)
+/** The states of a unit that has not started: the waiting class, and the ready phase (a scenario's is active). */
+const unstartedStates = (kind: Kind) =>
+  Object.keys(CLASS[kind]).filter((state) => {
+    const each = classOf(kind, state)
+    return each.tags.includes("waiting") || each.phase === "ready"
+  })
+/** The outcome's live states: the run states that are not final. */
+const liveStates = () => Object.keys(CLASS.run).filter((state) => !classOf("run", state).final)
 
 /**
  * How the run ends (AD-4). `outcome` is `running` while a task or scenario has work in hand and `waiting` while none
@@ -1197,8 +1205,7 @@ const totality = (plan: Plan, built: RunConfig): ReadonlyArray<string> => {
     const trusted = Object.fromEntries(unit.dependencies.map((id) => [key(id), "trusted"]))
     const tasks = unit.dependencies.filter((id) => isTask(plan, id))
     const regions = unit.dependencies.filter((id) => !isTask(plan, id))
-    const states = unit.kind === "task" ? ["waiting", "ready"] : ["waiting", "ready", "parked"]
-    return states.flatMap((state) => {
+    return unstartedStates(unit.kind).flatMap((state) => {
       const rows = listOf(unit.node(state).always).filter(isPlain)
       const where = `${unit.id} ${state}`
       const ready =
@@ -1230,7 +1237,7 @@ const totality = (plan: Plan, built: RunConfig): ReadonlyArray<string> => {
   // Every combination of final unit states settles: one unit at a time in each final state, the others trusted (the
   // settle guards are a conjunction over units, so one unit's states decide each conjunct).
   const trusted = Object.fromEntries(units.map((unit) => [key(unit.id), "trusted"]))
-  const settles = ["running", "waiting"].flatMap((state) => {
+  const settles = liveStates().flatMap((state) => {
     const on = nodeAt(built, "outcome", state).on
     const rows = isPlain(on) ? listOf(on["run.settled"]).filter(isPlain) : []
     return units.flatMap((unit) =>
