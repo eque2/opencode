@@ -202,9 +202,6 @@ export const stoppedGroup = (task: TaskStatus) => (tagged(task, "dead") ? 0 : ta
 /** The colour of a state. */
 export const stateColor = (theme: TuiThemeCurrent, state: string) => color(theme, tone(state))
 
-// The run and task states after which nothing moves without the developer. The Gantt and the Ticker read it until T4.7
-// and T4.8; the store reads the tags.
-export const ENDED = ["done", "refused", "cancelled", "needs_human", "budget_exhausted", "failed"]
 
 // --- the tree ------------------------------------------------------------------------------------------------------
 

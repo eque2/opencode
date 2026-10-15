@@ -1,11 +1,12 @@
 // Design 7, Ticker: the quietest. Its line is the status part of the shortcut bar beside the prompt; it adds a toast
 // when a task changes state, a notification when the run ends, and expands to a dialog over the session.
 import type { ScrollBoxRenderable } from "@opentui/core"
+import { Option } from "effect"
 import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
 import { SharedRegion, pageBy } from "../shared"
-import { ENDED, MARK, NAME, label, tone, type Status } from "../store"
-import { Brand, TaskLine, type Ctx, type ViewProps } from "../ui"
+import { MARK, NAME, label, tagged, tone, type Status } from "../store"
+import { Brand, OlderLine, TaskLine, reasonLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
 const PEEK = 72
@@ -20,6 +21,51 @@ export const changes = (before: Status, after: Status) => [
   ),
 ]
 
+const variantOf = (state: string): "success" | "error" | "warning" | "info" => {
+  const value = tone(state)
+  return value === "good" ? "success" : value === "bad" ? "error" : value === "warn" ? "warning" : "info"
+}
+
+/**
+ * The toasts for one change, at most three (EXPERIENCE "Ticker toast"): the run's change, then each task's, a task
+ * before the tasks it blocks. A task that gains `dead` or `blocked` shows its reason in place of "from → to".
+ */
+export const tickerToasts = (before: Status, after: Status) => {
+  // How deep a task sits in a chain of blocks: a blocker ranks before what it blocks.
+  const rank = (id: string, seen: ReadonlyArray<string> = []): number => {
+    const by = after.tasks[id]?.blockedBy?.id
+    return by && !seen.includes(by) ? rank(by, [...seen, id]) + 1 : 0
+  }
+  const list = changes(before, after)
+  const run = list.filter((change) => change.unit === "run")
+  const tasks = list.filter((change) => change.unit !== "run").toSorted((a, b) => rank(a.unit) - rank(b.unit))
+  return [...run, ...tasks].slice(0, 3).map((change) => {
+    const task = change.unit === "run" ? undefined : after.tasks[change.unit]
+    const was = change.unit === "run" ? undefined : before.tasks[change.unit]
+    const gained = task && task.reason && ["dead", "blocked"].some((tag) => tagged(task, tag) && !(was && tagged(was, tag)))
+    return {
+      variant: variantOf(change.to),
+      message: gained
+        ? `${change.unit} ${task.reason}`
+        : `${change.unit} ${change.from ? `${label(change.from)} → ` : ""}${label(change.to)}`,
+    }
+  })
+}
+
+/**
+ * The end-of-run notification when the run gains the `ended` tag, with the run reason line of a stopped run; a done
+ * run that ends with a "not run" line raises none (AD-16, UI19).
+ */
+export const endNotice = (before: Status, after: Status) => {
+  if (!tagged(after.run, "ended") || tagged(before.run, "ended")) return Option.none<string>()
+  const stopped = tagged(after.run, "stopped")
+  const line = reasonLine(after)
+  if (!stopped && Option.isSome(line)) return Option.none<string>()
+  return Option.some(
+    `Run ${label(after.run.state)}${stopped && Option.isSome(line) ? `: ${line.value.text}` : ""}`,
+  )
+}
+
 export function TickerDialog(props: ViewProps & { onScroll?: (box: ScrollBoxRenderable) => void }) {
   return (
     <box flexDirection="column" paddingLeft={2} paddingRight={2} paddingBottom={1}>
@@ -29,6 +75,9 @@ export function TickerDialog(props: ViewProps & { onScroll?: (box: ScrollBoxRend
             <Brand theme={props.theme} />
             <span style={{ fg: props.theme().textMuted }}> tasks</span>
           </text>
+          <Show when={props.view.status()}>
+            {(status) => <OlderLine theme={props.theme} status={status()} width={LIST} />}
+          </Show>
           <For each={props.view.rows()}>
             {(row) => (
               <TaskLine
@@ -59,20 +108,8 @@ export function registerTicker(ctx: Ctx) {
   createEffect(
     on(ctx.view.status, (after, before) => {
       if (!ctx.active() || !before || !after) return
-      const list = changes(before, after)
-      for (const change of list.slice(0, 3)) {
-        const value = tone(change.to)
-        ctx.api.ui.toast({
-          variant: value === "good" ? "success" : value === "bad" ? "error" : value === "warn" ? "warning" : "info",
-          title: MARK,
-          message: `${change.unit} ${change.from ? `${label(change.from)} → ` : ""}${label(change.to)}`,
-        })
-      }
-      if (before.run.state !== after.run.state && ENDED.includes(after.run.state))
-        void ctx.api.attention.notify({
-          title: NAME,
-          message: `Run ${label(after.run.state)}${after.run.reason ? `: ${after.run.reason}` : ""}`,
-        })
+      for (const toast of tickerToasts(before, after)) ctx.api.ui.toast({ ...toast, title: MARK })
+      Option.map(endNotice(before, after), (message) => void ctx.api.attention.notify({ title: NAME, message }))
     }),
   )
 

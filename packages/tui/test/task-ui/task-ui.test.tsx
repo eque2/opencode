@@ -34,7 +34,6 @@ import { waitSentences, wrap } from "../../src/task-ui/shared"
 import type { CapturedFrame, RGBA } from "@opentui/core"
 import {
   DISPLAY,
-  ENDED,
   OLDER_LINE,
   bySeverity,
   columnOf,
@@ -360,9 +359,9 @@ test("durations: 45s, 3m 12s, 1h 4m; live to now, still to the heartbeat, fixed 
   expect(durationOf({ startedAt: 10_000 }, {}, "still", 55_000)).toBe("")
 })
 
-test("poll, LIVE_WINDOW, ACTIVE and the view signals have left the store; ENDED waits for the Gantt and the Ticker", () => {
-  for (const gone of ["poll", "LIVE_WINDOW", "ACTIVE", "createView"]) expect(Store).not.toHaveProperty(gone)
-  expect(ENDED).toContain("done")
+// T4.8 re-baselined: ENDED left the store with its last importer, the Ticker.
+test("poll, LIVE_WINDOW, ACTIVE, ENDED and the view signals have left the store", () => {
+  for (const gone of ["poll", "LIVE_WINDOW", "ACTIVE", "ENDED", "createView"]) expect(Store).not.toHaveProperty(gone)
 })
 
 test("UI25 a status with no tags: still, the older-harness line, display glyphs and labels, and no classes", () => {
