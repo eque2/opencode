@@ -175,6 +175,7 @@ export const view = (snapshot: RunSnapshot): State => {
     run: {
       state: runState,
       ...(run?.reason === undefined ? {} : { reason: run.reason }),
+      ...(context.warning.length === 0 ? {} : { warning: context.warning.join("\n") }),
       spec: context.spec,
       path: context.path,
     },

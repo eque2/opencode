@@ -25,6 +25,7 @@ import { TaskWorkspace } from "@/task/core/workspace"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
 import { facts, loadPlan, trustLeaf } from "./lib/machine"
+import { storedFacts, storedTypes } from "./lib/supervise"
 
 // The stateless workers of a run (spine AD-8, AD-11, D7, AD-19): each runs one Effect and returns. The git side runs
 // on scratch repositories; the session side runs against a recording session boundary (create, prompt, cancel,
@@ -574,9 +575,10 @@ describe("staleCheck", () => {
         specDir,
         stored: [f.runStarted(), ...trustLeaf(plan, f, "T1.1")],
       })
-      const quiet = yield* TaskWorkers.staleCheck(run)
+      const quiet = yield* TaskWorkers.staleCheck(run, "")
       expect(quiet.stale).toEqual([])
-      expect(quiet.failures).toEqual([])
+      // A spec that loads as the plan did, with no warning: nothing to record.
+      expect(yield* storedTypes(run.id)).not.toContain("spec.checked")
       expect(Option.isSome(quiet.spec)).toBe(true)
       // T1.1 (trusted) and T1.2 (pending) both change their first obligation's text.
       for (const task of ["T1.1", "T1.2"] as const) {
@@ -584,7 +586,7 @@ describe("staleCheck", () => {
         const text = yield* fs.readFileString(file)
         yield* fs.writeFileString(file, text.replace(/text: "/, 'text: "Changed. '))
       }
-      const found = yield* TaskWorkers.staleCheck(run)
+      const found = yield* TaskWorkers.staleCheck(run, "")
       const spec = Option.getOrThrow(found.spec)
       const reloaded = (id: string) => spec.obligations.find((item) => item.id === id)?.hash
       expect(found.stale.length).toBeGreaterThan(0)
@@ -599,13 +601,13 @@ describe("staleCheck", () => {
     }),
   )
 
-  it.live("reads the spec only under the checkout lock, and reports a spec that stops loading with its failures", () =>
+  it.live("reads the spec only under the checkout lock, and records spec.checked for a spec that stops loading", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const { directory, specDir, plan } = yield* specCopy()
       const { run } = yield* runOf({ plan, directory, specDir, stored: [facts().runStarted()] })
       const lock = yield* hold(run.locks.checkout)
-      const checking = yield* Effect.forkChild(TaskWorkers.staleCheck(run))
+      const checking = yield* Effect.forkChild(TaskWorkers.staleCheck(run, ""))
       expect(yield* waiting(checking)).toBe(true)
       // The spec changes while the check waits: the check reads it after the lock is free.
       yield* fs.remove(path.join(specDir, "SPEC.md"))
@@ -613,7 +615,8 @@ describe("staleCheck", () => {
       const broken = yield* Fiber.join(checking)
       expect(broken.spec).toEqual(Option.none())
       expect(broken.stale).toEqual([])
-      expect(broken.failures.length).toBeGreaterThan(0)
+      const checked = (yield* storedFacts(run.id)).flatMap((fact) => (fact.type === "spec.checked" ? [fact] : []))
+      expect(checked.map((fact) => fact.failures.length > 0)).toEqual([true])
     }),
   )
 })

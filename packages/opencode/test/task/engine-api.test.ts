@@ -100,6 +100,7 @@ describe("TaskEngineXState", () => {
         f.ready("T1.2"),
         f.proved("T1.2", [fail("T1.2.c1", "red")]),
         f.stale("T1.1.c1"),
+        f.checked([{ rule: "R3", path: "T1-release-notes.task/T1.2-version-bump.task/TASK.md", message: "a fault" }]),
         f.proved("T1.1", [fail("T1.1.c1", "red")]),
         f.ended("done"),
       ]
@@ -129,6 +130,7 @@ describe("TaskEngineXState", () => {
           "task.needs_human",
           "task.failed",
           "obligation.stale",
+          "spec.checked",
           "scenario.proved",
           "scenario.verified",
           "run.cancelled",

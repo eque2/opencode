@@ -161,6 +161,8 @@ export interface RunContext {
   readonly units: Readonly<Record<string, Slot>>
   readonly moves: Readonly<Record<string, Move>>
   readonly log: ReadonlyArray<History>
+  /** The run warning: the latest `spec.checked` failures, one line each (AD-14); empty when none. */
+  readonly warning: ReadonlyArray<string>
   /** A stop the run took: `run.cancelled`, or the state of `run.ended`, with its reason. */
   readonly stop?: Stop
 }
@@ -417,6 +419,25 @@ export const ACTIONS = {
   resume: assign<RunContext, RunEvent, undefined, RunEvent>(({ context, event }) => {
     if (event.type !== "run.resumed") return {}
     return { log: [...context.log, entryOf(event.at, RUN, lastRun(context), "running", "resumed")] }
+  }),
+  /** `spec.checked`: the run warning (no failures clears it) and a run history entry naming the count. */
+  check: assign<RunContext, RunEvent, undefined, RunEvent>(({ context, event }) => {
+    if (event.type !== "spec.checked") return {}
+    const count = event.failures.length
+    const run = lastRun(context)
+    return {
+      warning: event.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`),
+      log: [
+        ...context.log,
+        entryOf(
+          event.at,
+          RUN,
+          run,
+          run,
+          `spec.checked: ${count === 0 ? "no" : count} ${count === 1 ? "failure" : "failures"}`,
+        ),
+      ],
+    }
   }),
   /** A transition's move: its `from` and reason, for the target state's entry action. */
   move: assign<RunContext, RunEvent, MoveParams, RunEvent>(({ context, event }, params) => ({
@@ -1006,6 +1027,7 @@ const outcomeRegion = (plan: Plan): StateNode => {
       "run.ended": [{ actions: [{ type: "stop" }] }],
       "run.started": [{ actions: [{ type: "begin" }] }],
       "run.resumed": [{ actions: [{ type: "resume" }] }],
+      "spec.checked": [{ actions: [{ type: "check" }] }],
     },
   })
   return unitRegion(RUN, "run", "running", { running: live("waiting", not(busy)), waiting: live("running", busy) })
@@ -1030,7 +1052,7 @@ const firstContext = (plan: Plan): RunContext => {
     ...plan.external.map((id): [string, Slot] => [id, { kind: "external", state: "untrusted" }]),
     [RUN, { kind: "run", state: "running" }],
   ]
-  return { spec: plan.specPath, path: plan.path, units: Object.fromEntries(slots), moves: {}, log: [] }
+  return { spec: plan.specPath, path: plan.path, units: Object.fromEntries(slots), moves: {}, log: [], warning: [] }
 }
 
 /** The regions of `active`, keyed by unit: tasks, scenarios, `outside` preconditions, external folder tasks. */

@@ -68,7 +68,14 @@ export interface ScenarioModel {
 }
 
 export interface State {
-  readonly run: { readonly state: RunState; readonly reason?: string; readonly spec: string; readonly path: string }
+  readonly run: {
+    readonly state: RunState
+    readonly reason?: string
+    /** The latest `spec.checked` failures, one `<rule> <path>: <message>` line each (AD-14); absent when none. */
+    readonly warning?: string
+    readonly spec: string
+    readonly path: string
+  }
   readonly tasks: Readonly<Record<string, TaskModel>>
   readonly obligations: Readonly<Record<string, ObligationModel>>
   readonly scenarios: Readonly<Record<string, ScenarioModel>>
@@ -116,6 +123,12 @@ export type Fact =
   | { readonly type: "task.repeated"; readonly at: number; readonly task: string; readonly reason: string }
   | { readonly type: "task.needs_human"; readonly at: number; readonly task: string; readonly reason: string }
   | { readonly type: "task.failed"; readonly at: number; readonly task: string; readonly reason: string }
+  /** A stale check found the spec's failures changed (D12): none clears the run warning. */
+  | {
+      readonly type: "spec.checked"
+      readonly at: number
+      readonly failures: ReadonlyArray<{ readonly rule: string; readonly path: string; readonly message: string }>
+    }
   /** An obligation's unit hash changed after it was judged: prove and judge it again. */
   | { readonly type: "obligation.stale"; readonly at: number; readonly id: string; readonly hash: string }
   | { readonly type: "scenario.proved"; readonly at: number; readonly id: string; readonly status: "passed" | "failed"; readonly reason?: string }

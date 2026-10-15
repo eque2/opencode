@@ -55,6 +55,7 @@ const names = (list: ReadonlyArray<Fact>) =>
         return `${fact.type} ${fact.id}`
       case "run.started":
       case "run.resumed":
+      case "spec.checked":
       case "run.cancelled":
       case "run.ended":
         return fact.type

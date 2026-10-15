@@ -181,6 +181,7 @@ export const project = (plan: Plan, snapshot: RunSnapshot): Status => {
       state: state.run.state,
       tags: tags("run"),
       ...(has(state.run.reason) ? { reason: state.run.reason } : {}),
+      ...(has(state.run.warning) ? { warning: state.run.warning } : {}),
       spec: plan.specPath,
       specId,
       path: plan.path,

@@ -68,6 +68,11 @@ export const facts = (start = 0) => {
     needsHuman: (task: string, reason: string): Fact => ({ type: "task.needs_human", at: at(), task, reason }),
     failed: (task: string, reason: string): Fact => ({ type: "task.failed", at: at(), task, reason }),
     stale: (id: string, hash = "hash2"): Fact => ({ type: "obligation.stale", at: at(), id, hash }),
+    checked: (failures: ReadonlyArray<{ rule: string; path: string; message: string }>): Fact => ({
+      type: "spec.checked",
+      at: at(),
+      failures,
+    }),
     outside: (id: string): Fact => ({ type: "outside.trusted", at: at(), id }),
     scenarioProved: (id: string, status: "passed" | "failed", reason?: string): Fact => ({
       type: "scenario.proved",

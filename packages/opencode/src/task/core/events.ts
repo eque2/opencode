@@ -54,6 +54,11 @@ export const FactSchema = Schema.Union([
   Schema.Struct({ ...TaskFact("task.repeated"), reason: Text }),
   Schema.Struct({ ...TaskFact("task.needs_human"), reason: Text }),
   Schema.Struct({ ...TaskFact("task.failed"), reason: Text }),
+  Schema.Struct({
+    type: Schema.Literal("spec.checked"),
+    at: At,
+    failures: Schema.Array(Schema.Struct({ rule: Text, path: Text, message: Text })),
+  }),
   Schema.Struct({ type: Schema.Literal("obligation.stale"), at: At, id: Text, hash: Text }),
   Schema.Struct({
     type: Schema.Literal("scenario.proved"),

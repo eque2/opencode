@@ -123,17 +123,20 @@ const passingBatch = fromEffect(({ input }: { input: { run: TaskWorkers.Run; ids
   }),
 )
 
+// What a stale check that finds nothing returns.
+const NOTHING: TaskWorkers.Stale = { spec: Option.none(), stale: [] }
+
 // A stale check stand-in that finds nothing.
 const quietStale = fromEffect<
   { readonly run: TaskWorkers.Run },
-  Option.Option<BlendModel.Spec>,
+  TaskWorkers.Stale,
   never,
   FileSystem.FileSystem | Path.Path
 >(() =>
   Effect.gen(function* () {
     yield* FileSystem.FileSystem
     yield* Path.Path
-    return Option.none<BlendModel.Spec>()
+    return NOTHING
   }),
 )
 
@@ -539,7 +542,7 @@ describe("the timer regions", () => {
           yield* FileSystem.FileSystem
           yield* Path.Path
           yield* input.run.locks.checkout.withPermit(Effect.sync(() => checks++))
-          return Option.none<BlendModel.Spec>()
+          return NOTHING
         }),
       )
       const release = yield* Deferred.make<void>()
@@ -588,7 +591,8 @@ describe("the timer regions", () => {
       yield* logged(
         messages,
         Effect.gen(function* () {
-          const actor = yield* supervise(setup, { clock, actors: { touch: failing } })
+          // The stale check reads no spec at /root; it would record spec.checked, which this test is not about.
+          const actor = yield* supervise(setup, { clock, actors: { touch: failing, stale: quietStale } })
           yield* running(actor)
           for (const count of [1, 2, 3]) {
             yield* clock.increment(5_000)
@@ -665,7 +669,7 @@ describe("the timer regions", () => {
       let checks = 0
       const failing = fromEffect<
         { readonly run: TaskWorkers.Run },
-        Option.Option<BlendModel.Spec>,
+        TaskWorkers.Stale,
         TaskWorkers.WorkerError,
         FileSystem.FileSystem | Path.Path
       >(({ input }) =>
@@ -914,10 +918,11 @@ describe("spec.checked and the run warning (D12, AD-12, VF4, VF5)", () => {
           "obligation.stale",
         )
 
+        // The stored slice is folded, not stored again: the store holds this job's facts only.
         const types = yield* storedTypes(setup.id)
-        const checkedAt = types.lastIndexOf("spec.checked")
-        expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.length)).toEqual([2, 0])
-        expect(checkedAt).toBeLessThan(types.indexOf("obligation.stale"))
+        expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.length)).toEqual([0])
+        expect(types.indexOf("spec.checked")).toBeGreaterThan(-1)
+        expect(types.indexOf("spec.checked")).toBeLessThan(types.indexOf("obligation.stale"))
         const log = (yield* runSnapshot(setup)).context.log
         const entry = log.findLastIndex((item) => item.unit === "run" && item.reason === "spec.checked: no failures")
         const stale = log.findIndex((item) => item.unit === "T1.1.c1" && item.to === "stale")
@@ -950,7 +955,6 @@ describe("spec.checked and the run warning (D12, AD-12, VF4, VF5)", () => {
         yield* check
 
         expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.map(lineOf))).toEqual([
-          warned.map(lineOf),
           [`R3 ${T11_VERIFY}: obligation T1.1.c9 is not in the loaded plan; the run keeps the plan it loaded`],
         ])
         expect(yield* storedTypes(setup.id)).not.toContain("obligation.stale")
@@ -1089,7 +1093,7 @@ describe("the job's cancel (SV4, SV25)", () => {
           yield* FileSystem.FileSystem
           yield* Path.Path
           yield* input.run.locks.checkout.withPermit(Effect.void)
-          return Option.none<BlendModel.Spec>()
+          return NOTHING
         }),
       )
       const release = yield* Deferred.make<void>()

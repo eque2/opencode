@@ -474,20 +474,54 @@ export const scenarioProof = Effect.fn("TaskWorkers.scenarioProof")(function* (r
   )
 })
 
-/** What a stale check found: the reloaded spec (none when it did not load), the stale obligations and the failures. */
+/** What a stale check found: the reloaded spec when it validates with the plan's obligation ids, and the stale obligations. */
 export interface Stale {
   readonly spec: Option.Option<BlendModel.Spec>
   readonly stale: ReadonlyArray<{ readonly id: string; readonly hash: string }>
-  readonly failures: ReadonlyArray<BlendModel.Failure>
+}
+
+const staleOf = (spec: Option.Option<BlendModel.Spec>, stale: Stale["stale"]): Stale => ({ spec, stale })
+
+// A task's folder, relative to the spec folder: `T1-release-notes.task/T1.2-version-bump.task`.
+const folderOf = (spec: BlendModel.Spec, id: string): string => {
+  const task = spec.tasks.find((item) => item.id === id)
+  if (task === undefined) return id
+  const own = `${task.id}-${task.slug}.task`
+  return task.parent === undefined ? own : `${folderOf(spec, task.parent)}/${own}`
+}
+
+// The plan's obligation ids are fixed (AD-12, SD-15): a valid reload that adds or removes one of its tasks' ids is a
+// failure, and the run keeps the plan it loaded.
+const idChanges = (plan: Plan, spec: BlendModel.Spec): ReadonlyArray<BlendModel.Failure> => {
+  const tasks = plan.tasks.map((task) => task.id)
+  const planned = plan.spec.obligations.filter((obligation) => tasks.includes(obligation.task))
+  const reloaded = spec.obligations.filter((obligation) => tasks.includes(obligation.task))
+  const failure = (obligation: BlendModel.Obligation, message: string): BlendModel.Failure => ({
+    rule: "R3",
+    path: `${folderOf(plan.spec, obligation.task)}/VERIFY.md`,
+    message: `obligation ${obligation.id} ${message}; the run keeps the plan it loaded`,
+  })
+  return [
+    ...reloaded
+      .filter((obligation) => !planned.some((item) => item.id === obligation.id))
+      .map((obligation) => failure(obligation, "is not in the loaded plan")),
+    ...planned
+      .filter((obligation) => !reloaded.some((item) => item.id === obligation.id))
+      .map((obligation) => failure(obligation, "of the loaded plan is missing")),
+  ]
 }
 
 /**
- * Loads the spec from the root checkout under the checkout lock. An obligation whose unit hash changed after it
- * passed or was trusted is stale. The run supervisor records `obligation.stale` and keeps the new spec.
+ * Loads the spec from the root checkout under the checkout lock and records `spec.checked` when its failures differ
+ * from `warning`, the run's current warning (D12, AC 14). An obligation whose unit hash changed after it passed or
+ * was trusted is stale; the run supervisor keeps the new spec, then records `obligation.stale` (AD-12).
  */
-export const staleCheck = Effect.fn("TaskWorkers.staleCheck")(function* (run: Run) {
+export const staleCheck = Effect.fn("TaskWorkers.staleCheck")(function* (run: Run, warning: string) {
   const loaded = yield* run.locks.checkout.withPermit(Blend.load(run.specDir))
-  if (!loaded.spec) return { spec: Option.none(), stale: [], failures: loaded.failures } satisfies Stale
+  const faults = loaded.spec ? idChanges(run.plan, loaded.spec) : loaded.failures
+  const lines = faults.map((fault) => `${fault.rule} ${fault.path}: ${fault.message}`).join("\n")
+  if (lines !== warning) yield* record(run, { type: "spec.checked", failures: faults })
+  if (!loaded.spec || faults.length > 0) return staleOf(Option.none(), [])
   const state = TaskEngineXState.view(yield* snapshotOf(run))
   const stale = loaded.spec.obligations.flatMap((obligation) => {
     const current = state.obligations[obligation.id]
@@ -495,7 +529,7 @@ export const staleCheck = Effect.fn("TaskWorkers.staleCheck")(function* (run: Ru
     if (current.state !== "trusted" && current.state !== "passed") return []
     return [{ id: obligation.id, hash: obligation.hash }]
   })
-  return { spec: Option.some(loaded.spec), stale, failures: loaded.failures } satisfies Stale
+  return staleOf(Option.some(loaded.spec), stale)
 })
 
 /** Records one fact through the run's Recorder (AD-9). */

@@ -73,6 +73,8 @@ interface Context {
   readonly writer: Fiber.Fiber<void, unknown>
   /** The current spec (AD-12): the plan's, then each valid reload. */
   readonly spec: BlendModel.Spec
+  /** The obligations the last stale check found, recorded once the reloaded spec is assigned. */
+  readonly stale: TaskWorkers.Stale["stale"]
   /** When this job recorded `run.started` or `run.resumed`: the run wall clock and the task clocks count from it. */
   readonly runStart: number
   readonly latest: Option.Option<RunSnapshot>
@@ -173,12 +175,17 @@ const applyTrusts = (input: { readonly run: TaskWorkers.Run; readonly ids: Effec
     return outside
   })
 
-/** A stale check: the reloaded spec (when it loaded) after recording `obligation.stale` for each changed obligation. */
+/** A stale check, given the run's current warning: it records `spec.checked` itself (D12). */
 const checkStale = (input: { readonly run: TaskWorkers.Run }) =>
   Effect.gen(function* () {
-    const found = yield* TaskWorkers.staleCheck(input.run)
-    for (const item of found.stale) yield* TaskWorkers.record(input.run, { type: "obligation.stale", ...item })
-    return found.spec
+    const warning = TaskEngineXState.view(yield* input.run.recorder.actor.getSnapshot).run.warning ?? ""
+    return yield* TaskWorkers.staleCheck(input.run, warning)
+  })
+
+/** `obligation.stale` for each obligation a stale check found, once the new spec is assigned (AD-12). */
+const markStale = (input: { readonly run: TaskWorkers.Run; readonly stale: TaskWorkers.Stale["stale"] }) =>
+  Effect.gen(function* () {
+    for (const item of input.stale) yield* TaskWorkers.record(input.run, { type: "obligation.stale", ...item })
   })
 
 /** The batch proof of the `ready` scenarios: one `scenario.proved` for each. */
@@ -247,6 +254,7 @@ export const machine = setup({
     watch,
     touch: fromEffect(({ input }: { input: { run: TaskWorkers.Run } }) => TaskWorkers.touch(input.run)),
     stale: fromEffect(({ input }: { input: Parameters<typeof checkStale>[0] }) => checkStale(input)),
+    mark: fromEffect(({ input }: { input: Parameters<typeof markStale>[0] }) => markStale(input)),
     batch: fromEffect(({ input }: { input: Parameters<typeof proveBatch>[0] }) => proveBatch(input)),
     finish: fromEffect(({ input }: { input: Parameters<typeof finish>[0] }) => finish(input)),
     record: fromEffect(({ input }: { input: Parameters<typeof recordFact>[0] }) => recordFact(input)),
@@ -401,6 +409,7 @@ export const machine = setup({
     release: input.release,
     writer: input.writer,
     spec: input.run.plan.spec,
+    stale: [],
     runStart: 0,
     latest: Option.none(),
     pending: [],
@@ -531,25 +540,37 @@ export const machine = setup({
           on: { "run.ended": ".stopped" },
           states: {
             waiting: { after: { stale: "checking" } },
-            // A failed check is logged, records nothing, and the cadence goes on.
+            // A failed check is logged, records nothing more, and the cadence goes on. The check records
+            // `spec.checked`; a valid reload's spec is assigned and sent before `obligation.stale` is recorded.
             checking: {
               invoke: {
                 src: "stale",
                 input: ({ context }) => ({ run: context.run }),
                 onDone: {
-                  target: "waiting",
+                  target: "marking",
                   actions: enqueueActions(({ context, event, enqueue }) => {
-                    const spec = Option.flatten(event.output)
-                    if (Option.isNone(spec)) return
-                    enqueue.assign({ spec: spec.value })
+                    if (Option.isNone(event.output)) return
+                    const found = event.output.value
+                    enqueue.assign({ stale: found.stale })
+                    if (Option.isNone(found.spec)) return
+                    const spec = found.spec.value
+                    enqueue.assign({ spec })
                     for (const [unit, kind] of Object.entries(context.units))
-                      enqueue.sendTo(childId(context.run, kind, unit), { type: "spec.reloaded", spec: spec.value })
+                      enqueue.sendTo(childId(context.run, kind, unit), { type: "spec.reloaded", spec })
                   }),
                 },
                 onError: {
                   target: "waiting",
                   actions: "logStaleFailure",
                 },
+              },
+            },
+            marking: {
+              invoke: {
+                src: "mark",
+                input: ({ context }) => ({ run: context.run, stale: context.stale }),
+                onDone: "waiting",
+                onError: { target: "waiting", actions: "logStaleFailure" },
               },
             },
             stopped: { type: "final" },
