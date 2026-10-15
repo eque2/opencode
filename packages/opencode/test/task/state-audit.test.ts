@@ -9,7 +9,7 @@ import ts from "typescript"
 // names. Each finding names its file and its identifier: the nearest declaration around the construct (a variable,
 // a function, a type), or the list name for `ACTIVE`, `ENDED` and `JUDGED`. A finding passes only when the
 // allowlist names its file and identifier with a reason; an entry that matches no finding fails, so the list never
-// keeps a stale entry. Entries marked `until` are interim: each names the task that removes it.
+// keeps a stale entry. The allowlist holds only the AD-17 entries.
 
 const ROOT = path.resolve(import.meta.dir, "../../../..")
 const SCOPES = ["packages/opencode/src/task", "packages/tui/src/task-ui"]
@@ -263,8 +263,6 @@ interface Entry {
   readonly file: string
   readonly identifier: string
   readonly reason: string
-  /** The task that removes an interim entry. */
-  readonly until?: string
 }
 
 const opencode = (file: string) => `packages/opencode/src/task/${file}`
@@ -274,7 +272,7 @@ const ui = (file: string) => `${UI}${file}`
 const SCHEMA = "The status contract's encode and decode vocabulary, not a classification (AD-13)."
 const FACTS =
   "The stored-fact vocabulary of FactSchema (a verdict, a result status, a run.ended state), not a classification."
-const FINAL: ReadonlyArray<Entry> = [
+const ALLOWLIST: ReadonlyArray<Entry> = [
   { file: opencode("core/status.ts"), identifier: "RunStateSchema", reason: SCHEMA },
   { file: opencode("core/status.ts"), identifier: "TaskStateSchema", reason: SCHEMA },
   { file: opencode("core/status.ts"), identifier: "ObligationStateSchema", reason: SCHEMA },
@@ -314,12 +312,6 @@ const FINAL: ReadonlyArray<Entry> = [
     reason: "A bounded poll for a process group to exit (Effect.timeoutOption): operating-system teardown.",
   },
 ]
-
-// The interim entries: state that phase 2 and phase 4 moved into the actors, each naming the task that removed it.
-// T4.8 removed the last, the store's and the Ticker's ENDED.
-const INTERIM: ReadonlyArray<Entry> = []
-
-const ALLOWLIST: ReadonlyArray<Entry> = [...FINAL, ...INTERIM]
 
 const key = (item: { readonly file: string; readonly identifier: string }) => `${item.file} ${item.identifier}`
 
@@ -376,6 +368,7 @@ const FLAGGED: ReadonlyArray<readonly [string, string, string]> = [
 
 const FLAGGED_UI: ReadonlyArray<readonly [string, string, string]> = [
   ["Effect.sleep", "const pause = Effect.sleep('1 second')", "pause"],
+  ["Schedule.spaced", "const every = Schedule.spaced('1 second')", "every"],
   ["Schedule.recurs", "const every = Schedule.recurs(3)", "every"],
   ["createSignal", "const [shown, setShown] = createSignal(false)", "shown"],
   ["poll", "const sample = poll([], '1 second', read)", "sample"],
@@ -423,47 +416,53 @@ describe("the state audit", () => {
     expect(audit(findings, [{ ...unreasoned, reason: "A reason." }, stale]).stale).toEqual([stale])
   })
 
-  test("names the task that removes each interim entry", () => {
-    for (const entry of INTERIM)
-      expect({ entry: key(entry), until: entry.until }).toEqual({
-        entry: key(entry),
-        until: expect.stringMatching(/^T[24]\.\d+$/),
-      })
-  })
-
-  test("SV19 holds exactly the AD-17 entries for the harness tree, none of them interim", () => {
-    // The AD-17 table, for packages/opencode/src/task: the status schemas, the machine's DEAD and CLASS, the
-    // FactSchema vocabulary (with its verdict and result-status members), and the two proof-process loops.
-    const expected = [
-      "core/events.ts FactSchema",
-      "core/events.ts Result_",
-      "core/events.ts Verdict",
-      "core/status.ts ObligationStateSchema",
-      "core/status.ts OutsideStateSchema",
-      "core/status.ts RunStateSchema",
-      "core/status.ts ScenarioStateSchema",
-      "core/status.ts TaskStateSchema",
-      "engine-xstate/machine.ts CLASS",
-      "engine-xstate/machine.ts DEAD",
-      "proof/process.ts appender",
-      "proof/process.ts awaitGroupGone",
-    ]
-    const harness = ALLOWLIST.filter((entry) => entry.file.startsWith(opencode("")))
-    expect(harness.map((entry) => `${entry.file.slice(opencode("").length)} ${entry.identifier}`).toSorted()).toEqual(
-      expected,
+  test("SV19 holds exactly the AD-17 entries for both trees, fromActor and DISPLAY included", () => {
+    // The AD-17 table: the task-ui's adapter and display lookup, the status schemas, the machine's DEAD and CLASS,
+    // the FactSchema vocabulary (with its verdict and result-status members), and the two proof-process loops.
+    expect(ALLOWLIST.map(key).toSorted()).toEqual(
+      [
+        "packages/opencode/src/task/core/events.ts FactSchema",
+        "packages/opencode/src/task/core/events.ts Result_",
+        "packages/opencode/src/task/core/events.ts Verdict",
+        "packages/opencode/src/task/core/status.ts ObligationStateSchema",
+        "packages/opencode/src/task/core/status.ts OutsideStateSchema",
+        "packages/opencode/src/task/core/status.ts RunStateSchema",
+        "packages/opencode/src/task/core/status.ts ScenarioStateSchema",
+        "packages/opencode/src/task/core/status.ts TaskStateSchema",
+        "packages/opencode/src/task/engine-xstate/machine.ts CLASS",
+        "packages/opencode/src/task/engine-xstate/machine.ts DEAD",
+        "packages/opencode/src/task/proof/process.ts appender",
+        "packages/opencode/src/task/proof/process.ts awaitGroupGone",
+        "packages/tui/src/task-ui/actor.ts fromActor",
+        "packages/tui/src/task-ui/store.ts DISPLAY",
+      ].toSorted(),
     )
-    expect(harness.filter((entry) => entry.until !== undefined).map(key)).toEqual([])
   })
 
-  test("keeps no interim entry for the polled runner, its builder watch or its hook maps; each left names a T4 task", () => {
-    expect(INTERIM.filter((entry) => !entry.file.startsWith(UI)).map(key)).toEqual([])
-    for (const file of ["core/runner.ts", "core/sessions.ts", "core/hooks.ts"])
-      expect(ALLOWLIST.filter((entry) => entry.file === opencode(file)).map(key)).toEqual([])
-    for (const entry of INTERIM)
-      expect({ entry: key(entry), until: entry.until }).toEqual({
-        entry: key(entry),
-        until: expect.stringMatching(/^T4\.\d+$/),
+  test("SV18 a planted Effect.sleep, Schedule.spaced or view-state createSignal in the task-ui fails the audit", () => {
+    for (const text of [
+      "const pause = Effect.sleep('1 second')",
+      "const every = Schedule.spaced('1 second')",
+      "const [shown, setShown] = createSignal(false)",
+    ])
+      expect({ text, failed: audit(scan(PLANTED_UI, text), ALLOWLIST).unlisted.length > 0 }).toEqual({
+        text,
+        failed: true,
       })
+  })
+
+  test("the task-ui holds no repeat, schedule, sleep, interval or signal outside fromActor", () => {
+    const findings = files()
+      .filter((file) => file.startsWith(UI))
+      .flatMap((file) => scan(file, fs.readFileSync(path.join(ROOT, file), "utf8")))
+    const timed = ["Effect.repeat", "Effect.sleep", "setInterval", "createSignal", "createStore", "poll"]
+    const polls = findings.filter((item) => timed.includes(item.rule) || item.rule.startsWith("Schedule"))
+    expect(polls.filter((item) => key(item) !== key({ file: ui("actor.ts"), identifier: "fromActor" }))).toEqual([])
+    // Every task-ui finding is one of its two AD-17 entries.
+    expect([...new Set(findings.map(key))].toSorted()).toEqual([
+      key({ file: ui("actor.ts"), identifier: "fromActor" }),
+      key({ file: ui("store.ts"), identifier: "DISPLAY" }),
+    ])
   })
 
   test("passes on the current tree with the allowlist", () => {
