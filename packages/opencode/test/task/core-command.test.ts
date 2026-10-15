@@ -23,7 +23,7 @@ import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskLimits } from "@/task/limits"
 import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { facts, loadPlan, trustLeaf } from "./lib/machine"
+import { exhaustLeaf, facts, loadPlan, trustLeaf } from "./lib/machine"
 import { boundary, eventually } from "./lib/supervise"
 
 // `/task` (spine AD-8, AD-19, AD-6). A refusal needs no session runtime, so the ops only record the reply. A run
@@ -861,5 +861,279 @@ describe("the job of a run (AD-8, SV4, SV21, SV27)", () => {
         return yield* Effect.void
       }),
     { git: true },
+  )
+})
+
+// A task folder of the seeded spec, as `/task` takes it, and as its folder relative to the spec.
+const folder = (name: string) => `T1-release-notes.task/${name}`
+const SUB = (name: string) => `${SPEC}/${folder(name)}`
+const T1_1 = "T1.1-commit-parser.task"
+const T1_3 = "T1.3-markdown-render.task"
+const T1_4 = "T1.4-command-line.task"
+const T1_5 = "T1.5-issue-links.task"
+
+const r12 = (name: string, task: string, other: string) =>
+  `R12 ${folder(name)}: ${task} is after ${other}, which is outside this run and not trusted`
+
+// Stored slices on the run's aggregate, oldest first.
+const storeSlices = (directory: string, ...slices: ReadonlyArray<ReadonlyArray<Fact>>) =>
+  Effect.gen(function* () {
+    const events = yield* EventV2Bridge.Service
+    for (const fact of slices.flat()) yield* TaskEvents.publish(events, TaskEvents.runID(directory, SPEC), fact)
+  })
+
+// A whole-spec slice in which T1.1 ended trusted.
+const trustedSlice = Effect.gen(function* () {
+  const plan = yield* loadPlan("release-notes.spec")
+  const f = facts()
+  return [f.runStarted(SPEC), ...trustLeaf(plan, f, "T1.1")]
+})
+
+describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
+  it.instance(
+    "VF6 refuses the T1.3 subtree with no stored run: one R12 line naming T1.3 and T1.1, then the hint",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        expect(yield* runTask(harness, SUB(T1_3), jobs)).toEqual([
+          [
+            `Refused ${SUB(T1_3)}: 1 failure. No work started.`,
+            r12(T1_3, "T1.3", "T1.1"),
+            "Run the whole spec, or a folder that holds T1.1.",
+          ].join("\n"),
+        ])
+        expect(yield* refusalOf(directory)).toMatchObject({ state: "refused", reason: r12(T1_3, "T1.3", "T1.1") })
+        expect(jobs.starts).toEqual([])
+        expect(yield* harness.live(directory)).toEqual(Option.none())
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "names two untrusted folder tasks in natural id order, and the hint names both",
+    () =>
+      Effect.gen(function* () {
+        yield* seeded
+        expect(yield* runTask(yield* TaskHarness.make, SUB(T1_4))).toEqual([
+          [
+            `Refused ${SUB(T1_4)}: 2 failures. No work started.`,
+            r12(T1_4, "T1.4", "T1.2"),
+            r12(T1_4, "T1.4", "T1.3"),
+            "Run the whole spec, or a folder that holds T1.2 and T1.3.",
+          ].join("\n"),
+        ])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF7 runs the T1.3 subtree after a slice in which T1.1 ended trusted: outside.trusted T1.1 directly after run.started",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const db = yield* Database.Service
+        yield* storeSlices(directory, yield* trustedSlice)
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        jobs.mode = "run"
+        const replies = yield* runTask(harness, SUB(T1_3), jobs)
+        expect(replies[0]).toStartWith("Task harness: running")
+        const id = TaskEvents.runID(directory, SPEC)
+        const slice = Effect.map(TaskEvents.read(db.db, id), (stored) =>
+          Option.getOrElse(TaskEvents.latestRun(stored), (): ReadonlyArray<Fact> => []),
+        )
+        // The new slice: its run.started names the T1.3 path, and one more fact follows it.
+        yield* eventually(
+          Effect.map(slice, (list) => {
+            const first = list[0]
+            return first?.type === "run.started" && first.path === SUB(T1_3) && list.length >= 2
+          }),
+          "the new slice's first two facts",
+        )
+        expect((yield* slice).slice(0, 2)).toMatchObject([
+          { type: "run.started", path: SUB(T1_3) },
+          { type: "outside.trusted", id: "T1.1" },
+        ])
+        jobs.status = "cancelled"
+        for (const fiber of jobs.fibers) yield* Fiber.interrupt(fiber)
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF21 a typed /task trust T1.1 never stands in for the folder task's own trust",
+    () =>
+      Effect.gen(function* () {
+        yield* seeded
+        const harness = yield* TaskHarness.make
+        expect(yield* runTask(harness, "trust T1.1")).toEqual([
+          "Task harness: recorded the outside precondition T1.1 as trusted.",
+        ])
+        expect((yield* runTask(harness, SUB(T1_3)))[0]).toContain(r12(T1_3, "T1.3", "T1.1"))
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF20 the latest slice that holds T1.1 decides: trusted, then budget exhausted, is refused",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const f = facts(100)
+        yield* storeSlices(directory, yield* trustedSlice, [f.runStarted(SPEC), ...exhaustLeaf(f, "T1.1", "T1.1.c1")])
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toContain(r12(T1_3, "T1.3", "T1.1"))
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF21 trusted, then reopened and cancelled, is refused",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const plan = yield* loadPlan("release-notes.spec")
+        const f = facts(100)
+        yield* storeSlices(directory, yield* trustedSlice, [
+          f.runStarted(SPEC),
+          ...trustLeaf(plan, f, "T1.1"),
+          f.stale("T1.1.c1"),
+          f.cancelled("user stop"),
+        ])
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toContain(r12(T1_3, "T1.3", "T1.1"))
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF21 a later slice whose plan has no T1.1 region does not decide: the T1.3 subtree runs",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const f = facts(100)
+        // The T1.4 subtree's plan holds T1.4 and the external regions T1.2 and T1.3, not T1.1.
+        yield* storeSlices(directory, yield* trustedSlice, [f.runStarted(SUB(T1_4))])
+        const jobs = jobsOf()
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3), jobs))[0]).toStartWith("Task harness: running")
+        expect(jobs.starts).toHaveLength(1)
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF21 an old slice with no path and T1.1 trusted counts as a whole-spec slice: the T1.3 subtree runs",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const plan = yield* loadPlan("release-notes.spec")
+        const f = facts()
+        yield* storeSlices(directory, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.ended("done")])
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "a subtree slice that trusted T1.1 as an external region decides too: its own subtree resumes",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const branch = yield* git(directory, "rev-parse", "--abbrev-ref", "HEAD")
+        yield* storeSlices(directory, [
+          { type: "run.started", at: 1, base: branch, path: SUB(T1_3) },
+          { type: "outside.trusted", at: 2, id: "T1.1" },
+        ])
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF24 a newer slice that holds T1.1 decides before an older slice whose path no longer loads",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const f = facts(100)
+        yield* storeSlices(directory, [f.runStarted(SUB("T1.9-gone.task"))], yield* trustedSlice)
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF24 a newest slice whose path no longer loads refuses with one plain line naming its path",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const f = facts(100)
+        yield* storeSlices(directory, yield* trustedSlice, [f.runStarted(SUB("T1.9-gone.task"))])
+        const jobs = jobsOf()
+        expect(yield* runTask(yield* TaskHarness.make, SUB(T1_3), jobs)).toEqual([
+          [
+            `Refused ${SUB(T1_3)}. No work started.`,
+            `the stored run of /task ${SUB("T1.9-gone.task")} no longer loads; run the whole spec once to record a newer run`,
+          ].join("\n"),
+        ])
+        expect(jobs.starts).toEqual([])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "the T1.5 subtree with T1.3 trusted: one R12 line for T1.4, and the outside precondition T9 is no refusal",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const plan = yield* loadPlan("release-notes.spec")
+        const f = facts()
+        yield* storeSlices(directory, [
+          f.runStarted(SPEC),
+          ...trustLeaf(plan, f, "T1.1"),
+          ...trustLeaf(plan, f, "T1.3"),
+        ])
+        expect(yield* runTask(yield* TaskHarness.make, SUB(T1_5))).toEqual([
+          [
+            `Refused ${SUB(T1_5)}: 1 failure. No work started.`,
+            r12(T1_5, "T1.5", "T1.4"),
+            "Run the whole spec, or a folder that holds T1.4.",
+          ].join("\n"),
+        ])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "VF8 a subtree run that leaves scenarios out names them in its start message",
+    () =>
+      Effect.gen(function* () {
+        yield* seeded
+        const plan = yield* loadPlan("release-notes.spec")
+        // The scenarios that need a task other than T1.1 that is not an outside precondition.
+        const leftOut = plan.spec.scenarios
+          .filter((scenario) => scenario.needs.some((id) => id !== "T1.1" && !(id in plan.spec.outside)))
+          .map((scenario) => scenario.id)
+        expect(leftOut.length).toBeGreaterThan(0)
+        expect(yield* runTask(yield* TaskHarness.make, SUB(T1_1))).toEqual([
+          `Task harness: running ${SUB(T1_1)} in the background. Its status is in .opencode/task/status.json. Left out: ${leftOut.join(", ")} — they need tasks outside this run.`,
+        ])
+      }),
+    { git: true },
+  )
+})
+
+describe("the plan of a subtree (AD-15)", () => {
+  it.live("gives an external region for an after inherited through afterEffective", () =>
+    Effect.gen(function* () {
+      const whole = yield* loadPlan("release-notes.spec")
+      const parent = whole.spec.tasks.find((task) => task.id === "T1.3")
+      if (parent === undefined) throw new Error("no T1.3")
+      // A child of T1.3 with no `after` of its own inherits T1.3's `after: [T1.1]`.
+      const child = { ...parent, id: "T1.3.1", parent: "T1.3", after: [], afterEffective: ["T1.1"], children: [] }
+      const spec = { ...whole.spec, tasks: [...whole.spec.tasks, child] }
+      const plan = TaskCommand.plan({ spec, specPath: SPEC, path: SPEC, root: Option.some("T1.3.1") })
+      expect(plan.tasks.map((task) => task.id)).toEqual(["T1.3.1"])
+      expect(plan.external).toEqual(["T1.1"])
+    }),
   )
 })
