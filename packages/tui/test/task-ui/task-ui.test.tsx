@@ -54,14 +54,14 @@ import {
   type Status,
 } from "../../src/task-ui/store"
 import { TaskView } from "../../src/task-ui/machine"
-import { LedgerView } from "../../src/task-ui/designs/1-ledger"
-import { DockView } from "../../src/task-ui/designs/2-dock"
+import { LedgerView, registerLedger } from "../../src/task-ui/designs/1-ledger"
+import { DockView, registerDock } from "../../src/task-ui/designs/2-dock"
 import { BoardView } from "../../src/task-ui/designs/3-board"
 import { MatrixView } from "../../src/task-ui/designs/4-matrix"
 import { GanttView, lane } from "../../src/task-ui/designs/5-gantt"
-import { HudView } from "../../src/task-ui/designs/6-hud"
-import { TickerDialog, changes } from "../../src/task-ui/designs/7-ticker"
-import { Screen } from "../../src/task-ui/designs/screen"
+import { HudView, registerHud } from "../../src/task-ui/designs/6-hud"
+import { TickerDialog, changes, registerTicker } from "../../src/task-ui/designs/7-ticker"
+import { Screen, registerScreen } from "../../src/task-ui/designs/screen"
 import { Brand, ShortcutBar, barKeys, registerTab, type Ctx } from "../../src/task-ui/ui"
 import { DESIGNS, nextRunning, proofLogFile, runActive, waitsOn } from "../../src/task-ui/store"
 import {
@@ -766,6 +766,10 @@ test("bar: UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ �
   expect(still.found).toHaveLength(0)
   const diamond = still.spans.lines.flatMap((line) => line.spans).find((span) => span.text.startsWith("◆"))
   expect(((diamond?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(false)
+  // The name keeps its weight when the mark stops: bold in both forms.
+  const stillName = still.spans.lines.flatMap((line) => line.spans).find((span) => span.text.includes("In the Flow"))
+  expect(((stillName?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(true)
+  expect(diamond?.text.includes("In the Flow")).toBe(false)
   expect(still.text).toContain("◆ In the Flow")
 })
 
@@ -801,6 +805,55 @@ test("bar: UI14 UI12 the diamond moves only while live and with animations on; e
   const peek = await marks(() => <Peek {...peekProps} unit="T1.4" width={60} lines={3} />)
   expect(peek.found).toHaveLength(0)
   expect(peek.text).toContain("◆ In the Flow · T1.4 details · read-only")
+})
+
+test("bar: UI14 each design's own mark gets the host's motion setting from its context", async () => {
+  // A host that keeps what each design registers: its slots, its route and its dialog.
+  const hosted = async (design: number, motion: boolean) => {
+    const { view } = await viewFor(status, { design })
+    const slots: Record<string, () => JSX.Element> = {}
+    const routes: Array<{ render: () => JSX.Element }> = []
+    const dialogs: Array<() => JSX.Element> = []
+    const api = {
+      slots: { register: (input: { slots: Record<string, () => JSX.Element> }) => void Object.assign(slots, input.slots) },
+      route: { register: (list: typeof routes) => void routes.push(...list), current: { name: "task-ui" }, navigate: () => {} },
+      keymap: { registerLayer: () => () => {} },
+      ui: { toast: () => {}, dialog: { replace: (render: () => JSX.Element) => void dialogs.push(render), setSize: () => {}, clear: () => {} } },
+      attention: { notify: async () => {} },
+    }
+    const ctx: Ctx = {
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) the design registers read only the slots, route, keymap, ui and attention members above
+      api: api as unknown as TuiPluginApi,
+      view,
+      sessions: none,
+      theme: () => theme,
+      active: () => true,
+      leader: "ctrl+x",
+      root: () => "",
+      owns: () => true,
+      harness: () => [],
+      logs: () => [],
+      motion: () => motion,
+    }
+    if (design === 7) view.setExpanded(true)
+    await settle()
+    const register = { 1: registerLedger, 2: registerDock, 3: registerScreen, 6: registerHud, 7: registerTicker }[design]
+    if (!register) throw new Error(`no design ${design}`)
+    const stop = createRoot((dispose) => {
+      register(ctx)
+      return dispose
+    })
+    await settle()
+    const node = design === 1 ? slots.sidebar_content : design === 2 ? slots.app_bottom : design === 6 ? slots.app : design === 3 ? routes[0]?.render : dialogs[0]
+    if (!node) throw new Error(`design ${design} registered nothing`)
+    const found = (await marks(node)).found.length
+    stop()
+    return found
+  }
+  for (const design of [1, 2, 3, 6, 7]) {
+    expect({ design, on: (await hosted(design, true)) > 0 }).toEqual({ design, on: true })
+    expect({ design, off: await hosted(design, false) }).toEqual({ design, off: 0 })
+  }
 })
 
 test("bar: UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
