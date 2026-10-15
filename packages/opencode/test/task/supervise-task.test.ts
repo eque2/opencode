@@ -574,6 +574,90 @@ describe("the builder watch (D7)", () => {
   )
 })
 
+// The supervisor of a test, once spawned: a turn can start before `spawn` returns, so a turn waits for it.
+const spawned = (holder: { actor?: Supervisor }): Effect.Effect<Supervisor> =>
+  Effect.suspend(() =>
+    holder.actor ? Effect.succeed(holder.actor) : Effect.sleep(5).pipe(Effect.andThen(spawned(holder))),
+  )
+
+const REPEATED = "repetition: 3 identical bash calls in a row"
+
+describe("the end of a turn (AD-11)", () => {
+  it.live("records task.repeated for a turn that repeated itself, before its task_ready and with no nudge", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const holder: { actor?: Supervisor } = {}
+      // prompt.ts stopped the turn on the repetition after the builder had also called task_ready.
+      const repeating: Turn = (prompt) =>
+        Effect.gen(function* () {
+          const actor = yield* spawned(holder)
+          yield* actor.send({ type: "hook.ready", session: prompt.session })
+          yield* actor.send({ type: "hook.repeated", session: prompt.session, reason: REPEATED })
+        })
+      const setup = {
+        plan,
+        ...(yield* runOf({
+          plan,
+          directory: "/root",
+          stored: [f.runStarted(), f.started("T1.1")],
+          turns: [repeating],
+        })),
+      }
+      const actor = yield* spawn(setup, "T1.1")
+      holder.actor = actor
+      yield* stored(setup.id, 1)
+      yield* quiet(actor)
+      yield* settle
+      expect(yield* storedFacts(setup.id)).toMatchObject([{ type: "task.repeated", task: "T1.1", reason: REPEATED }])
+      expect(yield* storedTypes(setup.id)).toEqual(["task.repeated"])
+      // The next building entry is a new attempt: its message, and no nudge spent.
+      const context = (yield* actor.getSnapshot).context
+      expect(context.prompt).toBe("attempt")
+      expect(context.nudges).toBe(0)
+    }),
+  )
+
+  it.live("records a spend cap that ended the turn before a repetition in the same turn", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const now = yield* Clock.currentTimeMillis
+      const capped = {
+        info: {
+          role: "assistant",
+          time: { created: now + 60_000 },
+          error: { data: { message: "insufficient_quota" } },
+        },
+        parts: [],
+      }
+      const holder: { actor?: Supervisor } = {}
+      const repeating: Turn = (prompt) =>
+        Effect.flatMap(spawned(holder), (actor) =>
+          actor.send({ type: "hook.repeated", session: prompt.session, reason: REPEATED }),
+        )
+      const setup = {
+        plan,
+        ...(yield* runOf({
+          plan,
+          directory: "/root",
+          stored: [f.runStarted(), f.started("T1.1")],
+          turns: [repeating],
+          messages: [capped],
+        })),
+      }
+      const actor = yield* spawn(setup, "T1.1")
+      holder.actor = actor
+      yield* stored(setup.id, 1)
+      yield* quiet(actor)
+      yield* settle
+      expect(yield* storedFacts(setup.id)).toMatchObject([
+        { type: "task.needs_human", task: "T1.1", reason: "spend cap: insufficient_quota" },
+      ])
+    }),
+  )
+})
+
 describe("nudges and attempts", () => {
   it.live("SV12 nudges twice, then commits the work and fails its proofs with the builder's missing task_ready", () =>
     Effect.gen(function* () {
