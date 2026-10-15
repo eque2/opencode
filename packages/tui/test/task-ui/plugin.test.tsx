@@ -323,6 +323,8 @@ test("UI14 the plugin's mark moves for a live run with animations on, and stays 
   }
   first.kv.set("animations_enabled", false)
   await first.unload()
+  // A fresh heartbeat again, so the mark is static for the setting, not for a run gone still.
+  await writeStatus(dir.path, { ...fixture, run: { ...fixture.run, aliveAt: Date.now() } })
   await using second = await load(dir.path, { kv: first.kv })
   expect(await second.shows("In the Flow run: running")).toBe(true)
   for (const after of [" In the Flow run: running", " In the Flow Ledger  "])
