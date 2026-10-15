@@ -315,21 +315,14 @@ const FINAL: ReadonlyArray<Entry> = [
   },
 ]
 
-const VIEW = "The task-ui's view state and polls, replaced by the taskView actor (AD-16)."
 const CLASSIFY = "A task-ui classification by state names, replaced by a read of the status tags (AD-16)."
 const interim = (file: string, until: string, reason: string, identifiers: ReadonlyArray<string>) =>
   identifiers.map((identifier): Entry => ({ file, identifier, reason, until }))
 
 // The interim entries: state that phase 2 and phase 4 move into the actors. Each names the task that removes it.
 const INTERIM: ReadonlyArray<Entry> = [
-  ...interim(ui("store.ts"), "T4.3", VIEW, ["value", "fiber", "design", "chosen", "expanded", "watching"]),
-  // The store reads the tags since T4.2; the lists stay for their last importers (watch.tsx, the Gantt, the Ticker).
-  ...interim(ui("store.ts"), "T4.3", CLASSIFY, ["ACTIVE"]),
+  // The store reads the tags since T4.2; ENDED stays for its last importers, the Gantt and the Ticker.
   ...interim(ui("store.ts"), "T4.8", CLASSIFY, ["ENDED"]),
-  ...interim(ui("index.tsx"), "T4.3", VIEW, ["root", "sample"]),
-  ...interim(ui("peek.tsx"), "T4.3", VIEW, ["children", "all", "activity"]),
-  ...interim(ui("watch.tsx"), "T4.3", VIEW, ["armed", "stopper", "target", "tail"]),
-  ...interim(ui("watch.tsx"), "T4.3", CLASSIFY, ["ACTIVE"]),
   ...interim(ui("designs/3-board.tsx"), "T4.6", CLASSIFY, ["COLUMNS"]),
   ...interim(ui("designs/5-gantt.tsx"), "T4.7", CLASSIFY, ["ENDED", "BLOCK"]),
   ...interim(ui("designs/7-ticker.tsx"), "T4.8", CLASSIFY, ["ENDED"]),

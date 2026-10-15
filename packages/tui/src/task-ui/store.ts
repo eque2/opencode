@@ -1,7 +1,6 @@
-// The data every task-ui design shares: the harness status file, the task tree derived from it, the selection, the
-// expanded toggle, and the design number. The designs only render; nothing here writes to the harness.
-import { Array as Arr, Effect, Fiber, Option, Schedule, Schema, type Duration } from "effect"
-import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
+// The data every task-ui design shares: the harness status file and what pure selectors derive from it (the task tree,
+// the tags' classes, the display table, durations). The view state is the taskView actor's (machine.ts, view.ts).
+import { Array as Arr, Option, Schema } from "effect"
 import type { RGBA } from "@opentui/core"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 
@@ -80,20 +79,6 @@ export type TaskStatus = typeof Task.Type
 /** The status in `text`, or none when it is not a status file (empty, half written, or another shape). */
 export const parse = Schema.decodeUnknownOption(Schema.fromJsonString(Status))
 
-/** `read`'s value, read now and then every `every` while the calling owner lives. A failed read keeps the last value. */
-export function poll<A>(initial: A, every: Duration.Input, read: Effect.Effect<A, unknown>): Accessor<A> {
-  const [value, setValue] = createSignal(initial)
-  const fiber = Effect.runFork(
-    read.pipe(
-      Effect.tap((next) => Effect.sync(() => setValue(() => next))),
-      Effect.ignore,
-      Effect.repeat(Schedule.spaced(every)),
-    ),
-  )
-  onCleanup(() => Effect.runFork(Fiber.interrupt(fiber)))
-  return value
-}
-
 // Natural order, so `T1.10` sorts after `T1.2`.
 const collator = new Intl.Collator("en", { numeric: true })
 
@@ -108,9 +93,6 @@ export const proofLogFile = (directory: string, task: string) => `${directory}/.
 
 /** A proof log: its name (a task id, or `scenarios`) and when the harness last wrote to it, in epoch milliseconds. */
 export type ProofLog = { readonly name: string; readonly mtime: number }
-
-/** How long a run may stand still and still count as live: the harness's own stream-idle bound. */
-export const LIVE_WINDOW = 300_000
 
 /** The mark on every task-workflow surface, so none of it reads as an ordinary subagent task. */
 export const MARK = "◆ In the Flow"
@@ -217,10 +199,6 @@ export const stoppedGroup = (task: TaskStatus) => (tagged(task, "dead") ? 0 : ta
 
 /** The colour of a state. */
 export const stateColor = (theme: TuiThemeCurrent, state: string) => color(theme, tone(state))
-
-// The task states in which the harness works on a task: building, proving or verifying. The importers that still read
-// it move to the tags in T4.3; the store reads the tags.
-export const ACTIVE = ["building", "proving", "verifying"]
 
 // The run and task states after which nothing moves without the developer. The Gantt and the Ticker read it until T4.7
 // and T4.8; the store reads the tags.
@@ -342,7 +320,7 @@ export const durationOf = (
   return run.aliveAt === undefined ? "" : elapsed(run.aliveAt - task.startedAt)
 }
 
-// --- the view state ------------------------------------------------------------------------------------------------
+// --- the designs ---------------------------------------------------------------------------------------------------
 
 /** The designs, and where each one shows: the picker and the switch notice say it, so a design is never hard to find. */
 export const DESIGNS = [
@@ -354,68 +332,3 @@ export const DESIGNS = [
   { id: 6, name: "HUD", where: "floating panel in the top-right corner" },
   { id: 7, name: "Ticker", where: "line beside the prompt, with notices" },
 ] as const
-
-export type View = ReturnType<typeof createView>
-
-/**
- * The selection, the expanded toggle and the design number over a status accessor. Call it inside a reactive root.
- * Expanded is one state for every design: what it shows (details under the tree, a full-screen view, a dialog) is the
- * design's own, and it survives a design switch.
- */
-export function createView(input: {
-  status: Accessor<Status | undefined>
-  now: Accessor<number>
-  design: number
-  /** The run is live (see `index.tsx`); without it, live means the status says the run has not ended. */
-  live?: Accessor<boolean>
-}) {
-  const [design, setDesign] = createSignal(input.design)
-  const [chosen, setChosen] = createSignal<string>()
-  const [expanded, setExpanded] = createSignal(false)
-  const [watching, setWatching] = createSignal(false)
-  const list = createMemo(() => {
-    const status = input.status()
-    return status ? rows(status) : []
-  })
-  const selected = createMemo(() => {
-    const id = chosen()
-    return id && list().some((row) => row.id === id) ? id : focus(list())
-  })
-  const move = (by: number) => {
-    const ids = list().map((row) => row.id)
-    if (ids.length === 0) return
-    const at = ids.indexOf(selected() ?? ids[0])
-    setChosen(ids[(at + by + ids.length) % ids.length])
-  }
-  const moveRunning = (by: 1 | -1) => {
-    const id = nextRunning(list(), selected(), by)
-    if (Option.isSome(id)) setChosen(id.value)
-  }
-  return {
-    status: input.status,
-    now: input.now,
-    /** Tab and `esc` act on the run: it has not ended, and it is still moving. */
-    live: (): boolean => {
-      if (input.live) return input.live()
-      const status = input.status()
-      return Boolean(status && runActive(status))
-    },
-    rows: list,
-    selected,
-    select: setChosen,
-    next: () => move(1),
-    previous: () => move(-1),
-    /** The next task in work: what Tab selects in the watch view. */
-    nextRunning: () => moveRunning(1),
-    previousRunning: () => moveRunning(-1),
-    expanded,
-    setExpanded,
-    toggleExpanded: () => setExpanded((open) => !open),
-    /** The watch view is on: the session area shows the selected task's running session (see `watch.tsx`). */
-    watching,
-    setWatching,
-    design,
-    setDesign: (id: number) => DESIGNS.some((item) => item.id === id) && setDesign(id),
-    cycleDesign: () => setDesign((id) => (id % DESIGNS.length) + 1),
-  }
-}

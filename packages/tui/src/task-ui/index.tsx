@@ -2,26 +2,19 @@
 // `<directory>/.opencode/task/status.json`, in one of seven designs. `/task-design` picks the design and `ctrl+x v`
 // cycles it. The chosen design is kept in the TUI's kv store and restored at the next launch. Without a stored design
 // it starts on a host's `design` option (1-7) where a host passes one, else on design 1 (Ledger); built-in plugins get
-// no options. README.md describes the designs and the keys.
+// no options. The view state and every cadence are one taskView actor (machine.ts, AD-16); README.md describes the
+// designs and the keys.
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
-import { Clock, Effect, Option } from "effect"
-import { createEffect, createMemo, createRoot, createSignal, on, onCleanup } from "solid-js"
+import { Effect, Exit, Scope } from "effect"
+import { createActor } from "@jambudipa/xstate-effect"
+import { createEffect, createMemo, createRoot, on, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
+import { TaskView } from "./machine"
 import { liveSessions } from "./peek"
-import {
-  DESIGNS,
-  LIVE_WINDOW,
-  NAME,
-  createView,
-  parse,
-  poll,
-  runActive,
-  statusFile,
-  type ProofLog,
-  type Status,
-} from "./store"
+import { DESIGNS, NAME } from "./store"
 import { ShortcutBar, leaderOf, registerTab, type Ctx } from "./ui"
-import { registerWatch } from "./watch"
+import { viewOf, type ViewActor } from "./view"
+import { registerWatch, type Listen } from "./watch"
 import { registerLedger } from "./designs/1-ledger"
 import { registerDock } from "./designs/2-dock"
 import { registerHud } from "./designs/6-hud"
@@ -30,12 +23,24 @@ import { registerScreen } from "./designs/screen"
 
 const tui: TuiPlugin = (api, options) =>
   Effect.runPromise(
-    Effect.sync(() => {
+    Effect.gen(function* () {
       // A stored value that is not a design (an older or hand-edited kv file) is passed over.
       const design = [api.kv.get(KV_DESIGN), Number(options?.design)].find(isDesign) ?? 1
+      // One taskView actor for each plugin instance, in a scope that closes with the plugin's reactive root.
+      const scope = yield* Scope.make()
+      const actor = yield* Scope.provide(scope)(
+        createActor(TaskView.machine, { input: { directory: api.state.path.directory, design } }),
+      )
+      yield* actor.start
       createRoot((dispose) => {
-        api.lifecycle.onDispose(dispose)
-        start(api, design)
+        api.lifecycle.onDispose(() => {
+          dispose()
+          Effect.runFork(Scope.close(scope, Exit.void))
+        })
+        const listen: Listen = (type, run) => {
+          Effect.runFork(Scope.provide(scope)(actor.on(type, () => Effect.sync(run))))
+        }
+        start(api, actor, listen)
       })
     }),
   )
@@ -45,81 +50,44 @@ const KV_DESIGN = "task_ui_design"
 
 const isDesign = (value: unknown): value is number => DESIGNS.some((item) => item.id === value)
 
-// When a file was last written, in epoch milliseconds; 0 when it cannot be read.
-const modified = (file: string) =>
-  Effect.tryPromise(() => Bun.file(file).stat()).pipe(
-    Effect.map((stat) => stat.mtimeMs),
-    Effect.orElseSucceed(() => 0),
-  )
+function start(api: Parameters<TuiPlugin>[0], actor: ViewActor, listen: Listen) {
+  const view = viewOf(actor)
 
-// The proof logs the harness writes as proofs run (`.opencode/task/proofs/<name>.log`); none when it wrote none.
-const proofLogs = (directory: string) => {
-  const folder = `${directory}/.opencode/task/proofs`
-  return Effect.tryPromise(() => Array.fromAsync(new Bun.Glob("*.log").scan({ cwd: folder }))).pipe(
-    Effect.flatMap((names) =>
-      Effect.forEach(names, (name) =>
-        modified(`${folder}/${name}`).pipe(Effect.map((mtime): ProofLog => ({ name: name.slice(0, -4), mtime }))),
-      ),
-    ),
-    Effect.orElseSucceed((): ReadonlyArray<ProofLog> => []),
-  )
-}
-
-function start(api: Parameters<TuiPlugin>[0], design: number) {
-  // The status file, its age, the proof logs and the clock, read once a second. The text is compared before parsing,
-  // and a text that does not parse (absent, or the harness is mid-write) keeps the last good status on screen.
-  const file = statusFile(api.state.path.directory)
-  const sample = poll<{ text: string; mtime: number; logs: ReadonlyArray<ProofLog>; now: number }>(
-    { text: "", mtime: 0, logs: [], now: 0 },
-    "1 second",
-    Effect.all({
-      text: Effect.tryPromise(() => Bun.file(file).text()).pipe(Effect.orElseSucceed(() => "")),
-      mtime: modified(file),
-      logs: proofLogs(api.state.path.directory),
-      now: Clock.currentTimeMillis,
-    }),
-  )
-  const text = createMemo(() => sample().text)
-  const status = createMemo<Status | undefined>((last) => Option.getOrElse(parse(text()), () => last))
-  const now = createMemo(() => sample().now)
-  const logs = createMemo(() => sample().logs)
-
-  // The root session: the session on screen, or its parent when the developer opened a builder or verifier.
-  const [root, setRoot] = createSignal("")
-  createEffect(() => {
+  // The root session: the session on screen, or its parent when the developer opened a builder or verifier. Only a
+  // change of session or parent is a route change: the watch view's own `watch` parameter is not.
+  const route = createMemo(() => {
     const current = api.route.current
     const id = "params" in current ? current.params?.sessionID : ""
-    if (typeof id === "string" && id) setRoot(api.state.session.get(id)?.parentID ?? id)
+    if (typeof id !== "string" || !id) return ""
+    return [id, api.state.session.get(id)?.parentID ?? ""].join("\n")
   })
+  createEffect(
+    on(route, (key) => {
+      if (!key) return
+      const [session, parent] = key.split("\n")
+      view.send(parent ? { type: "route.changed", session, parent } : { type: "route.changed", session })
+    }),
+  )
 
-  // The run on screen is the root session's own when the root owns harness sessions. It is live while it has not
-  // ended and something still moves: the status file, a harness session, or a proof log changed in the last five
-  // minutes (the harness's stream-idle bound). A run whose server stopped keeps a running status, but nothing moves.
-  const sessions = liveSessions(api, root)
+  // The root's harness sessions, read on the view's session cadence; the machine learns whether the root owns any.
+  const sessions = liveSessions(api, view)
   const harness = sessions.all()
-  const owns = createMemo(() => harness().length > 0)
-  const live = createMemo(() => {
-    const current = status()
-    if (!current || !runActive(current) || !owns()) return false
-    const changed = Math.max(
-      sample().mtime,
-      ...harness().map((item) => item.updated),
-      ...logs().map((log) => log.mtime),
-    )
-    return now() - changed <= LIVE_WINDOW
-  })
+  createEffect(
+    on(harness, (list) =>
+      view.send({ type: "sessions.changed", owns: list.length > 0, updated: Math.max(0, ...list.map((item) => item.updated)) }),
+    ),
+  )
 
-  const view = createView({ status, now, design, live })
   // Every change is kept, whichever key made it (the picker, `ctrl+x v`, or a full-screen design's own key).
   createEffect(on(view.design, (id) => api.kv.set(KV_DESIGN, id), { defer: true }))
   const base = {
     api,
     view,
-    root,
+    root: view.root,
     sessions,
-    owns,
+    owns: view.owns,
     harness,
-    logs,
+    logs: view.logs,
     theme: () => api.theme.current,
     leader: leaderOf(api),
   }
@@ -131,7 +99,7 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
   registerHud(ctx(6))
   registerTicker(ctx(7))
   // The watch view works with every design.
-  const toggleWatch = registerWatch({ ...base, active: () => true })
+  const toggleWatch = registerWatch({ ...base, active: () => true }, listen)
   // One shortcut bar for every design, at the bottom right of the input box.
   api.slots.register({
     order: 50,
@@ -143,17 +111,19 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
     },
   })
 
-  // Every switch says where the new design shows, so a one-line design is never hard to find.
-  const announce = () => {
-    const current = DESIGNS[view.design() - 1]
+  // Every switch says where the new design shows, so a one-line design is never hard to find. The id is the one chosen:
+  // the machine takes the event on its own fiber.
+  const announce = (id: number) => {
+    const current = DESIGNS[id - 1]
     api.ui.toast({
       title: `Task design ${current.id}: ${current.name}`,
       message: `${current.where[0].toUpperCase()}${current.where.slice(1)}. ${base.leader} o expands it.`,
     })
   }
   const cycle = () => {
-    view.cycleDesign()
-    announce()
+    const next = (view.design() % DESIGNS.length) + 1
+    view.setDesign(next)
+    announce(next)
   }
   const pick = () =>
     api.ui.dialog.replace(() => (
@@ -164,7 +134,7 @@ function start(api: Parameters<TuiPlugin>[0], design: number) {
         onSelect={(option) => {
           view.setDesign(option.value)
           api.ui.dialog.clear()
-          announce()
+          announce(option.value)
         }}
       />
     ))

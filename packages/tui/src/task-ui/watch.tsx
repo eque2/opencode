@@ -4,26 +4,14 @@
 // only: nothing here sends to a harness session.
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { useTerminalDimensions } from "@opentui/solid"
-import { Effect, Fiber, Option, type Duration } from "effect"
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
+import { Effect, Option } from "effect"
+import { For, Show, createEffect, createMemo, createResource, onCleanup, type Accessor } from "solid-js"
 import stripAnsi from "strip-ansi"
 import type { Child } from "./peek"
-import {
-  ACTIVE,
-  MARK,
-  NAME,
-  cut,
-  label,
-  poll,
-  proofLogFile,
-  rows,
-  runActive,
-  waitsOn,
-  type ProofLog,
-  type Status,
-} from "./store"
+import { MARK, NAME, cut, label, proofLogFile, rows, runActive, tagged, waitsOn, type ProofLog, type Status } from "./store"
 import { SCREENS } from "./designs/screen"
 import { Brand, autocompleteOpen, type Ctx } from "./ui"
+import type { View } from "./view"
 
 /** What the band says: what is watched, or why nothing is. */
 export type Band =
@@ -65,9 +53,14 @@ const judged = (child: Child | undefined) =>
 // A band with no session of its own: the root session's own transcript shows.
 const note = (text: string): Watch => ({ band: { kind: "note", text }, session: "", keep: false, proofs: "" })
 
-/** `Nothing is running. The run waits on T9.`, or, once the run has ended, `Nothing is running · run: done`. */
+/**
+ * What the band says with nothing in work: an untrusted outside precondition the run waits on, with its trust command
+ * (UI21); else the tasks it waits on, an external one with no command; else how the run ended.
+ */
 export const idleText = (status: Status) => {
   const ids = runActive(status) ? waitsOn(status) : []
+  const outside = ids.find((id) => status.outside?.[id]?.state === "untrusted")
+  if (outside) return `Nothing is running. The run is waiting on ${outside} (outside) — run /task trust ${outside}.`
   return ids.length > 0
     ? `Nothing is running. The run waits on ${ids.join(", ")}.`
     : `Nothing is running · run: ${label(status.run.state)}`
@@ -95,7 +88,7 @@ export function chooseWatch(input: {
   readonly loaded: (session: string) => boolean
   readonly recent?: string
 }): Watch {
-  const working = rows(input.status).filter((row) => ACTIVE.includes(row.task.state))
+  const working = rows(input.status).filter((row) => tagged(row.task, "active"))
   const id = input.task && input.status.tasks[input.task] ? input.task : (working[0]?.id ?? "")
   const task = Option.fromNullishOr(input.status.tasks[id])
   if (working.length === 0 || Option.isNone(task)) {
@@ -268,17 +261,27 @@ export function ProofPanel(props: {
   )
 }
 
-// The proof log's tail, read twice a second: the harness appends to it every 200 ms, so output shows within a second.
-function LiveProofPanel(props: { ctx: Ctx; task: string; width: number; height: number }) {
-  const file = proofLogFile(props.ctx.api.state.path.directory, props.task)
-  const tail = poll(
-    { text: "", partial: false },
-    "500 millis",
-    Effect.tryPromise(() => Bun.file(file).slice(-PROOF_TAIL_BYTES).text()).pipe(
-      Effect.map((text) => ({ text, partial: Bun.file(file).size > PROOF_TAIL_BYTES })),
-      Effect.orElseSucceed(() => ({ text: "", partial: false })),
-    ),
+/**
+ * A proof log's tail, read again on each tail tick of the view (500 ms): the harness appends to it every 200 ms, so
+ * output shows within a second. `partial` says the tail starts mid-file.
+ */
+export function liveTail(file: string, view: Pick<View, "ticks">) {
+  const [tail] = createResource(
+    () => view.ticks().tail,
+    () =>
+      Effect.runPromise(
+        Effect.tryPromise(() => Bun.file(file).slice(-PROOF_TAIL_BYTES).text()).pipe(
+          Effect.map((text) => ({ text, partial: Bun.file(file).size > PROOF_TAIL_BYTES })),
+          Effect.orElseSucceed(() => ({ text: "", partial: false })),
+        ),
+      ),
+    { initialValue: { text: "", partial: false } },
   )
+  return tail
+}
+
+function LiveProofPanel(props: { ctx: Ctx; task: string; width: number; height: number }) {
+  const tail = liveTail(proofLogFile(props.ctx.api.state.path.directory, props.task), props.ctx.view)
   return (
     <ProofPanel
       theme={props.ctx.theme}
@@ -291,53 +294,18 @@ function LiveProofPanel(props: { ctx: Ctx; task: string; width: number; height: 
   )
 }
 
-/**
- * `esc` twice, as opencode's own interrupt works: the first press `warn`s and arms, a second press within `window`
- * `stop`s. While `open` (the prompt's autocomplete, a permission or a question is showing), the key is not taken.
- * Returns the key's command: true when it took the key. Call it inside a reactive owner; the pending disarm ends with
- * it.
- */
-export function stopper(input: {
-  readonly open: () => boolean
-  readonly warn: () => void
-  readonly stop: () => void
-  readonly window?: Duration.Input
-}) {
-  const [armed, setArmed] = createSignal(false)
-  let disarm = Option.none<Fiber.Fiber<unknown>>()
-  const cancelDisarm = () => {
-    if (Option.isSome(disarm)) Effect.runFork(Fiber.interrupt(disarm.value))
-    disarm = Option.none()
-  }
-  onCleanup(cancelDisarm)
-  return () => {
-    if (input.open()) return false
-    cancelDisarm()
-    if (armed()) {
-      setArmed(false)
-      input.stop()
-      return true
-    }
-    setArmed(true)
-    disarm = Option.some(
-      Effect.runFork(
-        Effect.sleep(input.window ?? "5 seconds").pipe(Effect.andThen(Effect.sync(() => setArmed(false)))),
-      ),
-    )
-    input.warn()
-    return true
-  }
-}
+/** How the plugin hears the stop key's emitted events from the view actor: warn on the first press, stop on the second. */
+export type Listen = (type: "stop.warn" | "stop.run", run: () => void) => void
 
 /**
  * The watch view's state and keys: the session it shows, the band in the `session_watch` slot, the route it keeps on
  * the session screen, and `esc` twice to stop the run. All of it acts only on a root session that owns harness
  * sessions (`ctx.owns`). Returns the toggle that `ctrl+x w` runs.
  */
-export function registerWatch(ctx: Ctx) {
+export function registerWatch(ctx: Ctx, listen: Listen) {
   const { api, view } = ctx
 
-  // The selected task's harness sessions, from the shared poll: a task revisited with Tab shows at once.
+  // The selected task's harness sessions, from the shared session list: a task revisited with Tab shows at once.
   const children = createMemo(() => ctx.harness().filter((item) => item.unit === view.selected()))
   const recent = createMemo(() => recentProof(ctx.logs(), view.now()))
   const watch = createMemo(() => {
@@ -355,14 +323,11 @@ export function registerWatch(ctx: Ctx) {
       : Option.none<Watch>()
   })
 
-  // The session in the frame: the latest choice, "" for the root's own transcript; kept while nothing runs.
-  const [target, setTarget] = createSignal("")
+  // The session in the frame is the machine's `target`: the latest choice, kept while nothing runs, "" once the watch
+  // view is off.
   createEffect(() => {
     const current = Option.getOrUndefined(watch())
-    if (current && !current.keep) setTarget(current.session)
-  })
-  createEffect(() => {
-    if (!view.watching()) setTarget("")
+    if (current) view.send({ type: "watch.target", session: current.session, keep: current.keep })
   })
 
   // The root session's own route, the only one the view acts on: a developer who opens a child session, or a
@@ -378,7 +343,7 @@ export function registerWatch(ctx: Ctx) {
     const current = api.route.current
     const root = ctx.root()
     if (!root || !ctx.owns() || !onRoot() || !("params" in current)) return
-    const want = view.watching() ? target() || root : ""
+    const want = view.watching() ? view.target() || root : ""
     const have = typeof current.params?.watch === "string" ? current.params.watch : ""
     if (want === have) return
     api.route.navigate("session", want ? { sessionID: root, watch: want } : { sessionID: root })
@@ -408,33 +373,37 @@ export function registerWatch(ctx: Ctx) {
     },
   })
 
-  // `esc` twice stops the whole run. The run belongs to the root session, so stopping it aborts that session. The
-  // stop is announced only once the server took it.
-  const stopRun = stopper({
-    open: () =>
-      autocompleteOpen(api) ||
-      api.state.session.permission(ctx.root()).length > 0 ||
-      api.state.session.question(ctx.root()).length > 0,
-    warn: () => api.ui.toast({ variant: "warning", message: "Press esc again to stop the run" }),
-    stop: () => {
-      const sessionID = ctx.root()
-      const path = view.status()?.run.path ?? ""
-      Effect.runFork(
-        Effect.tryPromise(() => api.client.session.abort({ sessionID }, { throwOnError: true })).pipe(
-          Effect.match({
-            onSuccess: () =>
-              api.ui.toast({
-                message: path
-                  ? `Run stopped. Type /task ${path} to start it again.`
-                  : "Run stopped. Type the same /task to start it again.",
-              }),
-            onFailure: () =>
-              api.ui.toast({ variant: "error", message: "The run did not stop. Press esc twice to try again." }),
-          }),
-        ),
-      )
-    },
+  // `esc` twice stops the whole run: the view machine's stop key arms on the first press and stops on a second within
+  // 5 s. The run belongs to the root session, so stopping it aborts that session; the stop is announced only once the
+  // server took it. While the autocomplete, a permission or a question is showing, `esc` is theirs.
+  const open = () =>
+    autocompleteOpen(api) ||
+    api.state.session.permission(ctx.root()).length > 0 ||
+    api.state.session.question(ctx.root()).length > 0
+  listen("stop.warn", () => api.ui.toast({ variant: "warning", message: "Press esc again to stop the run" }))
+  listen("stop.run", () => {
+    const sessionID = ctx.root()
+    const path = view.status()?.run.path ?? ""
+    Effect.runFork(
+      Effect.tryPromise(() => api.client.session.abort({ sessionID }, { throwOnError: true })).pipe(
+        Effect.match({
+          onSuccess: () =>
+            api.ui.toast({
+              message: path
+                ? `Run stopped. Type /task ${path} to start it again.`
+                : "Run stopped. Type the same /task to start it again.",
+            }),
+          onFailure: () =>
+            api.ui.toast({ variant: "error", message: "The run did not stop. Press esc twice to try again." }),
+        }),
+      ),
+    )
   })
+  const stopRun = () => {
+    if (open()) return false
+    view.send({ type: "stop.key" })
+    return true
+  }
   createEffect(() => {
     if (!view.watching() || !view.live() || !ctx.owns() || !onRoot()) return
     onCleanup(
@@ -459,7 +428,7 @@ export function registerWatch(ctx: Ctx) {
     // The full-screen designs and the Ticker's dialog cover the session area, where the watch view shows.
     if (SCREENS[view.design()] || view.design() === 7) view.setExpanded(false)
     const selected = view.rows().find((row) => row.id === view.selected())
-    if (!selected || !ACTIVE.includes(selected.task.state)) view.nextRunning()
+    if (!selected || !tagged(selected.task, "active")) view.nextRunning()
     view.setWatching(true)
   }
 }

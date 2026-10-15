@@ -3,8 +3,9 @@
 import type { Part } from "@opencode-ai/sdk/v2"
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { Effect } from "effect"
-import { For, Show, createMemo, type Accessor } from "solid-js"
-import { MARK, bySeverity, color, cut, glyph, label, obligationsOf, poll, stateColor, tone, type Tone, type View } from "./store"
+import { For, Show, createMemo, createResource, type Accessor } from "solid-js"
+import { MARK, bySeverity, color, cut, glyph, label, obligationsOf, stateColor, tone, type Tone } from "./store"
+import type { View } from "./view"
 
 /** A builder, verifier or reviewer session the harness made for a unit (`T1.4 builder`, `S3 verifier (again)`). */
 export type Child = {
@@ -24,11 +25,11 @@ export type Line = { readonly glyph: string; readonly tone: Tone; readonly text:
 
 /** Where the peek reads sessions from: the live server, or fixed data in a test. */
 export type Sessions = {
-  /** The harness sessions of `unit`, oldest first. Polls while the calling component lives. */
+  /** The harness sessions of `unit`, oldest first, from the shared session list. */
   readonly children: (unit: string) => Accessor<ReadonlyArray<Child>>
-  /** The latest activity of one session. Polls while the calling component lives. */
+  /** The latest activity of one session, read again on each activity tick while the calling component lives. */
   readonly activity: (sessionID: string) => Accessor<ReadonlyArray<Line>>
-  /** Every harness session of the root, with its unit. Polls while the calling owner lives. */
+  /** Every harness session of the root, with its unit, read again on each session tick. */
   readonly all: () => Accessor<ReadonlyArray<Harness>>
 }
 
@@ -56,30 +57,45 @@ export const harnessOf = (session: {
 }
 
 /**
- * The child sessions of the root session the developer is looking at, read through the SDK. The peek is telemetry:
- * a failed read keeps what is on screen.
+ * The child sessions of the root session the developer is looking at, read through the SDK on the view's cadences
+ * (AD-16): the session list on each `sessions` tick (2 s), a session's activity on each `activity` tick (1.5 s). The
+ * peek is telemetry: a failed read keeps what is on screen.
  */
-export function liveSessions(api: TuiPluginApi, root: Accessor<string>): Sessions {
-  // No root yet (the developer has not opened a session): no call, an empty list.
-  const read = Effect.suspend((): Effect.Effect<ReadonlyArray<Harness>, unknown> =>
-    root()
-      ? Effect.tryPromise(() => api.client.session.children({ sessionID: root() })).pipe(
-          Effect.map((result) => (result.data ?? []).flatMap(harnessOf)),
-        )
-      : Effect.succeed([]),
+export function liveSessions(api: TuiPluginApi, view: View): Sessions {
+  // Keyed by a string, so only a new root or a new tick reads again, not every snapshot of the view.
+  const [all] = createResource(
+    () => `${view.ticks().sessions}\n${view.root()}`,
+    (key, info): Promise<ReadonlyArray<Harness>> => {
+      const root = key.slice(key.indexOf("\n") + 1)
+      // No root yet (the developer has not opened a session): no call, an empty list.
+      return root
+        ? Effect.runPromise(
+            Effect.tryPromise(() => api.client.session.children({ sessionID: root })).pipe(
+              Effect.map((result): ReadonlyArray<Harness> => (result.data ?? []).flatMap(harnessOf)),
+              Effect.orElseSucceed(() => info.value ?? []),
+            ),
+          )
+        : Promise.resolve([])
+    },
+    { initialValue: [] },
   )
   return {
-    children: (unit) =>
-      poll<ReadonlyArray<Child>>([], "2 seconds", read.pipe(Effect.map((all) => all.filter((item) => item.unit === unit)))),
-    all: () => poll<ReadonlyArray<Harness>>([], "2 seconds", read),
-    activity: (sessionID) =>
-      poll<ReadonlyArray<Line>>(
-        [],
-        "1500 millis",
-        Effect.tryPromise(() => api.client.session.messages({ sessionID, limit: 8 })).pipe(
-          Effect.map((result) => (result.data ?? []).flatMap((message) => message.parts.flatMap(lines))),
-        ),
-      ),
+    all: () => all,
+    children: (unit) => createMemo(() => all().filter((item) => item.unit === unit)),
+    activity: (sessionID) => {
+      const [activity] = createResource(
+        () => view.ticks().activity,
+        (_tick, info): Promise<ReadonlyArray<Line>> =>
+          Effect.runPromise(
+            Effect.tryPromise(() => api.client.session.messages({ sessionID, limit: 8 })).pipe(
+              Effect.map((result): ReadonlyArray<Line> => (result.data ?? []).flatMap((message) => message.parts.flatMap(lines))),
+              Effect.orElseSucceed(() => info.value ?? []),
+            ),
+          ),
+        { initialValue: [] },
+      )
+      return activity
+    },
   }
 }
 
@@ -140,7 +156,7 @@ export function Peek(props: {
   const children = props.sessions.children(props.unit)
   const builder = createMemo(() => children().findLast((child) => child.role === "builder"))
   const verifier = createMemo(() => children().findLast((child) => child.role !== "builder"))
-  // By id, so a poll that returns the same session does not remount its activity.
+  // By id, so a read that returns the same session does not remount its activity.
   const builderID = createMemo(() => builder()?.id)
   const verifierID = createMemo(() => verifier()?.id)
   const task = createMemo(() => props.view.status()?.tasks[props.unit])

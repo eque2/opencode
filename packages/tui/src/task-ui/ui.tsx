@@ -15,8 +15,8 @@ import {
   type ProofLog,
   type Row,
   type Status,
-  type View,
 } from "./store"
+import type { View } from "./view"
 
 /** What a design gets: the host API, the shared view state, the peek's session source, and whether it is selected. */
 export type Ctx = {
@@ -34,7 +34,7 @@ export type Ctx = {
    * watch view, Tab and `esc` leave it alone.
    */
   readonly owns: Accessor<boolean>
-  /** Every harness session of the root, from one shared poll, so a task revisited with Tab shows at once. */
+  /** Every harness session of the root, from the shared session list, so a task revisited with Tab shows at once. */
   readonly harness: Accessor<ReadonlyArray<Harness>>
   /** The proof logs in `.opencode/task/proofs/`, with when each was last written. */
   readonly logs: Accessor<ReadonlyArray<ProofLog>>
