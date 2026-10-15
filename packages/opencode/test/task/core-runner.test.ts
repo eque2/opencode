@@ -1,12 +1,14 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "path"
 import type { BlendModel } from "@/task/blend/model"
 import type { History, Plan } from "@/task/core/model"
 import { TaskEvents } from "@/task/core/events"
-import { TaskRunner } from "@/task/core/runner"
+import { TaskCommand } from "@/task/core/command"
+import { RunSupervisor } from "@/task/core/supervise/run"
+import { TaskWorkers } from "@/task/core/workers"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import type { TaskProof } from "@/task/proof"
 import { testEffect } from "../lib/effect"
@@ -15,7 +17,8 @@ import { facts, fail, loadPlan, observed, trustLeaf } from "./lib/machine"
 const fold = (plan: Plan, list: ReadonlyArray<Parameters<typeof TaskEngineXState.apply>[2]>, from?: RunSnapshot) =>
   list.reduce((snapshot, fact) => TaskEngineXState.apply(plan, snapshot, fact), from ?? TaskEngineXState.initial(plan))
 
-// The pure parts of the task harness runner: no server, no model.
+// The pure parts of the task harness that the polled runner held, in the modules that hold them now (spine AD-8):
+// the workers' helpers, the run supervisor's choice of units, and the command's choice of slice. No server, no model.
 
 const entry = (at: number, unit: string, from: string, to: string): History => ({ at, unit, from, to })
 
@@ -32,21 +35,21 @@ describe("the task wall clock", () => {
   ]
 
   test("starts at the latest building entry", () => {
-    expect(TaskRunner.taskClockStart(history.slice(0, 5), "T1.1", 0)).toEqual(Option.some(300))
+    expect(TaskWorkers.taskClockStart(history.slice(0, 5), "T1.1", 0)).toEqual(Option.some(300))
   })
 
   test("a trusted task reopened without building has no clock; built again, it starts afresh", () => {
-    expect(TaskRunner.taskClockStart(history, "T1.1", 0)).toEqual(Option.none())
+    expect(TaskWorkers.taskClockStart(history, "T1.1", 0)).toEqual(Option.none())
     const rebuilt = [...history, entry(800, "T1.1", "proving", "building")]
-    expect(TaskRunner.taskClockStart(rebuilt, "T1.1", 0)).toEqual(Option.some(800))
+    expect(TaskWorkers.taskClockStart(rebuilt, "T1.1", 0)).toEqual(Option.some(800))
   })
 
   test("never starts before the latest start or resume of the run", () => {
-    expect(TaskRunner.taskClockStart(history, "T1.2", 1_000)).toEqual(Option.some(1_000))
+    expect(TaskWorkers.taskClockStart(history, "T1.2", 1_000)).toEqual(Option.some(1_000))
   })
 
   test("a task never in building has no clock", () => {
-    expect(TaskRunner.taskClockStart(history, "T1.3", 0)).toEqual(Option.none())
+    expect(TaskWorkers.taskClockStart(history, "T1.3", 0)).toEqual(Option.none())
   })
 })
 
@@ -102,7 +105,7 @@ const passing: ReadonlyArray<TaskProof.ObligationResult> = [
 ]
 
 const mapped =(input: Parameters<typeof proof>[0], gates: ReadonlyArray<string> = []) =>
-  TaskRunner.results(spec, proof(input), gates)
+  TaskWorkers.results(spec, proof(input), gates)
 
 describe("the proof results", () => {
   test("a verifier-judged pass needs a judge; a machine-judged pass is passed; a review needs a judge", () => {
@@ -174,12 +177,12 @@ describe("the scenario results", () => {
   const scenario = (result: TaskProof.TagResult): TaskProof.ScenarioProof => ({ scenario: "S2", result, evidence })
 
   test("passed is passed; failed keeps its reason; skipped is failed", () => {
-    expect(TaskRunner.scenarioOutcome(scenario({ status: "passed" }))).toEqual({ status: "passed" })
-    expect(TaskRunner.scenarioOutcome(scenario({ status: "failed", reason: "no test titled [S2]" }))).toEqual({
+    expect(TaskWorkers.scenarioOutcome(scenario({ status: "passed" }))).toEqual({ status: "passed" })
+    expect(TaskWorkers.scenarioOutcome(scenario({ status: "failed", reason: "no test titled [S2]" }))).toEqual({
       status: "failed",
       reason: "no test titled [S2]",
     })
-    expect(TaskRunner.scenarioOutcome(scenario({ status: "skipped" }))).toEqual({
+    expect(TaskWorkers.scenarioOutcome(scenario({ status: "skipped" }))).toEqual({
       status: "failed",
       reason: "skipped: every test titled [S2] was skipped",
     })
@@ -189,7 +192,7 @@ describe("the scenario results", () => {
 describe("the verdicts of a round", () => {
   test("keep only the last verdict per id", () => {
     expect(
-      TaskRunner.latestVerdicts([
+      TaskWorkers.latestVerdicts([
         { id: "T1.1.c1", verdict: "rejected", reason: "first look" },
         { id: "T1.1.c2", verdict: "trusted" },
         { id: "T1.1.c1", verdict: "trusted" },
@@ -201,20 +204,28 @@ describe("the verdicts of a round", () => {
   })
 })
 
-// The phase-1 seam (AD-20): the runner starts work by the run machine's phase tags, ends on its `done`, and
-// resumes only a slice that has not ended.
-describe("the phase-1 seam on the run snapshot", () => {
+// The supervisors work by the run machine's tags (AD-8): the run supervisor supervises a task tagged ready or active
+// and a scenario in verifying, proves the ready scenarios as one batch, and supervises nothing once the run is done;
+// the command resumes only a slice that has not ended.
+describe("the units the run supervisor supervises", () => {
   const it = testEffect(NodeServices.layer)
-  const keys = (plan: Plan, snapshot: RunSnapshot) =>
-    TaskRunner.due(plan, snapshot).map((work) => `${work.kind}:${work.key}${work.ids ? `=${work.ids.join(",")}` : ""}`)
+  const keys = (plan: Plan, snapshot: RunSnapshot) => {
+    const units = RunSupervisor.supervised(plan, snapshot)
+    const phase = (unit: string) => RunSupervisor.tagsOf(snapshot, unit).find((tag) => tag !== "waiting" && tag !== "active") ?? "-"
+    const batch = RunSupervisor.readyScenarios(plan, snapshot)
+    return [
+      ...Object.entries(units).map(([unit, kind]) => `${kind}:${unit}:${phase(unit)}`),
+      ...(batch.length > 0 ? [`batch:${batch.join(",")}`] : []),
+    ]
+  }
 
-  it.live("starts each ready leaf, and only the ready ones", () =>
+  it.live("supervises each ready leaf, and only the ready ones", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const f = facts()
-      expect(keys(plan, fold(plan, [f.runStarted()]))).toEqual(["begin:T1.1", "begin:T1.2"])
+      expect(keys(plan, fold(plan, [f.runStarted()]))).toEqual(["task:T1.1:ready", "task:T1.2:ready"])
       const building = fold(plan, [f.runStarted(), f.started("T1.1")])
-      expect(keys(plan, building)).toEqual(["build:T1.1", "begin:T1.2"])
+      expect(keys(plan, building)).toEqual(["task:T1.1:building", "task:T1.2:ready"])
     }),
   )
 
@@ -222,17 +233,17 @@ describe("the phase-1 seam on the run snapshot", () => {
     Effect.gen(function* () {
       const plan = yield* loadPlan("example-scenarios.spec")
       const f = facts()
-      expect(keys(plan, fold(plan, [f.runStarted(), f.started("T1.1"), f.ready("T1.1")]))).toEqual(["prove:T1.1"])
+      expect(keys(plan, fold(plan, [f.runStarted(), f.started("T1.1"), f.ready("T1.1")]))).toEqual(["task:T1.1:proving"])
       const trusted = fold(plan, [f.runStarted(), ...trustLeaf(plan, f, "T1.1")])
-      expect(keys(plan, trusted)).toEqual(["review:T1", "scenarios:scenarios=S1"])
+      expect(keys(plan, trusted)).toEqual(["task:T1:ready", "batch:S1"])
       const judged = fold(plan, [f.scenarioProved("S1", "passed")], trusted)
-      expect(keys(plan, judged)).toEqual(["review:T1", "judge:S1"])
+      expect(keys(plan, judged)).toEqual(["task:T1:ready", "scenario:S1:verifying"])
       const verifying = fold(plan, [f.proved("T1", [])], judged)
-      expect(keys(plan, verifying)).toEqual(["verify:T1", "judge:S1"])
+      expect(keys(plan, verifying)).toEqual(["task:T1:verifying", "scenario:S1:verifying"])
     }),
   )
 
-  it.live("RM10 keeps the independent task's worker after another task dies, until the snapshot is done", () =>
+  it.live("RM10 keeps supervising the independent task after another task dies, until the snapshot is done", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("example-cascade.spec")
       const f = facts()
@@ -243,7 +254,7 @@ describe("the phase-1 seam on the run snapshot", () => {
         f.ready("T1.1"),
         f.proved("T1.1", [fail("T1.1.c1", "BUILD-1 exited 1")]),
       ])
-      expect(keys(plan, dead)).toEqual(["build:T1.3"])
+      expect(keys(plan, dead)).toEqual(["task:T1.3:building"])
       expect(TaskEngineXState.ended(dead)).toBe(false)
       const done = fold(plan, trustLeaf(plan, f, "T1.3").slice(1), dead)
       expect(TaskEngineXState.ended(done)).toBe(true)
@@ -254,53 +265,66 @@ describe("the phase-1 seam on the run snapshot", () => {
   it.live("RM8 resumes a slice that has not ended, and never one that stopped or folds to done", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
-      const engine = TaskEngineXState.XStateEngine
       const f = facts()
       const open = [f.runStarted(), ...trustLeaf(plan, f, "T1.1")]
       // An old slice with no path counts as a whole-spec slice (RM8b).
-      expect(Option.map(TaskRunner.resumable(engine, plan, open), (slice) => slice.length)).toEqual(Option.some(5))
+      expect(yield* TaskCommand.sliceOf(plan, open, plan.specPath)).toEqual({ kind: "resume", facts: open })
       // A stored stop ends the slice (RM8a).
-      expect(TaskRunner.resumable(engine, plan, [...open, f.ended("done")])).toEqual(Option.none())
-      // The observed slice with its scenario proofs folds to done: never resumed (RM8c).
+      expect((yield* TaskCommand.sliceOf(plan, [...open, f.ended("done")], plan.specPath)).kind).toBe("new")
+      // The observed slice with its scenario proofs and its outside trusts folds to done: never resumed (RM8c).
       const ready = ["S2", "S3", "S4", "S7", "S12"]
       const done = [
         ...observed(plan, f),
         ...ready.flatMap((id) => [f.scenarioProved(id, "passed"), f.scenarioVerified({ id, verdict: "trusted" })]),
       ]
-      expect(TaskRunner.resumable(engine, plan, done)).toEqual(Option.none())
+      expect(TaskEngineXState.ended(TaskEvents.fold(TaskEngineXState.XStateEngine, plan, done))).toBe(true)
+      expect((yield* TaskCommand.sliceOf(plan, done, plan.specPath)).kind).toBe("new")
       // Only the latest slice counts.
-      expect(Option.isSome(TaskRunner.resumable(engine, plan, [...done, ...open]))).toBe(true)
+      expect((yield* TaskCommand.sliceOf(plan, [...done, ...open], plan.specPath)).kind).toBe("resume")
     }),
   )
 
-  it.live("RM17 records each directory trust once at the start, and none the machine already holds", () =>
+  it.live("RM17 trusts an outside region once: an untrusted outside region takes a trust, a trusted one none", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const f = facts()
       const started = fold(plan, [f.runStarted()])
-      // The directory recorded T9 twice and T8 once before this run.
-      const directory = [f.outside("T9"), f.outside("T8"), f.outside("T9")]
-      const recorded = TaskRunner.trustFacts(started, TaskEvents.trustedOutside(directory), 50)
-      expect(recorded).toEqual([
-        { type: "outside.trusted", at: 50, id: "T9" },
-        { type: "outside.trusted", at: 50, id: "T8" },
-      ])
-      // Applied, they trust both regions; the same trusts again (a forwarded /task trust) record nothing.
-      const trusted = fold(plan, recorded, started)
+      expect(RunSupervisor.untrustedOutside(plan, started, "T9")).toBe(true)
+      expect(RunSupervisor.untrustedOutside(plan, started, "T8")).toBe(true)
+      // A task is no outside region.
+      expect(RunSupervisor.untrustedOutside(plan, started, "T1.1")).toBe(false)
+      const trusted = fold(plan, [f.outside("T9"), f.outside("T8")], started)
       expect(TaskEngineXState.unitState(trusted, "T9")).toBe("trusted")
-      expect(TaskEngineXState.unitState(trusted, "T8")).toBe("trusted")
-      expect(TaskRunner.trustFacts(trusted, ["T9", "T8"], 60)).toEqual([])
-      expect(TaskRunner.trustFacts(trusted, ["T9"], 60)).toEqual([])
+      expect(RunSupervisor.untrustedOutside(plan, trusted, "T9")).toBe(false)
+      expect(RunSupervisor.untrustedOutside(plan, trusted, "T8")).toBe(false)
     }),
   )
+})
 
-  test("holds no readiness check, no done rule, no trust set and no lists of states", () => {
-    const source = readFileSync(path.resolve(import.meta.dir, "../../src/task/core/runner.ts"), "utf8")
-    expect(source).not.toMatch(/\bcheckDone\b/)
-    expect(source).not.toMatch(/\bfollows\b/)
-    expect(source).not.toMatch(/\bconst (ACTIVE|JUDGED)\b/)
-    expect(source).not.toMatch(/afterEffective\.every/)
-    expect(source).not.toMatch(/readonly outside: Ref/)
-    expect(source).not.toMatch(/type: "run\.ended", at: [^,]+, state: "done"/)
+describe("the polled runner is gone (SV1)", () => {
+  // The runner's own names: no module of the harness core (the runner's home, now the harness root, the Recorder, the
+  // workers and the supervisors) declares one of them any more.
+  const RUNNER = ["loop", "tick", "TICK", "STALE_EVERY", "checkDone", "failures", "MAX_FAILURES", "stopping", "children", "active", "trustActive"]
+  const sources = (dir: string): ReadonlyArray<string> =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((item) =>
+      item.isDirectory()
+        ? sources(path.join(dir, item.name))
+        : item.name.endsWith(".ts")
+          ? [path.join(dir, item.name)]
+          : [],
+    )
+  const root = path.resolve(import.meta.dir, "../../src/task/core")
+
+  test("no module defines the runner's loop, its counters, its registry or its FiberMap of workers", () => {
+    expect(existsSync(path.join(root, "runner.ts"))).toBe(false)
+    const found = sources(root).flatMap((file) => {
+      const text = readFileSync(file, "utf8")
+      const declared = RUNNER.filter((name) =>
+        new RegExp(`\\b(const|let|var|function|class)\\s+${name}\\b|\\bexport const ${name}\\b`).test(text),
+      )
+      const fiberMap = /\bFiberMap\b/.test(text) ? ["FiberMap"] : []
+      return [...declared, ...fiberMap].map((name) => `${path.relative(root, file)}: ${name}`)
+    })
+    expect(found).toEqual([])
   })
 })
