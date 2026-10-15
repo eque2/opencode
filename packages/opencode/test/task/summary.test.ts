@@ -8,12 +8,13 @@ import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import type { Plan } from "@/task/core/model"
+import type { Fact, Plan } from "@/task/core/model"
 import { TaskHarness } from "@/task/core/harness"
 import { TaskStatus } from "@/task/core/status"
 import { TaskSummary } from "@/task/core/summary"
 import { RunSupervisor } from "@/task/core/supervise/run"
 import { TaskWorkers } from "@/task/core/workers"
+import { TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
 import { facts, fold, loadPlan, observed } from "./lib/machine"
 import { eventually, runOf } from "./lib/supervise"
@@ -244,49 +245,131 @@ describe("the closing summary's markdown (D18, UI7)", () => {
     expect(TaskSummary.usage([])).toEqual({ tokens: 0, cost: 0 })
   })
 
+  it.live("summary: EDGE-11 the spec title, the task title and a scenario title are escaped", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const titled = (task: boolean) => {
+        const status = ended(plan)
+        Object.assign(status.run, {
+          title: "Notes <v2> | *beta*",
+          ...(task ? { task: { id: "T1.2", title: "Parse `feat_x` [scope]" } } : {}),
+        })
+        Object.assign(status.scenarios["S4"] ?? {}, { title: "The <h2> | heading" })
+        Object.assign(status.scenarios["S13"] ?? {}, { title: "Waits *on* T8" })
+        return status
+      }
+      const lines = (status: Status) =>
+        TaskSummary.markdown({ plan, status, stop: none, warned: false, usage: spent }).split("\n")
+      expect(lines(titled(false))[0]).toBe("Spec **Notes \\<v2\\> \\| \\*beta\\*** — budget exhausted")
+      const subtree = lines(titled(true))
+      expect(subtree[0]).toBe(
+        "**T1.2 Parse \\`feat\\_x\\` \\[scope\\]** from spec **Notes \\<v2\\> \\| \\*beta\\*** — budget exhausted",
+      )
+      expect(subtree).toContain("- ✗ **S4** rejected · The \\<h2\\> \\| heading")
+      expect(subtree).toContain("- ○ **S13** Waits \\*on\\* T8 — waiting on T8 (outside)")
+    }),
+  )
+
+  it.live("summary: UI20 a spec check with failures warns the run, even when a later check validates again", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const failure = { rule: "R4", path: "spec.md", message: "the spec has no H1" }
+      const warned = (list: ReadonlyArray<Fact>) => TaskEngineXState.warned(fold(plan, [f.runStarted(), ...list]))
+      expect(warned([f.checked([failure]), f.checked([])])).toBe(true)
+      expect(warned([f.checked([failure, failure])])).toBe(true)
+      expect(warned([f.checked([])])).toBe(false)
+      expect(warned([])).toBe(false)
+    }),
+  )
+
   test("summary: model text is escaped for CommonMark (EDGE-11)", () => {
     expect(TaskSummary.escape("Type 'Promise<void>' | x")).toBe("Type 'Promise\\<void\\>' \\| x")
     expect(TaskSummary.escape("a\\b*c_d`e[f]g")).toBe("a\\\\b\\*c\\_d\\`e\\[f\\]g")
   })
 })
 
+// A session as the session store holds it: its parent, tokens (with a cache that is never counted) and cost.
+const sessionOf = (parentID: string, input: number, cost: number) => ({
+  parentID,
+  tokens: { input, output: 0, reasoning: 0, cache: { read: 900_000, write: 900_000 } },
+  cost,
+})
+
+// A run that records `before`, then is cancelled. The root's child sessions spent 1.5M tokens and $2.31; any other
+// session asked for spent more, so a read of the wrong sessions shows.
+const closing = (before: ReadonlyArray<Parameters<typeof TaskWorkers.record>[1]>) =>
+  Effect.gen(function* () {
+    const plan = yield* loadPlan("release-notes.spec")
+    const setup = { plan, ...(yield* runOf({ plan, directory: "/root", stored: [facts().runStarted()] })) }
+    const order: string[] = []
+    const said: Array<{ sessionID: string; text: string }> = []
+    const asked: string[] = []
+    Object.assign(setup.run.env.ops, {
+      say: (input: { sessionID: string; text: string }) =>
+        Effect.sync(() => {
+          said.push(input)
+          order.push("say")
+        }),
+    })
+    Object.assign(setup.run.env.sessions, {
+      children: (id: string) =>
+        Effect.sync(() => {
+          asked.push(id)
+          return id === setup.run.root
+            ? [sessionOf(id, 1_200_000, 2), sessionOf(id, 300_000, 0.31)]
+            : [sessionOf(id, 5_000_000, 5)]
+        }),
+    })
+    const harness = yield* TaskHarness.make
+    yield* harness.spawnRun(setup.id, RunSupervisor.machine, {
+      run: setup.run,
+      events: setup.events,
+      resumed: false,
+      path: plan.path,
+      trusts: Effect.succeed([]),
+      externals: [],
+      release: Effect.sync(() => void order.push("release")),
+      writer: setup.recorder.writer,
+    })
+    yield* eventually(
+      Effect.map(setup.recorder.actor.getSnapshot, () => true),
+      "the run actor",
+    )
+    for (const fact of before) yield* TaskWorkers.record(setup.run, fact)
+    yield* TaskWorkers.record(setup.run, { type: "run.cancelled", reason: "user stop" })
+    yield* RunSupervisor.awaitClosed(harness, setup.id).pipe(Effect.timeout(20_000))
+    return { order, said, asked, root: setup.run.root, prompts: setup.seen.prompts }
+  })
+
+const WARNING = "The spec stopped validating during the run. The run kept the plan it loaded."
+const failing = { type: "spec.checked" as const, failures: [{ rule: "R4", path: "spec.md", message: "no H1" }] }
+const clean = { type: "spec.checked" as const, failures: [] }
+
 describe("the run supervisor's closing summary (AD-18, UI7, UI23, UI24)", () => {
   it.live("summary: when the run is done the supervisor frees the lease, then says the summary once, then closes", () =>
     Effect.gen(function* () {
-      const plan = yield* loadPlan("release-notes.spec")
-      const setup = { plan, ...(yield* runOf({ plan, directory: "/root", stored: [facts().runStarted()] })) }
-      const order: string[] = []
-      const said: Array<{ sessionID: string; text: string }> = []
-      Object.assign(setup.run.env.ops, {
-        say: (input: { sessionID: string; text: string }) =>
-          Effect.sync(() => {
-            said.push(input)
-            order.push("say")
-          }),
-      })
-      const harness = yield* TaskHarness.make
-      yield* harness.spawnRun(setup.id, RunSupervisor.machine, {
-        run: setup.run,
-        events: setup.events,
-        resumed: false,
-        path: plan.path,
-        trusts: Effect.succeed([]),
-        externals: [],
-        release: Effect.sync(() => void order.push("release")),
-        writer: setup.recorder.writer,
-      })
-      yield* eventually(
-        Effect.map(setup.recorder.actor.getSnapshot, () => true),
-        "the run actor",
-      )
-      yield* TaskWorkers.record(setup.run, { type: "run.cancelled", reason: "user stop" })
-      yield* RunSupervisor.awaitClosed(harness, setup.id).pipe(Effect.timeout(20_000))
-      expect(order).toEqual(["release", "say"])
-      expect(said).toHaveLength(1)
-      expect(said[0]?.sessionID).toBe(setup.run.root)
-      expect(said[0]?.text).toStartWith("Spec **Release notes from conventional commits** — cancelled: user stop")
+      const run = yield* closing([failing, clean])
+      expect(run.order).toEqual(["release", "say"])
+      expect(run.said).toHaveLength(1)
+      expect(run.said[0]?.sessionID).toBe(run.root)
+      const lines = (run.said[0]?.text ?? "").split("\n")
+      expect(lines[0]).toBe("Spec **Release notes from conventional commits** — cancelled: user stop")
+      // The run's sessions are the root's child sessions; the counts line sums their tokens (no cache) and cost.
+      expect(run.asked).toEqual([run.root])
+      expect(lines[2]).toEndWith(" · 1.5M tokens · $2.31")
+      // A check with failures warns the run, though a later check validated again (UI20).
+      expect(lines).toContain(WARNING)
       // No model turn: the summary is said, never prompted.
-      expect(setup.seen.prompts).toEqual([])
+      expect(run.prompts).toEqual([])
+    }),
+  )
+
+  it.live("summary: UI20 a run whose spec checks all validated says no run-warning line", () =>
+    Effect.gen(function* () {
+      const run = yield* closing([clean])
+      expect(run.said).toHaveLength(1)
+      expect(run.said[0]?.text).not.toContain("stopped validating")
     }),
   )
 
