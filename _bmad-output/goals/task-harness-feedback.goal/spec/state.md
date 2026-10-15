@@ -54,7 +54,7 @@
 | T4.5    | task       | completed                               |
 | T4.6    | task       | completed                               |
 | T4.7    | task       | completed                               |
-| T4.8    | task       | not_started                             |
+| T4.8    | task       | completed                               |
 | T4.9    | task       | not_started                             |
 | T4.10   | task       | not_started                             |
 | T4.11   | task       | not_started                             |
