@@ -39,7 +39,7 @@ import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
-import { footerText, runOf } from "../../task-ui/usage"
+import { promptFooter } from "../../task-ui/usage"
 import { errorMessage } from "../../util/error"
 import { formatDuration } from "../../util/format"
 import { createColors, createFrames } from "../../ui/spinner"
@@ -328,14 +328,15 @@ export function Prompt(props: PromptProps) {
   })
 
   // A /task root's run usage after today's figure (D24): its child sessions summed, live from the synced sessions.
-  // The text gets the prompt box's width less its padding and the commands hint; a narrow one drops parts.
-  const footer = createMemo(() => {
-    if (!props.sessionID) return Option.none<string>()
-    const own = Option.map(usage(), (item) => [item.context, ...Option.toArray(item.cost)].join(" · "))
-    const room =
-      dimensions().width - (dimensions().width > 120 ? 42 : 0) - 4 - `${paletteShortcut() ?? ""} commands`.length - 2
-    return footerText(own, runOf(sync.data.session, props.sessionID), room)
-  })
+  const footer = createMemo(() =>
+    promptFooter({
+      sessionID: props.sessionID,
+      own: usage(),
+      sessions: sync.data.session,
+      width: dimensions().width,
+      shortcut: paletteShortcut(),
+    }),
+  )
 
   const [store, setStore] = createStore<{
     prompt: PromptInfo

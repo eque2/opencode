@@ -55,3 +55,21 @@ export const footerText = (
       return Option.some(forms.find((form) => form.length <= room) ?? `run ${cost}`)
     },
   })
+
+/**
+ * The prompt footer's text for a session (D24): today's figure (the context, then the cost), then the run's usage when
+ * the session is a /task root. The room is the prompt box's width less the sidebar (above 120 cells), 4 cells of
+ * padding, the commands hint and a 2-cell gap.
+ */
+export const promptFooter = (input: {
+  readonly sessionID: string | undefined
+  readonly own: Option.Option<{ readonly context: string; readonly cost: Option.Option<string> }>
+  readonly sessions: ReadonlyArray<SessionLike>
+  readonly width: number
+  readonly shortcut: string | undefined
+}) => {
+  if (!input.sessionID) return Option.none<string>()
+  const own = Option.map(input.own, (item) => [item.context, ...Option.toArray(item.cost)].join(" · "))
+  const room = input.width - (input.width > 120 ? 42 : 0) - 4 - `${input.shortcut ?? ""} commands`.length - 2
+  return footerText(own, runOf(input.sessions, input.sessionID), room)
+}
