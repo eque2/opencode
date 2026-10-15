@@ -391,6 +391,8 @@ export type TuiState = {
   session: {
     count: () => number
     get: (sessionID: string) => Session | undefined
+    /** The synced child sessions of a session: a /task root's harness sessions, for the run usage (D24). */
+    children: (sessionID: string) => ReadonlyArray<Session>
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
     messages: (sessionID: string) => ReadonlyArray<Message>

@@ -136,6 +136,7 @@ export function createTuiPluginApi(opts: Opts): TuiPluginApi {
       session: {
         count: () => 0,
         get: () => undefined,
+        children: () => [],
         diff: () => [],
         todo: () => [],
         messages: () => [],

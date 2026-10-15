@@ -387,6 +387,7 @@ Mode pushes are automatically tracked by the plugin runtime. If a plugin is disa
   - `path.{state,config,worktree,directory}`
   - `vcs?.branch`
   - `session.count()`
+  - `session.children(sessionID)` (the synced child sessions; the run usage of a `/task` root)
   - `session.diff(sessionID)`
   - `session.todo(sessionID)`
   - `session.messages(sessionID)`
