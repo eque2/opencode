@@ -20,7 +20,7 @@ import {
   type Row,
   type Status,
 } from "./store"
-import { outsideCollapsed, warningOf, wrap } from "./shared"
+import { outsideCollapsed, outsideWaits, warningOf, wrap } from "./shared"
 import { registerOpencodeSpinner } from "../component/register-spinner"
 import type { View } from "./view"
 
@@ -268,7 +268,6 @@ export const barKeys = (view: View, leader: string): Part[] => {
       : [select, { key: `${leader} w`, label: "stop watching" }]
   return [
     { key: `${leader} o`, label: view.expanded() ? "collapse" : "expand" },
-    { key: "/task-design", label: "switch" },
     live ? { key: "tab", label: "select task" } : select,
     { key: `${leader} w`, label: "watch" },
   ]
@@ -324,19 +323,45 @@ export function ShortcutBar(props: ViewProps & { width: number }) {
     if (!status) return []
     const design = props.view.design()
     const row = props.view.rows().find((item) => item.id === props.view.selected())
-    const trusted: Part = { key: trustedText(status), label: "" }
+    // The run warning and the outside wait come first, so a narrow bar keeps them (EXPERIENCE "Shortcut bar").
+    const waits = outsideWaits(status)
+    const alerts: Part[] = [
+      ...(status.run.warning ? [{ key: "! spec", label: "", color: props.theme().warning }] : []),
+      ...(waits.length > 0
+        ? [
+            {
+              key: `/task trust ${waits[0]}${waits.length > 1 ? ` +${waits.length - 1}` : ""}`,
+              label: "outside wait",
+              color: props.theme().warning,
+            },
+          ]
+        : []),
+    ]
+    const stopped = stoppedText(status).trim()
+    const trusted: Part[] = [
+      { key: trustedText(status), label: "" },
+      ...(stopped ? [{ key: stopped, label: "", color: props.theme().error }] : []),
+    ]
     const ticker: Part[] = row
       ? [{ key: `${glyph(row.task.state)} ${row.id}`, label: label(row.task.state), color: stateColor(props.theme(), row.task.state) }]
       : []
     const keys = barKeys(props.view, props.leader)
-    const ordered = design === 7 ? [trusted, ...ticker, ...keys] : design >= 3 && design <= 5 ? [...keys, trusted] : keys
+    const ordered =
+      design === 7
+        ? [...alerts, ...trusted, ...ticker, ...keys]
+        : design >= 3 && design <= 5
+          ? [...alerts, ...keys, ...trusted]
+          : [...alerts, ...keys]
     const room = barRoom(props.width) - `${MARK} ${DESIGNS[design - 1].name}`.length
-    return ordered.reduce<{ used: number; list: Part[] }>(
+    // A narrow bar drops parts from the end: the first part that does not fit ends the bar.
+    return ordered.reduce<{ used: number; full: boolean; list: Part[] }>(
       (fit, part) => {
         const size = part.key.length + part.label.length + 3
-        return fit.used + size > room ? fit : { used: fit.used + size, list: [...fit.list, part] }
+        return fit.full || fit.used + size > room
+          ? { ...fit, full: true }
+          : { used: fit.used + size, full: false, list: [...fit.list, part] }
       },
-      { used: 0, list: [] },
+      { used: 0, full: false, list: [] },
     ).list
   }
   return (
