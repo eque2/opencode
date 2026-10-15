@@ -60,7 +60,7 @@
 | T4.11   | task       | completed                               |
 | T4.12   | task       | completed                               |
 | T4.13   | task       | completed                               |
-| T4.14   | task       | not_started                             |
+| T4.14   | task       | building                                |
 | DOC1    | scenario   | not_started                             |
 | RM1     | scenario   | not_started                             |
 | RM2     | scenario   | not_started                             |
