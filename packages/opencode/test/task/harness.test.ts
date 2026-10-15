@@ -12,11 +12,13 @@ import { testEffect } from "../lib/effect"
 
 const it = testEffect(NodeServices.layer)
 
+// Each run's spec and path differ from each other and from every other run's, so an answer that swaps them or names
+// the wrong run fails.
 const claim = (directory: string, runID: string) => ({
   directory,
   runID,
-  spec: "task-formats/blend/release-notes.spec",
-  path: "task-formats/blend/release-notes.spec",
+  spec: `specs/${runID}.spec`,
+  path: `specs/${runID}.spec/T1-${runID}.task`,
 })
 
 // A run supervisor stand-in for the forwarding tests: it keeps the trusts it receives.
@@ -47,25 +49,19 @@ describe("TaskHarness leases", () => {
       expect(yield* harness.live(directory)).toEqual(Option.none())
       const first = yield* harness.claim(claim(directory, "task_a"))
       expect(first.kind).toBe("claimed")
-      expect(yield* harness.live(directory)).toEqual(
-        Option.some({
-          runID: "task_a",
-          spec: "task-formats/blend/release-notes.spec",
-          path: "task-formats/blend/release-notes.spec",
-        }),
-      )
-      expect(yield* harness.claim(claim(directory, "task_b"))).toEqual({
-        kind: "busy",
-        runID: "task_a",
-        spec: "task-formats/blend/release-notes.spec",
-        path: "task-formats/blend/release-notes.spec",
-      })
+      const lease = { runID: "task_a", spec: "specs/task_a.spec", path: "specs/task_a.spec/T1-task_a.task" }
+      expect(yield* harness.live(directory)).toEqual(Option.some(lease))
+      // The busy answer names the live run's id, spec and path, not the asking run's.
+      expect(yield* harness.claim(claim(directory, "task_b"))).toEqual({ kind: "busy", ...lease })
       // A release by a run that does not hold the lease changes nothing.
       yield* harness.release(directory, "task_b")
-      expect(Option.isSome(yield* harness.live(directory))).toBe(true)
+      expect(yield* harness.live(directory)).toEqual(Option.some(lease))
       yield* harness.release(directory, "task_a")
       expect(yield* harness.live(directory)).toEqual(Option.none())
       expect((yield* harness.claim(claim(directory, "task_b"))).kind).toBe("claimed")
+      expect(yield* harness.live(directory)).toEqual(
+        Option.some({ runID: "task_b", spec: "specs/task_b.spec", path: "specs/task_b.spec/T1-task_b.task" }),
+      )
     }),
   )
 
@@ -73,11 +69,37 @@ describe("TaskHarness leases", () => {
     Effect.gen(function* () {
       const harness = yield* TaskHarness.make
       const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped()
-      const start = Effect.fail("the background job did not start")
+      // The lease is held while the start runs; the failed start then releases it.
+      const start = Effect.gen(function* () {
+        expect(Option.map(yield* harness.live(directory), (live) => live.runID)).toEqual(Option.some("task_a"))
+        return yield* Effect.fail("the background job did not start")
+      })
       const exit = yield* Effect.exit(harness.withClaim(claim(directory, "task_a"), () => start))
-      expect(Exit.isFailure(exit)).toBe(true)
+      expect(exit).toEqual(Exit.fail("the background job did not start"))
       expect(yield* harness.live(directory)).toEqual(Option.none())
       expect((yield* harness.claim(claim(directory, "task_b"))).kind).toBe("claimed")
+    }),
+  )
+
+  it.live("keeps the claim of a job that started, so the next claim is busy, and hands start the lease's locks", () =>
+    Effect.gen(function* () {
+      const harness = yield* TaskHarness.make
+      const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped()
+      const started = yield* harness.withClaim(claim(directory, "task_a"), (locks) => Effect.succeed(locks))
+      expect(Option.map(yield* harness.live(directory), (live) => live.runID)).toEqual(Option.some("task_a"))
+      expect(yield* harness.claim(claim(directory, "task_b"))).toMatchObject({ kind: "busy", runID: "task_a" })
+      // A second withClaim for the directory does not start: it answers busy with the live run.
+      const ran: Array<string> = []
+      const second = yield* harness.withClaim(claim(directory, "task_c"), () => Effect.sync(() => ran.push("task_c")))
+      expect(second).toEqual({
+        kind: "busy",
+        runID: "task_a",
+        spec: "specs/task_a.spec",
+        path: "specs/task_a.spec/T1-task_a.task",
+      })
+      expect(ran).toEqual([])
+      // `start` received the lease's own locks.
+      expect(started).toMatchObject({ checkout: expect.anything(), git: expect.anything() })
     }),
   )
 
@@ -112,8 +134,28 @@ describe("TaskHarness leases", () => {
         )
       yield* Effect.all([merge("one"), merge("two")], { concurrency: "unbounded" })
       expect(order).toEqual(["one start", "one end", "two start", "two end"])
-      // The git lock (worktree creation) is a second lock of the same lease.
+      // The git lock (worktree creation) is a second one-permit lock of the same lease: two worktree creations
+      // serialise, and a creation does not wait for a merge that holds the checkout lock.
       expect(claimed.locks.git).not.toBe(claimed.locks.checkout)
+      const trees: Array<string> = []
+      const create = (name: string) =>
+        claimed.locks.git.withPermit(
+          Effect.gen(function* () {
+            trees.push(`${name} start`)
+            yield* Effect.sleep(20)
+            trees.push(`${name} end`)
+          }),
+        )
+      yield* Effect.all([create("one"), create("two")], { concurrency: "unbounded" })
+      expect(trees).toEqual(["one start", "one end", "two start", "two end"])
+      const both: Array<string> = []
+      yield* claimed.locks.checkout.withPermit(
+        Effect.gen(function* () {
+          both.push("merge holds checkout")
+          yield* claimed.locks.git.withPermit(Effect.sync(() => both.push("worktree under git")))
+        }),
+      )
+      expect(both).toEqual(["merge holds checkout", "worktree under git"])
       return yield* Effect.void
     }),
   )
