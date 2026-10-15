@@ -33,13 +33,14 @@ import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
 import { TaskCommand } from "@/task/core/command"
 import { TaskHarness } from "@/task/core/harness"
-import type { Plan } from "@/task/core/model"
+import type { Fact, Plan } from "@/task/core/model"
 import type { SessionID } from "@/session/schema"
 import { RunSupervisor } from "@/task/core/supervise/run"
 import { ScenarioSupervisor } from "@/task/core/supervise/scenario"
 import { TaskSupervisor } from "@/task/core/supervise/task"
 import { TaskStatus } from "@/task/core/status"
 import { TaskWorkers } from "@/task/core/workers"
+import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskMachine } from "@/task/engine-xstate/machine"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
@@ -722,6 +723,239 @@ describe("the timer regions", () => {
         })
       }
     }),
+  )
+})
+
+// A run of a copy of the release-notes spec whose stale check reads the copy.
+const copiedRun = Effect.fnUntraced(function* (
+  stored: (plan: Plan, f: ReturnType<typeof facts>) => ReadonlyArray<Fact>,
+  resumed = false,
+) {
+  const fs = yield* FileSystem.FileSystem
+  const directory = yield* fs.makeTempDirectoryScoped()
+  const specDir = path.join(directory, "release-notes.spec")
+  yield* fs.copy(path.resolve(import.meta.dir, "../../../../task-formats/blend/release-notes.spec"), specDir)
+  const loaded = yield* Blend.load(specDir)
+  const spec = loaded.spec
+  if (spec === undefined) throw new Error("the copy did not load")
+  const plan = TaskCommand.plan({
+    spec,
+    specPath: "release-notes.spec",
+    path: "release-notes.spec",
+    root: Option.none(),
+  })
+  const setup = { plan, ...(yield* runOf({ plan, directory, stored: stored(plan, facts()) })) }
+  const clock = new SimulatedClock()
+  const actor = yield* createActor(logicOf({}), {
+    input: { ...inputOf(setup, { resumed }), run: { ...setup.run, specDir } },
+    clock,
+  })
+  yield* actor.start
+  yield* running(actor)
+  // A file of the copy, rewritten.
+  const edit = (file: string, change: (text: string) => string) =>
+    Effect.gen(function* () {
+      const target = path.join(specDir, file)
+      yield* fs.writeFileString(target, change(yield* fs.readFileString(target)))
+    })
+  // One stale check: the cadence fires, and the check ends back in `waiting`.
+  const check = Effect.gen(function* () {
+    yield* settle
+    yield* clock.increment(1_000)
+    yield* eventually(
+      Effect.map(actor.getSnapshot, (snapshot) => snapshot.matches({ running: { staleCadence: "checking" } })),
+      "the stale check starts",
+    )
+    yield* eventually(
+      Effect.map(actor.getSnapshot, (snapshot) => snapshot.matches({ running: { staleCadence: "waiting" } })),
+      "the stale check ends",
+    )
+    yield* settle
+  })
+  const lines = Effect.map(Blend.load(specDir), (result) =>
+    result.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`),
+  )
+  return { specDir, setup, actor, plan, edit, check, lines }
+})
+
+const T11_VERIFY = "T1-release-notes.task/T1.1-commit-parser.task/VERIFY.md"
+const T12_TASK = "T1-release-notes.task/T1.2-version-bump.task/TASK.md"
+
+// Two loader failures: an unknown category in T1.1's VERIFY.md and a second `refs` key in T1.2's TASK.md.
+const breakTwo = (edit: Effect.Success<ReturnType<typeof copiedRun>>["edit"]) =>
+  Effect.gen(function* () {
+    yield* edit(T11_VERIFY, (text) => text.replace("category: happy-path", "category: nonsense"))
+    yield* edit(T12_TASK, (text) => text.replace("---\n", "---\nrefs: []\n"))
+  })
+
+const ADDED = '  c9:\n    category: boundary\n    text: "An added obligation."\n    covers: [S2]\n'
+const addObligation = (text: string) => text.replace("ensures:\n", `ensures:\n${ADDED}`)
+const changeText = (text: string) => text.replace(/text: "/, 'text: "Changed. ')
+
+const checkedFacts = (id: string) =>
+  Effect.map(storedFacts(id), (list) => list.flatMap((fact) => (fact.type === "spec.checked" ? [fact] : [])))
+
+const lineOf = (failure: { readonly rule: string; readonly path: string; readonly message: string }) =>
+  `${failure.rule} ${failure.path}: ${failure.message}`
+
+const runSnapshot = (setup: Setup) => setup.recorder.actor.getSnapshot
+
+// The run's history entries for spec.checked.
+const checkedEntries = (snapshot: Effect.Success<ReturnType<typeof runSnapshot>>) =>
+  snapshot.context.log.filter((entry) => entry.unit === "run" && (entry.reason ?? "").startsWith("spec.checked"))
+
+describe("spec.checked and the run warning (D12, AD-12, VF4, VF5)", () => {
+  it.live(
+    "VF4 a reload that does not validate keeps the plan and the spec, records spec.checked once and sets the warning",
+    () =>
+      Effect.gen(function* () {
+        const { setup, actor, plan, edit, check, lines } = yield* copiedRun((plan, f) => [f.runStarted()])
+        const before = (yield* actor.getSnapshot).context.spec
+        yield* breakTwo(edit)
+        const expected = yield* lines
+        expect(expected).toHaveLength(2)
+        yield* check
+        // The same failures again record nothing.
+        yield* check
+
+        const checked = yield* checkedFacts(setup.id)
+        expect(checked.map((fact) => fact.failures.map(lineOf))).toEqual([expected])
+        expect((yield* actor.getSnapshot).context.spec).toBe(before)
+        const snapshot = yield* runSnapshot(setup)
+        expect(TaskEngineXState.view(snapshot).run.warning).toBe(expected.join("\n"))
+        expect(TaskStatus.project(plan, snapshot).run.warning).toBe(expected.join("\n"))
+        expect(checkedEntries(snapshot).map((entry) => entry.reason)).toEqual(["spec.checked: 2 failures"])
+      }),
+  )
+
+  it.live("VF5 the next reload that validates records spec.checked with no failures and clears the warning", () =>
+    Effect.gen(function* () {
+      const { specDir, setup, plan, edit, check } = yield* copiedRun((plan, f) => [f.runStarted()])
+      const file = path.join(specDir, T11_VERIFY)
+      const fs = yield* FileSystem.FileSystem
+      const verify = yield* fs.readFileString(file)
+      const task = yield* fs.readFileString(path.join(specDir, T12_TASK))
+      yield* breakTwo(edit)
+      yield* check
+      yield* edit(T11_VERIFY, () => verify)
+      yield* edit(T12_TASK, () => task)
+      yield* check
+
+      expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.length)).toEqual([2, 0])
+      const snapshot = yield* runSnapshot(setup)
+      expect(TaskEngineXState.view(snapshot).run.warning).toBeUndefined()
+      expect(TaskStatus.project(plan, snapshot).run).not.toHaveProperty("warning")
+      expect(checkedEntries(snapshot).map((entry) => entry.reason)).toEqual([
+        "spec.checked: 2 failures",
+        "spec.checked: no failures",
+      ])
+    }),
+  )
+
+  it.live(
+    "a valid reload that adds an obligation id of the plan is a spec.checked failure; the run keeps the old text",
+    () =>
+      Effect.gen(function* () {
+        const { setup, actor, edit, check, lines } = yield* copiedRun((plan, f) => [
+          f.runStarted(),
+          ...trustLeaf(plan, f, "T1.1"),
+        ])
+        yield* edit(T11_VERIFY, (text) => changeText(addObligation(text)))
+        expect(yield* lines).toEqual([])
+        yield* check
+
+        expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.map(lineOf))).toEqual([
+          [`R3 ${T11_VERIFY}: obligation T1.1.c9 is not in the loaded plan; the run keeps the plan it loaded`],
+        ])
+        // No new text, no stale obligation, no reload sent.
+        const spec = (yield* actor.getSnapshot).context.spec
+        expect(spec.obligations.find((item) => item.id === "T1.1.c1")?.text.startsWith("Changed. ")).toBe(false)
+        expect(spec.obligations.some((item) => item.id === "T1.1.c9")).toBe(false)
+        expect(yield* storedTypes(setup.id)).not.toContain("obligation.stale")
+      }),
+  )
+
+  it.live("a valid reload that removes an obligation id of the plan is a spec.checked failure", () =>
+    Effect.gen(function* () {
+      const { setup, actor, edit, check, lines } = yield* copiedRun((plan, f) => [f.runStarted()])
+      const before = (yield* actor.getSnapshot).context.spec
+      yield* edit(T11_VERIFY, (text) => text.replace(/ {2}c3:\n(?: {4}.*\n)+/, ""))
+      expect(yield* lines).toEqual([])
+      yield* check
+
+      expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.map(lineOf))).toEqual([
+        [`R3 ${T11_VERIFY}: obligation T1.1.c3 of the loaded plan is missing; the run keeps the plan it loaded`],
+      ])
+      expect((yield* actor.getSnapshot).context.spec).toBe(before)
+    }),
+  )
+
+  it.live(
+    "a resumed slice with a 2-failure warning and a now-valid spec: spec.checked [] comes before obligation.stale",
+    () =>
+      Effect.gen(function* () {
+        const warned = [
+          { rule: "R3", path: T11_VERIFY, message: "first" },
+          { rule: "R3", path: T12_TASK, message: "second" },
+        ]
+        const { setup, actor, edit, check } = yield* copiedRun(
+          (plan, f) => [
+            f.runStarted(),
+            ...trustLeaf(plan, f, "T1.1"),
+            { type: "spec.checked", at: 50, failures: warned },
+          ],
+          true,
+        )
+        expect(TaskEngineXState.view(yield* runSnapshot(setup)).run.warning).toBe(warned.map(lineOf).join("\n"))
+        yield* edit(T11_VERIFY, changeText)
+        yield* check
+        yield* eventually(
+          Effect.map(storedTypes(setup.id), (types) => types.includes("obligation.stale")),
+          "obligation.stale",
+        )
+
+        const types = yield* storedTypes(setup.id)
+        const checkedAt = types.lastIndexOf("spec.checked")
+        expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.length)).toEqual([2, 0])
+        expect(checkedAt).toBeLessThan(types.indexOf("obligation.stale"))
+        const log = (yield* runSnapshot(setup)).context.log
+        const entry = log.findLastIndex((item) => item.unit === "run" && item.reason === "spec.checked: no failures")
+        const stale = log.findIndex((item) => item.unit === "T1.1.c1" && item.to === "stale")
+        expect(entry).toBeGreaterThan(-1)
+        expect(entry).toBeLessThan(stale)
+        expect(TaskEngineXState.view(yield* runSnapshot(setup)).run.warning).toBeUndefined()
+        const spec = (yield* actor.getSnapshot).context.spec
+        expect(spec.obligations.find((item) => item.id === "T1.1.c1")?.text.startsWith("Changed. ")).toBe(true)
+      }),
+  )
+
+  it.live(
+    "a resumed slice with a warning: a valid reload that changes a hash and adds an id records only spec.checked",
+    () =>
+      Effect.gen(function* () {
+        const warned = [
+          { rule: "R3", path: T11_VERIFY, message: "first" },
+          { rule: "R3", path: T12_TASK, message: "second" },
+        ]
+        const { setup, actor, edit, check } = yield* copiedRun(
+          (plan, f) => [
+            f.runStarted(),
+            ...trustLeaf(plan, f, "T1.1"),
+            { type: "spec.checked", at: 50, failures: warned },
+          ],
+          true,
+        )
+        const before = (yield* actor.getSnapshot).context.spec
+        yield* edit(T11_VERIFY, (text) => changeText(addObligation(text)))
+        yield* check
+
+        expect((yield* checkedFacts(setup.id)).map((fact) => fact.failures.map(lineOf))).toEqual([
+          warned.map(lineOf),
+          [`R3 ${T11_VERIFY}: obligation T1.1.c9 is not in the loaded plan; the run keeps the plan it loaded`],
+        ])
+        expect(yield* storedTypes(setup.id)).not.toContain("obligation.stale")
+        expect((yield* actor.getSnapshot).context.spec).toBe(before)
+      }),
   )
 })
 
