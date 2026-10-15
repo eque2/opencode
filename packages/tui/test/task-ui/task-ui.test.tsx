@@ -780,27 +780,32 @@ test("bar: UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ �
 
 test("bar: UI14 UI12 the diamond moves only while live and with animations on; every Brand site carries it", async () => {
   const motion = () => true
-  const props = async (input: Status, design: number) => ({ ...(await view(none, input, design)), motion })
+  const props = async (input: Status, design: number, now?: number) => ({
+    ...(await view(none, input, design)),
+    motion,
+    ...(now === undefined ? {} : { view: (await viewFor(input, { design, now })).view }),
+  })
+  // The spinners at each site, motion on: the Ledger, the Dock, the HUD, the full screen, the Ticker dialog, the bar.
+  const sites = async (input: Status, now?: number) => {
+    const ledger = await props(input, 1, now)
+    const dock = await props(input, 2, now)
+    const hud = await props(input, 6, now)
+    const screen = await props(input, 3, now)
+    const ticker = await props(input, 7, now)
+    return [
+      await marks(() => <LedgerView {...ledger} width={38} />),
+      await marks(() => <DockView {...dock} width={160} />),
+      await marks(() => <HudView {...hud} />),
+      await marks(() => <Screen {...screen} width={160} height={40} />),
+      await marks(() => <TickerDialog {...ticker} />),
+      await marks(() => <ShortcutBar {...ledger} width={200} />),
+    ].map((site) => site.found.length)
+  }
   // Live, motion on: each site has the spinner.
-  const ledgerProps = await props(status, 1)
-  const dockProps = await props(status, 2)
-  const hudProps = await props(status, 6)
-  const screenProps = await props(status, 3)
-  const tickerProps = await props(status, 7)
-  const sites = [
-    await marks(() => <LedgerView {...ledgerProps} width={38} />),
-    await marks(() => <DockView {...dockProps} width={160} />),
-    await marks(() => <HudView {...hudProps} />),
-    await marks(() => <Screen {...screenProps} width={160} height={40} />),
-    await marks(() => <TickerDialog {...tickerProps} />),
-    await marks(() => <ShortcutBar {...ledgerProps} width={200} />),
-  ]
-  expect(sites.map((site) => site.found.length >= 1)).toEqual([true, true, true, true, true, true])
-  // Ended, still, or animations off: no spinner, a static ◆.
-  const endedProps = await props(ended, 1)
-  expect((await marks(() => <LedgerView {...endedProps} width={38} />)).found).toHaveLength(0)
-  const stillProps = { ...(await view(none, status, 1)), motion, view: (await viewFor(status, { design: 1, now: (status.run.aliveAt ?? 0) + 60_000 })).view }
-  expect((await marks(() => <LedgerView {...stillProps} width={38} />)).found).toHaveLength(0)
+  expect((await sites(status)).map((found) => found >= 1)).toEqual([true, true, true, true, true, true])
+  // Ended, or standing still (a minute past the heartbeat), motion on: no spinner at any site, a static ◆.
+  expect(await sites(ended)).toEqual([0, 0, 0, 0, 0, 0])
+  expect(await sites(status, (status.run.aliveAt ?? 0) + 60_000)).toEqual([0, 0, 0, 0, 0, 0])
   const offProps = { ...(await view(none, status, 1)), motion: () => false }
   const off = await marks(() => <LedgerView {...offProps} width={38} />)
   expect(off.found).toHaveLength(0)
@@ -862,8 +867,8 @@ test("bar: UI14 each design's own mark gets the host's motion setting from its c
 })
 
 test("bar: UI14 the watch view's band gets the host's motion setting from its context", async () => {
-  const banded = async (motion: boolean) => {
-    const { view, listen } = await viewFor(live({ "T1.4": "building" }), { design: 1 })
+  const banded = async (motion: boolean, input: Status = live({ "T1.4": "building" }), now?: number) => {
+    const { view, listen } = await viewFor(input, { design: 1, ...(now === undefined ? {} : { now }) })
     view.select("T1.4")
     view.setWatching(true)
     await settle()
@@ -904,6 +909,17 @@ test("bar: UI14 the watch view's band gets the host's motion setting from its co
   expect(on.text).toContain("watch only")
   expect(on.found).toHaveLength(1)
   expect((await banded(false)).found).toHaveLength(0)
+  // Motion on, but the run stands still (a minute past the heartbeat) or ended: the band shows, its mark is static.
+  const building = live({ "T1.4": "building" })
+  const still = await banded(true, building, (building.run.aliveAt ?? 0) + 60_000)
+  expect(still.text).toContain("watch only")
+  expect(still.found).toHaveLength(0)
+  const over = await banded(
+    true,
+    restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { T1: "waiting", "T1.5": "waiting", "T1.4": "building" }),
+  )
+  expect(over.text).toContain("watch only")
+  expect(over.found).toHaveLength(0)
 })
 
 test("bar: UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
