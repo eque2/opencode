@@ -538,6 +538,22 @@ test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; t
     { text: "waiting on T2.1 (not in this run)", tone: "muted" },
   ])
   expect(builderHeading(waitingT15, "T1.5", "live", 0)).toEqual(waitSentences(waitingT15, waitingT15.tasks["T1.5"]))
+  // A waiting task that ran before (a reopened task): the sentences first, then its attempt and duration.
+  const reopened = changed((raw) => {
+    Object.assign(tasksIn(raw)["T1.5"], {
+      state: "waiting",
+      tags: ["waiting"],
+      waitingOn: ["T1.4"],
+      reason: null,
+      attempts: 2,
+      startedAt: 0,
+      endedAt: 45_000,
+    })
+  })
+  expect(builderHeading(reopened, "T1.5", "ended", 0)).toEqual([
+    { text: "waiting on T1.4", tone: "muted" },
+    { text: "attempt 2 · 45s", tone: "text" },
+  ])
   // T9 trusted: no trust sentence for it.
   const trusted = changed((raw) => {
     Object.assign(tasksIn(raw)["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T9"], waitingOnOutside: ["T9"] })
@@ -602,6 +618,25 @@ test("T4.5 a task with endedAt and no startedAt did not start: both fallbacks sa
   const later = inside(await frame(() => <Peek {...pendingProps} unit="T1.5" width={60} lines={3} />))
   expect(later).toContain("  no builder session yet")
   expect(later).toContain("  no verifier session yet")
+  // A task that started and ended, with no session found: it ran, so "yet", never "did not start".
+  const ranProps = await view(none, exhausted)
+  const ran = inside(await frame(() => <Peek {...ranProps} unit="T1.4" width={60} lines={3} />))
+  expect(ran).toContain("  no builder session yet")
+  expect(ran).toContain("  no verifier session yet")
+  // A cancelled task (not blocked) that ended before it started: both fallbacks say it did not start.
+  const cancelled = changed((raw) =>
+    Object.assign(tasksIn(raw)["T1.2"], {
+      state: "cancelled",
+      tags: ["ended", "stopped"],
+      reason: "user stop",
+      startedAt: undefined,
+      endedAt: 30,
+    }),
+  )
+  const cancelledProps = await view(none, cancelled)
+  const stopped = inside(await frame(() => <Peek {...cancelledProps} unit="T1.2" width={60} lines={3} />))
+  expect(stopped).toContain("  no builder session: the task did not start")
+  expect(stopped).toContain("  no verifier session: the task did not start")
 })
 
 test("T4.5 a harness session carries its tokens (input, output and reasoning, no cache) and its cost, for T4.12", () => {
