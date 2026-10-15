@@ -1,0 +1,560 @@
+Thu 15 Oct 2026 17:11:06 BST
+17:11  up 11 days, 11:59, 5 users, load averages: 13.07 16.92 19.90
+bun test v1.3.14 (0d9b296a)
+
+test/task-harness/conformance.test.ts:
+203 | 
+204 | async function noRequests(c: Ctx, when: string) {
+205 |   apparatus(c)
+206 |   const hits = await c.model.hits()
+207 |   if (hits.length > 0)
+208 |     throw new Error(`the scripted model received ${hits.length} request(s) ${when}; no model request is allowed`)
+                    ^
+error: the scripted model received 1 request(s) before the refusal; no model request is allowed
+      at noRequests (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:208:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:366:8
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:256:33)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:365:30
+      at processTicksAndRejections (unknown:7:39)
+(fail) H1 refuse before the model [6285.74ms]
+203 | 
+204 | async function noRequests(c: Ctx, when: string) {
+205 |   apparatus(c)
+206 |   const hits = await c.model.hits()
+207 |   if (hits.length > 0)
+208 |     throw new Error(`the scripted model received ${hits.length} request(s) ${when}; no model request is allowed`)
+                    ^
+error: the scripted model received 1 request(s) while loading T2; no model request is allowed
+      at noRequests (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:208:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:386:12
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:256:33)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:381:7
+      at processTicksAndRejections (unknown:7:39)
+(fail) H2 parse T2 [6117.92ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: run done: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H3/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:305:19)
+(fail) H3 happy path [38176.79ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1-T1.4 trusted, T1.5 and S13 waiting: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H4/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:315:19)
+(fail) H4 order and parallelism [36462.90ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 trusted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H5/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:359:19)
+(fail) H5 ready is a request [37394.92ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 trusted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H6/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:384:19)
+(fail) H6 forced rejection [36838.47ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 and the run budget_exhausted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H7/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:416:19)
+(fail) H7 budget [37283.21ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.3's first builder request: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H8/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:434:23)
+(fail) H8 crash and resume [39522.21ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 trusted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H9/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:540:9)
+(fail) H9 stale on edit [40433.12ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 trusted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H10/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:586:19)
+(fail) H10 builder cannot judge [34836.01ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 back in building for attempt 2: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H11/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:618:19)
+(fail) H11 test tampering [39587.10ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: the hung builder request: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H12/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:663:22)
+(fail) H12 stream stall [37640.19ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.1 trusted: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H13/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:709:9)
+(fail) H13 hung proof [39304.57ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: (a) T1.1 trusted after a 529: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H14a/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:731:21)
+(fail) H14 provider errors [38068.41ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: the 3rd identical read call: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H15/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:763:23)
+(fail) H15 repetition [37631.21ms]
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: both bash sleeps in flight: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-11-07-520Z-r1/H16/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+(fail) H16 cancel [36875.12ms]
+
+ 0 pass
+ 1 skip
+ 16 fail
+Ran 17 tests across 1 file. [545.79s]
+[task-conformance] baseline-2026-10-15T16-11-07-520Z-r1: score 0 (0/17)
+bun test v1.3.14 (0d9b296a)
+
+ 16 pass
+ 1 skip
+ 0 fail
+Ran 17 tests across 1 file. [689.37s]
+[task-conformance] o2-2026-10-15T16-11-07-520Z-r1: score 94.118 (16/17)
+[task-conformance] guard passed; JSON in /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/guard-2026-10-15T16-11-07-520Z.json
+{
+  "guard": {
+    "passed": true,
+    "failures": []
+  },
+  "arm": "o2",
+  "arms": [
+    "baseline",
+    "o2"
+  ],
+  "runs": 1,
+  "live": false,
+  "selection": [
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "H7",
+    "H8",
+    "H9",
+    "H10",
+    "H11",
+    "H12",
+    "H13",
+    "H14",
+    "H15",
+    "H16",
+    "L1"
+  ],
+  "commit": "adb947ca15664d8b1e40304704bed177b743993d",
+  "baselineCommit": "55ab6b3e568678f5f26f36a6f3f906268f38e8ac",
+  "fixture": {
+    "spec": "529185a51d7b5ce10ce4c925858a5061e7b3f3e0",
+    "t2": "ab8a39f0d74ca8e9a7482487f4966140e757d53b",
+    "seed": "ecd6340a7344ec5fb82621690c6087b9d0659563",
+    "solution": "b8846187a84e7f3e219d0e745e46cba763169405",
+    "suite": "8c2b47e58f27fe42b851a71f90d25e3d08a097c1",
+    "scripts": "572744ee7edf9b2a81abe19aadc8cf43f19b1619",
+    "arms": "eceeeb1daf09edb494678b41327e0cb93adfaa13"
+  },
+  "dirty": [],
+  "baselineExport": {
+    "dir": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/baseline/55ab6b3e56",
+    "entry": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/baseline/55ab6b3e56/packages/opencode/src/index.ts",
+    "reused": true,
+    "links": {
+      "node_modules/@opencode-ai/plugin": "packages/plugin",
+      "node_modules/@opencode-ai/script": "packages/script",
+      "node_modules/@opencode-ai/sdk": "packages/sdk/js",
+      "packages/opencode/node_modules/@opencode-ai/llm": "packages/llm",
+      "packages/opencode/node_modules/@opencode-ai/core": "packages/core",
+      "packages/opencode/node_modules/@opencode-ai/http-recorder": "packages/http-recorder",
+      "packages/opencode/node_modules/@opencode-ai/tui": "packages/tui",
+      "packages/opencode/node_modules/@opencode-ai/plugin": "packages/plugin",
+      "packages/opencode/node_modules/@opencode-ai/server": "packages/server",
+      "packages/opencode/node_modules/@opencode-ai/protocol": "packages/protocol",
+      "packages/opencode/node_modules/@opencode-ai/codemode": "packages/codemode",
+      "packages/opencode/node_modules/@opencode-ai/script": "packages/script",
+      "packages/opencode/node_modules/@opencode-ai/schema": "packages/schema",
+      "packages/opencode/node_modules/@opencode-ai/sdk": "packages/sdk/js"
+    }
+  },
+  "preflight": {
+    "started": true,
+    "url": "http://127.0.0.1:56950",
+    "ms": 5087,
+    "log": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/preflight-2026-10-15T16-11-07-520Z/home/server-1792080667631.log",
+    "quiet": true,
+    "waitedForQuietMs": 95
+  },
+  "results": {
+    "baseline": {
+      "scores": [
+        0
+      ],
+      "stats": {
+        "median": 0,
+        "mean": 0,
+        "sd": 0,
+        "cv": null,
+        "se": 0,
+        "min": 0,
+        "max": 0
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H2": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H3": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H4": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H5": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H6": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H7": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H8": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H9": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H10": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H11": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H12": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H13": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H14": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H15": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "H16": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "baseline-2026-10-15T16-11-07-520Z-r1",
+          "exitCode": 1,
+          "loadAverage": [
+            13.306640625,
+            16.90087890625,
+            19.87548828125
+          ],
+          "waitedForQuietMs": 109,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 545818,
+          "checks": {
+            "H1": "failed",
+            "H2": "failed",
+            "H3": "failed",
+            "H4": "failed",
+            "H5": "failed",
+            "H6": "failed",
+            "H7": "failed",
+            "H8": "failed",
+            "H9": "failed",
+            "H10": "failed",
+            "H11": "failed",
+            "H12": "failed",
+            "H13": "failed",
+            "H14": "failed",
+            "H15": "failed",
+            "H16": "failed",
+            "L1": "not-runnable"
+          },
+          "score": 0
+        }
+      ]
+    },
+    "o2": {
+      "scores": [
+        94.118
+      ],
+      "stats": {
+        "median": 94.118,
+        "mean": 94.118,
+        "sd": 0,
+        "cv": 0,
+        "se": 0,
+        "min": 94.118,
+        "max": 94.118
+      },
+      "perCheck": {
+        "H1": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H2": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H3": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H4": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H5": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H6": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H7": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H8": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H9": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H10": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H11": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H12": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H13": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H14": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H15": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "H16": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        },
+        "L1": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "o2-2026-10-15T16-11-07-520Z-r1",
+          "exitCode": 0,
+          "loadAverage": [
+            15.748046875,
+            20.40380859375,
+            20.60693359375
+          ],
+          "waitedForQuietMs": 40354,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 689417,
+          "checks": {
+            "H1": "passed",
+            "H2": "passed",
+            "H3": "passed",
+            "H4": "passed",
+            "H5": "passed",
+            "H6": "passed",
+            "H7": "passed",
+            "H8": "passed",
+            "H9": "passed",
+            "H10": "passed",
+            "H11": "passed",
+            "H12": "passed",
+            "H13": "passed",
+            "H14": "passed",
+            "H15": "passed",
+            "H16": "passed",
+            "L1": "skipped"
+          },
+          "score": 94.118
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "baselineMedian": 0,
+    "change": 94.118,
+    "noiseFloorPoints": 0,
+    "smallestEffect": 50,
+    "clearsSmallestEffect": true,
+    "sameFixture": true
+  }
+}
+GUARD_EXIT=0
+Thu 15 Oct 2026 17:32:28 BST
+17:32  up 11 days, 12:20, 5 users, load averages: 11.94 15.41 17.56

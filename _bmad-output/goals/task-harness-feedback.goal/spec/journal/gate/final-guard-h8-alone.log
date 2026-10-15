@@ -1,0 +1,240 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task-harness/conformance.test.ts:
+172 |     const s = "status" in reading ? reading.status : undefined
+173 |     const value = await probe(s)
+174 |     if (value !== undefined) return value
+175 |     const started = c.arm.startedAt
+176 |     if ("problem" in reading && started !== undefined && Date.now() - started > STATUS_APPEARS_MS)
+177 |       throw new Error(
+                      ^
+error: T1.3's first builder request: no status file at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/baseline-2026-10-15T16-03-58-236Z-r1/H8/repo/.opencode/task/status.json, 30 s after /task; the arm exposes no task state
+      at until (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:177:17)
+      at async <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/conformance.test.ts:434:23)
+(fail) H8 crash and resume [39370.96ms]
+
+ 0 pass
+ 16 skip
+ 1 fail
+Ran 17 tests across 1 file. [45.13s]
+[task-conformance] baseline-2026-10-15T16-03-58-236Z-r1: score 0 (0/1)
+bun test v1.3.14 (0d9b296a)
+
+ 1 pass
+ 16 skip
+ 0 fail
+Ran 17 tests across 1 file. [137.08s]
+[task-conformance] o2-2026-10-15T16-03-58-236Z-r1: score 100 (1/1)
+[task-conformance] guard FAILED; JSON in /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/guard-2026-10-15T16-03-58-236Z.json
+{
+  "guard": {
+    "passed": false,
+    "failures": [
+      "baseline run 1: H1 is skipped",
+      "baseline run 1: H2 is skipped",
+      "baseline run 1: H3 is skipped",
+      "baseline run 1: H4 is skipped",
+      "baseline run 1: H5 is skipped",
+      "baseline run 1: H6 is skipped",
+      "baseline run 1: H7 is skipped",
+      "baseline run 1: H9 is skipped",
+      "baseline run 1: H10 is skipped",
+      "baseline run 1: H11 is skipped",
+      "baseline run 1: H12 is skipped",
+      "baseline run 1: H13 is skipped",
+      "baseline run 1: H14 is skipped",
+      "baseline run 1: H15 is skipped",
+      "baseline run 1: H16 is skipped",
+      "o2 run 1: H1 is skipped",
+      "o2 run 1: H2 is skipped",
+      "o2 run 1: H3 is skipped",
+      "o2 run 1: H4 is skipped",
+      "o2 run 1: H5 is skipped",
+      "o2 run 1: H6 is skipped",
+      "o2 run 1: H7 is skipped",
+      "o2 run 1: H9 is skipped",
+      "o2 run 1: H10 is skipped",
+      "o2 run 1: H11 is skipped",
+      "o2 run 1: H12 is skipped",
+      "o2 run 1: H13 is skipped",
+      "o2 run 1: H14 is skipped",
+      "o2 run 1: H15 is skipped",
+      "o2 run 1: H16 is skipped"
+    ]
+  },
+  "arm": "o2",
+  "arms": [
+    "baseline",
+    "o2"
+  ],
+  "runs": 1,
+  "live": false,
+  "selection": [
+    "H8"
+  ],
+  "commit": "adb947ca15664d8b1e40304704bed177b743993d",
+  "baselineCommit": "55ab6b3e568678f5f26f36a6f3f906268f38e8ac",
+  "fixture": {
+    "spec": "529185a51d7b5ce10ce4c925858a5061e7b3f3e0",
+    "t2": "ab8a39f0d74ca8e9a7482487f4966140e757d53b",
+    "seed": "ecd6340a7344ec5fb82621690c6087b9d0659563",
+    "solution": "b8846187a84e7f3e219d0e745e46cba763169405",
+    "suite": "8c2b47e58f27fe42b851a71f90d25e3d08a097c1",
+    "scripts": "572744ee7edf9b2a81abe19aadc8cf43f19b1619",
+    "arms": "eceeeb1daf09edb494678b41327e0cb93adfaa13"
+  },
+  "dirty": [],
+  "baselineExport": {
+    "dir": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/baseline/55ab6b3e56",
+    "entry": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/baseline/55ab6b3e56/packages/opencode/src/index.ts",
+    "reused": true,
+    "links": {
+      "node_modules/@opencode-ai/plugin": "packages/plugin",
+      "node_modules/@opencode-ai/script": "packages/script",
+      "node_modules/@opencode-ai/sdk": "packages/sdk/js",
+      "packages/opencode/node_modules/@opencode-ai/llm": "packages/llm",
+      "packages/opencode/node_modules/@opencode-ai/core": "packages/core",
+      "packages/opencode/node_modules/@opencode-ai/http-recorder": "packages/http-recorder",
+      "packages/opencode/node_modules/@opencode-ai/tui": "packages/tui",
+      "packages/opencode/node_modules/@opencode-ai/plugin": "packages/plugin",
+      "packages/opencode/node_modules/@opencode-ai/server": "packages/server",
+      "packages/opencode/node_modules/@opencode-ai/protocol": "packages/protocol",
+      "packages/opencode/node_modules/@opencode-ai/codemode": "packages/codemode",
+      "packages/opencode/node_modules/@opencode-ai/script": "packages/script",
+      "packages/opencode/node_modules/@opencode-ai/schema": "packages/schema",
+      "packages/opencode/node_modules/@opencode-ai/sdk": "packages/sdk/js"
+    }
+  },
+  "preflight": {
+    "started": true,
+    "url": "http://127.0.0.1:4096",
+    "ms": 3609,
+    "log": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/preflight-2026-10-15T16-03-58-236Z/home/server-1792080298645.log",
+    "quiet": true,
+    "waitedForQuietMs": 60402
+  },
+  "results": {
+    "baseline": {
+      "scores": [
+        0
+      ],
+      "stats": {
+        "median": 0,
+        "mean": 0,
+        "sd": 0,
+        "cv": null,
+        "se": 0,
+        "min": 0,
+        "max": 0
+      },
+      "perCheck": {
+        "H8": {
+          "passed": 0,
+          "runs": 1,
+          "passK": 0
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "baseline-2026-10-15T16-03-58-236Z-r1",
+          "exitCode": 1,
+          "loadAverage": [
+            15.19677734375,
+            19.2578125,
+            21.44482421875
+          ],
+          "waitedForQuietMs": 108,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 45172,
+          "checks": {
+            "H1": "skipped",
+            "H2": "skipped",
+            "H3": "skipped",
+            "H4": "skipped",
+            "H5": "skipped",
+            "H6": "skipped",
+            "H7": "skipped",
+            "H8": "failed",
+            "H9": "skipped",
+            "H10": "skipped",
+            "H11": "skipped",
+            "H12": "skipped",
+            "H13": "skipped",
+            "H14": "skipped",
+            "H15": "skipped",
+            "H16": "skipped",
+            "L1": "not-runnable"
+          },
+          "score": 0
+        }
+      ]
+    },
+    "o2": {
+      "scores": [
+        100
+      ],
+      "stats": {
+        "median": 100,
+        "mean": 100,
+        "sd": 0,
+        "cv": 0,
+        "se": 0,
+        "min": 100,
+        "max": 100
+      },
+      "perCheck": {
+        "H8": {
+          "passed": 1,
+          "runs": 1,
+          "passK": 1
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "runId": "o2-2026-10-15T16-03-58-236Z-r1",
+          "exitCode": 0,
+          "loadAverage": [
+            15.1474609375,
+            19.556640625,
+            21.24072265625
+          ],
+          "waitedForQuietMs": 172264,
+          "quiet": true,
+          "timedOut": false,
+          "durationMs": 137104,
+          "checks": {
+            "H1": "skipped",
+            "H2": "skipped",
+            "H3": "skipped",
+            "H4": "skipped",
+            "H5": "skipped",
+            "H6": "skipped",
+            "H7": "skipped",
+            "H8": "passed",
+            "H9": "skipped",
+            "H10": "skipped",
+            "H11": "skipped",
+            "H12": "skipped",
+            "H13": "skipped",
+            "H14": "skipped",
+            "H15": "skipped",
+            "H16": "skipped",
+            "L1": "skipped"
+          },
+          "score": 100
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "baselineMedian": 0,
+    "change": 100,
+    "noiseFloorPoints": 0,
+    "smallestEffect": 50,
+    "clearsSmallestEffect": true,
+    "sameFixture": true
+  }
+}
