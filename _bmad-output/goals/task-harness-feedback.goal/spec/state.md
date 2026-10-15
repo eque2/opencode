@@ -5,7 +5,7 @@
 |---------|------------|-----------------------------------------|
 | T1      | parentTask | verified                                |
 | T2      | parentTask | verified                                |
-| T3      | parentTask | verifyingSubtasks                       |
+| T3      | parentTask | verified                                |
 | T4      | parentTask | {"buildingSubtasks":"checkingProgress"} |
 | T1.1    | task       | completed                               |
 | T1.2    | task       | completed                               |
