@@ -270,6 +270,33 @@ describe("the closing summary's markdown (D18, UI7)", () => {
     }),
   )
 
+  it.live("summary: EDGE-11 a stopped task's reason, a blocked line's reason and a stop's reason are escaped", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const status = ended(plan)
+      Object.assign(status.tasks["T1.4"] ?? {}, { reason: "Type 'Promise<void>' | x" })
+      for (const id of ["T1", "T1.5"])
+        Object.assign(status.tasks[id] ?? {}, { reason: "blocked by T1.4: a *bold* [link]" })
+      const lines = TaskSummary.markdown({ plan, status, stop: none, warned: false, usage: spent }).split("\n")
+      expect(lines).toContain("  Type 'Promise\\<void\\>' \\| x")
+      expect(lines).toContain("- ⊖ **T1**, **T1.5** blocked by T1.4: a \\*bold\\* \\[link\\]")
+      // A stop's outcome line carries the first line of the run's reason, escaped.
+      const cancel = statusOf(plan, (changed) => {
+        for (const task of Object.values(changed.tasks))
+          Object.assign(task, { state: "trusted", tags: ["ended"], reason: undefined, blockedBy: undefined })
+        Object.assign(changed.run, {
+          state: "cancelled",
+          tags: ["ended", "stopped"],
+          reason: "stop <now> | `here`\nnext",
+        })
+      })
+      const stop = Option.some({ state: "cancelled", reason: "stop" })
+      expect(TaskSummary.markdown({ plan, status: cancel, stop, warned: false, usage: spent }).split("\n")[0]).toBe(
+        "Spec **Release notes from conventional commits** — cancelled: stop \\<now\\> \\| \\`here\\`",
+      )
+    }),
+  )
+
   it.live("summary: UI20 a spec check with failures warns the run, even when a later check validates again", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
