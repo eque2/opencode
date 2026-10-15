@@ -1,0 +1,586 @@
+Thu 15 Oct 2026 18:02:25 BST
+a41387da5c
+18:02  up 11 days, 12:50, 5 users, load averages: 24.86 18.02 17.79
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/config/config.test.ts:
+[17:06:03.257] INFO (#55267): creating instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ald2v96zko",
+}
+[17:06:03.258] INFO (#55267): fromDirectory {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ald2v96zko",
+}
+[17:06:03.429] INFO (#55285): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-64592/config/opencode/config.json",
+}
+[17:06:03.430] INFO (#55285): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-64592/config/opencode/opencode.json",
+}
+[17:06:03.430] INFO (#55285): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-64592/config/opencode/opencode.jsonc",
+}
+[17:06:03.521] INFO (#55290): disposing all instances
+[17:06:03.521] INFO (#55290): disposing instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ald2v96zko",
+}
+
+test/plugin/github-copilot-models.test.ts:
+[17:06:30.965] WARN (#60537): Copilot model list failed {
+  error: {
+    _tag: "CopilotModels.Error",
+    message: "timeout",
+    cause: 475 |   expect(models["claude-opus-4.7"].api.npm).toBe("@ai-sdk/anthropic")
+476 |   expect(models["claude-opus-4.7"].variants).toBeUndefined()
+477 | })
+478 | 
+479 | test("remaps fallback oauth model urls to the enterprise host", async () => {
+480 |   stubFetch(() => Promise.reject(new Error("timeout")))
+                                           ^
+error: timeout
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:480:38)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:487:40)
+,
+  },
+} {
+  category: "provider.discovery",
+}
+
+test/server/httpapi-v2-pty.test.ts:
+88 |       expect(found.status).toBe(200)
+89 |       info = Schema.decodeUnknownSync(Location.response(Pty.Info))(await found.json()).data
+90 |       if (info.status === "exited") break
+91 |       await new Promise((resolve) => setTimeout(resolve, 50))
+92 |     }
+93 |     expect(info).toMatchObject({ status: "exited", exitCode: 4 })
+                      ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "exitCode": 4,
+-   "status": "exited",
++   "args": [
++     "sh",
++     "-c",
++     "exit 4",
++   ],
++   "command": "/usr/bin/env",
++   "cwd": "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ki13dxukc2",
++   "id": "pty_14089aba60010OaZIkKt4Q2YKb",
++   "pid": 74939,
++   "status": "running",
++   "title": "v2",
+  }
+
+- Expected  - 2
++ Received  + 11
+
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/server/httpapi-v2-pty.test.ts:93:18)
+(fail) v2 pty HttpApi > serves location-wrapped PTY routes and retains exited sessions [21609.62ms]
+
+test/server/httpapi-mdns.test.ts:
+[17:09:12.369] WARN (#1244893): mDNS enabled but hostname is loopback; skipping mDNS publish
+
+test/task/engine-xstate-graph.test.ts:
+(fail) the graph proof > RM19 walks the release-notes plan: no stuck state, every snapshot active or done [60011.98ms]
+  ^ this test timed out after 60000ms.
+example walk example-cascade.spec 108 keys 292 edges
+example walk example-outside-run.spec 29 keys 74 edges
+example walk example-scenarios.spec 23 keys 46 edges
+outside-run subtree walk 14 keys 35 edges
+release-notes walk 338 keys 746 edges
+negative control 398 keys 806 edges 33 stuck
+reduction 292 1310 27 39
+killed 1 dangling process
+
+test/task/core-command.test.ts:
+(fail) /task on a root checkout that cannot take a run > refuses a tracked change and names it [30000.28ms]
+  ^ this test timed out after 30000ms.
+[17:38:02.936] ERROR (#2949023): 47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+TaskWorkspaceGitError: git -c user.name=t -c user.email=t@t commit -q --no-verify -m seed: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+
+
+# Unhandled error between tests
+-------------------------------
+47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+error: git -c user.name=t -c user.email=t@t commit -q --no-verify -m seed: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/proof/process.ts:197:18
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+      at processTicksAndRejections (unknown:7:39)
+-------------------------------
+
+killed 1 dangling process
+(fail) one run per directory (AD-19, SV8) > frees this call's claim when a job of that id is already running [30001.73ms]
+  ^ this test timed out after 30000ms.
+[17:42:37.244] ERROR (#2965892): 463 |       Effect.gen(function* () {
+464 |         const directory = yield* seeded
+465 |         const harness = yield* TaskHarness.make
+466 |         const jobs = jobsOf()
+467 |         jobs.mode = "elsewhere"
+468 |         expect(yield* runTask(harness, SPEC, jobs)).toEqual([`Task harness: the run of ${SPEC} is already going on.`])
+      ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "Task harness: the run of task-formats/blend/release-notes.spec is already going on.",
++   
++ "Refused task-formats/blend/release-notes.spec. No work started.
++ the folder is not inside a git repository"
++ ,
+  ]
+
+- Expected  - 1
++ Received  + 4
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/core-command.test.ts:468:53
+
+
+# Unhandled error between tests
+-------------------------------
+463 |       Effect.gen(function* () {
+464 |         const directory = yield* seeded
+465 |         const harness = yield* TaskHarness.make
+466 |         const jobs = jobsOf()
+467 |         jobs.mode = "elsewhere"
+468 |         expect(yield* runTask(harness, SPEC, jobs)).toEqual([`Task harness: the run of ${SPEC} is already going on.`])
+      ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "Task harness: the run of task-formats/blend/release-notes.spec is already going on.",
++   
++ "Refused task-formats/blend/release-notes.spec. No work started.
++ the folder is not inside a git repository"
++ ,
+  ]
+
+- Expected  - 1
++ Received  + 4
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/core-command.test.ts:468:53
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9
+      at processTicksAndRejections (unknown:7:39)
+-------------------------------
+
+killed 1 dangling process
+(fail) one run per directory (AD-19, SV8) > answers busy to the second of two calls that both passed the live check, and keeps the first claim [30019.45ms]
+  ^ this test timed out after 30000ms.
+[17:42:40.326] ERROR (#2966904): 47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+TaskWorkspaceGitError: git add -A: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+
+
+# Unhandled error between tests
+-------------------------------
+47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+error: git add -A: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/proof/process.ts:197:18
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+      at processTicksAndRejections (unknown:7:39)
+-------------------------------
+
+(fail) the job of a run (AD-8, SV4, SV21, SV27) > SV4 a cancelled job records run.cancelled, its supervisor closes, and the next /task is not busy (SV21) [30016.15ms]
+  ^ this test timed out after 30000ms.
+killed 1 dangling process
+(fail) a subtree run and the folder tasks outside it (D13, AD-15) > VF24 a newer slice that holds T1.1 decides before an older slice whose path no longer loads [30001.65ms]
+  ^ this test timed out after 30000ms.
+[17:47:46.601] ERROR (#2999197): 993 |     () =>
+994 |       Effect.gen(function* () {
+995 |         const directory = yield* seeded
+996 |         const f = facts(100)
+997 |         yield* storeSlices(directory, [f.runStarted(SUB("T1.9-gone.task"))], yield* trustedSlice)
+998 |         expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith(
+      ^
+error: expect(received).toStartWith(expected)
+
+Expected to start with: "Implementing **T1.3 Render the release notes as Markdown** from spec"
+Received: "Refused task-formats/blend/release-notes.spec/T1-release-notes.task/T1.3-markdown-render.task. No work started.\ngit could not read the checkout: git ls-files --others --exclude-standard --full-name -- :(top) :(top,exclude).opencode/task: exit 143: "
+
+      at toStartWith (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/core-command.test.ts:998:73
+
+
+# Unhandled error between tests
+-------------------------------
+993 |     () =>
+994 |       Effect.gen(function* () {
+995 |         const directory = yield* seeded
+996 |         const f = facts(100)
+997 |         yield* storeSlices(directory, [f.runStarted(SUB("T1.9-gone.task"))], yield* trustedSlice)
+998 |         expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith(
+      ^
+error: expect(received).toStartWith(expected)
+
+Expected to start with: "Implementing **T1.3 Render the release notes as Markdown** from spec"
+Received: "Refused task-formats/blend/release-notes.spec/T1-release-notes.task/T1.3-markdown-render.task. No work started.\ngit could not read the checkout: git ls-files --others --exclude-standard --full-name -- :(top) :(top,exclude).opencode/task: exit 143: "
+
+      at toStartWith (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/core-command.test.ts:998:73
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9
+      at processTicksAndRejections (unknown:7:39)
+-------------------------------
+
+killed 1 dangling process
+(fail) a subtree run and the folder tasks outside it (D13, AD-15) > the T1.5 subtree with T1.3 trusted: one R12 line for T1.4, and the outside precondition T9 is no refusal [30001.83ms]
+  ^ this test timed out after 30000ms.
+[17:48:45.593] ERROR (#3003745): 47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+TaskWorkspaceGitError: git add -A: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+
+
+# Unhandled error between tests
+-------------------------------
+47 | 
+48 | /** Runs git and returns its trimmed output; a non-zero exit fails. */
+49 | export const git = Effect.fnUntraced(function* (cwd: string, limits: TaskLimits.Limits, ...args: ReadonlyArray<string>) {
+50 |   const result = yield* call(cwd, limits, args)
+51 |   if (result.exitCode !== 0) {
+52 |     return yield* new GitError({
+                           ^
+error: git add -A: exit 143: 
+ _tag: "TaskWorkspaceGitError",
+
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/core/workspace.ts:52:23
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/task/proof/process.ts:197:18
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+      at processTicksAndRejections (unknown:7:39)
+-------------------------------
+
+(fail) a subtree run and the folder tasks outside it (D13, AD-15) > VF8 a subtree run that leaves scenarios out names them in its start message [30005.47ms]
+  ^ this test timed out after 30000ms.
+
+test/task/live-check-runs.test.ts:
+84 |       })().catch(() => undefined)
+85 |       return { url: m[1], pid: proc.pid, log, exited: proc.exited }
+86 |     }
+87 |   }
+88 |   kill(proc.pid, "SIGKILL")
+89 |   throw new Error(`opencode serve did not start within ${readyMs} ms; log ${log}:\n${fs.readFileSync(log, "utf8").slice(-2000)}`)
+                 ^
+error: opencode serve did not start within 60000 ms; log /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/.task-conformance/conformance/live-check/example-scenarios.spec-64592-1792086574329/home/server-1792086611484.log:
+
+      at start (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/arms/server.ts:89:13)
+      at async open (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task-harness/arms/index.ts:92:29)
+(fail) scripted runs of the live-check folders > VF18 example-scenarios: T1.1 trusted, S1 proved by its [S1] test and trusted, T1's review trusted, run done [97835.49ms]
+112 |         "T1.2 blocked by T1.1",
+113 |       ])
+114 |       // T1.1 and T1.3 were built in parallel: T1.3's first builder request came before T1.1 was exhausted.
+115 |       const exhausted = end.history.find((entry) => entry.unit === "T1.1" && entry.to === "budget_exhausted")?.at ?? 0
+116 |       const t13 = run.requests.find((r) => r.role === "builder" && r.unit === "T1.3")?.at ?? Infinity
+117 |       expect(t13).toBeLessThan(exhausted)
+                        ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < 1792086866618
+Received: 1792086878814
+
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/live-check-runs.test.ts:117:19)
+(fail) scripted runs of the live-check folders > VF17 example-cascade: T1.1 budget exhausted, T1.2 and T1 blocked by it, T1.3 trusted, and the run ends only after T1.3 [267430.52ms]
+
+test/acp/service-session.test.ts:
+[18:05:08.387] ERROR (#3133129): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+[18:05:08.388] ERROR (#3133130): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+
+test/control-plane/workspace.test.ts:
+[18:05:45.901] INFO (#3150301): disposing all instances
+[18:07:45.874] INFO (#3250107): disposing all instances
+killed 1 dangling process
+
+test/tool/truncation.test.ts:
+(fail) Truncate > output > loads truncate effect in a fresh process [20060.97ms]
+  ^ this test timed out after 20000ms.
+
+# Unhandled error between tests
+-------------------------------
+100 |   }
+101 |   return `${describeCommand(command.left)} | ${describeCommand(command.right)}`
+102 | }
+103 | 
+104 | const wrapError = (description: string, cause: unknown): AppProcessError =>
+105 |   cause instanceof AppProcessError ? cause : new AppProcessError({ command: description, cause })
+                                                   ^
+error: Command failed: /Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts: Unknown: ChildProcess.exitCode (/Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts): Process interrupted due to receipt of signal: 'SIGTERM'
+    _tag: "AppProcessError",
+ command: "/Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts",
+
+      at wrapError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/process.ts:105:46)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/process.ts:215:63)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2292:17)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:421:19)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:285:18)
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+
+172 |  *
+173 |  * @stability unstable
+174 |  * @category constructors
+175 |  * @since 4.0.0
+176 |  */
+177 | export const systemError = options => new PlatformError(new SystemError(options));
+                                            ^
+error: Unknown: ChildProcess.exitCode (/Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts): Process interrupted due to receipt of signal: 'SIGTERM'
+     reason: 172 |  *
+173 |  * @stability unstable
+174 |  * @category constructors
+175 |  * @since 4.0.0
+176 |  */
+177 | export const systemError = options => new PlatformError(new SystemError(options));
+                                                              ^
+error: Unknown: ChildProcess.exitCode (/Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts): Process interrupted due to receipt of signal: 'SIGTERM'
+       _tag: "Unknown",
+     module: "ChildProcess",
+     method: "exitCode",
+ pathOrDescriptor: "/Users/marknorgate/.bun/bin/bun run /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/tool/truncate.ts",
+ description: "Process interrupted due to receipt of signal: 'SIGTERM'",
+
+      at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:57)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:462:13)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:285:18)
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+,
+       _tag: "PlatformError",
+ ~effect/PlatformError: "~effect/PlatformError",
+
+      at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:462:13)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:285:18)
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+-------------------------------
+
+
+test/tool/registry.test.ts:
+(fail) tool.registry > preserves Zod arg descriptions from older config-scoped plugin packages [20001.74ms]
+  ^ this test timed out after 20000ms.
+
+test/session/prompt.test.ts:
+(fail) running subtask preserves metadata after tool-call transition [5105.30ms]
+  ^ this test timed out after 5000ms.
+[18:22:25.683] ERROR (#3717740): 174 |       yield* Effect.sleep("20 millis")
+175 |     }
+176 |   }).pipe(
+177 |     Effect.timeoutOrElse({
+178 |       duration,
+179 |       orElse: () => Effect.fail(new TimeoutError({ message })),
+                                      ^
+TestTimeoutError: timed out waiting for running subtask metadata
+ _tag: "TestTimeoutError",
+
+      at orElse (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/lib/effect.ts:179:33)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+
+
+# Unhandled error between tests
+-------------------------------
+174 |       yield* Effect.sleep("20 millis")
+175 |     }
+176 |   }).pipe(
+177 |     Effect.timeoutOrElse({
+178 |       duration,
+179 |       orElse: () => Effect.fail(new TimeoutError({ message })),
+                                      ^
+error: timed out waiting for running subtask metadata
+ _tag: "TestTimeoutError",
+
+      at orElse (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/lib/effect.ts:179:33)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+-------------------------------
+
+(fail) running task tool preserves metadata after tool-call transition [10120.68ms]
+  ^ this test timed out after 10000ms.
+[18:22:30.585] ERROR (#3721977): 174 |       yield* Effect.sleep("20 millis")
+175 |     }
+176 |   }).pipe(
+177 |     Effect.timeoutOrElse({
+178 |       duration,
+179 |       orElse: () => Effect.fail(new TimeoutError({ message })),
+                                      ^
+TestTimeoutError: timed out waiting for running task metadata
+ _tag: "TestTimeoutError",
+
+      at orElse (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/lib/effect.ts:179:33)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+
+
+# Unhandled error between tests
+-------------------------------
+174 |       yield* Effect.sleep("20 millis")
+175 |     }
+176 |   }).pipe(
+177 |     Effect.timeoutOrElse({
+178 |       duration,
+179 |       orElse: () => Effect.fail(new TimeoutError({ message })),
+                                      ^
+error: timed out waiting for running task metadata
+ _tag: "TestTimeoutError",
+
+      at orElse (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/lib/effect.ts:179:33)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+-------------------------------
+
+(fail) loop sets status to busy then idle [3018.44ms]
+  ^ this test timed out after 3000ms.
+(fail) cancel interrupts loop and resolves with an assistant message [30078.08ms]
+  ^ this test timed out after 30000ms.
+error: script "test" was terminated by signal SIGTERM (Polite quit request)

@@ -1,0 +1,103 @@
+Thu 15 Oct 2026 19:31:45 BST
+a41387da5c
+19:31  up 11 days, 14:20, 3 users, load averages: 25.79 68.31 79.93
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/config/config.test.ts:
+[18:34:39.830] INFO (#55262): creating instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-wobraaszh6s",
+}
+[18:34:39.831] INFO (#55262): fromDirectory {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-wobraaszh6s",
+}
+[18:34:39.974] INFO (#55280): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-56735/config/opencode/config.json",
+}
+[18:34:39.974] INFO (#55280): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-56735/config/opencode/opencode.json",
+}
+[18:34:39.974] INFO (#55280): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-56735/config/opencode/opencode.jsonc",
+}
+[18:34:40.042] INFO (#55285): disposing all instances
+[18:34:40.043] INFO (#55285): disposing instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-wobraaszh6s",
+}
+
+test/plugin/github-copilot-models.test.ts:
+[18:35:03.248] WARN (#60529): Copilot model list failed {
+  error: {
+    _tag: "CopilotModels.Error",
+    message: "timeout",
+    cause: 475 |   expect(models["claude-opus-4.7"].api.npm).toBe("@ai-sdk/anthropic")
+476 |   expect(models["claude-opus-4.7"].variants).toBeUndefined()
+477 | })
+478 | 
+479 | test("remaps fallback oauth model urls to the enterprise host", async () => {
+480 |   stubFetch(() => Promise.reject(new Error("timeout")))
+                                           ^
+error: timeout
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:480:38)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:487:40)
+,
+  },
+} {
+  category: "provider.discovery",
+}
+
+test/server/httpapi-mdns.test.ts:
+[18:36:25.156] WARN (#1244535): mDNS enabled but hostname is loopback; skipping mDNS publish
+
+test/task/supervise-run.test.ts:
+(fail) spec.checked and the run warning (D12, AD-12, VF4, VF5) > a valid reload that removes an obligation id of the plan is a spec.checked failure [31425.21ms]
+  ^ this test timed out after 30000ms.
+(fail) spec.checked and the run warning (D12, AD-12, VF4, VF5) > a resumed slice with a 2-failure warning and a now-valid spec: spec.checked [] comes before obligation.stale [30102.71ms]
+  ^ this test timed out after 30000ms.
+[18:58:58.464] ERROR (#2894691): 931 |         expect(types.indexOf("spec.checked")).toBeLessThan(types.indexOf("obligation.stale"))
+932 |         const log = (yield* runSnapshot(setup)).context.log
+933 |         const entry = log.findLastIndex((item) => item.unit === "run" && item.reason === "spec.checked: no failures")
+934 |         const stale = log.findIndex((item) => item.unit === "T1.1.c1" && item.to === "stale")
+935 |         expect(entry).toBeGreaterThan(-1)
+936 |         expect(entry).toBeLessThan(stale)
+      ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < -1
+Received: 14
+
+      at toBeLessThan (native:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/supervise-run.test.ts:936:23
+
+
+# Unhandled error between tests
+-------------------------------
+931 |         expect(types.indexOf("spec.checked")).toBeLessThan(types.indexOf("obligation.stale"))
+932 |         const log = (yield* runSnapshot(setup)).context.log
+933 |         const entry = log.findLastIndex((item) => item.unit === "run" && item.reason === "spec.checked: no failures")
+934 |         const stale = log.findIndex((item) => item.unit === "T1.1.c1" && item.to === "stale")
+935 |         expect(entry).toBeGreaterThan(-1)
+936 |         expect(entry).toBeLessThan(stale)
+      ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < -1
+Received: 14
+
+      at toBeLessThan (native:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/supervise-run.test.ts:936:23
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+-------------------------------
+
+error: script "test" was terminated by signal SIGTERM (Polite quit request)
