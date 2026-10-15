@@ -61,12 +61,14 @@ export const boundary = (turns: ReadonlyArray<Turn>, messages: ReadonlyArray<unk
   const sessions = {
     create: () => Effect.sync(() => ({ id: SessionID.make(`ses_judge_${++created}`) })),
     messages: () => Effect.succeed(messages),
+    // The closing summary sums the run's sessions; none has spent anything here.
+    children: () => Effect.succeed([]),
   }
   const instances = {
     provide: <A, E, R>(_load: InstanceStore.LoadInput, effect: Effect.Effect<A, E, R>) => effect,
   }
   const env: TaskSessions.Env = {
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the workers call only create and messages
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the workers call only create, messages and children
     sessions: sessions as unknown as Session.Interface,
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the workers never read the status service
     status: {} as SessionStatus.Interface,
@@ -93,6 +95,7 @@ export const boundary = (turns: ReadonlyArray<Turn>, messages: ReadonlyArray<unk
       },
       cancel: (session) => Effect.sync(() => seen.cancels.push(session)),
       currentModel: () => Effect.succeed({ providerID: "test", modelID: "test" }),
+      say: () => Effect.void,
     },
   }
   return { env, seen }

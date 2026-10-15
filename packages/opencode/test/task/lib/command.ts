@@ -107,6 +107,7 @@ export const runTaskInputs = (harness: TaskHarness.Interface, args: string = SPE
         }),
       cancel: () => Effect.void,
       currentModel: () => Effect.succeed({ providerID: "test", modelID: "test" }),
+      say: () => Effect.void,
     }
     yield* TaskCommand.run({ sessionID: SESSION, arguments: args }, ops, harness).pipe(Effect.provide(services(jobs)))
     return inputs

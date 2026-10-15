@@ -115,6 +115,7 @@ const recording = (boundary: Boundary = {}) => {
           seen.order.push(`cancel ${session}`)
         }).pipe(Effect.andThen(boundary.cancelling ?? Effect.void)),
       currentModel: () => Effect.succeed({ providerID: "test", modelID: "test" }),
+      say: () => Effect.void,
     },
   }
   return { env, seen }

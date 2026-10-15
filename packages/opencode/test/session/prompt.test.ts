@@ -548,6 +548,106 @@ it.instance("a /task header's text part keeps its metadata (T4.10)", () =>
   }),
 )
 
+// The closing summary's seam (T4.11, AD-18): one complete assistant message with no model call.
+
+const HEADER = { taskHarness: { header: { spec: { id: "release-notes.spec", title: "Release notes" }, leftOut: [] } } }
+
+const said = (messages: ReadonlyArray<SessionV1.WithParts>, text: string) =>
+  messages.filter(
+    (message) =>
+      message.info.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === text),
+  )
+
+it.instance("summary: say writes one complete assistant message answering the run header, with no model call", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+    const header = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Implementing spec **Release notes**", metadata: HEADER }],
+    })
+    // A later user message: the summary still answers the run header.
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "later" }],
+    })
+    yield* prompt.say({ sessionID: chat.id, text: "Spec **Release notes** — done" })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+    const summary = said(messages, "Spec **Release notes** — done")
+    expect(summary).toHaveLength(1)
+    const info = summary[0]?.info
+    if (info?.role !== "assistant" || header.info.role !== "user") throw new Error("no summary or no header")
+    expect(info.parentID).toBe(header.info.id)
+    expect({ providerID: info.providerID, modelID: info.modelID }).toEqual({
+      providerID: header.info.model.providerID,
+      modelID: header.info.model.modelID,
+    })
+    expect(info.cost).toBe(0)
+    expect(info.tokens).toEqual({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
+    expect(info.finish).toBe("stop")
+    expect(info.time.completed).toBeGreaterThanOrEqual(info.time.created)
+    expect(summary[0]?.parts.map((part) => part.type)).toEqual(["text"])
+    expect(yield* llm.hits).toHaveLength(0)
+  }),
+)
+
+it.instance(
+  "summary: say waits behind a turn in flight and writes once after it ends, an abort included; a later prompt runs a turn",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "Implementing spec **Release notes**", metadata: HEADER }],
+      })
+      yield* llm.hang
+      yield* user(chat.id, "a question in flight")
+      const turn = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+      yield* llm.wait(1)
+      yield* waitForBusy(chat.id)
+      const saying = yield* prompt.say({ sessionID: chat.id, text: "the summary" }).pipe(Effect.forkChild)
+      yield* Effect.sleep("200 millis")
+      // The turn is still in flight: nothing written yet.
+      expect(said(yield* sessions.messages({ sessionID: chat.id }), "the summary")).toHaveLength(0)
+      // The user aborts the turn: the summary is written once, after it.
+      yield* prompt.cancel(chat.id)
+      yield* Fiber.join(saying)
+      yield* Fiber.await(turn)
+      expect(said(yield* sessions.messages({ sessionID: chat.id }), "the summary")).toHaveLength(1)
+      // A later user prompt still runs a model turn: the summary answers the header, not this prompt.
+      yield* llm.text("an answer")
+      const answer = yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        parts: [{ type: "text", text: "next" }],
+      })
+      expect(answer.parts.some((part) => part.type === "text" && part.text === "an answer")).toBe(true)
+    }),
+  15_000,
+)
+
+it.instance("summary: UI23 say fails when the session is gone", () =>
+  Effect.gen(function* () {
+    yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+    yield* sessions.remove(chat.id)
+    expect(Exit.isFailure(yield* Effect.exit(prompt.say({ sessionID: chat.id, text: "the summary" })))).toBe(true)
+  }),
+)
+
 it.instance("loop calls LLM and returns assistant message", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

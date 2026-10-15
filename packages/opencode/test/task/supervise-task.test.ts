@@ -101,6 +101,7 @@ const boundary = (turns: ReadonlyArray<Turn>, messages: ReadonlyArray<unknown> =
       },
       cancel: (session) => Effect.sync(() => seen.cancels.push(session)),
       currentModel: () => Effect.succeed({ providerID: "test", modelID: "test" }),
+      say: () => Effect.void,
     },
   }
   return { env, seen }
