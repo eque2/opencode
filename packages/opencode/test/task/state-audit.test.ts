@@ -315,16 +315,9 @@ const FINAL: ReadonlyArray<Entry> = [
   },
 ]
 
-const CLASSIFY = "A task-ui classification by state names, replaced by a read of the status tags (AD-16)."
-const interim = (file: string, until: string, reason: string, identifiers: ReadonlyArray<string>) =>
-  identifiers.map((identifier): Entry => ({ file, identifier, reason, until }))
-
-// The interim entries: state that phase 2 and phase 4 move into the actors. Each names the task that removes it.
-const INTERIM: ReadonlyArray<Entry> = [
-  // The store reads the tags since T4.2; ENDED stays for its last importers, the Gantt and the Ticker.
-  ...interim(ui("store.ts"), "T4.8", CLASSIFY, ["ENDED"]),
-  ...interim(ui("designs/7-ticker.tsx"), "T4.8", CLASSIFY, ["ENDED"]),
-]
+// The interim entries: state that phase 2 and phase 4 moved into the actors, each naming the task that removed it.
+// T4.8 removed the last, the store's and the Ticker's ENDED.
+const INTERIM: ReadonlyArray<Entry> = []
 
 const ALLOWLIST: ReadonlyArray<Entry> = [...FINAL, ...INTERIM]
 

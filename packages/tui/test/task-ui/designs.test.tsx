@@ -6,10 +6,14 @@ import { expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import type { CapturedFrame, RGBA } from "@opentui/core"
 import { Option, Result } from "effect"
-import type { JSX } from "solid-js"
+import { createRoot, type JSX } from "solid-js"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import type { Sessions } from "../../src/task-ui/peek"
 import { outsideCollapsed, stoppedLines } from "../../src/task-ui/shared"
+import { reasonLine, registerWarning, runTitle, stoppedText, warningToast } from "../../src/task-ui/ui"
+import { LedgerView } from "../../src/task-ui/designs/1-ledger"
+import { DockView } from "../../src/task-ui/designs/2-dock"
+import { TickerDialog, endNotice, tickerToasts } from "../../src/task-ui/designs/7-ticker"
 import { parse, rows, runSpan, runUsage, type Status } from "../../src/task-ui/store"
 import { BoardView, cardLines, cardsIn } from "../../src/task-ui/designs/3-board"
 import { MatrixView } from "../../src/task-ui/designs/4-matrix"
@@ -17,6 +21,7 @@ import { GanttView, ganttRange, lane } from "../../src/task-ui/designs/5-gantt"
 import { HudView, hudLine } from "../../src/task-ui/designs/6-hud"
 import { Screen } from "../../src/task-ui/designs/screen"
 import projected from "./fixture-projected.json"
+import legacy from "./fixture-status.json"
 import { settle, viewFor } from "./view"
 
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
@@ -621,12 +626,331 @@ test("UI5 the HUD panel shows the outside wait line under the run warning line; 
   expect(head).toBeGreaterThan(0)
   expect(rgb(fgOf(one.spans, "! spec no longer"))).toEqual(rgb(theme.warning))
   // The line wraps at a word boundary in 40 cells and never cuts the command.
-  expect(one.lines.slice(head + 1, head + 3)).toEqual(["waiting on T9 (outside) — run /task", "trust T9"])
+  expect(one.lines.slice(head + 1, head + 3)).toEqual(["waiting on T9 (outside) — run", "/task trust T9"])
   expect(rgb(fgOf(one.spans, "waiting on T9"))).toEqual(rgb(theme.warning))
   expect(outsideCollapsed(waiting(["T9", "T8"]))).toBe("waiting on T8 (outside) — run /task trust T8 +1")
   const two = await hud(waiting(["T9", "T8"]))
-  expect(two.lines.slice(head + 1, head + 3)).toEqual(["waiting on T8 (outside) — run /task", "trust T8 +1"])
+  expect(two.lines.slice(head + 1, head + 3)).toEqual(["waiting on T8 (outside) — run", "/task trust T8 +1"])
   // No outside wait, no line; no warning, no warning line.
   expect(outsideCollapsed(hudStatus)).toBeUndefined()
   expect((await hud(hudStatus)).lines.join("\n")).not.toContain("spec no longer validates")
+})
+
+// --- the Ledger, the Dock, the Ticker and the full-screen header (T4.8) ----------------------------------------------
+
+const ledger = async (status: Status, width = 38, expanded = false) => {
+  const { view } = await viewFor(status, { design: 1 })
+  if (expanded) view.setExpanded(true)
+  await settle()
+  const shown = await render(
+    () => <LedgerView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={width} />,
+    120,
+    60,
+  )
+  return { ...shown, lines: linesOf(shown.text) }
+}
+
+const fullScreen = async (status: Status, width = 120, height = 50) => {
+  const { view } = await viewFor(status, { design: 3 })
+  await settle()
+  const shown = await render(
+    () => <Screen theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={width} height={height} />,
+    width,
+    height,
+  )
+  return { ...shown, lines: linesOf(shown.text) }
+}
+
+const dock = async (status: Status, width: number, sessions: Sessions = none, height = 40, expanded = false) => {
+  const { view } = await viewFor(status, { design: 2 })
+  view.select("T1.4")
+  if (expanded) view.setExpanded(true)
+  await settle()
+  const shown = await render(
+    () => (
+      <DockView theme={() => theme} view={view} sessions={sessions} leader="ctrl+x" width={width} height={height} />
+    ),
+    Math.max(width, 120),
+    height,
+  )
+  return { ...shown, lines: linesOf(shown.text) }
+}
+
+test("UI6 the Ledger shows the run title on its own line, muted and cut; the full-screen header reads title · run: state", async () => {
+  const shown = await ledger(base)
+  expect(shown.lines[0]).toBe("◆ In the Flow run: running")
+  expect(shown.lines[1]).toBe("Release notes from conventional commi…")
+  expect(rgb(fgOf(shown.spans, "Release notes"))).toEqual(rgb(theme.textMuted))
+  expect(shown.lines[2]).toStartWith("▰")
+  expect(shown.text).not.toContain("release-notes.spec")
+  // No title: the spec id.
+  const untitled = statusOf((raw) => Object.assign(raw.run, { title: undefined }))
+  expect(runTitle(untitled)).toBe("release-notes.spec")
+  expect((await fullScreen(base)).lines[0]).toContain("Board Release notes from conventional commits · run: running")
+})
+
+const refused = statusOf((raw) => {
+  Object.assign(raw.run, { state: "refused", tags: ["ended", "stopped"], reason: "R1 a: one\nR3 b: two\nR4 c: three" })
+  Object.assign(raw, { tasks: {}, obligations: {}, scenarios: {} })
+})
+
+test("UI17 a refused run: the Ledger shows run: refused and every reason line in the error tone; the full-screen body says so", async () => {
+  const shown = await ledger(refused)
+  expect(shown.lines[0]).toBe("◆ In the Flow run: refused")
+  for (const line of ["R1 a: one", "R3 b: two", "R4 c: three"]) {
+    expect(shown.lines).toContain(line)
+    expect(rgb(fgOf(shown.spans, line))).toEqual(rgb(theme.error))
+  }
+  expect(shown.text).not.toContain("(+2 more)")
+  const screenLines = (await fullScreen(refused)).lines
+  const body = screenLines.findIndex((line) => line.includes("No work started: the spec was refused."))
+  expect(body).toBeGreaterThan(0)
+  expect(screenLines.slice(body + 1, body + 4).map((line) => line.trim())).toEqual([
+    "R1 a: one",
+    "R3 b: two",
+    "R4 c: three",
+  ])
+})
+
+test("UI19 the run reason line: the first line and (+N more); error with stopped, muted on a done run", async () => {
+  const stopped = statusOf((raw) =>
+    Object.assign(raw.run, {
+      state: "budget_exhausted",
+      tags: ["ended", "stopped"],
+      reason: "T1.4 budget exhausted\nT1 blocked by T1.4\nT1.5 blocked by T1.4",
+    }),
+  )
+  expect(reasonLine(stopped)).toEqual(Option.some({ text: "T1.4 budget exhausted (+2 more)", tone: "error" }))
+  const done = statusOf((raw) =>
+    Object.assign(raw.run, { state: "done", tags: ["ended"], reason: "not run: S13 waits on T8" }),
+  )
+  expect(reasonLine(done)).toEqual(Option.some({ text: "not run: S13 waits on T8", tone: "muted" }))
+  expect(reasonLine(base)).toEqual(Option.none())
+  for (const [status, text, color] of [
+    [stopped, "T1.4 budget exhausted (+2 more)", theme.error],
+    [done, "not run: S13 waits on T8", theme.textMuted],
+  ] as const) {
+    const side = await ledger(status)
+    expect(side.lines).toContain(text)
+    expect(rgb(fgOf(side.spans, text))).toEqual(rgb(color))
+    const header = await fullScreen(status)
+    expect(header.lines.findIndex((line) => line.includes(text))).toBeLessThan(
+      header.lines.findIndex((line) => line.includes("WAITING")),
+    )
+    expect(rgb(fgOf(header.spans, text))).toEqual(rgb(color))
+  }
+})
+
+test("UI21 every trusted count ends with · N stopped in the error tone, and shows nothing at 0", async () => {
+  expect(stoppedText(base)).toBe(" · 3 stopped")
+  const clean = statusOf((raw) => {
+    for (const id of ["T1", "T1.4", "T1.5"])
+      Object.assign(tasksOf(raw)[id], { state: "trusted", tags: ["ended"], reason: null })
+  })
+  expect(stoppedText(clean)).toBe("")
+  const side = await ledger(base)
+  expect(side.lines[2]).toEndWith("3/6 trusted · 3 stopped")
+  expect(rgb(fgOf(side.spans, "· 3 stopped"))).toEqual(rgb(theme.error))
+  expect((await ledger(clean)).lines[2]).toEndWith("6/6 trusted")
+  const header = await fullScreen(base)
+  expect(header.lines[0]).toEndWith("3/6 trusted · 3 stopped")
+  expect(rgb(fgOf(header.spans, "· 3 stopped"))).toEqual(rgb(theme.error))
+  const strip = await dock(base, 200)
+  expect(strip.text).toContain("3/6 trusted · 3 stopped")
+  const { view } = await viewFor(base, { design: 6 })
+  const panel = (
+    await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)
+  ).text
+  // The HUD's bar shrinks by the width of the stopped count, so the panel keeps its 40 cells.
+  const bar = linesOf(panel).find((line) => line.includes("trusted")) ?? ""
+  expect(bar).toContain("3/6 trusted · 3 stopped ║")
+})
+
+// The run live, before T1.4's death reached its dependants: T1.4 proving, T1 and T1.5 waiting on it.
+const before = statusOf((raw) => {
+  Object.assign(tasksOf(raw)["T1.4"], { state: "proving", tags: ["active"], reason: null, endedAt: undefined })
+  for (const id of ["T1", "T1.5"])
+    Object.assign(tasksOf(raw)[id], {
+      state: "waiting",
+      tags: ["waiting"],
+      waitingOn: ["T1.4"],
+      reason: null,
+      blockedBy: undefined,
+    })
+})
+const after = statusOf((raw) =>
+  Object.assign(raw.run, { state: "budget_exhausted", tags: ["ended", "stopped"], reason: "T1.4 budget exhausted" }),
+)
+
+test("UI18 a Ticker toast for a task that turns dead or blocked shows its reason; a blocker comes before what it blocks", () => {
+  expect(tickerToasts(before, after)).toEqual([
+    { variant: "error", message: "run running → budget exhausted" },
+    { variant: "error", message: "T1.4 T1.4.c7: the test asserts only that 'topic change' appears" },
+    { variant: "warning", message: "T1 blocked by T1.4: budget exhausted" },
+  ])
+  // Without the run change, the blocked tasks follow T1.4: at most three toasts.
+  const quiet = statusOf((raw) => Object.assign(raw, { run: before.run }))
+  expect(tickerToasts(before, quiet).map((toast) => toast.message)).toEqual([
+    "T1.4 T1.4.c7: the test asserts only that 'topic change' appears",
+    "T1 blocked by T1.4: budget exhausted",
+    "T1.5 blocked by T1.4: budget exhausted",
+  ])
+  // A plain change still reads from → to.
+  const moved = statusOf((raw) =>
+    Object.assign(tasksOf(raw)["T1.4"], { state: "verifying", tags: ["active"], reason: null }),
+  )
+  expect(tickerToasts(before, moved)[0]).toEqual({ variant: "info", message: "T1.4 proving → verifying" })
+})
+
+test("UI19 the Ticker's end notification follows the ended tag; a done run's not-run line raises none", () => {
+  expect(endNotice(before, after)).toEqual(Option.some("Run budget exhausted: T1.4 budget exhausted"))
+  // No notification while the run lacks ended, or once it already had it.
+  expect(endNotice(before, before)).toEqual(Option.none())
+  expect(endNotice(after, after)).toEqual(Option.none())
+  const done = statusOf((raw) =>
+    Object.assign(raw.run, { state: "done", tags: ["ended"], reason: "not run: S13 waits on T8" }),
+  )
+  expect(endNotice(before, done)).toEqual(Option.none())
+  const clean = statusOf((raw) => Object.assign(raw.run, { state: "done", tags: ["ended"], reason: undefined }))
+  expect(endNotice(before, clean)).toEqual(Option.some("Run done"))
+})
+
+const warned = statusOf((raw) => Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" }))
+
+test("UI16 the run warning's one line in the collapsed views; a warning toast once each time it appears", async () => {
+  const side = await ledger(warned)
+  expect(side.lines[3]).toBe("! spec no longer validates · 2 failure…")
+  expect(rgb(fgOf(side.spans, "! spec"))).toEqual(rgb(theme.warning))
+  expect((await ledger(warned, 60)).lines[3]).toBe("! spec no longer validates · 2 failures")
+  const header = await fullScreen(warned)
+  expect(header.lines[1].trim()).toBe("! spec no longer validates · 2 failures")
+  expect((await dock(warned, 200)).text).toContain("│ ! spec │")
+  expect(warningToast(base, warned)).toEqual(
+    Option.some("The spec no longer validates (2 failures). The run keeps the plan it loaded."),
+  )
+  expect(warningToast(warned, warned)).toEqual(Option.none())
+  expect(warningToast(warned, base)).toEqual(Option.none())
+  expect(warningToast(undefined, warned)).toEqual(
+    Option.some("The spec no longer validates (2 failures). The run keeps the plan it loaded."),
+  )
+  // Wired: the plugin toasts on each absent-to-present change of the status it follows, in every design.
+  const toasts: Array<{ variant?: string; title?: string; message: string }> = []
+  const { view, advance, dispose } = await viewFor(base, { design: 4, later: [warned, warned, base, warned] })
+  const root = createRoot((stop) => {
+    registerWarning({ view, toast: (toast) => void toasts.push(toast) })
+    return stop
+  })
+  for (let step = 0; step < 4; step++) await advance(1_000)
+  expect(toasts).toEqual([
+    {
+      variant: "warning",
+      title: "◆ In the Flow",
+      message: "The spec no longer validates (2 failures). The run keeps the plan it loaded.",
+    },
+    {
+      variant: "warning",
+      title: "◆ In the Flow",
+      message: "The spec no longer validates (2 failures). The run keeps the plan it loaded.",
+    },
+  ])
+  root()
+  dispose()
+})
+
+// T1.5 waits on the untrusted outside tasks T9 and T8.
+const outside = statusOf((raw) =>
+  Object.assign(tasksOf(raw)["T1.5"], {
+    state: "waiting",
+    tags: ["waiting"],
+    waitingOn: ["T9", "T8"],
+    waitingOnOutside: ["T9", "T8"],
+    reason: null,
+  }),
+)
+
+test("UI5 the collapsed outside wait line in the Ledger and the full-screen header, under the warning; a Dock segment", async () => {
+  const both = statusOf((raw) => {
+    Object.assign(raw, { tasks: outside.tasks })
+    Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" })
+  })
+  const side = await ledger(both)
+  expect(side.lines.slice(3, 6)).toEqual([
+    "! spec no longer validates · 2 failure…",
+    "waiting on T8 (outside) — run",
+    "/task trust T8 +1",
+  ])
+  expect(rgb(fgOf(side.spans, "waiting on T8"))).toEqual(rgb(theme.warning))
+  const header = await fullScreen(both)
+  expect(header.lines.slice(1, 3).map((line) => line.trim())).toEqual([
+    "! spec no longer validates · 2 failures",
+    "waiting on T8 (outside) — run /task trust T8 +1",
+  ])
+  expect((await dock(outside, 200)).text).toContain("│ /task trust T8 +1 │")
+  expect((await ledger(base)).text).not.toContain("/task trust")
+})
+
+test("UI15 the Dock strip: $2.31 after the stopped count; the selected task drops first, then the cost, before the chips", async () => {
+  const spent: Sessions = {
+    ...none,
+    all: () => () => [
+      { id: "b", unit: "T1.4", role: "builder", again: false, created: 1, updated: 1, tokens: 1_400_000, cost: 2.31 },
+    ],
+  }
+  const wide = (await dock(base, 200, spent)).lines.find((line) => line.includes("run: running")) ?? ""
+  expect(wide).toContain("3/6 trusted · 3 stopped │ $2.31 │ ⊖ T1")
+  expect(wide).toContain("▸ T1.4 budget exhausted")
+  // 120 cells: no room for the selected task; the cost stays.
+  const middle = (await dock(base, 120, spent)).lines.find((line) => line.includes("run: running")) ?? ""
+  expect(middle).toContain("$2.31")
+  expect(middle).not.toContain("▸ T1.4")
+  // 100 cells: the cost goes too; the chips are cut at the edge.
+  const narrow = (await dock(base, 100, spent)).lines.find((line) => line.includes("run: running")) ?? ""
+  expect(narrow).not.toContain("$")
+  expect(narrow).toContain("⊖ T1")
+  // No usage before tokens: no segment.
+  expect((await dock(base, 200)).text).not.toContain("$")
+})
+
+test("UI15 the Dock's expanded view: the Peek left and the region right from 110 cells, else stacked; at most half the height", async () => {
+  const side = await dock(base, 140, none, 50, true)
+  const peek = side.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
+  const region = side.lines.findIndex((line) => line.includes("STOPPED 3"))
+  expect(region).toBe(peek)
+  expect(side.lines[peek].indexOf("╔")).toBe(0)
+  // The Peek takes half the width, at most 72 cells: 70 of 140.
+  expect(side.lines[region].indexOf("STOPPED 3")).toBeGreaterThan(70)
+  // Above the strip, the expanded part takes at most 25 of the 50 rows.
+  const strip = side.lines.findIndex((line) => line.includes("run: running"))
+  expect(strip - peek).toBeLessThanOrEqual(25)
+  const stacked = await dock(base, 100, none, 50, true)
+  const stackedPeek = stacked.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
+  expect(stacked.lines.findIndex((line) => line.includes("STOPPED 3"))).toBeGreaterThan(stackedPeek)
+})
+
+test("the Ticker reads the ended tag and the store keeps no ENDED or ACTIVE list", async () => {
+  const ticker = await Bun.file(new URL("../../src/task-ui/designs/7-ticker.tsx", import.meta.url)).text()
+  const store = await Bun.file(new URL("../../src/task-ui/store.ts", import.meta.url)).text()
+  expect(ticker).not.toMatch(/\bENDED\b/)
+  expect(store).not.toMatch(/export const (ENDED|ACTIVE)\b/)
+})
+
+test("UI25 the Ledger, the Dock, the Ticker, the full-screen views and the HUD show the older-status line for a status with no tags", async () => {
+  const old = Option.getOrThrow(parse(JSON.stringify(legacy)))
+  const line = "status from an older harness — type /task to refresh"
+  const views = [
+    (await ledger(old, 60)).text,
+    (await dock(old, 200, none, 40, true)).text,
+    (await fullScreen(old)).text,
+  ]
+  const { view } = await viewFor(old, { design: 7 })
+  views.push(
+    (await render(() => <TickerDialog theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 120, 40))
+      .text,
+  )
+  views.push(
+    (await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)).text,
+  )
+  expect(views.map((text) => text.includes(line))).toEqual([true, true, true, true, true])
+  const shown = await ledger(old, 60)
+  expect(rgb(fgOf(shown.spans, "status from an older harness"))).toEqual(rgb(theme.textMuted))
 })
