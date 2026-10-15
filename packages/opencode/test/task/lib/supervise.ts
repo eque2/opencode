@@ -17,6 +17,7 @@ import type { TaskSessions } from "@/task/core/sessions"
 import type { TaskWorkers } from "@/task/core/workers"
 import { TaskWorkspace } from "@/task/core/workspace"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
+import type { RunMachine } from "@/task/engine-xstate/machine"
 import { TaskLimits } from "@/task/limits"
 
 // Shared parts of the supervisor tests: a scratch repository, a run with a real Recorder over the real event store,
@@ -107,6 +108,10 @@ export interface Setup {
   readonly messages?: ReadonlyArray<unknown>
   readonly limits?: TaskLimits.Limits
   readonly claim?: TaskWorkers.Run["claim"]
+  /** Write status.json for real (the default writes nothing). */
+  readonly writes?: boolean
+  /** The run actor's machine, when it is not the plan's. */
+  readonly machine?: RunMachine
 }
 
 // A run: its Recorder over the stored facts, its locks, and the scripted session boundary.
@@ -119,7 +124,8 @@ export const runOf = Effect.fnUntraced(function* (setup: Setup) {
     directory: setup.directory,
     stored: setup.stored,
     events,
-    write: () => Effect.void,
+    ...(setup.writes ? {} : { write: () => Effect.void }),
+    ...(setup.machine === undefined ? {} : { machine: setup.machine }),
   })
   const { env, seen } = boundary(setup.turns ?? [], setup.messages)
   const run: TaskWorkers.Run = {
