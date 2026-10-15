@@ -31,8 +31,8 @@ export const facts = (start = 0) => {
   let clock = start
   const at = () => ++clock
   return {
-    runStarted: (): Fact => ({ type: "run.started", at: at() }),
-    runResumed: (): Fact => ({ type: "run.resumed", at: at() }),
+    runStarted: (path?: string): Fact => ({ type: "run.started", at: at(), ...(path === undefined ? {} : { path }) }),
+    runResumed: (path?: string): Fact => ({ type: "run.resumed", at: at(), ...(path === undefined ? {} : { path }) }),
     started: (task: string): Fact => ({
       type: "task.started",
       at: at(),
@@ -57,6 +57,13 @@ export const facts = (start = 0) => {
       verdicts,
     }),
     stalled: (task: string, reason: string): Fact => ({ type: "task.stalled", at: at(), task, reason }),
+    nudged: (task: string, nudge: 1 | 2, reason: string): Fact => ({
+      type: "task.nudged",
+      at: at(),
+      task,
+      nudge,
+      reason,
+    }),
     repeated: (task: string, reason: string): Fact => ({ type: "task.repeated", at: at(), task, reason }),
     needsHuman: (task: string, reason: string): Fact => ({ type: "task.needs_human", at: at(), task, reason }),
     failed: (task: string, reason: string): Fact => ({ type: "task.failed", at: at(), task, reason }),

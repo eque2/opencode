@@ -1,8 +1,9 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import type { BlendModel } from "@/task/blend/model"
 import type { Fact, Plan, Result, Verdict } from "@/task/core/model"
+import { TaskEvents } from "@/task/core/events"
 import { TaskRunner } from "@/task/core/runner"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
@@ -934,6 +935,63 @@ describe("the run machine on the release-notes and live-check plans", () => {
         reason: "T1.1 budget exhausted\nT1 blocked by T1.1\nT1.2 blocked by T1.1\nuser stop",
       })
       expect(engine.view(snapshot).tasks["T1.3"]?.state).toBe("cancelled")
+    }),
+  )
+})
+
+describe("the fact list (AD-10)", () => {
+  const decode = Schema.decodeUnknownSync(TaskEvents.FactSchema)
+
+  it.live("folds task.nudged as a targetless building entry with its reason", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      const f = facts()
+      const building = foldOf(notes, [f.runStarted(), f.started("T1.1")])
+      const nudged = foldOf(notes, [f.nudged("T1.1", 1, "idle without task_ready")], building)
+      expect(engine.view(nudged).tasks["T1.1"]).toMatchObject({ state: "building", attempts: 1 })
+      expect(nudged.context.log.at(-1)).toMatchObject({
+        unit: "T1.1",
+        from: "building",
+        to: "building",
+        reason: "idle without task_ready",
+      })
+      // A nudge is a note: it moves no state, and a second one adds a second entry.
+      const twice = foldOf(notes, [f.nudged("T1.1", 2, "idle again")], nudged)
+      expect(twice.context.log.filter((entry) => entry.unit === "T1.1").map((entry) => entry.reason)).toEqual([
+        undefined,
+        "idle without task_ready",
+        "idle again",
+      ])
+      // A nudge for a task that is not building changes nothing.
+      expect(engine.apply(notes, building, f.nudged("T1.2", 1, "not building"))).toBe(building)
+    }),
+  )
+
+  test("decodes task.nudged with nudge 1 or 2 and refuses any other", () => {
+    for (const nudge of [1, 2]) {
+      const fact = { type: "task.nudged", at: 1, task: "T1.1", nudge, reason: "idle" }
+      expect(decode(fact)).toEqual(fact)
+    }
+    expect(() => decode({ type: "task.nudged", at: 1, task: "T1.1", nudge: 3, reason: "idle" })).toThrow()
+    expect(() => decode({ type: "task.nudged", at: 1, task: "T1.1", reason: "idle" })).toThrow()
+  })
+
+  test("decodes run.started and run.resumed with or without a path", () => {
+    for (const type of ["run.started", "run.resumed"]) {
+      expect(decode({ type, at: 1 })).toEqual({ type, at: 1 })
+      expect(decode({ type, at: 1, path: "task-formats/blend/release-notes.spec" })).toEqual({
+        type,
+        at: 1,
+        path: "task-formats/blend/release-notes.spec",
+      })
+      expect(decode({ type, at: 1, base: "dev", path: "x.spec" })).toEqual({ type, at: 1, base: "dev", path: "x.spec" })
+    }
+  })
+
+  it.live("still decodes every stored fact of the observed release-notes run (durable v1)", () =>
+    Effect.gen(function* () {
+      const notes = yield* loadPlan("release-notes.spec")
+      for (const fact of observed(notes)) expect(decode(fact)).toEqual(fact)
     }),
   )
 })
