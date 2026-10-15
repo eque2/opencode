@@ -29,7 +29,7 @@
 | T2.5    | task       | completed                               |
 | T2.6    | task       | completed                               |
 | T2.7    | task       | completed                               |
-| T2.8    | task       | not_started                             |
+| T2.8    | task       | building                                |
 | T2.9    | task       | not_started                             |
 | T2.10   | task       | not_started                             |
 | T2.11   | task       | not_started                             |
