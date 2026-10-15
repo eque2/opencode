@@ -173,7 +173,9 @@ export const builderHeading = (status: Status, id: string, liveness: Liveness, n
   )
   const after: ReadonlyArray<Piece> = meta.length > 0 ? [{ text: meta.join(" · "), tone: "text" }] : []
   if (tagged(task, "blocked")) return [{ text: task.reason ?? label(task.state), tone: "warning" }, ...after]
-  if (tagged(task, "waiting") && task.waitingOn.length > 0) return [...waitSentences(status, task), ...after]
+  // A waiting task with no wait sentence left (an outside id trusted since) falls back to its state line.
+  const waits = tagged(task, "waiting") ? waitSentences(status, task) : []
+  if (waits.length > 0) return [...waits, ...after]
   return [
     { text: [label(task.state), ...meta].join(" · "), tone: "text" },
     ...(task.reason ? [{ text: task.reason, tone: tagged(task, "dead") ? ("bad" as const) : ("muted" as const) }] : []),
