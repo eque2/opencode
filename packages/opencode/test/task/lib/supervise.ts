@@ -55,7 +55,7 @@ export interface Seen {
 }
 
 // A session boundary whose prompts follow `turns` in order (a prompt past the end just ends).
-const boundary = (turns: ReadonlyArray<Turn>, messages: ReadonlyArray<unknown> = []) => {
+export const boundary = (turns: ReadonlyArray<Turn>, messages: ReadonlyArray<unknown> = []) => {
   const seen: Seen = { order: [], prompts: [], cancels: [], claims: [] }
   let created = 0
   const sessions = {
