@@ -51,3 +51,47 @@ test("a status file is absent, malformed, or the contract's shape", () => {
     fs.rmSync(repo, { recursive: true, force: true })
   }
 })
+
+test("the reader takes the AD-13 fields as optional: a file with them reads them, a file without them still reads", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "task-harness-status-"))
+  try {
+    fs.mkdirSync(path.dirname(Status.file(repo)), { recursive: true })
+    const bare = { run: { state: "refused", spec: "s", path: "p" }, tasks: {}, obligations: {}, scenarios: {}, history: [] }
+    fs.writeFileSync(Status.file(repo), JSON.stringify(bare))
+    expect(Status.read(repo)?.run.tags).toBeUndefined()
+    const full = {
+      ...bare,
+      run: {
+        state: "refused",
+        tags: ["ended", "stopped"],
+        reason: "R7 tasks.md: T1.2 depends on T9, which no task defines",
+        warning: "R4 spec.md: the spec has no H1",
+        spec: "s",
+        specId: "release-notes",
+        path: "p",
+        title: "Release notes",
+        task: { id: "T1.2", title: "Compute the next version" },
+        aliveAt: 5,
+      },
+      tasks: {
+        "T1.2": {
+          state: "building",
+          tags: ["active"],
+          attempts: 1,
+          waitingOn: [],
+          spans: [{ state: "building", from: 1 }],
+        },
+      },
+    }
+    fs.writeFileSync(Status.file(repo), JSON.stringify(full))
+    const status = Status.read(repo)
+    expect(status?.run).toMatchObject({ tags: ["ended", "stopped"], specId: "release-notes", title: "Release notes" })
+    expect(status?.run.task).toEqual({ id: "T1.2", title: "Compute the next version" })
+    expect([status?.run.warning, status?.run.aliveAt]).toEqual(["R4 spec.md: the spec has no H1", 5])
+    expect(status?.tasks["T1.2"]?.spans).toEqual([{ state: "building", from: 1 }])
+    // H1 reads the refusal's rule from the run's reason.
+    expect(status?.run.reason?.includes("R7")).toBe(true)
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
