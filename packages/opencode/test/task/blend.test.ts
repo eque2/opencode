@@ -232,6 +232,29 @@ describe("live-check folders", () => {
     )
   }
 
+  for (const [name, leaf] of [
+    ["example-scenarios.spec", "T1-slugs.task/T1.1-slugify.task"],
+    ["example-cascade.spec", "T1-numbers.task/T1.2-mean.task"],
+  ] as const) {
+    it.live(
+      `a copy of ${name} whose leaf ${leaf} has no ensures key fails R3: the required-ensures schema applies`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          const copy = path.join(yield* fs.makeTempDirectoryScoped(), name)
+          yield* fs.copy(path.join(formatDir, name), copy)
+          const file = path.join(copy, leaf, "VERIFY.md")
+          // The front matter keeps every key but `ensures` and its entries.
+          const text = yield* fs.readFileString(file)
+          yield* fs.writeFileString(file, text.replace(/^ensures:\n(?: {2}.*\n)+/m, ""))
+          const result = yield* Blend.load(copy)
+          expect(result.failures).toEqual([
+            { rule: "R3", path: `${leaf}/VERIFY.md`, message: "(root): 'ensures' is a required property" },
+          ])
+        }),
+    )
+  }
+
   it.live("example-scenarios has a parent T1, one leaf and scenario S1 proved by a [S1] test", () =>
     Effect.gen(function* () {
       const spec = yield* load("example-scenarios.spec")
