@@ -1,12 +1,15 @@
+import { NodeServices } from "@effect/platform-node"
 import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Logger } from "effect"
+import { Effect, Fiber, Logger, Option, Schema } from "effect"
+import { assign, setup } from "@jambudipa/xstate-effect"
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Permission } from "@/permission"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionID } from "@/session/schema"
+import { TaskHarness } from "@/task/core/harness"
 import { TaskHooks } from "@/task/core/hooks"
 import type { Verdict } from "@/task/core/model"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
@@ -26,37 +29,227 @@ afterEach(async () => {
 
 const call = { toolCallId: "call_1", messages: [] }
 
+const node = testEffect(NodeServices.layer)
+
+const tools = (agent: string, sessionID: SessionID, hooks?: TaskHooks.HarnessHooks) =>
+  SessionPrompt.createTaskHarnessTools(agent, sessionID, hooks)
+
 describe("the harness-only tools", () => {
-  test("only the builder gets task_ready and only the verifier gets verdict", () => {
-    const sessionID = SessionID.make("ses_wiring_tools")
-    expect(Object.keys(SessionPrompt.createTaskHarnessTools(TaskHooks.BUILDER, sessionID))).toEqual(["task_ready"])
-    expect(Object.keys(SessionPrompt.createTaskHarnessTools(TaskHooks.VERIFIER, sessionID))).toEqual(["verdict"])
-    expect(SessionPrompt.createTaskHarnessTools("build", sessionID)).toEqual({})
+  node.live("only the builder gets task_ready and only the verifier gets verdict", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_wiring_tools")
+      expect(Object.keys(yield* tools(TaskHooks.BUILDER, sessionID))).toEqual(["task_ready"])
+      expect(Object.keys(yield* tools(TaskHooks.VERIFIER, sessionID))).toEqual(["verdict"])
+      expect(yield* tools("build", sessionID)).toEqual({})
+    }),
+  )
+
+  node.live("task_ready records the request for the session", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_wiring_ready")
+      const tool = (yield* tools(TaskHooks.BUILDER, sessionID)).task_ready
+      const result = yield* Effect.promise(() => tool.execute!({ summary: "parser done" }, call))
+      expect(result.output).toBe("Ready recorded. End your turn now: the harness runs the proofs.")
+      expect(TaskHooks.takeReady(sessionID)).toEqual({ summary: "parser done" })
+    }),
+  )
+
+  node.live("verdict records every verdict, and refuses an invalid input without recording", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_wiring_verdict")
+      const tool = (yield* tools(TaskHooks.VERIFIER, sessionID)).verdict
+      const verdicts: Verdict[] = [
+        { id: "T1.1.c1", verdict: "trusted" },
+        { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
+      ]
+      const result = yield* Effect.promise(() => tool.execute!({ verdicts }, call))
+      expect(result.output).toBe("Recorded 2 verdicts.")
+      expect(TaskHooks.takeVerdicts(sessionID)).toEqual(verdicts)
+
+      const invalid = yield* Effect.promise(() =>
+        tool.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] }, call),
+      )
+      expect(invalid.metadata.valid).toBe(false)
+      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
+    }),
+  )
+})
+
+// An owner stand-in for the routing tests: it keeps the hook events it receives, and holds a repetition limit.
+const owner = setup({
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- xstate reads `types` for its type parameters only
+  types: {} as {
+    context: { events: ReadonlyArray<TaskHooks.HookEvent>; limit: number }
+    events: TaskHooks.HookEvent
+  },
+}).createMachine({
+  context: { events: [], limit: 3 },
+  on: {
+    "hook.ready": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+    "hook.verdicts": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+    "hook.repeated": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+  },
+})
+
+const decodeEvents = Schema.decodeUnknownSync(Schema.Struct({ context: Schema.Struct({ events: Schema.Array(Schema.Unknown) }) }))
+
+const eventsOf = (harness: TaskHarness.Interface, runID: string) =>
+  Effect.gen(function* () {
+    const ref = yield* harness.system.get(TaskHarness.systemId.run(runID))
+    if (Option.isNone(ref)) return yield* Effect.die(new Error(`no actor run:${runID}`))
+    return decodeEvents(yield* ref.value.getSnapshot).context.events
   })
 
-  test("task_ready records the request for the session", async () => {
-    const sessionID = SessionID.make("ses_wiring_ready")
-    const tool = SessionPrompt.createTaskHarnessTools(TaskHooks.BUILDER, sessionID).task_ready
-    const result = await tool.execute!({ summary: "parser done" }, call)
-    expect(result.output).toBe("Ready recorded. End your turn now: the harness runs the proofs.")
-    expect(TaskHooks.takeReady(sessionID)).toEqual({ summary: "parser done" })
+// A send to a child only queues it: wait until the owner holds `count` events.
+const received = (harness: TaskHarness.Interface, runID: string, count: number) =>
+  Effect.gen(function* () {
+    const wait = yield* Effect.forkChild(
+      Effect.gen(function* () {
+        while ((yield* eventsOf(harness, runID)).length < count) yield* Effect.sleep(5)
+      }),
+    )
+    yield* Fiber.join(wait).pipe(Effect.timeout(2_000))
+    return yield* eventsOf(harness, runID)
   })
 
-  test("verdict records every verdict, and refuses an invalid input without recording", async () => {
-    const sessionID = SessionID.make("ses_wiring_verdict")
-    const tool = SessionPrompt.createTaskHarnessTools(TaskHooks.VERIFIER, sessionID).verdict
-    const verdicts: Verdict[] = [
-      { id: "T1.1.c1", verdict: "trusted" },
-      { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
-    ]
-    const result = await tool.execute!({ verdicts }, call)
-    expect(result.output).toBe("Recorded 2 verdicts.")
-    expect(TaskHooks.takeVerdicts(sessionID)).toEqual(verdicts)
-
-    const invalid = await tool.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] }, call)
-    expect(invalid.metadata.valid).toBe(false)
-    expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
+// A harness with one live owner, `run:task_a`, that has claimed `session`.
+const owned = (session: string, watch: boolean) =>
+  Effect.gen(function* () {
+    const harness = yield* TaskHarness.make
+    yield* harness.spawnRun("task_a", owner)
+    yield* harness.claimSession({ session, owner: TaskHarness.systemId.run("task_a"), watch })
+    return harness
   })
+
+const bash = { tool: "bash", input: { command: "ls" } }
+
+describe("the hook routing (AD-11)", () => {
+  node.live("task_ready in a claimed builder session sends hook.ready to its owner and answers as today", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_route_ready")
+      const harness = yield* owned(sessionID, true)
+      const tool = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
+      const result = yield* Effect.promise(() => tool.execute!({ summary: "parser done" }, call))
+      expect(result).toEqual({
+        title: "Task ready",
+        output: "Ready recorded. End your turn now: the harness runs the proofs.",
+        metadata: { valid: true },
+      })
+      expect(yield* received(harness, "task_a", 1)).toEqual([
+        { type: "hook.ready", session: sessionID, summary: "parser done" },
+      ])
+      // The routed tool leaves the polled runner's map alone.
+      expect(TaskHooks.takeReady(sessionID)).toBeUndefined()
+    }),
+  )
+
+  node.live("verdict in a claimed verifier session sends hook.verdicts; an invalid verdict sends nothing", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_route_verdict")
+      const harness = yield* owned(sessionID, false)
+      const tool = (yield* tools(TaskHooks.VERIFIER, sessionID, harness.hooks)).verdict
+      const invalid = yield* Effect.promise(() =>
+        tool.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] }, call),
+      )
+      expect(invalid.metadata.valid).toBe(false)
+      const verdicts: Verdict[] = [
+        { id: "T1.1.c1", verdict: "trusted" },
+        { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
+      ]
+      const result = yield* Effect.promise(() => tool.execute!({ verdicts }, call))
+      expect(result.output).toBe("Recorded 2 verdicts.")
+      // Only the valid call arrived.
+      expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.verdicts", session: sessionID, verdicts }])
+      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
+    }),
+  )
+
+  node.live("SV13 a tool call in a session with no owner records nothing and says so", () =>
+    Effect.gen(function* () {
+      const harness = yield* owned("ses_route_other", true)
+      const sessionID = SessionID.make("ses_route_nobody")
+      const ready = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
+      const verdict = (yield* tools(TaskHooks.VERIFIER, sessionID, harness.hooks)).verdict
+      expect(yield* Effect.promise(() => ready.execute!({ summary: "done" }, call))).toEqual({
+        title: "Task ready",
+        output: "No task harness run owns this session. Nothing was recorded.",
+        metadata: { valid: false },
+      })
+      const answer = yield* Effect.promise(() =>
+        verdict.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "trusted" }] }, call),
+      )
+      expect(answer).toEqual({
+        title: "Verdict",
+        output: "No task harness run owns this session. Nothing was recorded.",
+        metadata: { valid: false },
+      })
+      expect(yield* eventsOf(harness, "task_a")).toEqual([])
+      expect(TaskHooks.takeReady(sessionID)).toBeUndefined()
+      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
+    }),
+  )
+
+  node.live("a session whose owner has stopped records nothing; a re-claim by a respawned owner replaces it", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("ses_route_stopped")
+      const harness = yield* TaskHarness.make
+      // The index names an owner that is not in the system: `system.get` answers none.
+      yield* harness.claimSession({ session: sessionID, owner: TaskHarness.systemId.task("task_a", "T1.1"), watch: true })
+      const tool = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
+      const stopped = yield* Effect.promise(() => tool.execute!({}, call))
+      expect(stopped.output).toBe("No task harness run owns this session. Nothing was recorded.")
+      expect(stopped.metadata.valid).toBe(false)
+      expect(yield* harness.hooks.limitOf(sessionID)).toEqual(Option.none())
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, sessionID, [bash, bash, bash])).toEqual(Option.none())
+      // The respawned owner claims the reused session before its turn, and the next call reaches it.
+      yield* harness.spawnRun("task_b", owner)
+      yield* harness.claimSession({ session: sessionID, owner: TaskHarness.systemId.run("task_b"), watch: true })
+      const again = yield* Effect.promise(() => tool.execute!({}, call))
+      expect(again.metadata.valid).toBe(true)
+      expect(yield* received(harness, "task_b", 1)).toEqual([{ type: "hook.ready", session: sessionID }])
+    }),
+  )
+})
+
+describe("the repetition stop over the hooks", () => {
+  test("the pure check matches only the last limit calls of one tool with one input", () => {
+    const other = { tool: "bash", input: { command: "pwd" } }
+    expect(TaskHooks.repetition(3, [bash, bash])).toEqual(Option.none())
+    expect(TaskHooks.repetition(3, [other, bash, bash, bash])).toEqual(
+      Option.some("repetition: 3 identical bash calls in a row"),
+    )
+    expect(TaskHooks.repetition(3, [bash, other, bash])).toEqual(Option.none())
+    expect(TaskHooks.repetition(2, [other, bash, bash])).toEqual(
+      Option.some("repetition: 2 identical bash calls in a row"),
+    )
+  })
+
+  node.live("reads the limit from the owner's snapshot, ends the turn on a match and sends hook.repeated", () =>
+    Effect.gen(function* () {
+      const sessionID = "ses_route_watch"
+      const harness = yield* owned(sessionID, true)
+      expect(yield* harness.hooks.limitOf(sessionID)).toEqual(Option.some(3))
+      // Below the limit: no stop and no send.
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, sessionID, [bash, bash])).toEqual(Option.none())
+      expect(yield* eventsOf(harness, "task_a")).toEqual([])
+      const reason = "repetition: 3 identical bash calls in a row"
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, sessionID, [bash, bash, bash])).toEqual(Option.some(reason))
+      expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.repeated", session: sessionID, reason }])
+    }),
+  )
+
+  node.live("never stops a session that is not watched or has no owner", () =>
+    Effect.gen(function* () {
+      const harness = yield* owned("ses_route_judge", false)
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, "ses_route_judge", [bash, bash, bash])).toEqual(
+        Option.none(),
+      )
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, "ses_route_none", [bash, bash, bash])).toEqual(
+        Option.none(),
+      )
+      expect(yield* eventsOf(harness, "task_a")).toEqual([])
+    }),
+  )
 })
 
 describe("the harness agents' shell", () => {
