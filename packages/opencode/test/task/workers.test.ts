@@ -649,6 +649,64 @@ describe("proof", () => {
   )
 })
 
+describe("an interrupted proof", () => {
+  it.live("kills the proof's process group when the worker is interrupted mid-process", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* repository()
+      const plan = yield* loadPlan("release-notes.spec")
+      const tree = yield* TaskWorkspace.ensureWorktree(root, "task_workershang", "T1.1", BASE, limits)
+      // A tagged test that writes its process id, then never ends.
+      const pidFile = path.join(yield* fs.makeTempDirectoryScoped(), "pid")
+      yield* fs.makeDirectory(path.join(tree.worktree, "test"), { recursive: true })
+      yield* fs.writeFileString(
+        path.join(tree.worktree, "test", "hang.test.ts"),
+        [
+          'import { test } from "bun:test"',
+          'import { writeFileSync } from "fs"',
+          `test("[T1.1.c1] hangs", async () => {`,
+          `  writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))`,
+          "  await new Promise(() => {})",
+          "}, 600_000)",
+          "",
+        ].join("\n"),
+      )
+      const head = yield* TaskWorkspace.commitAll(tree.worktree, limits, "T1.1: attempt 1")
+      const started: Fact = {
+        type: "task.started",
+        at: 2,
+        task: "T1.1",
+        worktree: tree.worktree,
+        branch: tree.branch,
+        base: tree.base,
+        session: "ses_T1.1",
+      }
+      const { run } = yield* runOf({
+        plan,
+        directory: root,
+        stored: [facts().runStarted(), started, { type: "task.ready", at: 3, task: "T1.1", head }],
+      })
+      const proving = yield* Effect.forkChild(TaskWorkers.proof(run, taskOf(plan, "T1.1"), plan.spec))
+      for (let tries = 0; tries < 400 && !(yield* fs.exists(pidFile)); tries++) yield* Effect.sleep(25)
+      const pid = Number(yield* fs.readFileString(pidFile))
+      expect(pid).toBeGreaterThan(0)
+      const alive = () => {
+        try {
+          process.kill(pid, 0)
+          return true
+        } catch {
+          return false
+        }
+      }
+      expect(alive()).toBe(true)
+      yield* Fiber.interrupt(proving).pipe(Effect.timeout(10_000))
+      // SIGTERM to the group, then SIGKILL after limits.cancelDeadline (1 s): gone within a few seconds.
+      for (let tries = 0; tries < 120 && alive(); tries++) yield* Effect.sleep(25)
+      expect(alive()).toBe(false)
+    }),
+  )
+})
+
 describe("scenarioProof", () => {
   it.live(
     "runs one batch on the base branch under the checkout lock: passed stays passed, an untested scenario fails",
