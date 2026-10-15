@@ -10,10 +10,18 @@ import { createRoot, type JSX } from "solid-js"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import type { Sessions } from "../../src/task-ui/peek"
 import { outsideCollapsed, stoppedLines, wrap } from "../../src/task-ui/shared"
-import { reasonLine, registerWarning, runTitle, stoppedText, warningToast } from "../../src/task-ui/ui"
+import {
+  reasonLine,
+  refused as isRefused,
+  registerWarning,
+  runTitle,
+  stoppedText,
+  warningToast,
+} from "../../src/task-ui/ui"
 import { LedgerView } from "../../src/task-ui/designs/1-ledger"
 import { DockView } from "../../src/task-ui/designs/2-dock"
-import { TickerDialog, endNotice, tickerToasts } from "../../src/task-ui/designs/7-ticker"
+import { TickerDialog, endNotice, registerTicker, tickerToasts } from "../../src/task-ui/designs/7-ticker"
+import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { parse, rows, runSpan, runUsage, type Status } from "../../src/task-ui/store"
 import { BoardView, cardLines, cardsIn } from "../../src/task-ui/designs/3-board"
 import { MatrixView } from "../../src/task-ui/designs/4-matrix"
@@ -750,6 +758,11 @@ test("ledger: UI6 the Ledger shows the run title on its own line, muted and cut;
   const untitled = statusOf((raw) => Object.assign(raw.run, { title: undefined }))
   expect(runTitle(untitled)).toBe("release-notes.spec")
   expect((await fullScreen(base)).lines[0]).toContain("Board Release notes from conventional commits · run: running")
+  // A narrow header cuts the title with …; the counts stay whole.
+  const narrow = (await fullScreen(base, 80)).lines[0]
+  expect(narrow).toContain("Board Release notes")
+  expect(narrow).toContain("…")
+  expect(narrow).toEndWith("3/6 trusted · 3 stopped")
 })
 
 const refused = statusOf((raw) => {
@@ -765,6 +778,12 @@ test("ledger: UI17 a refused run: the Ledger shows run: refused and every reason
     expect(rgb(fgOf(shown.spans, line))).toEqual(rgb(theme.error))
   }
   expect(shown.text).not.toContain("(+2 more)")
+  // A refusal is a stopped run with no task, whatever its state's name (AD-13 gives it no tag of its own).
+  expect(isRefused(refused)).toBe(true)
+  expect(isRefused(statusOf((raw) => Object.assign(raw, { tasks: {} })))).toBe(false)
+  expect(isRefused(statusOf((raw) => Object.assign(raw.run, { state: "refused", tags: ["ended", "stopped"] })))).toBe(
+    false,
+  )
   const screenLines = (await fullScreen(refused)).lines
   const body = screenLines.findIndex((line) => line.includes("No work started: the spec was refused."))
   expect(body).toBeGreaterThan(0)
@@ -820,6 +839,7 @@ test("ledger: UI21 every trusted count ends with · N stopped in the error tone,
   expect(rgb(fgOf(header.spans, "· 3 stopped"))).toEqual(rgb(theme.error))
   const strip = await dock(base, 200)
   expect(strip.text).toContain("3/6 trusted · 3 stopped")
+  expect(rgb(fgOf(strip.spans, "· 3 stopped"))).toEqual(rgb(theme.error))
   const { view } = await viewFor(base, { design: 6 })
   const panel = (
     await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)
@@ -883,6 +903,47 @@ test("ledger: UI19 the Ticker's end notification follows the ended tag; a done r
   expect(endNotice(before, done)).toEqual(Option.none())
   const clean = statusOf((raw) => Object.assign(raw.run, { state: "done", tags: ["ended"], reason: undefined }))
   expect(endNotice(before, clean)).toEqual(Option.some("Run done"))
+  // The tag decides, not the state: a run whose state reads done but lacks the ended tag raises none.
+  const untagged = statusOf((raw) => Object.assign(raw.run, { state: "done", tags: ["active"], reason: undefined }))
+  expect(endNotice(before, untagged)).toEqual(Option.none())
+})
+
+test("ledger: the Ticker toasts and notifies through the host when the status it follows changes", async () => {
+  const toasts: Array<{ variant?: string; title?: string; message: string }> = []
+  const notices: Array<{ title: string; message: string }> = []
+  const { view, advance, dispose } = await viewFor(before, { design: 7, later: [after] })
+  const api = {
+    ui: {
+      toast: (toast: (typeof toasts)[number]) => void toasts.push(toast),
+      dialog: { replace: () => {}, setSize: () => {}, clear: () => {} },
+    },
+    attention: { notify: async (notice: (typeof notices)[number]) => void notices.push(notice) },
+    keymap: { registerLayer: () => () => {} },
+  }
+  const stop = createRoot((dispose) => {
+    registerTicker({
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) registerTicker reads only the ui, attention and keymap members above
+      api: api as unknown as TuiPluginApi,
+      view,
+      sessions: none,
+      theme: () => theme,
+      active: () => true,
+      leader: "ctrl+x",
+      root: () => "",
+      owns: () => true,
+      harness: () => [],
+      logs: () => [],
+    })
+    return dispose
+  })
+  await advance(1_000)
+  for (let tries = 0; tries < 100 && view.status()?.run.state !== "budget_exhausted"; tries++) await settle()
+  await settle()
+  expect(toasts.map((toast) => toast.message)).toEqual(tickerToasts(before, after).map((toast) => toast.message))
+  expect(toasts.every((toast) => toast.title === "◆ In the Flow")).toBe(true)
+  expect(notices).toEqual([{ title: "In the Flow", message: "Run budget exhausted: T1.4 budget exhausted" }])
+  stop()
+  dispose()
 })
 
 const warned = statusOf((raw) => Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" }))
@@ -894,7 +955,9 @@ test("ledger: UI16 the run warning's one line in the collapsed views; a warning 
   expect((await ledger(warned, 60)).lines[3]).toBe("! spec no longer validates · 2 failures")
   const header = await fullScreen(warned)
   expect(header.lines[1].trim()).toBe("! spec no longer validates · 2 failures")
-  expect((await dock(warned, 200)).text).toContain("│ ! spec │")
+  const warnedStrip = await dock(warned, 200)
+  expect(warnedStrip.text).toContain("│ ! spec │")
+  expect(rgb(fgOf(warnedStrip.spans, "! spec"))).toEqual(rgb(theme.warning))
   expect(warningToast(base, warned)).toEqual(
     Option.some("The spec no longer validates (2 failures). The run keeps the plan it loaded."),
   )
@@ -1001,7 +1064,9 @@ test("ledger: UI5 the collapsed outside wait line in the Ledger and the full-scr
     "! spec no longer validates · 2 failures",
     "waiting on T8 (outside) — run /task trust T8 +1",
   ])
-  expect((await dock(outside, 200)).text).toContain("│ /task trust T8 +1 │")
+  const segment = await dock(outside, 200)
+  expect(segment.text).toContain("│ /task trust T8 +1 │")
+  expect(rgb(fgOf(segment.spans, "/task trust T8"))).toEqual(rgb(theme.warning))
   expect((await ledger(base)).text).not.toContain("/task trust")
 })
 
@@ -1049,6 +1114,18 @@ test("ledger: UI15 the Dock's expanded view: the Peek left and the region right 
   const short = await dock(base, 140, none, 30, true)
   const shortPeek = short.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
   expect(short.lines.findIndex((line) => line.includes("run: running")) - shortPeek).toBeLessThanOrEqual(15)
+  // The boundary: 110 cells is side by side, 109 stacked.
+  for (const [width, beside] of [
+    [110, true],
+    [109, false],
+  ] as const) {
+    const edge = await dock(base, width, none, 50, true)
+    const top = edge.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
+    expect({ width, beside: edge.lines.findIndex((line) => line.includes("STOPPED 3")) === top }).toEqual({
+      width,
+      beside,
+    })
+  }
   const stacked = await dock(base, 100, none, 50, true)
   const stackedPeek = stacked.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
   expect(stacked.lines.findIndex((line) => line.includes("STOPPED 3"))).toBeGreaterThan(stackedPeek)
