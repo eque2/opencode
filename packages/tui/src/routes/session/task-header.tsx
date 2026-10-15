@@ -39,6 +39,26 @@ export const splitHeader = (parts: ReadonlyArray<TextLike>) => {
   }
 }
 
+export type Split = ReturnType<typeof splitHeader>
+
+/** Whether a user message has a body: its header, or any text of its own. */
+export const shows = (split: Split) => Option.isSome(split.header) || split.texts.length > 0
+
+/** A user message's body: the run header, drawn from its metadata, then its other texts. */
+export function MessageBody(props: { theme: { readonly text: RGBA; readonly textMuted: RGBA }; split: Split }) {
+  const text = () => props.split.texts.join("\n\n")
+  return (
+    <>
+      <Show when={Option.getOrUndefined(props.split.header)}>
+        {(header) => <TaskHeader theme={props.theme} header={header()} />}
+      </Show>
+      <Show when={text()}>
+        <text fg={props.theme.text}>{text()}</text>
+      </Show>
+    </>
+  )
+}
+
 /**
  * "Implementing spec" muted and the spec title bold; a subtree run: "Implementing", the task bold, "from spec", the
  * spec title bold. An empty title reads as the spec id. The left-out scenarios follow on a muted line. It wraps at
