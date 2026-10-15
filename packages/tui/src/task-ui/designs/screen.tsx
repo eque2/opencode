@@ -16,6 +16,8 @@ import {
   moving,
   reasonLine,
   refused,
+  stoppedText,
+  trustedText,
   runText,
   runTitle,
   type Ctx,
@@ -55,6 +57,15 @@ const peekRows = (lines: number) => 5 + 3 * lines
 
 export function Screen(props: ViewProps & { width: number; height: number; onScroll?: (box: ScrollBoxRenderable) => void }) {
   const name = () => DESIGNS.find((design) => design.id === props.view.design())?.name ?? ""
+  // The header's title and run state take what the mark, the name and the counts leave; the title is cut with …
+  // (EXPERIENCE "Run header"), the counts never.
+  const titleRoom = () => {
+    const status = props.view.status()
+    if (!status) return 0
+    const counts = 10 + 1 + trustedText(status).length + stoppedText(status).length
+    // The row's four 1-cell gaps: after the mark, after the name, and on both sides of the spacer before the counts.
+    return Math.max(8, props.width - 2 - "◆ In the Flow".length - name().length - counts - 4)
+  }
   const inner = () => props.width - 2
   // Where the Peek and the region go: the Board's right pane, split under the Board, or stacked under the design.
   const layout = () =>
@@ -129,7 +140,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                 <b>{name()}</b>
               </text>
               <text fg={props.theme().textMuted} wrapMode="none">
-                {`${runTitle(status())} · ${runText(status())}`}
+                {cut(`${runTitle(status())} · ${runText(status())}`, titleRoom())}
               </text>
               <box flexGrow={1} />
               <TrustedCount
