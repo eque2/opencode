@@ -1139,8 +1139,14 @@ async function wired(input: {
   later?: ReadonlyArray<Status>
   /** Whether the root owns the run's harness sessions; true by default. */
   owns?: () => boolean
+  /** The view's clock; the status's heartbeat by default. */
+  now?: number
 }) {
-  const made = await viewFor(input.status, { design: input.design ?? 1, later: input.later })
+  const made = await viewFor(input.status, {
+    design: input.design ?? 1,
+    later: input.later,
+    ...(input.now === undefined ? {} : { now: input.now }),
+  })
   const navigations: Array<Record<string, unknown> | undefined> = []
   const aborted: string[] = []
   const toasts: string[] = []
@@ -1415,6 +1421,43 @@ test("with the watch on and the run live, esc stops nothing from a root that no 
     await settle()
     plugin.app.mockInput.pressEscape()
     expect(await until(() => plugin.toasts.length === 1)).toBe(true)
+  } finally {
+    plugin.app.renderer.destroy()
+  }
+})
+
+test("ctrl+x w turns the watch view on only while the run is live; a watch that is on still turns off (UI3)", async () => {
+  const building = live({ "T1.4": "building" })
+  const over = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { "T1.4": "budget_exhausted" })
+  // A minute past the heartbeat the run stands still; an ended run is over. Neither turns the watch view on.
+  for (const [name, plugin] of [
+    ["still", await wired({ status: building, harness: harnessOfT14, now: (building.run.aliveAt ?? 0) + 60_000 })],
+    ["ended", await wired({ status: over, harness: harnessOfT14 })],
+  ] as const) {
+    try {
+      expect({ name, liveness: plugin.view.liveness() }).toEqual({ name, liveness: name })
+      plugin.toggle()
+      await settle()
+      expect({ name, watching: plugin.view.watching(), navigations: plugin.navigations }).toEqual({
+        name,
+        watching: false,
+        navigations: [],
+      })
+    } finally {
+      plugin.app.renderer.destroy()
+    }
+  }
+  // A watch turned on while live still turns off once the run has ended.
+  const plugin = await wired({ status: building, harness: harnessOfT14, later: [over] })
+  try {
+    plugin.toggle()
+    await settle()
+    expect(plugin.view.watching()).toBe(true)
+    await plugin.advance(1_000)
+    expect(plugin.view.liveness()).toBe("ended")
+    plugin.toggle()
+    await settle()
+    expect(plugin.view.watching()).toBe(false)
   } finally {
     plugin.app.renderer.destroy()
   }
