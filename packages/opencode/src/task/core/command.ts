@@ -120,6 +120,16 @@ export const plan = (input: {
   }
 }
 
+/**
+ * The refusal lines of a load (D10, AD-14): one `<rule> <path>: <message>` line for each failure, in the load's order;
+ * the one fallback line when the load gave neither a spec nor a failure; none for a spec that loaded.
+ */
+export const loadFailures = (loaded: BlendModel.LoadResult): ReadonlyArray<string> => {
+  if (loaded.failures.length > 0)
+    return loaded.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`)
+  return loaded.spec ? [] : ["R1 .: the spec did not load"]
+}
+
 /** The scenarios a plan leaves out: each needs a task that is neither in the run nor an `outside` precondition. */
 export const leftOut = (plan: Plan): ReadonlyArray<string> =>
   plan.spec.scenarios.filter((scenario) => !plan.scenarios.includes(scenario)).map((scenario) => scenario.id)
@@ -382,14 +392,9 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const specDir = found.value
     const specPath = path.relative(directory, specDir)
     const loaded = yield* Blend.load(specDir)
-    if (loaded.failures.length > 0) {
-      return yield* failed(
-        specPath,
-        loaded.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`),
-      )
-    }
-    if (!loaded.spec) return yield* failed(specPath, [`R1 .: the spec did not load`])
     const spec = loaded.spec
+    const lines = loadFailures(loaded)
+    if (lines.length > 0 || !spec) return yield* failed(specPath, lines)
     if (spec.tasks.length === 0) return yield* plain(specPath, "the spec holds no task")
 
     const folder = target === specDir ? Option.none<string>() : Option.some(path.basename(target))
