@@ -3,7 +3,7 @@
 // message.
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Logger, Option } from "effect"
+import { Data, Effect, Layer, Logger, Option } from "effect"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -72,6 +72,7 @@ const ended = (plan: Plan) =>
   })
 
 const spent = { tokens: 1_400_000, cost: 2.31 }
+class Gone extends Data.TaggedError("Gone")<{ readonly message: string }> {}
 const none = Option.none<TaskSummary.Stop>()
 
 describe("the closing summary's markdown (D18, UI7)", () => {
@@ -404,7 +405,7 @@ describe("the run supervisor's closing summary (AD-18, UI7, UI23, UI24)", () => 
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const setup = { plan, ...(yield* runOf({ plan, directory: "/root", stored: [facts().runStarted()] })) }
-      Object.assign(setup.run.env.ops, { say: () => Effect.fail(new Error("the root session is gone")) })
+      Object.assign(setup.run.env.ops, { say: () => Effect.fail(new Gone({ message: "the root session is gone" })) })
       const messages: unknown[] = []
       let released = 0
       yield* Effect.gen(function* () {
