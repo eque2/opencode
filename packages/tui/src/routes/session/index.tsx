@@ -24,6 +24,7 @@ import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner } from "../../component/spinner"
 import { createSyntaxStyleMemo, generateSubtleSyntax, selectedForeground, useTheme } from "../../context/theme"
+import { TaskHeader, splitHeader } from "./task-header"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
 import type {
@@ -1569,11 +1570,11 @@ function UserMessage(props: {
 }) {
   const ctx = use()
   const local = useLocal()
-  const text = createMemo(() => {
-    // The user's own non-empty text parts; synthetic parts are not shown.
-    const texts = props.parts.flatMap((x) => (x.type === "text" && !x.synthetic && x.text ? [x.text] : []))
-    return texts.join("\n\n")
-  })
+  // The user's own non-empty text parts; synthetic parts are not shown. A /task run header is drawn from its part's
+  // metadata, not from its text (D17).
+  const split = createMemo(() => splitHeader(props.parts))
+  const text = createMemo(() => split().texts.join("\n\n"))
+  const header = createMemo(() => Option.getOrUndefined(split().header))
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
@@ -1586,7 +1587,7 @@ function UserMessage(props: {
 
   return (
     <>
-      <Show when={text()}>
+      <Show when={text() || header()}>
         <box
           id={props.message.id}
           ref={(el: BoxRenderable) => alwaysSeparate.add(el)}
@@ -1609,7 +1610,10 @@ function UserMessage(props: {
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
-            <text fg={theme.text}>{text()}</text>
+            <Show when={header()}>{(value) => <TaskHeader theme={theme} header={value()} />}</Show>
+            <Show when={text()}>
+              <text fg={theme.text}>{text()}</text>
+            </Show>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
