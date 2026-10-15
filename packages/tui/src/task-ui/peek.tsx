@@ -33,8 +33,8 @@ export type Child = {
   readonly updated: number
 }
 
-/** A harness session and the unit it works on. */
-export type Harness = Child & { readonly unit: string }
+/** A harness session, the unit it works on, and what it spent: input, output and reasoning tokens, and its cost. */
+export type Harness = Child & { readonly unit: string; readonly tokens: number; readonly cost: number }
 
 /** One line of a session's latest activity. */
 export type Line = { readonly glyph: string; readonly tone: Tone; readonly text: string }
@@ -56,6 +56,8 @@ export const harnessOf = (session: {
   readonly id: string
   readonly title: string
   readonly time: { readonly created: number; readonly updated: number }
+  readonly tokens?: { readonly input: number; readonly output: number; readonly reasoning: number }
+  readonly cost?: number
 }): ReadonlyArray<Harness> => {
   const match = HARNESS_TITLE.exec(session.title)
   return match
@@ -67,6 +69,9 @@ export const harnessOf = (session: {
           again: Boolean(match[3]),
           created: session.time.created,
           updated: session.time.updated,
+          // Cache reads and writes are not counted (EXPERIENCE "Run usage").
+          tokens: (session.tokens?.input ?? 0) + (session.tokens?.output ?? 0) + (session.tokens?.reasoning ?? 0),
+          cost: session.cost ?? 0,
         },
       ]
     : []
