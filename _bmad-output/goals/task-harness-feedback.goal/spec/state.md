@@ -5,7 +5,7 @@
 |---------|------------|-----------------------------------------|
 | T1      | parentTask | verified                                |
 | T2      | parentTask | verified                                |
-| T3      | parentTask | {"buildingSubtasks":"checkingProgress"} |
+| T3      | parentTask | verifyingSubtasks                       |
 | T4      | parentTask | {"buildingSubtasks":"checkingProgress"} |
 | T1.1    | task       | completed                               |
 | T1.2    | task       | completed                               |
@@ -44,9 +44,9 @@
 | T3.6    | task       | completed                               |
 | T3.7    | task       | completed                               |
 | T3.8    | task       | completed                               |
-| T3.9    | task       | not_started                             |
+| T3.9    | task       | completed                               |
 | T3.10   | task       | completed                               |
-| T3.11   | task       | not_started                             |
+| T3.11   | task       | completed                               |
 | T4.1    | task       | not_started                             |
 | T4.2    | task       | not_started                             |
 | T4.3    | task       | not_started                             |
