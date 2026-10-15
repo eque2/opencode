@@ -44,7 +44,7 @@ interface Context {
 type Event = UnitMoved | SpecReloaded | TaskHooks.HookEvent
 
 /** Worker failures in a row that reject the scenario with `harness error: …` (SV6). */
-export const MAX_FAILURES = 3
+export const FAILURE_LIMIT = 3
 
 const RETRY_DELAY = Duration.seconds(1)
 
@@ -89,7 +89,7 @@ export const machine = setup({
     judged: ({ context }) => context.verdicts.length > 0,
     askMissing: ({ context }) => context.answered && context.verdicts.length === 0 && !context.missingAsked,
     anotherRound: ({ context }) => context.round < 2,
-    failureLeft: ({ context }) => context.failures + 1 < MAX_FAILURES,
+    failureLeft: ({ context }) => context.failures + 1 < FAILURE_LIMIT,
   },
 }).createMachine({
   id: "scenario",

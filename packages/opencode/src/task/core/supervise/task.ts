@@ -109,7 +109,7 @@ interface Context {
 type Event = UnitMoved | SpecReloaded | TaskHooks.HookEvent | TaskWorkers.TurnEvent | { readonly type: "clock.expired" }
 
 /** Worker failures in a row that end the task with `harness error: …` (SV6). */
-export const MAX_FAILURES = 3
+export const FAILURE_LIMIT = 3
 
 /** The pause before a failed worker runs again. */
 export const RETRY_DELAY = Duration.seconds(1)
@@ -325,7 +325,7 @@ export const machine = setup({
     repeated: ({ context }) => Option.isSome(context.repeated),
     readied: ({ context }) => context.ready,
     nudgeLeft: ({ context }) => context.nudges < 2,
-    failureLeft: ({ context }) => context.failures + 1 < MAX_FAILURES,
+    failureLeft: ({ context }) => context.failures + 1 < FAILURE_LIMIT,
     noJudge: ({ context }) => context.judge.length === 0,
     verdicts: ({ context }) => context.verdicts.length > 0,
     askMissing: ({ context }) => context.verdicts.length > 0 && missing(context).length > 0 && !context.missingAsked,

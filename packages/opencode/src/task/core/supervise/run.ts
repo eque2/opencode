@@ -98,13 +98,13 @@ interface Context {
 type Event = RunChanged | RunTrust | { readonly type: "run.ended" }
 
 /** Worker failures in a row that end a scenario batch with `harness error: …` (SV6). */
-export const MAX_FAILURES = 3
+export const FAILURE_LIMIT = 3
 
 /** The heartbeat cadence: the status writer rewrites the last snapshot with a fresh `aliveAt`. */
 export const HEARTBEAT = Duration.seconds(5)
 
 /** The stale-check cadence: the spec is loaded again from the root checkout. */
-export const STALE_EVERY = Duration.seconds(1)
+export const STALE_CADENCE = Duration.seconds(1)
 
 const RETRY_DELAY = Duration.seconds(1)
 
@@ -254,7 +254,7 @@ export const machine = setup({
   },
   delays: {
     heartbeat: Duration.toMillis(HEARTBEAT),
-    stale: Duration.toMillis(STALE_EVERY),
+    stale: Duration.toMillis(STALE_CADENCE),
     retry: Duration.toMillis(RETRY_DELAY),
     runWallClock: ({ context }: { context: Context }) =>
       Option.match(context.run.limits.runWallClock, { onNone: () => 0, onSome: Duration.toMillis }),
@@ -268,7 +268,7 @@ export const machine = setup({
         onSome: (snapshot) =>
           !ended(snapshot) && readyScenarios(context.run.plan, snapshot).some((id) => !context.proved.includes(id)),
       }),
-    batchFailureLeft: ({ context }) => context.batchFailures + 1 < MAX_FAILURES,
+    batchFailureLeft: ({ context }) => context.batchFailures + 1 < FAILURE_LIMIT,
   },
   actions: {
     // A failed touch or stale check is logged; it counts toward no failure rule and records no fact.
