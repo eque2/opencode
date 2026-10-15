@@ -29,7 +29,9 @@ import { json } from "../fixture/tui-sdk"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
 import projected from "./fixture-projected.json"
-import { Peek, liveSessions, lines, type Sessions } from "../../src/task-ui/peek"
+import { Peek, builderHeading, liveSessions, lines, type Sessions } from "../../src/task-ui/peek"
+import { waitSentences, wrap } from "../../src/task-ui/shared"
+import type { CapturedFrame, RGBA } from "@opentui/core"
 import {
   DISPLAY,
   ENDED,
@@ -385,7 +387,8 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
   const props = await view(sessions)
   const peek = await frame(() => <Peek {...props} unit="T1.4" width={70} lines={3} />)
   expect(peek).toContain("◆ In the Flow · T1.4 details · read-only")
-  expect(peek).toContain("BUILDER  attempt 3 · budget exhausted")
+  // T4.5 re-baselined the heading from "attempt 3 · budget exhausted": the state, the attempt, then the duration.
+  expect(peek).toContain("BUILDER  budget exhausted · attempt 3 · 0s")
   expect(peek).toContain("✗ c7 failed")
   expect(peek).toContain("VERIFIER second try")
   expect(peek).toContain("✓ T1.4.c1 trusted")
@@ -393,6 +396,187 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
   expect(await frame(() => <Peek {...props} unit="T1.4" width={38} lines={3} />)).toContain(
     "◆ T1.4 details · read-only",
   )
+})
+
+// --- the Peek BUILDER heading (T4.5: EXPERIENCE "Peek BUILDER heading", D19, D21) -----------------------------------
+
+type RawTasks = Record<string, Record<string, unknown>>
+
+// The projected status with `change` applied to a copy of its raw form.
+const changed = (change: (raw: typeof projected & { external?: unknown }) => void) => {
+  const raw = structuredClone(projected)
+  change(raw)
+  return Option.getOrThrow(parse(JSON.stringify(raw)))
+}
+const tasksIn = (raw: typeof projected): RawTasks => raw.tasks
+
+// T1.4 started at 0 and ended 6m 40s later.
+const exhausted = changed((raw) => Object.assign(tasksIn(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 }))
+
+// T1.5 waits on two plan tasks, the untrusted outside T9 and T2.1, a task of the spec outside this run.
+const waitingT15 = changed((raw) => {
+  Object.assign(tasksIn(raw)["T1.5"], {
+    state: "waiting",
+    tags: ["waiting"],
+    waitingOn: ["T1.3", "T1.4", "T9", "T2.1"],
+    waitingOnOutside: ["T9"],
+    reason: null,
+  })
+  Object.assign(raw, { external: { "T2.1": { state: "waiting", tags: ["waiting"] } } })
+})
+
+async function spansOf(node: () => JSX.Element, width = 120, height = 40) {
+  const app = await testRender(node, { width, height })
+  try {
+    await app.renderOnce()
+    return { text: app.captureCharFrame(), spans: app.captureSpans() }
+  } finally {
+    app.renderer.destroy()
+  }
+}
+
+// The colour of the first span that holds `text`.
+const fgOf = (captured: CapturedFrame, text: string) =>
+  captured.lines.flatMap((line) => line.spans).find((span) => span.text.includes(text))?.fg
+const rgb = (value: RGBA | undefined) => (value ? [value.r, value.g, value.b] : [])
+
+// The frame's lines, without the Peek's border and padding.
+const inside = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.replace(/^\s*║ ?/, "").replace(/ *║\s*$/, ""))
+
+test("T4.5 a task with a reason and without blocked: line 1 is state · attempt · duration, the reason under it", async () => {
+  expect(builderHeading(exhausted, "T1.4", "ended", 0)).toEqual([
+    { text: "budget exhausted · attempt 3 · 6m 40s", tone: "text" },
+    { text: "T1.4.c7: the test asserts only that 'topic change' appears", tone: "bad" },
+  ])
+  const props = await view(none, exhausted)
+  const shown = await spansOf(() => <Peek {...props} unit="T1.4" width={60} lines={3} />)
+  const lines = inside(shown.text)
+  const at = lines.findIndex((line) => line.startsWith("BUILDER  budget exhausted · attempt 3 · 6m 40s"))
+  expect(at).toBeGreaterThan(0)
+  // The reason continues under the heading text, 9 cells in, in the error tone with the dead tag.
+  expect(lines[at + 1]).toBe("         T1.4.c7: the test asserts only that 'topic")
+  expect(lines[at + 2]).toBe("         change' appears")
+  expect(rgb(fgOf(shown.spans, "T1.4.c7:"))).toEqual(rgb(theme.error))
+  expect(rgb(fgOf(shown.spans, "budget exhausted · attempt 3"))).toEqual(rgb(theme.text))
+  // Without the dead tag the reason is muted; with no attempt the line is the state and the duration.
+  const human = changed((raw) =>
+    Object.assign(tasksIn(raw)["T1.4"], { state: "needs_human", tags: ["ended", "stopped"], attempts: 0, startedAt: 0, endedAt: 45_000 }),
+  )
+  expect(builderHeading(human, "T1.4", "ended", 0)).toEqual([
+    { text: "needs human · 45s", tone: "text" },
+    { text: "T1.4.c7: the test asserts only that 'topic change' appears", tone: "muted" },
+  ])
+  const humanProps = await view(none, human)
+  const muted = await spansOf(() => <Peek {...humanProps} unit="T1.4" width={60} lines={3} />)
+  expect(muted.text).toContain("BUILDER  needs human · 45s")
+})
+
+test("T4.5 any other task: line 1 only; a running task's duration counts to now while the view is live", async () => {
+  const building = changed((raw) =>
+    Object.assign(tasksIn(raw)["T1.4"], {
+      state: "building",
+      tags: ["active"],
+      reason: null,
+      startedAt: raw.run.aliveAt - 192_000,
+      endedAt: undefined,
+    }),
+  )
+  expect(builderHeading(building, "T1.4", "live", (building.run.aliveAt ?? 0))).toEqual([
+    { text: "building · attempt 3 · 3m 12s", tone: "text" },
+  ])
+  // The view is live (its now is the heartbeat): the Peek shows the same count.
+  const props = await view(none, building)
+  const lines = inside(await frame(() => <Peek {...props} unit="T1.4" width={60} lines={3} />))
+  const at = lines.findIndex((line) => line.startsWith("BUILDER  building · attempt 3 · 3m 12s"))
+  expect(at).toBeGreaterThan(0)
+  expect(lines[at + 1]).toBe("  no builder session yet")
+  // A task with no start and no attempt: the state alone.
+  expect(builderHeading(status, "T1.1", "ended", 0)[0]?.text).toBe("trusted · attempt 1 · 0s")
+  expect(builderHeading(changed((raw) => Object.assign(tasksIn(raw)["T1.1"], { attempts: 0, startedAt: undefined })), "T1.1", "ended", 0)).toEqual([
+    { text: "trusted", tone: "text" },
+  ])
+})
+
+test("T4.5 a blocked task: line 1 starts its reason in the warning tone", async () => {
+  expect(builderHeading(status, "T1.5", "live", 0)).toEqual([{ text: "blocked by T1.4: budget exhausted", tone: "warning" }])
+  const props = await view(none, status)
+  const shown = await spansOf(() => <Peek {...props} unit="T1.5" width={60} lines={3} />)
+  expect(inside(shown.text)).toContain("BUILDER  blocked by T1.4: budget exhausted")
+  expect(rgb(fgOf(shown.spans, "blocked by T1.4"))).toEqual(rgb(theme.warning))
+})
+
+test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; the trust command is never cut", async () => {
+  expect(waitSentences(waitingT15, waitingT15.tasks["T1.5"])).toEqual([
+    { text: "waiting on T1.3, T1.4", tone: "muted" },
+    { text: "waiting on T9 (outside) — run /task trust T9", tone: "warning" },
+    { text: "waiting on T2.1 (not in this run)", tone: "muted" },
+  ])
+  expect(builderHeading(waitingT15, "T1.5", "live", 0)).toEqual(waitSentences(waitingT15, waitingT15.tasks["T1.5"]))
+  // T9 trusted: no trust sentence for it.
+  const trusted = changed((raw) => {
+    Object.assign(tasksIn(raw)["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T9"], waitingOnOutside: ["T9"] })
+    Object.assign(raw, { outside: { ...raw.outside, T9: { state: "trusted", tags: ["ended"] } } })
+  })
+  expect(waitSentences(trusted, trusted.tasks["T1.5"])).toEqual([])
+  const props = await view(none, waitingT15)
+  const shown = await spansOf(() => <Peek {...props} unit="T1.5" width={44} lines={3} />)
+  const lines = inside(shown.text)
+  const at = lines.findIndex((line) => line.startsWith("BUILDER  waiting on T1.3, T1.4"))
+  expect(at).toBeGreaterThan(0)
+  // The outside sentence wraps at a word boundary, 9 cells in; "/task trust T9" stays whole on one line.
+  expect(lines[at + 1]).toBe("         waiting on T9 (outside) — run")
+  expect(lines[at + 2]).toBe("         /task trust T9")
+  expect(lines[at + 3]).toBe("         waiting on T2.1 (not in this run)")
+  expect(rgb(fgOf(shown.spans, "waiting on T1.3"))).toEqual(rgb(theme.textMuted))
+  expect(rgb(fgOf(shown.spans, "waiting on T9"))).toEqual(rgb(theme.warning))
+  expect(rgb(fgOf(shown.spans, "/task trust T9"))).toEqual(rgb(theme.warning))
+  expect(rgb(fgOf(shown.spans, "(not in this run)"))).toEqual(rgb(theme.textMuted))
+})
+
+test("T4.5 a long reason wraps at word boundaries with a 9-cell hanging indent and no line limit; activity lines shrink first", async () => {
+  const words = Array.from({ length: 40 }, (_, i) => `word${i + 1}`)
+  const long = changed((raw) => Object.assign(tasksIn(raw)["T1.4"], { reason: words.join(" ") }))
+  const activity = Array.from({ length: 5 }, (_, i) => ({ glyph: "›", tone: "idle" as const, text: `step ${i + 1}` }))
+  const sessions: Sessions = {
+    children: () => () => [{ id: "b", role: "builder", again: false, created: 1, updated: 1 }],
+    activity: () => () => activity,
+    all: () => () => [],
+  }
+  const longProps = await view(sessions, long)
+  const lines = inside(await frame(() => <Peek {...longProps} unit="T1.4" width={50} lines={5} />, 120, 60))
+  const at = lines.findIndex((line) => line.startsWith("BUILDER  budget exhausted"))
+  const under = lines.slice(at + 1).filter((line) => /^ {9}\S/.test(line))
+  // Every word is there, in order, and no line is cut.
+  expect(under.join(" ").trim().split(/\s+/)).toEqual(words)
+  expect(under.length).toBeGreaterThan(5)
+  expect(under.every((line) => line.length <= 46 && !line.includes("…"))).toBe(true)
+  // The builder's five activity lines shrink to one before the heading is cut.
+  expect(lines.filter((line) => line.includes("› step")).map((line) => line.trim())).toEqual(["› step 5"])
+  // A reason of 1 line takes 1 activity line: 4 of 5 show.
+  const short = changed((raw) => Object.assign(tasksIn(raw)["T1.4"], { reason: "exit 1" }))
+  const shortProps = await view(sessions, short)
+  const shortLines = inside(await frame(() => <Peek {...shortProps} unit="T1.4" width={50} lines={5} />, 120, 60))
+  expect(shortLines.filter((line) => line.includes("› step")).map((line) => line.trim())).toEqual(["› step 2", "› step 3", "› step 4", "› step 5"])
+  // wrap splits a word longer than the line.
+  expect(wrap("a abcdefghij b", 4)).toEqual(["a", "abcd", "efgh", "ij b"])
+})
+
+test("T4.5 a task with endedAt and no startedAt did not start: both fallbacks say so", async () => {
+  const blockedProps = await view(none, status)
+  const lines = inside(await frame(() => <Peek {...blockedProps} unit="T1.5" width={60} lines={3} />))
+  expect(lines).toContain("  no builder session: the task did not start")
+  expect(lines).toContain("  no verifier session: the task did not start")
+  // A task still to start keeps "yet".
+  const pending = changed((raw) =>
+    Object.assign(tasksIn(raw)["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T1.4"], endedAt: undefined, reason: null }),
+  )
+  const pendingProps = await view(none, pending)
+  const later = inside(await frame(() => <Peek {...pendingProps} unit="T1.5" width={60} lines={3} />))
+  expect(later).toContain("  no builder session yet")
+  expect(later).toContain("  no verifier session yet")
 })
 
 test("the shortcut bar names the design, its keys, and drops keys before it overflows", async () => {
