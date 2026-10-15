@@ -201,22 +201,34 @@ describe("TaskHarness registry", () => {
       const fs = yield* FileSystem.FileSystem
       const one = yield* fs.makeTempDirectoryScoped()
       const two = yield* fs.makeTempDirectoryScoped()
-      yield* harness.claim(claim(one, "task_one"))
-      yield* harness.claim(claim(two, "task_two"))
+      // Two directories, two leases: each run holds its own directory.
+      expect((yield* harness.claim(claim(one, "task_one"))).kind).toBe("claimed")
+      expect((yield* harness.claim(claim(two, "task_two"))).kind).toBe("claimed")
       yield* harness.spawnRun("task_one", listener)
       yield* harness.spawnRun("task_two", listener)
-      yield* harness.trust(one, "T9")
-      // A send to a child only queues it: wait until the child has the trust.
-      const deadline = yield* Effect.forkChild(
+      // A send to a child only queues it: wait until the child holds `count` trusts.
+      const reaches = (runID: string, count: number) =>
         Effect.gen(function* () {
-          while ((yield* trustsOf(harness, "task_one")).length === 0) yield* Effect.sleep(5)
-        }),
-      )
-      yield* Fiber.join(deadline).pipe(Effect.timeout(2_000))
+          const wait = yield* Effect.forkChild(
+            Effect.gen(function* () {
+              while ((yield* trustsOf(harness, runID)).length < count) yield* Effect.sleep(5)
+            }),
+          )
+          yield* Fiber.join(wait).pipe(Effect.timeout(2_000))
+        })
+      yield* harness.trust(one, "T9")
+      yield* reaches("task_one", 1)
+      yield* harness.trust(two, "T7")
+      yield* reaches("task_two", 1)
+      // Each trust reached its own directory's supervisor and no other.
+      yield* Effect.sleep(20)
       expect(yield* trustsOf(harness, "task_one")).toEqual(["T9"])
-      expect(yield* trustsOf(harness, "task_two")).toEqual([])
-      // A trust for a directory with no live run reaches nobody and does not fail.
-      yield* harness.trust(yield* fs.makeTempDirectoryScoped(), "T9")
+      expect(yield* trustsOf(harness, "task_two")).toEqual(["T7"])
+      // A trust for a directory with no live run reaches no supervisor and does not fail.
+      yield* harness.trust(yield* fs.makeTempDirectoryScoped(), "T5")
+      yield* Effect.sleep(20)
+      expect(yield* trustsOf(harness, "task_one")).toEqual(["T9"])
+      expect(yield* trustsOf(harness, "task_two")).toEqual(["T7"])
     }),
   )
 })
