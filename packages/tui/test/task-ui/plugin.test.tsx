@@ -299,6 +299,33 @@ test("UI16 the plugin toasts the run warning once when the status gains it, in a
   ])
 })
 
+test("UI14 the plugin's mark moves for a live run with animations on, and stays a ◆ with them off", async () => {
+  await using dir = await tmpdir()
+  // A fresh heartbeat: the run is live for the next 15 s.
+  await writeStatus(dir.path, { ...fixture, run: { ...fixture.run, aliveAt: Date.now() } })
+  const first = await load(dir.path)
+  expect(await first.shows("In the Flow run: running")).toBe(true)
+  // The cell before the name, sampled for a second: the spinner's frames, more than one of them.
+  const marks = async (plugin: typeof first) => {
+    const seen = new Set<string>()
+    for (let sample = 0; sample < 20; sample++) {
+      const line = (await plugin.frame()).split("\n").find((item) => item.includes(" In the Flow run: running")) ?? ""
+      seen.add(line.slice(line.indexOf(" In the Flow run: running") - 1, line.indexOf(" In the Flow run: running")))
+      await Bun.sleep(50)
+    }
+    return seen
+  }
+  const moving = await marks(first)
+  expect(moving.size).toBeGreaterThan(1)
+  expect([...moving].every((cell) => ["·", "⬩", "⬪", "⬥", "◆"].includes(cell))).toBe(true)
+  first.kv.set("animations_enabled", false)
+  await first.unload()
+  await using second = await load(dir.path, { kv: first.kv })
+  expect(await second.shows("In the Flow run: running")).toBe(true)
+  expect([...(await marks(second))]).toEqual(["◆"])
+  await first[Symbol.asyncDispose]()
+})
+
 test("a chosen design survives a reload of the plugin with the same kv", async () => {
   await using dir = await tmpdir()
   await writeStatus(dir.path, fixture)

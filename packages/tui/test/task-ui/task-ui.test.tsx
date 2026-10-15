@@ -19,7 +19,8 @@ import { testRender, useRenderer } from "@opentui/solid"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Option, Result } from "effect"
-import { TextAttributes } from "@opentui/core"
+import { TextAttributes, type Renderable } from "@opentui/core"
+import { SpinnerRenderable } from "opentui-spinner"
 import { createRoot, createSignal, type JSX } from "solid-js"
 import { createOpencodeClient, type Part } from "@opencode-ai/sdk/v2"
 import type { TuiPluginApi, TuiRouteCurrent } from "@opencode-ai/plugin/tui"
@@ -711,7 +712,8 @@ test("UI16 the bar's parts per design: the run warning and the outside wait firs
     expect(await barOf(alerted, design)).toEndWith(
       "In the Flow " + DESIGNS[design - 1].name + "  ! spec  /task trust T9 outside wait  ctrl+x o expand  tab select task  ctrl+x w watch  3/6 trusted  · 2 stopped",
     )
-  expect(await barOf(alerted, 7)).toEndWith(
+  // The Ticker's bar is the longest: a 300-cell terminal leaves it room for every part.
+  expect(await barOf(alerted, 7, 300)).toEndWith(
     "In the Flow Ticker  ! spec  /task trust T9 outside wait  3/6 trusted  · 2 stopped  ⊘ T1.4 budget exhausted  ctrl+x o expand  tab select task  ctrl+x w watch",
   )
   // Not live: the select key reads ctrl+x j/k.
@@ -733,9 +735,9 @@ test("UI16 the bar's parts per design: the run warning and the outside wait firs
 const FRAMES = ["·", "⬩", "⬪", "⬥", "◆", "⬥", "⬪", "⬩"]
 
 // The spinner elements under a renderable.
-const spinners = (node: { getChildren: () => unknown[] }): Array<{ frames: string[]; interval: number; color: unknown }> => [
-  ...("frames" in node && "interval" in node ? [node as unknown as { frames: string[]; interval: number; color: unknown }] : []),
-  ...node.getChildren().flatMap((child) => spinners(child as { getChildren: () => unknown[] })),
+const spinners = (node: Renderable): ReadonlyArray<SpinnerRenderable> => [
+  ...(node instanceof SpinnerRenderable ? [node] : []),
+  ...node.getChildren().flatMap(spinners),
 ]
 
 async function marks(node: () => JSX.Element, width = 160, height = 40) {
@@ -753,6 +755,7 @@ test("UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 
   expect(shown.found).toHaveLength(1)
   expect(shown.found[0].frames).toEqual(FRAMES)
   expect(shown.found[0].interval).toBe(120)
+  expect(shown.found[0].color).toBe(theme.accent)
   expect(FRAMES.every((cell) => Bun.stringWidth(cell) === 1)).toBe(true)
   const name = shown.spans.lines.flatMap((line) => line.spans).find((span) => span.text.includes("In the Flow"))
   expect(name?.text.startsWith(" In the Flow")).toBe(true)
