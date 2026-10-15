@@ -1,14 +1,27 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
 import { Effect, Predicate } from "effect"
+import { readdirSync } from "node:fs"
+import path from "path"
 import { createMachine, initialTransition } from "@jambudipa/xstate-effect"
 import { getAdjacencyMap } from "@jambudipa/xstate-effect/graph"
+import { Blend } from "@/task/blend"
 import type { Fact, Plan } from "@/task/core/model"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import { TaskAlphabet } from "@/task/engine-xstate/alphabet"
 import { type RunEvent, type RunMachine, TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
 import { loadPlan } from "./lib/machine"
+
+const formatDir = path.resolve(import.meta.dir, "../../../../task-formats/blend")
+// The fault folders (D14) the loader refuses: never walked.
+const REFUSED = [
+  "example-format-faults.spec",
+  "example-cycle.spec",
+  "example-self-after.spec",
+  "example-unknown-after.spec",
+  "example-no-ensures.spec",
+]
 
 // The graph proof (D5, spine AD-7, owner ruling 4): every state of the run machine that the progress alphabet can
 // reach is either done or has a fact that changes its key. `machine(plan)` runs the structural totality check
@@ -25,10 +38,10 @@ const it = testEffect(NodeServices.layer)
 const LIMIT = {
   // measured: 338 keys, 746 edges
   releaseNotes: 2_300,
-  // measured: 23 keys, 46 edges
-  scenarios: 150,
   // measured: 108 keys, 292 edges
   cascade: 900,
+  // every example plan: the cascade's 292 edges is the largest (scenarios 46, outside-run 74, its T1.2 subtree 35)
+  examples: 900,
   // measured: 398 keys, 806 edges, 33 stuck
   negative: 2_500,
   // measured: 1 310 edges with the blocked rows
@@ -162,18 +175,67 @@ describe("the graph proof", () => {
   )
 
   it.live(
-    "RM20 walks the two live-check plans: no stuck state",
+    "RM20 walks every example plan that loads: the two live-check plans and example-outside-run, no stuck state",
     () =>
       Effect.gen(function* () {
-        const scenarios = yield* mainWalk("example-scenarios.spec", LIMIT.scenarios)
-        const cascade = yield* mainWalk("example-cascade.spec", LIMIT.cascade)
-        console.log("live-check walks", scenarios.keys, scenarios.edges, cascade.keys, cascade.edges)
-        expect(scenarios.stuck).toEqual([])
-        expect(cascade.stuck).toEqual([])
-        expect(scenarios.statuses).toEqual(["active", "done"])
-        expect(cascade.statuses).toEqual(["active", "done"])
+        const folders = readdirSync(formatDir)
+          .filter((name) => /^example-.*\.spec$/.test(name))
+          .toSorted()
+        const walked: Array<string> = []
+        for (const name of folders) {
+          const loaded = yield* Blend.load(path.join(formatDir, name))
+          // A folder the loader refuses must be a known fault folder: one that starts to load is walked instead.
+          if (loaded.failures.length > 0) {
+            expect(REFUSED).toContain(name)
+            continue
+          }
+          const result = yield* mainWalk(name, LIMIT.examples)
+          console.log("example walk", name, result.keys, "keys", result.edges, "edges")
+          expect({ name, stuck: result.stuck }).toEqual({ name, stuck: [] })
+          expect(result.statuses).toEqual(["active", "done"])
+          walked.push(name)
+        }
+        expect(walked).toEqual(["example-cascade.spec", "example-outside-run.spec", "example-scenarios.spec"])
+        // Each fault folder is there, and refused.
+        expect(folders.filter((name) => !walked.includes(name))).toEqual([...REFUSED].toSorted())
       }),
     WALK,
+  )
+
+  it.live(
+    "walks the T1.2 subtree plan of example-outside-run, with its external region for T1.1: no stuck state",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("example-outside-run.spec", "T1.2")
+        expect(plan.external).toEqual(["T1.1"])
+        const result = yield* walk(
+          plan,
+          TaskMachine.machine(plan),
+          TaskEngineXState.initial(plan),
+          canonical,
+          LIMIT.examples,
+        )
+        console.log("outside-run subtree walk", result.keys, "keys", result.edges, "edges")
+        expect(result.stuck).toEqual([])
+        expect(result.statuses).toEqual(["active", "done"])
+      }),
+    WALK,
+  )
+
+  it.live("trusts an external region only in the start-up step of the alphabet (AD-7)", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-outside-run.spec", "T1.2")
+      const initial = TaskEngineXState.initial(plan)
+      expect(TaskAlphabet.alphabet(initial)).toContainEqual({
+        type: "outside.trusted",
+        at: TaskAlphabet.AT,
+        id: "T1.1",
+      })
+      // After the first fact the region is still untrusted, and the alphabet no longer trusts it.
+      const started = TaskEngineXState.apply(plan, initial, { type: "run.started", at: 1 })
+      expect(TaskEngineXState.unitState(started, "T1.1")).toBe("untrusted")
+      expect(TaskAlphabet.alphabet(started).filter((fact) => fact.type === "outside.trusted")).toEqual([])
+    }),
   )
 
   it.live(
