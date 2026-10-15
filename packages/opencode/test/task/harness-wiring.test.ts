@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node"
 import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Fiber, Logger, Option, Schema } from "effect"
+import { Context, Effect, Fiber, Logger, Option, Schema } from "effect"
 import { assign, setup } from "@jambudipa/xstate-effect"
 import type { Tool as AITool } from "ai"
 import { Agent } from "@/agent/agent"
@@ -83,20 +83,23 @@ describe("the harness-only tools", () => {
 })
 
 // An owner stand-in for the routing tests: it keeps the hook events it receives, and holds a repetition limit.
-const owner = setup({
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- xstate reads `types` for its type parameters only
-  types: {} as {
-    context: { events: ReadonlyArray<TaskHooks.HookEvent>; limit: number }
-    events: TaskHooks.HookEvent
-  },
-}).createMachine({
-  context: { events: [], limit: 3 },
-  on: {
-    "hook.ready": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
-    "hook.verdicts": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
-    "hook.repeated": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
-  },
-})
+const ownerWith = (limit: number) =>
+  setup({
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- xstate reads `types` for its type parameters only
+    types: {} as {
+      context: { events: ReadonlyArray<TaskHooks.HookEvent>; limit: number }
+      events: TaskHooks.HookEvent
+    },
+  }).createMachine({
+    context: { events: [], limit },
+    on: {
+      "hook.ready": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+      "hook.verdicts": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+      "hook.repeated": { actions: assign({ events: ({ context, event }) => [...context.events, event] }) },
+    },
+  })
+
+const owner = ownerWith(3)
 
 const decodeEvents = Schema.decodeUnknownSync(Schema.Struct({ context: Schema.Struct({ events: Schema.Array(Schema.Unknown) }) }))
 
@@ -120,10 +123,10 @@ const received = (harness: TaskHarness.Interface, runID: string, count: number) 
   })
 
 // A harness with one live owner, `run:task_a`, that has claimed `session`.
-const owned = (session: string, watch: boolean) =>
+const owned = (session: string, watch: boolean, logic = owner) =>
   Effect.gen(function* () {
     const harness = yield* TaskHarness.make
-    yield* harness.spawnRun("task_a", owner)
+    yield* harness.spawnRun("task_a", logic)
     yield* harness.claimSession({ session, owner: TaskHarness.systemId.run("task_a"), watch })
     return harness
   })
@@ -214,6 +217,36 @@ describe("the hook routing (AD-11)", () => {
   )
 })
 
+// A value in the context where the tools are created: the hook Effects must run with it (EFX-31).
+class Captured extends Context.Service<Captured, string>()("test/TaskHarnessCaptured") {}
+
+describe("the context of the tools' execute (EFX-31)", () => {
+  node.live("runs each hook Effect with the context that createTaskHarnessTools captured", () =>
+    Effect.gen(function* () {
+      const seen: Array<Option.Option<string>> = []
+      // A routing that reads the captured value when it sends.
+      const hooks: TaskHooks.HarnessHooks = {
+        ownerOf: () => Effect.succeed(Option.some({ owner: "run:task_a", watch: true })),
+        limitOf: () => Effect.succeed(Option.some(3)),
+        send: () =>
+          Effect.map(Effect.serviceOption(Captured), (value) => {
+            seen.push(value)
+            return true
+          }),
+      }
+      const sessionID = SessionID.make("ses_route_context")
+      const created = yield* tools(TaskHooks.BUILDER, sessionID, hooks).pipe(Effect.provideService(Captured, "run 1"))
+      const verdicts = yield* tools(TaskHooks.VERIFIER, sessionID, hooks).pipe(Effect.provideService(Captured, "run 2"))
+      // `execute` runs later, outside the provide: only a captured context still holds the value.
+      expect((yield* exec(created.task_ready, { summary: "done" })).metadata.valid).toBe(true)
+      expect((yield* exec(verdicts.verdict, { verdicts: [{ id: "T1.1.c1", verdict: "trusted" }] })).metadata.valid).toBe(
+        true,
+      )
+      expect(seen).toEqual([Option.some("run 1"), Option.some("run 2")])
+    }),
+  )
+})
+
 describe("the repetition stop over the hooks", () => {
   test("the pure check matches only the last limit calls of one tool with one input", () => {
     const other = { tool: "bash", input: { command: "pwd" } }
@@ -237,6 +270,27 @@ describe("the repetition stop over the hooks", () => {
       expect(yield* eventsOf(harness, "task_a")).toEqual([])
       const reason = "repetition: 3 identical bash calls in a row"
       expect(yield* TaskHooks.repetitionStop(harness.hooks, sessionID, [bash, bash, bash])).toEqual(Option.some(reason))
+      expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.repeated", session: sessionID, reason }])
+    }),
+  )
+
+  node.live("reads the owner's own limit, and reads it before any send", () =>
+    Effect.gen(function* () {
+      const sessionID = "ses_route_limit"
+      const harness = yield* owned(sessionID, true, ownerWith(2))
+      expect(yield* harness.hooks.limitOf(sessionID)).toEqual(Option.some(2))
+      // One call is below the owner's limit of 2; two identical calls stop the turn.
+      expect(yield* TaskHooks.repetitionStop(harness.hooks, sessionID, [bash])).toEqual(Option.none())
+      const order: Array<string> = []
+      const spy: TaskHooks.HarnessHooks = {
+        ownerOf: (session) => harness.hooks.ownerOf(session).pipe(Effect.tap(() => Effect.sync(() => order.push("ownerOf")))),
+        limitOf: (session) => harness.hooks.limitOf(session).pipe(Effect.tap(() => Effect.sync(() => order.push("limitOf")))),
+        send: (event) =>
+          Effect.sync(() => order.push(`send ${event.type}`)).pipe(Effect.andThen(harness.hooks.send(event))),
+      }
+      const reason = "repetition: 2 identical bash calls in a row"
+      expect(yield* TaskHooks.repetitionStop(spy, sessionID, [bash, bash])).toEqual(Option.some(reason))
+      expect(order).toEqual(["ownerOf", "limitOf", "send hook.repeated"])
       expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.repeated", session: sessionID, reason }])
     }),
   )
