@@ -6,7 +6,7 @@ import { For, Match, Show, Switch, createEffect, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Peek } from "../peek"
 import { SharedRegion, outsideCollapsed, pageBy, regionRows, wrap } from "../shared"
-import { DESIGNS, OLDER_LINE, bar, counts, cut, older } from "../store"
+import { DESIGNS, OLDER_LINE, bar, costText, counts, cut, older, runUsage, tokensText } from "../store"
 import {
   Brand,
   OlderLine,
@@ -65,6 +65,20 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
     const counts = 10 + 1 + trustedText(status).length + stoppedText(status).length
     // The row's four 1-cell gaps: after the mark, after the name, and on both sides of the spacer before the counts.
     return Math.max(8, props.width - 2 - "◆ In the Flow".length - name().length - counts - 4)
+  }
+  // The run usage before the trusted bar (EXPERIENCE "Run usage"): the tokens drop first, then the cost, before the
+  // title is cut. Each part costs its text and the row's gap before it.
+  const usage = () => {
+    const status = props.view.status()
+    if (!status) return ""
+    const title = `${runTitle(status)} · ${runText(status)}`.length
+    return Option.match(runUsage(props.sessions.all()()), {
+      onNone: () => "",
+      onSome: (spent) =>
+        [`${tokensText(spent.tokens)} · ${costText(spent.cost)}`, costText(spent.cost)].find(
+          (text) => title + 1 + text.length <= titleRoom(),
+        ) ?? "",
+    })
   }
   const inner = () => props.width - 2
   // Where the Peek and the region go: the Board's right pane, split under the Board, or stacked under the design.
@@ -140,9 +154,14 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                 <b>{name()}</b>
               </text>
               <text fg={props.theme().textMuted} wrapMode="none">
-                {cut(`${runTitle(status())} · ${runText(status())}`, titleRoom())}
+                {cut(`${runTitle(status())} · ${runText(status())}`, titleRoom() - (usage() ? usage().length + 1 : 0))}
               </text>
               <box flexGrow={1} />
+              <Show when={usage()}>
+                <text fg={props.theme().textMuted} wrapMode="none">
+                  {usage()}
+                </text>
+              </Show>
               <TrustedCount
                 theme={props.theme}
                 status={status()}

@@ -5,7 +5,7 @@ import { Option } from "effect"
 import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
 import { SharedRegion, pageBy } from "../shared"
-import { MARK, NAME, label, tagged, tone, type Status } from "../store"
+import { MARK, NAME, costText, label, runUsage, tagged, tone, type Status } from "../store"
 import { Brand, OlderLine, TaskLine, moving, reasonLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
@@ -74,7 +74,7 @@ export function TickerDialog(props: ViewProps & { onScroll?: (box: ScrollBoxRend
           <box flexDirection="row">
             <Brand theme={props.theme} moving={moving(props)} />
             <text fg={props.theme().textMuted} wrapMode="none">
-              {" tasks"}
+              {` tasks${Option.match(runUsage(props.sessions.all()()), { onNone: () => "", onSome: (spent) => ` · ${costText(spent.cost)}` })}`}
             </text>
           </box>
           <Show when={props.view.status()}>
