@@ -5,6 +5,7 @@
   "description": "How a task is judged: numbered obligations (ensures, preserves, forbids), each with a proof, the gates it must pass, the weak proofs a verifier must refuse, and any tightening of the spec policy. Qualified obligation id = `<task id>.<key>`.",
   "type": "object",
   "additionalProperties": false,
+  "required": ["ensures"],
   "properties": {
     "gates": {
       "description": "Gates (SPEC.md gates) that must pass at this task's final commit.",

@@ -149,7 +149,8 @@ export const PolicyOverride = Schema.Struct({
 export const VerifyFrontMatter = Schema.Struct({
   gates: Schema.optionalKey(Schema.Array(GateId).check(Schema.isUnique())),
   hint: Schema.optionalKey(Text),
-  ensures: Schema.optionalKey(Schema.Record(EnsuresKey, Ensures).check(Schema.isMinProperties(1))),
+  // Required (D11): a task with nothing to prove gives the run nothing to trust.
+  ensures: Schema.Record(EnsuresKey, Ensures).check(Schema.isMinProperties(1)),
   preserves: Schema.optionalKey(
     Schema.Record(Schema.String.check(pattern("^p[1-9][0-9]*$")), Rule).check(Schema.isMinProperties(1)),
   ),
