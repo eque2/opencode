@@ -1,0 +1,962 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="633" assertions="25017" failures="0" skipped="19" time="792.129835">
+  <testsuite name="test/task-harness/scripts.test.ts" file="test/task-harness/scripts.test.ts" tests="19" assertions="44" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="parse" file="test/task-harness/scripts.test.ts" line="46" tests="5" assertions="12" failures="0" skipped="0" time="0.002" hostname="mac-studio-m1">
+      <testcase name="attempt 2 after N tool results gives attempt 2 and step N" classname="parse" time="0.002535" file="test/task-harness/scripts.test.ts" line="47" assertions="5" />
+      <testcase name="reopen lines give the id and the reason" classname="parse" time="0.000413" file="test/task-harness/scripts.test.ts" line="56" assertions="1" />
+      <testcase name="judge lines give the ids, with a bullet or trailing text tolerated" classname="parse" time="0.000231" file="test/task-harness/scripts.test.ts" line="64" assertions="3" />
+      <testcase name="a scenario judge is a verifier of a scenario" classname="parse" time="0.000081" file="test/task-harness/scripts.test.ts" line="73" assertions="2" />
+      <testcase name="the tools list is read from the request" classname="parse" time="0.000158" file="test/task-harness/scripts.test.ts" line="79" assertions="1" />
+    </testsuite>
+    <testsuite name="ERROR_TEXT" file="test/task-harness/scripts.test.ts" line="84" tests="10" assertions="10" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="an error result: [Tool execution was interrupted]" classname="ERROR_TEXT" time="0.000153" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="an error result: The arguments provided to the tool are invalid: Model tried to call unavailable tool &apos;verdict&apos;." classname="ERROR_TEXT" time="0.000023" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="an error result: Error: verdict is a verifier tool" classname="ERROR_TEXT" time="0.000004" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="an error result: The command was aborted" classname="ERROR_TEXT" time="0.000005" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="an error result: Permission denied" classname="ERROR_TEXT" time="0.000003" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="an error result: verdict is not allowed for a builder" classname="ERROR_TEXT" time="0.000003" file="test/task-harness/scripts.test.ts" line="92" assertions="1" />
+      <testcase name="not an error: 0 failed" classname="ERROR_TEXT" time="0.000029" file="test/task-harness/scripts.test.ts" line="96" assertions="1" />
+      <testcase name="not an error: no errors found" classname="ERROR_TEXT" time="0.000006" file="test/task-harness/scripts.test.ts" line="96" assertions="1" />
+      <testcase name="not an error: passed" classname="ERROR_TEXT" time="0.000003" file="test/task-harness/scripts.test.ts" line="96" assertions="1" />
+      <testcase name="not an error: Wrote file successfully." classname="ERROR_TEXT" time="0.000003" file="test/task-harness/scripts.test.ts" line="96" assertions="1" />
+    </testsuite>
+    <testsuite name="Script.answer" file="test/task-harness/scripts.test.ts" line="101" tests="4" assertions="22" failures="0" skipped="0" time="0.006" hostname="mac-studio-m1">
+      <testcase name="a request without a marker returns undefined" classname="Script.answer" time="0.000753" file="test/task-harness/scripts.test.ts" line="104" assertions="2" />
+      <testcase name="the builder writes each file, then calls task_ready at the step after the last write, then answers text" classname="Script.answer" time="0.00578" file="test/task-harness/scripts.test.ts" line="110" assertions="8" />
+      <testcase name="H11: attempt 1 writes the tampering file, attempt 2 removes it before the happy script" classname="Script.answer" time="0.000888" file="test/task-harness/scripts.test.ts" line="124" assertions="3" />
+      <testcase name="H6 rejects T1.1.c3 in the first round that judges it with siblings and trusts it in every later round" classname="Script.answer" time="0.001796" file="test/task-harness/scripts.test.ts" line="133" assertions="9" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution.test.ts" file="test/task-harness/release-notes-solution.test.ts" tests="3" assertions="65" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="release-notes task tree completion" file="test/task-harness/release-notes-solution.test.ts" line="243" tests="3" assertions="65" failures="0" skipped="0" time="35.096" hostname="mac-studio-m1">
+      <testcase name="tasks.json matches the tree: order, touches plus tests, hints and tags" classname="release-notes task tree completion" time="0.023127" file="test/task-harness/release-notes-solution.test.ts" line="244" assertions="47" />
+      <testcase name="the stage-T1.4 tree (T1.1 to T1.4) passes the four gates" classname="release-notes task tree completion" time="15.662512" file="test/task-harness/release-notes-solution.test.ts" line="283" assertions="6" />
+      <testcase name="the full tree (T1.1 to T1.5) passes the four gates offline with every obligation and scenario proved" classname="release-notes task tree completion" time="19.411849" file="test/task-harness/release-notes-solution.test.ts" line="307" assertions="12" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/conformance.test.ts" file="test/task-harness/conformance.test.ts" tests="17" assertions="0" failures="0" skipped="17" time="0" hostname="mac-studio-m1">
+    <testcase name="H1 refuse before the model" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H2 parse T2" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H3 happy path" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H4 order and parallelism" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H5 ready is a request" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H6 forced rejection" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H7 budget" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H8 crash and resume" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H9 stale on edit" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H10 builder cannot judge" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H11 test tampering" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H12 stream stall" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H13 hung proof" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H14 provider errors" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H15 repetition" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="H16 cancel" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="L1 live" classname="" time="0" file="test/task-harness/conformance.test.ts" line="121" assertions="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+  <testsuite name="test/task-harness/arms.test.ts" file="test/task-harness/arms.test.ts" tests="4" assertions="16" failures="0" skipped="0" time="0.005" hostname="mac-studio-m1">
+    <testcase name="matches the text literally: `.` is a dot, not any character" classname="" time="0.000348" file="test/task-harness/arms.test.ts" line="18" assertions="1" />
+    <testcase name="a marker matches every command that contains it, and nothing else" classname="" time="0.000083" file="test/task-harness/arms.test.ts" line="22" assertions="3" />
+    <testcase name="a status file is absent, malformed, or the contract&apos;s shape" classname="" time="0.003805" file="test/task-harness/arms.test.ts" line="28" assertions="6" />
+    <testcase name="the reader takes the AD-13 fields as optional: a file with them reads them, a file without them still reads" classname="" time="0.00283" file="test/task-harness/arms.test.ts" line="55" assertions="6" />
+  </testsuite>
+  <testsuite name="test/task-harness/conformance-runner.test.ts" file="test/task-harness/conformance-runner.test.ts" tests="15" assertions="28" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="readChecks" file="test/task-harness/conformance-runner.test.ts" line="27" tests="2" assertions="8" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="maps passed, failed and skipped cases and leaves the rest missing" classname="readChecks" time="0.000645" file="test/task-harness/conformance-runner.test.ts" line="28" assertions="7" />
+      <testcase name="a missing report leaves every check missing" classname="readChecks" time="0.000108" file="test/task-harness/conformance-runner.test.ts" line="39" assertions="1" />
+    </testsuite>
+    <testsuite name="stats" file="test/task-harness/conformance-runner.test.ts" line="44" tests="3" assertions="3" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="5 scores: the odd median and the sample standard deviation (n - 1)" classname="stats" time="0.000137" file="test/task-harness/conformance-runner.test.ts" line="45" assertions="1" />
+      <testcase name="4 scores: the even median is the mean of the middle two" classname="stats" time="0.000044" file="test/task-harness/conformance-runner.test.ts" line="57" assertions="1" />
+      <testcase name="all zeros: the coefficient of variation is null" classname="stats" time="0.000038" file="test/task-harness/conformance-runner.test.ts" line="61" assertions="1" />
+    </testsuite>
+    <testsuite name="compare" file="test/task-harness/conformance-runner.test.ts" line="66" tests="4" assertions="8" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="a zero-mean baseline: the noise floor is 2 x sd" classname="compare" time="0.000047" file="test/task-harness/conformance-runner.test.ts" line="67" assertions="1" />
+      <testcase name="otherwise the noise floor is 2 x cv x mean" classname="compare" time="0.000052" file="test/task-harness/conformance-runner.test.ts" line="71" assertions="1" />
+      <testcase name="clearsSmallestEffect only when the change is at least 50 and above the floor" classname="compare" time="0.000101" file="test/task-harness/conformance-runner.test.ts" line="75" assertions="4" />
+      <testcase name="sameFixture compares the fixture fingerprints" classname="compare" time="0.000049" file="test/task-harness/conformance-runner.test.ts" line="83" assertions="2" />
+    </testsuite>
+    <testsuite name="guardFailures" file="test/task-harness/conformance-runner.test.ts" line="89" tests="6" assertions="9" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="passes when every clause holds" classname="guardFailures" time="0.000247" file="test/task-harness/conformance-runner.test.ts" line="104" assertions="1" />
+      <testcase name="fails with the reason when the baseline server did not start, and judges no run" classname="guardFailures" time="0.000045" file="test/task-harness/conformance-runner.test.ts" line="108" assertions="1" />
+      <testcase name="fails when the fingerprinted paths have uncommitted changes" classname="guardFailures" time="0.000138" file="test/task-harness/conformance-runner.test.ts" line="114" assertions="3" />
+      <testcase name="fails for each baseline check that is missing or skipped, not for one that failed" classname="guardFailures" time="0.000193" file="test/task-harness/conformance-runner.test.ts" line="121" assertions="1" />
+      <testcase name="fails for each o2 check that did not pass in a run, and ignores L1" classname="guardFailures" time="0.000174" file="test/task-harness/conformance-runner.test.ts" line="129" assertions="1" />
+      <testcase name="fails when o2&apos;s median does not clear the smallest effect and the noise floor" classname="guardFailures" time="0.000091" file="test/task-harness/conformance-runner.test.ts" line="137" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/alphabet.test.ts" file="test/task/alphabet.test.ts" tests="9" assertions="3115" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the progress alphabet" file="test/task/alphabet.test.ts" line="67" tests="4" assertions="16" failures="0" skipped="0" time="0.861" hostname="mac-studio-m1">
+      <testcase name="gives a ready leaf its start and failure, a ready parent its review and failure, ready scenarios their proofs" classname="the progress alphabet" time="0.129119" file="test/task/alphabet.test.ts" line="69" assertions="2" />
+      <testcase name="gives an active task phase its abstract outcomes, and an active scenario one success path" classname="the progress alphabet" time="0.122215" file="test/task/alphabet.test.ts" line="87" assertions="4" />
+      <testcase name="trusts an untrusted outside region, never stops or stalls the run, and stamps every fact alike" classname="the progress alphabet" time="0.560503" file="test/task/alphabet.test.ts" line="124" assertions="8" />
+      <testcase name="trusts an external region only in the start-up step" classname="the progress alphabet" time="0.050074" file="test/task/alphabet.test.ts" line="138" assertions="2" />
+    </testsuite>
+    <testsuite name="the walk key" file="test/task/alphabet.test.ts" line="156" tests="5" assertions="3099" failures="0" skipped="0" time="50.426" hostname="mac-studio-m1">
+      <testcase name="lists the units in plan order by machine state, with the attempts of each task that has not ended" classname="the walk key" time="0.059712" file="test/task/alphabet.test.ts" line="157" assertions="9" />
+      <testcase name="keys the first death by the state that the outcome&apos;s firstDead guard reads" classname="the walk key" time="0.072877" file="test/task/alphabet.test.ts" line="184" assertions="5" />
+      <testcase name="keys two snapshots alike only when every fact moves them alike (main key)" classname="the walk key" time="23.506318" file="test/task/alphabet.test.ts" line="217" assertions="1395" />
+      <testcase name="keys two snapshots alike only when every fact moves them alike (stale key)" classname="the walk key" time="26.789446" file="test/task/alphabet.test.ts" line="217" assertions="1686" />
+      <testcase name="covers every context path that a guard reads" classname="the walk key" time="0.000729" file="test/task/alphabet.test.ts" line="263" assertions="4" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/task-demo.test.ts" file="test/task/task-demo.test.ts" tests="2" assertions="12" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="task-demo.sh" file="test/task/task-demo.test.ts" line="32" tests="2" assertions="12" failures="0" skipped="0" time="1.421" hostname="mac-studio-m1">
+      <testcase name="seeds every example folder beside the two shipped specs, commits a clean seed, and names both live checks" classname="task-demo.sh" time="1.161591" file="test/task/task-demo.test.ts" line="34" assertions="9" />
+      <testcase name="refuses to wipe a folder whose first commit is not seed" classname="task-demo.sh" time="0.260263" file="test/task/task-demo.test.ts" line="59" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/engine-xstate-random.test.ts" file="test/task/engine-xstate-random.test.ts" tests="41" assertions="11164" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="XStateEngine on random facts" file="test/task/engine-xstate-random.test.ts" line="215" tests="41" assertions="11164" failures="0" skipped="0" time="315.716" hostname="mac-studio-m1">
+      <testcase name="seed 1: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="8.527194" file="test/task/engine-xstate-random.test.ts" line="218" assertions="290" />
+      <testcase name="seed 2: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="8.251712" file="test/task/engine-xstate-random.test.ts" line="218" assertions="279" />
+      <testcase name="seed 3: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="9.811414" file="test/task/engine-xstate-random.test.ts" line="218" assertions="279" />
+      <testcase name="seed 4: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="7.94068" file="test/task/engine-xstate-random.test.ts" line="218" assertions="321" />
+      <testcase name="seed 5: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.457821" file="test/task/engine-xstate-random.test.ts" line="218" assertions="278" />
+      <testcase name="seed 6: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.068853" file="test/task/engine-xstate-random.test.ts" line="218" assertions="288" />
+      <testcase name="seed 7: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.72978" file="test/task/engine-xstate-random.test.ts" line="218" assertions="264" />
+      <testcase name="seed 8: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.33501" file="test/task/engine-xstate-random.test.ts" line="218" assertions="286" />
+      <testcase name="seed 9: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.710776" file="test/task/engine-xstate-random.test.ts" line="218" assertions="255" />
+      <testcase name="seed 10: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.992521" file="test/task/engine-xstate-random.test.ts" line="218" assertions="269" />
+      <testcase name="seed 11: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.711572" file="test/task/engine-xstate-random.test.ts" line="218" assertions="252" />
+      <testcase name="seed 12: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.039634" file="test/task/engine-xstate-random.test.ts" line="218" assertions="252" />
+      <testcase name="seed 13: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.816547" file="test/task/engine-xstate-random.test.ts" line="218" assertions="261" />
+      <testcase name="seed 14: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.620049" file="test/task/engine-xstate-random.test.ts" line="218" assertions="293" />
+      <testcase name="seed 15: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.285157" file="test/task/engine-xstate-random.test.ts" line="218" assertions="288" />
+      <testcase name="seed 16: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.1864" file="test/task/engine-xstate-random.test.ts" line="218" assertions="276" />
+      <testcase name="seed 17: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.625989" file="test/task/engine-xstate-random.test.ts" line="218" assertions="301" />
+      <testcase name="seed 18: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.272651" file="test/task/engine-xstate-random.test.ts" line="218" assertions="276" />
+      <testcase name="seed 19: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.009215" file="test/task/engine-xstate-random.test.ts" line="218" assertions="289" />
+      <testcase name="seed 20: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.44092" file="test/task/engine-xstate-random.test.ts" line="218" assertions="297" />
+      <testcase name="seed 21: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.481695" file="test/task/engine-xstate-random.test.ts" line="218" assertions="265" />
+      <testcase name="seed 22: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.463715" file="test/task/engine-xstate-random.test.ts" line="218" assertions="263" />
+      <testcase name="seed 23: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.816974" file="test/task/engine-xstate-random.test.ts" line="218" assertions="283" />
+      <testcase name="seed 24: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.974964" file="test/task/engine-xstate-random.test.ts" line="218" assertions="271" />
+      <testcase name="seed 25: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.323065" file="test/task/engine-xstate-random.test.ts" line="218" assertions="284" />
+      <testcase name="seed 26: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.647852" file="test/task/engine-xstate-random.test.ts" line="218" assertions="285" />
+      <testcase name="seed 27: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="6.865719" file="test/task/engine-xstate-random.test.ts" line="218" assertions="255" />
+      <testcase name="seed 28: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.015888" file="test/task/engine-xstate-random.test.ts" line="218" assertions="268" />
+      <testcase name="seed 29: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.797237" file="test/task/engine-xstate-random.test.ts" line="218" assertions="271" />
+      <testcase name="seed 30: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.150033" file="test/task/engine-xstate-random.test.ts" line="218" assertions="262" />
+      <testcase name="seed 31: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.212202" file="test/task/engine-xstate-random.test.ts" line="218" assertions="263" />
+      <testcase name="seed 32: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.995837" file="test/task/engine-xstate-random.test.ts" line="218" assertions="277" />
+      <testcase name="seed 33: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.86855" file="test/task/engine-xstate-random.test.ts" line="218" assertions="272" />
+      <testcase name="seed 34: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.644268" file="test/task/engine-xstate-random.test.ts" line="218" assertions="305" />
+      <testcase name="seed 35: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.176333" file="test/task/engine-xstate-random.test.ts" line="218" assertions="289" />
+      <testcase name="seed 36: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="7.243911" file="test/task/engine-xstate-random.test.ts" line="218" assertions="313" />
+      <testcase name="seed 37: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.130705" file="test/task/engine-xstate-random.test.ts" line="218" assertions="277" />
+      <testcase name="seed 38: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.561363" file="test/task/engine-xstate-random.test.ts" line="218" assertions="292" />
+      <testcase name="seed 39: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="5.654504" file="test/task/engine-xstate-random.test.ts" line="218" assertions="274" />
+      <testcase name="seed 40: the fold, a live actor and a restored actor agree, and the history grows only with a change" classname="XStateEngine on random facts" time="4.49609" file="test/task/engine-xstate-random.test.ts" line="218" assertions="285" />
+      <testcase name="reaches the lifecycle&apos;s later moves across the seeds" classname="XStateEngine on random facts" time="80.383653" file="test/task/engine-xstate-random.test.ts" line="273" assertions="16" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/supervise-run.test.ts" file="test/task/supervise-run.test.ts" tests="27" assertions="90" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the run supervisor&apos;s start" file="test/task/supervise-run.test.ts" line="205" tests="5" assertions="11" failures="0" skipped="0" time="2.7" hostname="mac-studio-m1">
+      <testcase name="records run.started with its path and base, then each directory trust of an outside region once" classname="the run supervisor&amp;apos;s start" time="0.666017" file="test/task/supervise-run.test.ts" line="206" assertions="2" />
+      <testcase name="records run.resumed when it resumes its stored slice" classname="the run supervisor&amp;apos;s start" time="0.567504" file="test/task/supervise-run.test.ts" line="222" assertions="1" />
+      <testcase name="SV20 defers a trust forwarded during start-up, applies it once after run.started, and ignores a repeat" classname="the run supervisor&amp;apos;s start" time="0.791308" file="test/task/supervise-run.test.ts" line="233" assertions="4" />
+      <testcase name="SV20 records a trust for an outside region once, never for an external region or a task" classname="the run supervisor&amp;apos;s start" time="0.159277" file="test/task/supervise-run.test.ts" line="276" assertions="3" />
+      <testcase name="is registered as run:&lt;runID&gt; in the harness before it reads the directory&apos;s trusts" classname="the run supervisor&amp;apos;s start" time="0.517193" file="test/task/supervise-run.test.ts" line="293" assertions="1" />
+    </testsuite>
+    <testsuite name="the unit supervisors (SV2)" file="test/task/supervise-run.test.ts" line="313" tests="5" assertions="17" failures="0" skipped="0" time="3.26" hostname="mac-studio-m1">
+      <testcase name="spawns one per ready or active task and per verifying scenario, sends each new entry once, and stops it" classname="the unit supervisors (SV2)" time="0.724249" file="test/task/supervise-run.test.ts" line="315" assertions="7" />
+      <testcase name="spawns a task that became ready without an entry with its state and tags, and a resumed building task" classname="the unit supervisors (SV2)" time="0.687676" file="test/task/supervise-run.test.ts" line="368" assertions="4" />
+      <testcase name="begins a task that became ready once, however many snapshots follow" classname="the unit supervisors (SV2)" time="0.698521" file="test/task/supervise-run.test.ts" line="395" assertions="2" />
+      <testcase name="starts only the newest work of a task whose two entries come in one snapshot" classname="the unit supervisors (SV2)" time="0.675012" file="test/task/supervise-run.test.ts" line="433" assertions="2" />
+      <testcase name="SV26 counts a unit supervisor that errored as three worker failures: the task ends with its defect" classname="the unit supervisors (SV2)" time="0.47676" file="test/task/supervise-run.test.ts" line="509" assertions="2" />
+    </testsuite>
+    <testsuite name="the timer regions" file="test/task/supervise-run.test.ts" line="532" tests="5" assertions="16" failures="0" skipped="0" time="4.886" hostname="mac-studio-m1">
+      <testcase name="SV5 touches every 5 s on its own region while a stale check waits on the checkout lock" classname="the timer regions" time="0.751397" file="test/task/supervise-run.test.ts" line="533" assertions="2" />
+      <testcase name="logs a failed touch, counts it toward nothing and records no fact" classname="the timer regions" time="0.825806" file="test/task/supervise-run.test.ts" line="584" assertions="4" />
+      <testcase name="records obligation.stale for a changed hash and sends the reloaded spec to its unit supervisors (H9)" classname="the timer regions" time="0.8419" file="test/task/supervise-run.test.ts" line="621" assertions="2" />
+      <testcase name="logs a stale check that fails three times, records no fact, and keeps its cadence" classname="the timer regions" time="1.006595" file="test/task/supervise-run.test.ts" line="669" assertions="4" />
+      <testcase name="ends a run that outlasts its wall clock, counted from this job&apos;s run.started or run.resumed" classname="the timer regions" time="1.463474" file="test/task/supervise-run.test.ts" line="712" assertions="4" />
+    </testsuite>
+    <testsuite name="spec.checked and the run warning (D12, AD-12, VF4, VF5)" file="test/task/supervise-run.test.ts" line="817" tests="6" assertions="29" failures="0" skipped="0" time="5.883" hostname="mac-studio-m1">
+      <testcase name="VF4 a reload that does not validate keeps the plan and the spec, records spec.checked once and sets the warning" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="0.996851" file="test/task/supervise-run.test.ts" line="819" assertions="6" />
+      <testcase name="VF5 the next reload that validates records spec.checked with no failures and clears the warning" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="1.010841" file="test/task/supervise-run.test.ts" line="841" assertions="4" />
+      <testcase name="a valid reload that adds an obligation id of the plan is a spec.checked failure; the run keeps the old text" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="0.941666" file="test/task/supervise-run.test.ts" line="866" assertions="5" />
+      <testcase name="a valid reload that removes an obligation id of the plan is a spec.checked failure" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="0.934593" file="test/task/supervise-run.test.ts" line="888" assertions="3" />
+      <testcase name="a resumed slice with a 2-failure warning and a now-valid spec: spec.checked [] comes before obligation.stale" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="0.990091" file="test/task/supervise-run.test.ts" line="904" assertions="8" />
+      <testcase name="a resumed slice with a warning: a valid reload that changes a hash and adds an id records only spec.checked" classname="spec.checked and the run warning (D12, AD-12, VF4, VF5)" time="1.012198" file="test/task/supervise-run.test.ts" line="951" assertions="3" />
+    </testsuite>
+    <testsuite name="the end of the run" file="test/task/supervise-run.test.ts" line="979" tests="4" assertions="10" failures="0" skipped="0" time="2.101" hostname="mac-studio-m1">
+      <testcase name="UI24 stops every region when the run is done, waits for the writer&apos;s done write, frees the lease, closes" classname="the end of the run" time="0.864682" file="test/task/supervise-run.test.ts" line="981" assertions="3" />
+      <testcase name="SV26 a run actor that stops with an error ends the run, logs the defect and frees the lease" classname="the end of the run" time="0.506856" file="test/task/supervise-run.test.ts" line="1008" assertions="2" />
+      <testcase name="SV26 a run supervisor that stops with an error ends the job&apos;s wait as a close does, and logs it" classname="the end of the run" time="0.037817" file="test/task/supervise-run.test.ts" line="1054" assertions="2" />
+      <testcase name="SV27 a closed scope stops the supervisors with no fact and no release" classname="the end of the run" time="0.694358" file="test/task/supervise-run.test.ts" line="1078" assertions="3" />
+    </testsuite>
+    <testsuite name="the job&apos;s cancel (SV4, SV25)" file="test/task/supervise-run.test.ts" line="1096" tests="2" assertions="7" failures="0" skipped="0" time="2.762" hostname="mac-studio-m1">
+      <testcase name="SV4 records run.cancelled while a stale check waits, lets the supervisor close, and the file holds it" classname="the job&amp;apos;s cancel (SV4, SV25)" time="1.795532" file="test/task/supervise-run.test.ts" line="1097" assertions="5" />
+      <testcase name="SV25 a cancel before run.started is stored waits for it, and records run.cancelled after it" classname="the job&amp;apos;s cancel (SV4, SV25)" time="0.967209" file="test/task/supervise-run.test.ts" line="1151" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/supervise-scenario.test.ts" file="test/task/supervise-scenario.test.ts" tests="8" assertions="30" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the scenario supervisor" file="test/task/supervise-scenario.test.ts" line="98" tests="8" assertions="30" failures="0" skipped="0" time="8.697" hostname="mac-studio-m1">
+      <testcase name="judges a verifying scenario in the root checkout for its owner and records scenario.verified" classname="the scenario supervisor" time="1.006177" file="test/task/supervise-scenario.test.ts" line="99" assertions="4" />
+      <testcase name="asks once more in the same session when the judge gave no verdict for the scenario, then records it" classname="the scenario supervisor" time="1.049235" file="test/task/supervise-scenario.test.ts" line="131" assertions="4" />
+      <testcase name="asks for a missing verdict once per session, then a second session, then rejects with no verdict" classname="the scenario supervisor" time="1.258657" file="test/task/supervise-scenario.test.ts" line="149" assertions="6" />
+      <testcase name="asks in a second session when the first gave nothing, and rejects with no verdict after that" classname="the scenario supervisor" time="1.089834" file="test/task/supervise-scenario.test.ts" line="180" assertions="4" />
+      <testcase name="SV6 rejects the scenario with harness error after three judge failures in a row" classname="the scenario supervisor" time="0.803864" file="test/task/supervise-scenario.test.ts" line="200" assertions="3" />
+      <testcase name="SV9 records only scenario.verified: other hooks do nothing, and a scenario not in verifying gets no judge" classname="the scenario supervisor" time="1.471408" file="test/task/supervise-scenario.test.ts" line="243" assertions="3" />
+      <testcase name="SV27 a stopped supervisor cancels its judge&apos;s turn, counts no failure and records nothing" classname="the scenario supervisor" time="1.025823" file="test/task/supervise-scenario.test.ts" line="273" assertions="3" />
+      <testcase name="judges again on a new verifying entry, as after a stale rejudge" classname="the scenario supervisor" time="0.996565" file="test/task/supervise-scenario.test.ts" line="292" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/workers.test.ts" file="test/task/workers.test.ts" tests="21" assertions="111" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="begin" file="test/task/workers.test.ts" line="187" tests="2" assertions="15" failures="0" skipped="0" time="2.99" hostname="mac-studio-m1">
+      <testcase name="makes the leaf&apos;s worktree and its builder session there, and returns the task.started payload" classname="begin" time="1.22926" file="test/task/workers.test.ts" line="188" assertions="7" />
+      <testcase name="RM16 two sibling begins at the same moment both make their worktrees, each under the git lock" classname="begin" time="1.761517" file="test/task/workers.test.ts" line="208" assertions="8" />
+    </testsuite>
+    <testsuite name="builderTurn" file="test/task/workers.test.ts" line="232" tests="6" assertions="21" failures="0" skipped="0" time="6.356" hostname="mac-studio-m1">
+      <testcase name="claims the session for its owner with watch, then prompts the attempt&apos;s message in the worktree" classname="builderTurn" time="0.612471" file="test/task/workers.test.ts" line="233" assertions="10" />
+      <testcase name="continues a session that already has the attempt&apos;s message, and sends the continue and nudge texts" classname="builderTurn" time="0.568301" file="test/task/workers.test.ts" line="260" assertions="2" />
+      <testcase name="sends a new attempt&apos;s message, with its reopen lines, when the session holds an older attempt" classname="builderTurn" time="0.593017" file="test/task/workers.test.ts" line="287" assertions="2" />
+      <testcase name="SV11 reports the spend-cap error that ended the turn" classname="builderTurn" time="0.573902" file="test/task/workers.test.ts" line="315" assertions="1" />
+      <testcase name="cancels the turn&apos;s session when the worker is interrupted, and gives up on a hung cancel at the deadline" classname="builderTurn" time="3.424834" file="test/task/workers.test.ts" line="345" assertions="4" />
+      <testcase name="fails with a WorkerError for a building task with no builder session" classname="builderTurn" time="0.586047" file="test/task/workers.test.ts" line="385" assertions="2" />
+    </testsuite>
+    <testsuite name="verifierPrompt" file="test/task/workers.test.ts" line="398" tests="1" assertions="6" failures="0" skipped="0" time="0.565" hostname="mac-studio-m1">
+      <testcase name="asks in a new verifier session, claimed without watch, then asks again in the same session" classname="verifierPrompt" time="0.565916" file="test/task/workers.test.ts" line="399" assertions="6" />
+    </testsuite>
+    <testsuite name="scenarioJudge" file="test/task/workers.test.ts" line="435" tests="1" assertions="18" failures="0" skipped="0" time="0.55" hostname="mac-studio-m1">
+      <testcase name="asks a scenario&apos;s judge in the root checkout for its owner, again in a new session, and for a missing verdict" classname="scenarioJudge" time="0.550913" file="test/task/workers.test.ts" line="437" assertions="18" />
+    </testsuite>
+    <testsuite name="merge" file="test/task/workers.test.ts" line="481" tests="2" assertions="11" failures="0" skipped="0" time="5.733" hostname="mac-studio-m1">
+      <testcase name="merges the proved head, not a later commit on the branch, once, under the checkout lock" classname="merge" time="1.867231" file="test/task/workers.test.ts" line="482" assertions="5" />
+      <testcase name="retries a merge that fails while git&apos;s index lock is held, and fails once the retries run out" classname="merge" time="3.866935" file="test/task/workers.test.ts" line="510" assertions="6" />
+    </testsuite>
+    <testsuite name="staleCheck" file="test/task/workers.test.ts" line="567" tests="2" assertions="13" failures="0" skipped="0" time="1.765" hostname="mac-studio-m1">
+      <testcase name="finds the trusted obligations whose hash changed, with the new hash, and returns the reloaded spec" classname="staleCheck" time="0.870964" file="test/task/workers.test.ts" line="568" assertions="9" />
+      <testcase name="reads the spec only under the checkout lock, and records spec.checked for a spec that stops loading" classname="staleCheck" time="0.8957" file="test/task/workers.test.ts" line="605" assertions="4" />
+    </testsuite>
+    <testsuite name="proof" file="test/task/workers.test.ts" line="625" tests="3" assertions="16" failures="0" skipped="0" time="3.977" hostname="mac-studio-m1">
+      <testcase name="judges a parent&apos;s review-only obligations without running anything, and empties its proof log" classname="proof" time="0.834204" file="test/task/workers.test.ts" line="626" assertions="2" />
+      <testcase name="proves a leaf in its worktree between its base and head, and fails the obligations no test proves" classname="proof" time="1.571486" file="test/task/workers.test.ts" line="645" assertions="11" />
+      <testcase name="proves a stale obligation on the base branch in the root checkout, under the checkout lock" classname="proof" time="1.572052" file="test/task/workers.test.ts" line="680" assertions="3" />
+    </testsuite>
+    <testsuite name="an interrupted proof" file="test/task/workers.test.ts" line="702" tests="1" assertions="3" failures="0" skipped="0" time="1.687" hostname="mac-studio-m1">
+      <testcase name="kills the proof&apos;s process group when the worker is interrupted mid-process" classname="an interrupted proof" time="1.687935" file="test/task/workers.test.ts" line="703" assertions="3" />
+    </testsuite>
+    <testsuite name="scenarioProof" file="test/task/workers.test.ts" line="764" tests="1" assertions="4" failures="0" skipped="0" time="1.37" hostname="mac-studio-m1">
+      <testcase name="runs one batch on the base branch under the checkout lock: passed stays passed, an untested scenario fails" classname="scenarioProof" time="1.370596" file="test/task/workers.test.ts" line="766" assertions="4" />
+    </testsuite>
+    <testsuite name="record and touch" file="test/task/workers.test.ts" line="792" tests="1" assertions="2" failures="0" skipped="0" time="0.582" hostname="mac-studio-m1">
+      <testcase name="record stores and folds through the run&apos;s Recorder; touch returns at once" classname="record and touch" time="0.582788" file="test/task/workers.test.ts" line="793" assertions="2" />
+    </testsuite>
+    <testsuite name="sessionEvents" file="test/task/workers.test.ts" line="816" tests="1" assertions="2" failures="0" skipped="0" time="0.228" hostname="mac-studio-m1">
+      <testcase name="relays the session&apos;s part and status events as turn events, and ignores other sessions" classname="sessionEvents" time="0.228595" file="test/task/workers.test.ts" line="817" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/fault-folders.test.ts" file="test/task/fault-folders.test.ts" tests="7" assertions="30" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the fault folders under /task (D14)" file="test/task/fault-folders.test.ts" line="29" tests="7" assertions="30" failures="0" skipped="0" time="5.357" hostname="mac-studio-m1">
+      <testcase name="example-format-faults.spec is refused with every planted rule and no other, and starts nothing" classname="the fault folders under /task (D14)" time="0.77403" file="test/task/fault-folders.test.ts" line="32" assertions="5" />
+      <testcase name="example-cycle.spec is refused with every planted rule and no other, and starts nothing" classname="the fault folders under /task (D14)" time="0.706322" file="test/task/fault-folders.test.ts" line="32" assertions="5" />
+      <testcase name="example-self-after.spec is refused with every planted rule and no other, and starts nothing" classname="the fault folders under /task (D14)" time="0.679716" file="test/task/fault-folders.test.ts" line="32" assertions="5" />
+      <testcase name="example-unknown-after.spec is refused with every planted rule and no other, and starts nothing" classname="the fault folders under /task (D14)" time="0.733198" file="test/task/fault-folders.test.ts" line="32" assertions="5" />
+      <testcase name="example-no-ensures.spec is refused with every planted rule and no other, and starts nothing" classname="the fault folders under /task (D14)" time="0.745738" file="test/task/fault-folders.test.ts" line="32" assertions="5" />
+      <testcase name="example-outside-run.spec as the T1.2 subtree is refused with the R12 line naming T1.2 and T1.1 (VF14)" classname="the fault folders under /task (D14)" time="0.910605" file="test/task/fault-folders.test.ts" line="63" assertions="3" />
+      <testcase name="example-outside-run.spec as a whole spec is not refused: its job starts" classname="the fault folders under /task (D14)" time="0.810478" file="test/task/fault-folders.test.ts" line="86" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/port-conformance.test.ts" file="test/task/port-conformance.test.ts" tests="10" assertions="22" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="port conformance" file="test/task/port-conformance.test.ts" line="38" tests="10" assertions="22" failures="0" skipped="0" time="0.074" hostname="mac-studio-m1">
+      <testcase name="AD-1: an id with `/` and `_` resolves; a dotted `#id` target is split on `.`" classname="port conformance" time="0.002693" file="test/task/port-conformance.test.ts" line="39" assertions="2" />
+      <testcase name="AD-2: a final state inside a parallel region still takes an event" classname="port conformance" time="0.001528" file="test/task/port-conformance.test.ts" line="65" assertions="1" />
+      <testcase name="AD-4: an onDone target in a sibling region re-enters the parallel state and resets its children" classname="port conformance" time="0.002608" file="test/task/port-conformance.test.ts" line="77" assertions="2" />
+      <testcase name="AD-6: a pure transition on a done snapshot still runs a microstep" classname="port conformance" time="0.001078" file="test/task/port-conformance.test.ts" line="99" assertions="3" />
+      <testcase name="AD-5: a raised event and a done event carry no `at`" classname="port conformance" time="0.001452" file="test/task/port-conformance.test.ts" line="115" assertions="1" />
+      <testcase name="AD-13: snapshot.tags is an array and hasTag works" classname="port conformance" time="0.000309" file="test/task/port-conformance.test.ts" line="147" assertions="4" />
+      <testcase name="AD-3: an eventless oscillation fails with a TransitionError past maxIterations" classname="port conformance" time="0.05844" file="test/task/port-conformance.test.ts" line="156" assertions="1" />
+      <testcase name="AD-6: a stateIn guard on an unknown id gives an error snapshot at start and a GuardError in a transition" classname="port conformance" time="0.002364" file="test/task/port-conformance.test.ts" line="166" assertions="3" />
+      <testcase name="AD-7: getAdjacencyMap accepts {} and its limit counts dequeued edges, not keys" classname="port conformance" time="0.004242" file="test/task/port-conformance.test.ts" line="191" assertions="4" />
+      <testcase name="a live actor and the pure transition agree on a final parallel state that takes an event" classname="port conformance" time="0.003694" file="test/task/port-conformance.test.ts" line="206" assertions="1" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/engine-xstate-graph.test.ts" file="test/task/engine-xstate-graph.test.ts" tests="7" assertions="26" failures="0" skipped="1" time="0" hostname="mac-studio-m1">
+    <testsuite name="the graph proof" file="test/task/engine-xstate-graph.test.ts" line="164" tests="7" assertions="26" failures="0" skipped="1" time="77.668" hostname="mac-studio-m1">
+      <testcase name="RM19 walks the release-notes plan: no stuck state, every snapshot active or done" classname="the graph proof" time="35.212543" file="test/task/engine-xstate-graph.test.ts" line="166" assertions="2" />
+      <testcase name="RM20 walks every example plan that loads: the two live-check plans and example-outside-run, no stuck state" classname="the graph proof" time="4.211737" file="test/task/engine-xstate-graph.test.ts" line="178" assertions="13" />
+      <testcase name="walks the T1.2 subtree plan of example-outside-run, with its external region for T1.1: no stuck state" classname="the graph proof" time="0.163321" file="test/task/engine-xstate-graph.test.ts" line="206" assertions="3" />
+      <testcase name="trusts an external region only in the start-up step of the alphabet (AD-7)" classname="the graph proof" time="0.012054" file="test/task/engine-xstate-graph.test.ts" line="225" assertions="3" />
+      <testcase name="RM21 finds the observed stuck state when the blocked rows are removed from a copy of the config" classname="the graph proof" time="17.873313" file="test/task/engine-xstate-graph.test.ts" line="242" assertions="1" />
+      <testcase name="RM22 the canonical and the full walk find the same stuck states, with and without the blocked rows" classname="the graph proof" time="20.197298" file="test/task/engine-xstate-graph.test.ts" line="264" assertions="4" />
+      <testcase name="walks the cascade plan with staleness and the full interleaving: no stuck state" classname="the graph proof" time="0" file="test/task/engine-xstate-graph.test.ts" line="300" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/delegate.test.ts" file="test/task/delegate.test.ts" tests="5" assertions="11" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="delegate" file="test/task/delegate.test.ts" line="65" tests="5" assertions="11" failures="0" skipped="0" time="8.466" hostname="mac-studio-m1">
+      <testcase name="runs named tests of the tui package and passes when one passed" classname="delegate" time="2.965305" file="test/task/delegate.test.ts" line="67" assertions="1" />
+      <testcase name="fails when the pattern matches no test, and when the only match was skipped" classname="delegate" time="0.180074" file="test/task/delegate.test.ts" line="79" assertions="2" />
+      <testcase name="fails with the named test and its message when a named test fails" classname="delegate" time="0.139358" file="test/task/delegate.test.ts" line="92" assertions="3" />
+      <testcase name="stops a run that outlasts its timeout, and kills the child" classname="delegate" time="5.041439" file="test/task/delegate.test.ts" line="106" assertions="3" />
+      <testcase name="kills the child when the caller is interrupted" classname="delegate" time="0.141732" file="test/task/delegate.test.ts" line="123" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/readme-validation.test.ts" file="test/task/readme-validation.test.ts" tests="7" assertions="92" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the blend README&apos;s Validation section" file="test/task/readme-validation.test.ts" line="33" tests="7" assertions="92" failures="0" skipped="0" time="0.001" hostname="mac-studio-m1">
+      <testcase name="replaces Validating and says what runs before any work starts" classname="the blend README&amp;apos;s Validation section" time="0.000175" file="test/task/readme-validation.test.ts" line="34" assertions="8" />
+      <testcase name="lists R1-R13, each with the file that enforces it, and says R12 is a runtime check" classname="the blend README&amp;apos;s Validation section" time="0.001087" file="test/task/readme-validation.test.ts" line="49" assertions="28" />
+      <testcase name="states the two rule stages and the refusal of a spec with no task (VF22, VF23)" classname="the blend README&amp;apos;s Validation section" time="0.000064" file="test/task/readme-validation.test.ts" line="61" assertions="4" />
+      <testcase name="says how a refusal reads: header, one line per failure, hint, run.reason" classname="the blend README&amp;apos;s Validation section" time="0.000084" file="test/task/readme-validation.test.ts" line="68" assertions="6" />
+      <testcase name="says how the run machine holds the order and which graph faults are refused" classname="the blend README&amp;apos;s Validation section" time="0.000112" file="test/task/readme-validation.test.ts" line="81" assertions="8" />
+      <testcase name="names the six fault folders and the two live-check folders, each row with its expected response" classname="the blend README&amp;apos;s Validation section" time="0.000603" file="test/task/readme-validation.test.ts" line="96" assertions="29" />
+      <testcase name="documents ensures as required, and the Layout tree lists the example folders" classname="the blend README&amp;apos;s Validation section" time="0.000152" file="test/task/readme-validation.test.ts" line="120" assertions="9" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/core-runner.test.ts" file="test/task/core-runner.test.ts" tests="17" assertions="41" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the task wall clock" file="test/task/core-runner.test.ts" line="25" tests="4" assertions="5" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="starts at the latest building entry" classname="the task wall clock" time="0.000114" file="test/task/core-runner.test.ts" line="37" assertions="1" />
+      <testcase name="a trusted task reopened without building has no clock; built again, it starts afresh" classname="the task wall clock" time="0.00011" file="test/task/core-runner.test.ts" line="41" assertions="2" />
+      <testcase name="never starts before the latest start or resume of the run" classname="the task wall clock" time="0.000046" file="test/task/core-runner.test.ts" line="47" assertions="1" />
+      <testcase name="a task never in building has no clock" classname="the task wall clock" time="0.000028" file="test/task/core-runner.test.ts" line="51" assertions="1" />
+    </testsuite>
+    <testsuite name="the proof results" file="test/task/core-runner.test.ts" line="110" tests="5" assertions="9" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="a verifier-judged pass needs a judge; a machine-judged pass is passed; a review needs a judge" classname="the proof results" time="0.000262" file="test/task/core-runner.test.ts" line="111" assertions="2" />
+      <testcase name="a failed gate of the task fails every test obligation that did not fail on its own" classname="the proof results" time="0.000203" file="test/task/core-runner.test.ts" line="124" assertions="2" />
+      <testcase name="a failed gate that is not one of the task&apos;s gates blocks nothing" classname="the proof results" time="0.000107" file="test/task/core-runner.test.ts" line="145" assertions="1" />
+      <testcase name="a structural violation names the path in the results and the reason" classname="the proof results" time="0.000148" file="test/task/core-runner.test.ts" line="153" assertions="3" />
+      <testcase name="a skipped test obligation stays failed with its reason" classname="the proof results" time="0.000089" file="test/task/core-runner.test.ts" line="167" assertions="1" />
+    </testsuite>
+    <testsuite name="the scenario results" file="test/task/core-runner.test.ts" line="176" tests="1" assertions="3" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="passed is passed; failed keeps its reason; skipped is failed" classname="the scenario results" time="0.000087" file="test/task/core-runner.test.ts" line="179" assertions="3" />
+    </testsuite>
+    <testsuite name="the verdicts of a round" file="test/task/core-runner.test.ts" line="192" tests="1" assertions="1" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="keep only the last verdict per id" classname="the verdicts of a round" time="0.00006" file="test/task/core-runner.test.ts" line="193" assertions="1" />
+    </testsuite>
+    <testsuite name="the units the run supervisor supervises" file="test/task/core-runner.test.ts" line="210" tests="5" assertions="21" failures="0" skipped="0" time="2.335" hostname="mac-studio-m1">
+      <testcase name="supervises each ready leaf, and only the ready ones" classname="the units the run supervisor supervises" time="0.443518" file="test/task/core-runner.test.ts" line="222" assertions="2" />
+      <testcase name="follows the phase tags: proving, verifying, the parent&apos;s review, the scenario batch and its judges" classname="the units the run supervisor supervises" time="0.049004" file="test/task/core-runner.test.ts" line="232" assertions="4" />
+      <testcase name="RM10 keeps supervising the independent task after another task dies, until the snapshot is done" classname="the units the run supervisor supervises" time="0.059719" file="test/task/core-runner.test.ts" line="246" assertions="4" />
+      <testcase name="RM8 resumes a slice that has not ended, and never one that stopped or folds to done" classname="the units the run supervisor supervises" time="1.384814" file="test/task/core-runner.test.ts" line="265" assertions="5" />
+      <testcase name="RM17 trusts an outside region once: an untrusted outside region takes a trust, a trusted one none" classname="the units the run supervisor supervises" time="0.400137" file="test/task/core-runner.test.ts" line="287" assertions="6" />
+    </testsuite>
+    <testsuite name="the polled runner is gone (SV1)" file="test/task/core-runner.test.ts" line="304" tests="1" assertions="2" failures="0" skipped="0" time="0.035" hostname="mac-studio-m1">
+      <testcase name="no module defines the runner&apos;s loop, its counters, its registry or its FiberMap of workers" classname="the polled runner is gone (SV1)" time="0.035985" file="test/task/core-runner.test.ts" line="318" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/state-audit.test.ts" file="test/task/state-audit.test.ts" tests="7" assertions="55" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the state audit" file="test/task/state-audit.test.ts" line="392" tests="7" assertions="55" failures="0" skipped="0" time="0.407" hostname="mac-studio-m1">
+      <testcase name="flags each planted construct with its file and identifier" classname="the state audit" time="0.029968" file="test/task/state-audit.test.ts" line="393" assertions="32" />
+      <testcase name="leaves the constructs that hold no lifecycle state alone" classname="the state audit" time="0.004695" file="test/task/state-audit.test.ts" line="406" assertions="11" />
+      <testcase name="fails a finding outside the allowlist, an entry with no reason, and an entry that matches nothing" classname="the state audit" time="0.000926" file="test/task/state-audit.test.ts" line="410" assertions="3" />
+      <testcase name="SV19 holds exactly the AD-17 entries for both trees, fromActor and DISPLAY included" classname="the state audit" time="0.000097" file="test/task/state-audit.test.ts" line="419" assertions="1" />
+      <testcase name="SV18 a planted Effect.sleep, Schedule.spaced or view-state createSignal in the task-ui fails the audit" classname="the state audit" time="0.001129" file="test/task/state-audit.test.ts" line="442" assertions="3" />
+      <testcase name="the task-ui holds no repeat, schedule, sleep, interval or signal outside fromActor" classname="the state audit" time="0.144009" file="test/task/state-audit.test.ts" line="454" assertions="2" />
+      <testcase name="passes on the current tree with the allowlist" classname="the state audit" time="0.229978" file="test/task/state-audit.test.ts" line="468" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/core-command.test.ts" file="test/task/core-command.test.ts" tests="50" assertions="161" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="/task on a root checkout that cannot take a run" file="test/task/core-command.test.ts" line="47" tests="2" assertions="4" failures="0" skipped="0" time="2.131" hostname="mac-studio-m1">
+      <testcase name="refuses a tracked change and names it" classname="/task on a root checkout that cannot take a run" time="1.229209" file="test/task/core-command.test.ts" line="49" assertions="2" />
+      <testcase name="refuses a detached HEAD" classname="/task on a root checkout that cannot take a run" time="0.902426" file="test/task/core-command.test.ts" line="72" assertions="2" />
+    </testsuite>
+    <testsuite name="the refusal message (D10, EXPERIENCE &quot;Refusal&quot;)" file="test/task/core-command.test.ts" line="124" tests="6" assertions="19" failures="0" skipped="0" time="4.406" hostname="mac-studio-m1">
+      <testcase name="lists every loader failure in loader order under a counted header, then the hint; run.reason holds the lines (VF1)" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.668708" file="test/task/core-command.test.ts" line="126" assertions="3" />
+      <testcase name="reads 1 failure for one loader failure, with its line and the hint (VF19)" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.615239" file="test/task/core-command.test.ts" line="147" assertions="3" />
+      <testcase name="keeps the argument as the spec of a path outside any spec folder" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.579927" file="test/task/core-command.test.ts" line="164" assertions="1" />
+      <testcase name="lists only the R3 line of a spec that also has an R7 cycle: R5-R13 wait for R1-R4 (VF23)" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.807923" file="test/task/core-command.test.ts" line="180" assertions="3" />
+      <testcase name="refuses a spec with no task with one plain line, and starts nothing (VF22)" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.984635" file="test/task/core-command.test.ts" line="200" assertions="7" />
+      <testcase name="with a run live, a faulty spec gets its refusal in the session and the live run&apos;s status file stays (VF2)" classname="the refusal message (D10, EXPERIENCE &amp;quot;Refusal&amp;quot;)" time="0.753447" file="test/task/core-command.test.ts" line="251" assertions="2" />
+    </testsuite>
+    <testsuite name="the refusal lines of a load (D10)" file="test/task/core-command.test.ts" line="272" tests="2" assertions="2" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="lists every failure as one `&lt;rule&gt; &lt;path&gt;: &lt;message&gt;` line, in the load&apos;s order" classname="the refusal lines of a load (D10)" time="0.000377" file="test/task/core-command.test.ts" line="275" assertions="1" />
+      <testcase name="gives the one fallback line for a load with neither a spec nor a failure" classname="the refusal lines of a load (D10)" time="0.000044" file="test/task/core-command.test.ts" line="284" assertions="1" />
+    </testsuite>
+    <testsuite name="one run per directory (AD-19, SV8)" file="test/task/core-command.test.ts" line="289" tests="11" assertions="37" failures="0" skipped="0" time="10.775" hostname="mac-studio-m1">
+      <testcase name="with a run live, a valid spec gets one busy line naming the live run, writes no file and starts nothing" classname="one run per directory (AD-19, SV8)" time="0.874779" file="test/task/core-command.test.ts" line="291" assertions="4" />
+      <testcase name="answers the usage line to an empty /task, and claims and starts nothing" classname="one run per directory (AD-19, SV8)" time="0.5615" file="test/task/core-command.test.ts" line="309" assertions="3" />
+      <testcase name="with a run live and a dirty checkout, answers the busy line: the live check comes before the git check" classname="one run per directory (AD-19, SV8)" time="0.651679" file="test/task/core-command.test.ts" line="325" assertions="2" />
+      <testcase name="refuses to resume a slice that started on another branch, before it claims or starts" classname="one run per directory (AD-19, SV8)" time="1.310824" file="test/task/core-command.test.ts" line="340" assertions="3" />
+      <testcase name="resumes the open slice of the same path: the job records run.resumed with the normalised path" classname="one run per directory (AD-19, SV8)" time="2.14411" file="test/task/core-command.test.ts" line="359" assertions="4" />
+      <testcase name="with a run live, a loader refusal and a task-folder refusal answer in the session only" classname="one run per directory (AD-19, SV8)" time="0.720241" file="test/task/core-command.test.ts" line="398" assertions="3" />
+      <testcase name="starts the job as the run id under the root session and claims the lease with the normalised path" classname="one run per directory (AD-19, SV8)" time="0.904653" file="test/task/core-command.test.ts" line="418" assertions="6" />
+      <testcase name="frees the claim of a job that did not start, so the next /task is not busy" classname="one run per directory (AD-19, SV8)" time="1.142835" file="test/task/core-command.test.ts" line="443" assertions="4" />
+      <testcase name="frees this call&apos;s claim when a job of that id is already running" classname="one run per directory (AD-19, SV8)" time="1.016561" file="test/task/core-command.test.ts" line="461" assertions="2" />
+      <testcase name="answers busy to the second of two calls that both passed the live check, and keeps the first claim" classname="one run per directory (AD-19, SV8)" time="0.837938" file="test/task/core-command.test.ts" line="475" assertions="4" />
+      <testcase name="SV20 records /task trust on the directory aggregate, then forwards it to the live run of the directory" classname="one run per directory (AD-19, SV8)" time="0.616388" file="test/task/core-command.test.ts" line="493" assertions="2" />
+    </testsuite>
+    <testsuite name="the slice a /task starts from (SV3, RM8, SV26)" file="test/task/core-command.test.ts" line="529" tests="6" assertions="21" failures="0" skipped="0" time="2.261" hostname="mac-studio-m1">
+      <testcase name="RM8b resumes an old slice with no path and no end for the whole spec, written any way" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.422968" file="test/task/core-command.test.ts" line="530" assertions="5" />
+      <testcase name="SV3 resumes the slice of the same path and starts a new slice for another path" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.463345" file="test/task/core-command.test.ts" line="543" assertions="4" />
+      <testcase name="RM8a starts a new slice after a stored stop" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.631004" file="test/task/core-command.test.ts" line="557" assertions="2" />
+      <testcase name="RM8c starts a new slice after a slice whose fold is done with no stop" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.102856" file="test/task/core-command.test.ts" line="569" assertions="3" />
+      <testcase name="folds a slice that names an id the spec dropped without a throw, and resumes it" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.578444" file="test/task/core-command.test.ts" line="590" assertions="1" />
+      <testcase name="SV26 counts a slice whose fold dies as ended, names the defect, and starts a new slice" classname="the slice a /task starts from (SV3, RM8, SV26)" time="0.065565" file="test/task/core-command.test.ts" line="599" assertions="6" />
+    </testsuite>
+    <testsuite name="the job of a run (AD-8, SV4, SV21, SV27)" file="test/task/core-command.test.ts" line="635" tests="5" assertions="13" failures="0" skipped="0" time="6.776" hostname="mac-studio-m1">
+      <testcase name="SV4 a cancelled job records run.cancelled, its supervisor closes, and the next /task is not busy (SV21)" classname="the job of a run (AD-8, SV4, SV21, SV27)" time="1.64941" file="test/task/core-command.test.ts" line="691" assertions="3" />
+      <testcase name="SV27 a scope that closes without a job cancel records nothing more, frees the lease, and leaves the slice open" classname="the job of a run (AD-8, SV4, SV21, SV27)" time="1.726222" file="test/task/core-command.test.ts" line="707" assertions="4" />
+      <testcase name="frees the lease last: after the cancel finalizer of a cancelled job and after the supervisor&apos;s own release" classname="the job of a run (AD-8, SV4, SV21, SV27)" time="1.506736" file="test/task/core-command.test.ts" line="727" assertions="2" />
+      <testcase name="frees the lease last after a scope close: the cancel finalizer runs while the lease is still held" classname="the job of a run (AD-8, SV4, SV21, SV27)" time="1.276913" file="test/task/core-command.test.ts" line="745" assertions="2" />
+      <testcase name="frees the lease when the job body dies" classname="the job of a run (AD-8, SV4, SV21, SV27)" time="0.619623" file="test/task/core-command.test.ts" line="760" assertions="2" />
+    </testsuite>
+    <testsuite name="a subtree run and the folder tasks outside it (D13, AD-15)" file="test/task/core-command.test.ts" line="825" tests="13" assertions="21" failures="0" skipped="0" time="16.115" hostname="mac-studio-m1">
+      <testcase name="VF6 refuses the T1.3 subtree with no stored run: one R12 line naming T1.3 and T1.1, then the hint" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.768901" file="test/task/core-command.test.ts" line="827" assertions="4" />
+      <testcase name="names two untrusted folder tasks in natural id order, and the hint names both" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.821777" file="test/task/core-command.test.ts" line="848" assertions="1" />
+      <testcase name="VF7 runs the T1.3 subtree after a slice in which T1.1 ended trusted: outside.trusted T1.1 directly after run.started" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.551478" file="test/task/core-command.test.ts" line="865" assertions="2" />
+      <testcase name="VF21 a typed /task trust T1.1 never stands in for the folder task&apos;s own trust" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.799456" file="test/task/core-command.test.ts" line="899" assertions="2" />
+      <testcase name="VF20 the latest slice that holds T1.1 decides: trusted, then budget exhausted, is refused" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.415255" file="test/task/core-command.test.ts" line="913" assertions="1" />
+      <testcase name="VF21 trusted, then reopened and cancelled, is refused" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.48913" file="test/task/core-command.test.ts" line="925" assertions="1" />
+      <testcase name="VF21 a later slice whose plan has no T1.1 region does not decide: the T1.3 subtree runs" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.326287" file="test/task/core-command.test.ts" line="943" assertions="2" />
+      <testcase name="VF21 an old slice with no path and T1.1 trusted counts as a whole-spec slice: the T1.3 subtree runs" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.509223" file="test/task/core-command.test.ts" line="960" assertions="1" />
+      <testcase name="a subtree slice that trusted T1.1 as an external region decides too: its own subtree resumes" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.922134" file="test/task/core-command.test.ts" line="975" assertions="1" />
+      <testcase name="VF24 a newer slice that holds T1.1 decides before an older slice whose path no longer loads" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.750048" file="test/task/core-command.test.ts" line="992" assertions="1" />
+      <testcase name="VF24 a newest slice whose path no longer loads refuses with one plain line naming its path" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.879754" file="test/task/core-command.test.ts" line="1006" assertions="2" />
+      <testcase name="the T1.5 subtree with T1.3 trusted: one R12 line for T1.4, and the outside precondition T9 is no refusal" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="1.975257" file="test/task/core-command.test.ts" line="1025" assertions="1" />
+      <testcase name="VF8 a subtree run that leaves scenarios out names them in its start message" classname="a subtree run and the folder tasks outside it (D13, AD-15)" time="0.911104" file="test/task/core-command.test.ts" line="1048" assertions="2" />
+    </testsuite>
+    <testsuite name="the plan of a subtree (AD-15)" file="test/task/core-command.test.ts" line="1081" tests="1" assertions="2" failures="0" skipped="0" time="0.026" hostname="mac-studio-m1">
+      <testcase name="gives an external region for an after inherited through afterEffective" classname="the plan of a subtree (AD-15)" time="0.026613" file="test/task/core-command.test.ts" line="1082" assertions="2" />
+    </testsuite>
+    <testsuite name="the run header (T4.10: UI6, VF8)" file="test/task/core-command.test.ts" line="1097" tests="4" assertions="42" failures="0" skipped="0" time="3.053" hostname="mac-studio-m1">
+      <testcase name="header: a whole-spec run&apos;s first message reads Implementing spec and the title, with the header as metadata (UI6)" classname="the run header (T4.10: UI6, VF8)" time="1.877524" file="test/task/core-command.test.ts" line="1099" assertions="3" />
+      <testcase name="header: an empty H1 falls back to the spec id in the same bold style; the metadata keeps the empty title" classname="the run header (T4.10: UI6, VF8)" time="0.095054" file="test/task/core-command.test.ts" line="1125" assertions="2" />
+      <testcase name="header: status.json carries the title, the spec id when it is empty, and a subtree run&apos;s task" classname="the run header (T4.10: UI6, VF8)" time="1.045347" file="test/task/core-command.test.ts" line="1138" assertions="5" />
+      <testcase name="header: the reply rides the Ops text parts with their metadata; src/task imports no SessionPrompt" classname="the run header (T4.10: UI6, VF8)" time="0.0363" file="test/task/core-command.test.ts" line="1155" assertions="32" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/live-check-runs.test.ts" file="test/task/live-check-runs.test.ts" tests="2" assertions="21" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="scripted runs of the live-check folders" file="test/task/live-check-runs.test.ts" line="10" tests="2" assertions="21" failures="0" skipped="0" time="43.302" hostname="mac-studio-m1">
+      <testcase name="VF18 example-scenarios: T1.1 trusted, S1 proved by its [S1] test and trusted, T1&apos;s review trusted, run done" classname="scripted runs of the live-check folders" time="22.29414" file="test/task/live-check-runs.test.ts" line="12" assertions="10" />
+      <testcase name="VF17 example-cascade: T1.1 budget exhausted, T1.2 and T1 blocked by it, T1.3 trusted, and the run ends only after T1.3" classname="scripted runs of the live-check folders" time="21.008825" file="test/task/live-check-runs.test.ts" line="66" assertions="11" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/engine-xstate.test.ts" file="test/task/engine-xstate.test.ts" tests="46" assertions="233" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="XStateEngine" file="test/task/engine-xstate.test.ts" line="224" tests="27" assertions="141" failures="0" skipped="0" time="0.604" hostname="mac-studio-m1">
+      <testcase name="1 ported: is named xstate" classname="XStateEngine" time="0.000041" file="test/task/engine-xstate.test.ts" line="225" assertions="1" />
+      <testcase name="2 ported: the initial state: tasks waiting, obligations pending, scenarios waiting" classname="XStateEngine" time="0.035005" file="test/task/engine-xstate.test.ts" line="229" assertions="8" />
+      <testcase name="3 ported: the happy leaf path: waiting, building, proving, verifying, trusted with attempts 1" classname="XStateEngine" time="0.019006" file="test/task/engine-xstate.test.ts" line="247" assertions="9" />
+      <testcase name="4 ported: a failed proof returns the task to the builder with the failed ids and reasons" classname="XStateEngine" time="0.023658" file="test/task/engine-xstate.test.ts" line="285" assertions="7" />
+      <testcase name="5 ported: the proof&apos;s own reason (a structural failure) is part of the task reason" classname="XStateEngine" time="0.006156" file="test/task/engine-xstate.test.ts" line="300" assertions="1" />
+      <testcase name="6 re-baselined (D3): budget exhaustion ends the task and blocks its parent; the run ends after the independent work" classname="XStateEngine" time="0.037948" file="test/task/engine-xstate.test.ts" line="311" assertions="8" />
+      <testcase name="7 ported: a rejection reopens only the rejected id; the others stay trusted" classname="XStateEngine" time="0.03037" file="test/task/engine-xstate.test.ts" line="331" assertions="8" />
+      <testcase name="8 ported: a verifier round that leaves an obligation unjudged also returns the task" classname="XStateEngine" time="0.014192" file="test/task/engine-xstate.test.ts" line="361" assertions="2" />
+      <testcase name="9 re-baselined (D3): a rejection at the budget exhausts it, and the run waits for the independent work" classname="XStateEngine" time="0.037599" file="test/task/engine-xstate.test.ts" line="369" assertions="2" />
+      <testcase name="10 ported: a stall keeps the task building with its attempts and records the reason" classname="XStateEngine" time="0.002906" file="test/task/engine-xstate.test.ts" line="382" assertions="2" />
+      <testcase name="11 re-baselined (D3): a repetition returns the task with attempts + 1; at the budget it ends the task only" classname="XStateEngine" time="0.008622" file="test/task/engine-xstate.test.ts" line="396" assertions="4" />
+      <testcase name="12 re-baselined (D3): needs_human ends an active task; the run waits for the independent work" classname="XStateEngine" time="0.027714" file="test/task/engine-xstate.test.ts" line="415" assertions="4" />
+      <testcase name="13 re-baselined (D3): task.failed fails the task; the run waits for the independent work" classname="XStateEngine" time="0.008337" file="test/task/engine-xstate.test.ts" line="432" assertions="2" />
+      <testcase name="14 re-baselined (default 4): cancel moves every unfinished task to cancelled, the waiting parent too, and the run" classname="XStateEngine" time="0.015374" file="test/task/engine-xstate.test.ts" line="438" assertions="5" />
+      <testcase name="15 ported: a stale obligation reopens its trusted task; a later round trusts it again" classname="XStateEngine" time="0.059004" file="test/task/engine-xstate.test.ts" line="453" assertions="10" />
+      <testcase name="16 ported: a failed result reopens a trusted obligation with its reason; a needs-judge result leaves it trusted" classname="XStateEngine" time="0.019159" file="test/task/engine-xstate.test.ts" line="483" assertions="5" />
+      <testcase name="17 re-baselined (D3, D4): a parent is reviewed once its children are trusted; trusted with attempts 1, or failed and never rebuilt" classname="XStateEngine" time="0.038706" file="test/task/engine-xstate.test.ts" line="508" assertions="9" />
+      <testcase name="18 re-baselined (D4): a scenario is proved once its needs are trusted, then verified; a failure or a rejection ends it" classname="XStateEngine" time="0.035223" file="test/task/engine-xstate.test.ts" line="533" assertions="7" />
+      <testcase name="19 re-baselined (D3, AD-4): run facts: started, resumed, outside trust, and run.ended as a stop" classname="XStateEngine" time="0.021647" file="test/task/engine-xstate.test.ts" line="549" assertions="6" />
+      <testcase name="20 ported: a fact that matches no row changes nothing and adds no history" classname="XStateEngine" time="0.00407" file="test/task/engine-xstate.test.ts" line="573" assertions="5" />
+      <testcase name="21 re-baselined (D3): facts after the run ended change nothing" classname="XStateEngine" time="0.019751" file="test/task/engine-xstate.test.ts" line="585" assertions="8" />
+      <testcase name="22 ported: apply is pure: it never changes the snapshot it receives" classname="XStateEngine" time="0.007286" file="test/task/engine-xstate.test.ts" line="601" assertions="1" />
+      <testcase name="23 re-baselined (D3, D4): a parent&apos;s stale review obligation reopens it once; the new review trusts it (attempts 1) or fails it" classname="XStateEngine" time="0.045541" file="test/task/engine-xstate.test.ts" line="608" assertions="10" />
+      <testcase name="24 re-baselined (D3): task.failed fails a waiting leaf, a waiting parent and a verifying leaf; the run does not follow" classname="XStateEngine" time="0.020278" file="test/task/engine-xstate.test.ts" line="633" assertions="12" />
+      <testcase name="25 retired, replaced by: a fact that moves nothing returns the identical snapshot (a stale rejected obligation)" classname="XStateEngine" time="0.012658" file="test/task/engine-xstate.test.ts" line="648" assertions="1" />
+      <testcase name="26 retired, replaced by: an unknown id returns the identical snapshot" classname="XStateEngine" time="0.002224" file="test/task/engine-xstate.test.ts" line="658" assertions="3" />
+      <testcase name="27 retired, replaced by: a foreign snapshot dies" classname="XStateEngine" time="0.062177" file="test/task/engine-xstate.test.ts" line="664" assertions="1" />
+    </testsuite>
+    <testsuite name="the run machine on the release-notes and live-check plans" file="test/task/engine-xstate.test.ts" line="672" tests="13" assertions="54" failures="0" skipped="0" time="6.392" hostname="mac-studio-m1">
+      <testcase name="RM7 blocks T1.5 and T1 in the fold step that exhausts T1.4, with the named cause" classname="the run machine on the release-notes and live-check plans" time="0.698676" file="test/task/engine-xstate.test.ts" line="673" assertions="8" />
+      <testcase name="RM8c the observed slice folds to its end: done, budget exhausted, T1.5 and T1 blocked" classname="the run machine on the release-notes and live-check plans" time="0.796477" file="test/task/engine-xstate.test.ts" line="689" assertions="6" />
+      <testcase name="RM8a a stored old slice that ended folds with its stop&apos;s state" classname="the run machine on the release-notes and live-check plans" time="0.616338" file="test/task/engine-xstate.test.ts" line="714" assertions="3" />
+      <testcase name="RM9 the cascade is transitive and names the first dead dependency" classname="the run machine on the release-notes and live-check plans" time="0.992808" file="test/task/engine-xstate.test.ts" line="725" assertions="7" />
+      <testcase name="RM15 a task is ready only when every after task and child is trusted, and waits again on a stale" classname="the run machine on the release-notes and live-check plans" time="0.851424" file="test/task/engine-xstate.test.ts" line="747" assertions="8" />
+      <testcase name="RM16 two siblings with no after between them become ready in the same step" classname="the run machine on the release-notes and live-check plans" time="0.496989" file="test/task/engine-xstate.test.ts" line="775" assertions="4" />
+      <testcase name="RM17 a task after an untrusted outside id waits and moves on its trust; a second trust changes nothing" classname="the run machine on the release-notes and live-check plans" time="0.820033" file="test/task/engine-xstate.test.ts" line="804" assertions="4" />
+      <testcase name="RM11 the task that died first gives the outcome, with lines for each dead and each blocked task" classname="the run machine on the release-notes and live-check plans" time="0.090331" file="test/task/engine-xstate.test.ts" line="825" assertions="2" />
+      <testcase name="RM11 a task.failed death decides the outcome once the independent task ends" classname="the run machine on the release-notes and live-check plans" time="0.059167" file="test/task/engine-xstate.test.ts" line="857" assertions="3" />
+      <testcase name="RM12 owner ruling 1: every task trusted and a scenario rejected ends the run failed" classname="the run machine on the release-notes and live-check plans" time="0.051399" file="test/task/engine-xstate.test.ts" line="872" assertions="1" />
+      <testcase name="RM13 owner ruling 1: a parked scenario adds its not-run line, and the run still ends done" classname="the run machine on the release-notes and live-check plans" time="0.137506" file="test/task/engine-xstate.test.ts" line="888" assertions="1" />
+      <testcase name="RM14 a cancel and a wall-clock stop finish the unfinished units and end the run" classname="the run machine on the release-notes and live-check plans" time="0.707823" file="test/task/engine-xstate.test.ts" line="906" assertions="5" />
+      <testcase name="RM27 AC 4 outranks the spine: a stop after a death ends in the dead task&apos;s state" classname="the run machine on the release-notes and live-check plans" time="0.079053" file="test/task/engine-xstate.test.ts" line="923" assertions="2" />
+    </testsuite>
+    <testsuite name="the fact list (AD-10)" file="test/task/engine-xstate.test.ts" line="942" tests="4" assertions="34" failures="0" skipped="0" time="0.519" hostname="mac-studio-m1">
+      <testcase name="folds task.nudged as a targetless building entry with its reason" classname="the fact list (AD-10)" time="0.471738" file="test/task/engine-xstate.test.ts" line="946" assertions="4" />
+      <testcase name="decodes task.nudged with nudge 1 or 2 and refuses any other" classname="the fact list (AD-10)" time="0.001597" file="test/task/engine-xstate.test.ts" line="971" assertions="4" />
+      <testcase name="decodes run.started and run.resumed with or without a path" classname="the fact list (AD-10)" time="0.000171" file="test/task/engine-xstate.test.ts" line="980" assertions="6" />
+      <testcase name="still decodes every stored fact of the observed release-notes run (durable v1)" classname="the fact list (AD-10)" time="0.04754" file="test/task/engine-xstate.test.ts" line="992" assertions="20" />
+    </testsuite>
+    <testsuite name="the base of an unfinished run" file="test/task/engine-xstate.test.ts" line="1000" tests="2" assertions="4" failures="0" skipped="0" time="0.02" hostname="mac-studio-m1">
+      <testcase name="B1 ported: is the branch its run.started recorded, until the run ends" classname="the base of an unfinished run" time="0.019446" file="test/task/engine-xstate.test.ts" line="1005" assertions="3" />
+      <testcase name="B2 ported: is unknown for a run stored before the base was recorded" classname="the base of an unfinished run" time="0.001235" file="test/task/engine-xstate.test.ts" line="1014" assertions="1" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/supervise-task.test.ts" file="test/task/supervise-task.test.ts" tests="16" assertions="68" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the task supervisor&apos;s phases" file="test/task/supervise-task.test.ts" line="328" tests="1" assertions="13" failures="0" skipped="0" time="2.323" hostname="mac-studio-m1">
+      <testcase name="begins a ready leaf, builds until task_ready, proves, verifies with ask, collect and askMissing, then merges" classname="the task supervisor&amp;apos;s phases" time="2.323656" file="test/task/supervise-task.test.ts" line="330" assertions="13" />
+    </testsuite>
+    <testsuite name="the builder watch (D7)" file="test/task/supervise-task.test.ts" line="442" tests="4" assertions="13" failures="0" skipped="0" time="3.938" hostname="mac-studio-m1">
+      <testcase name="SV10 stalls a silent turn after streamIdle, records task.stalled and continues once in the same attempt" classname="the builder watch (D7)" time="1.206748" file="test/task/supervise-task.test.ts" line="444" assertions="6" />
+      <testcase name="SV23 runs no stall timer while a tool runs, and starts it again when the tool ends" classname="the builder watch (D7)" time="0.979368" file="test/task/supervise-task.test.ts" line="493" assertions="3" />
+      <testcase name="SV11 records task.needs_human for a spend-cap retry status, before any nudge, and cancels the turn" classname="the builder watch (D7)" time="0.906759" file="test/task/supervise-task.test.ts" line="521" assertions="3" />
+      <testcase name="SV11 records task.needs_human for a spend cap that ended the turn, not a nudge" classname="the builder watch (D7)" time="0.847009" file="test/task/supervise-task.test.ts" line="546" assertions="1" />
+    </testsuite>
+    <testsuite name="the end of a turn (AD-11)" file="test/task/supervise-task.test.ts" line="586" tests="2" assertions="5" failures="0" skipped="0" time="1.786" hostname="mac-studio-m1">
+      <testcase name="records task.repeated for a turn that repeated itself, before its task_ready and with no nudge" classname="the end of a turn (AD-11)" time="0.928534" file="test/task/supervise-task.test.ts" line="587" assertions="4" />
+      <testcase name="records a spend cap that ended the turn before a repetition in the same turn" classname="the end of a turn (AD-11)" time="0.858753" file="test/task/supervise-task.test.ts" line="622" assertions="1" />
+    </testsuite>
+    <testsuite name="nudges and attempts" file="test/task/supervise-task.test.ts" line="662" tests="2" assertions="15" failures="0" skipped="0" time="3.604" hostname="mac-studio-m1">
+      <testcase name="SV12 nudges twice, then commits the work and fails its proofs with the builder&apos;s missing task_ready" classname="nudges and attempts" time="1.865639" file="test/task/supervise-task.test.ts" line="663" assertions="10" />
+      <testcase name="starts attempt 2 after a failed proof with no nudge spent and no task_ready left from attempt 1" classname="nudges and attempts" time="1.739138" file="test/task/supervise-task.test.ts" line="714" assertions="5" />
+    </testsuite>
+    <testsuite name="worker failures (SV6, SV9, SV27)" file="test/task/supervise-task.test.ts" line="761" tests="4" assertions="11" failures="0" skipped="0" time="5.469" hostname="mac-studio-m1">
+      <testcase name="SV6 records task.failed with harness error after three failures in a row" classname="worker failures (SV6, SV9, SV27)" time="1.279927" file="test/task/supervise-task.test.ts" line="762" assertions="3" />
+      <testcase name="resets the failure count on a success" classname="worker failures (SV6, SV9, SV27)" time="1.378271" file="test/task/supervise-task.test.ts" line="803" assertions="3" />
+      <testcase name="SV9 a task_ready during the proofs records nothing: only the proof&apos;s fact follows" classname="worker failures (SV6, SV9, SV27)" time="1.481211" file="test/task/supervise-task.test.ts" line="867" assertions="2" />
+      <testcase name="SV27 a stopped supervisor cancels its turn, counts no failure and records nothing" classname="worker failures (SV6, SV9, SV27)" time="1.331361" file="test/task/supervise-task.test.ts" line="903" assertions="3" />
+    </testsuite>
+    <testsuite name="the task wall clock" file="test/task/supervise-task.test.ts" line="933" tests="2" assertions="8" failures="0" skipped="0" time="2.441" hostname="mac-studio-m1">
+      <testcase name="SV22 fails the task whose clock expires, cancelling its turn, while an independent task keeps building" classname="the task wall clock" time="0.909368" file="test/task/supervise-task.test.ts" line="935" assertions="4" />
+      <testcase name="gives the full clock after a resume, and the time left to a supervisor spawned again in one job" classname="the task wall clock" time="1.53201" file="test/task/supervise-task.test.ts" line="971" assertions="4" />
+    </testsuite>
+    <testsuite name="resume (SV24)" file="test/task/supervise-task.test.ts" line="1009" tests="1" assertions="3" failures="0" skipped="0" time="1.335" hostname="mac-studio-m1">
+      <testcase name="a new supervisor claims the reused builder session before its prompt, and task_ready reaches it" classname="resume (SV24)" time="1.335894" file="test/task/supervise-task.test.ts" line="1010" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/proof.test.ts" file="test/task/proof.test.ts" tests="23" assertions="98" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="TaskLimits" file="test/task/proof.test.ts" line="113" tests="2" assertions="7" failures="0" skipped="0" time="0.001" hostname="mac-studio-m1">
+      <testcase name="selects the scripted bounds only for OPENCODE_TASK_LIMITS=scripted" classname="TaskLimits" time="0.000468" file="test/task/proof.test.ts" line="114" assertions="5" />
+      <testcase name="load reads OPENCODE_TASK_LIMITS from the environment" classname="TaskLimits" time="0.001044" file="test/task/proof.test.ts" line="124" assertions="2" />
+    </testsuite>
+    <testsuite name="TaskProof" file="test/task/proof.test.ts" line="139" tests="15" assertions="73" failures="0" skipped="0" time="17.602" hostname="mac-studio-m1">
+      <testcase name="all green: test, gate and unchanged obligations pass, a review obligation needs review" classname="TaskProof" time="1.153964" file="test/task/proof.test.ts" line="140" assertions="10" />
+      <testcase name="failing tag: that obligation fails with the message, the others keep their result" classname="TaskProof" time="0.802484" file="test/task/proof.test.ts" line="179" assertions="9" />
+      <testcase name="missing tag: an obligation with no test fails with &apos;no test titled [id]&apos;" classname="TaskProof" time="0.924951" file="test/task/proof.test.ts" line="202" assertions="3" />
+      <testcase name="hung test: the tag fails as timed out within the bound, and no process of the group survives" classname="TaskProof" time="6.013699" file="test/task/proof.test.ts" line="220" assertions="6" />
+      <testcase name="tampering: a test file holding another task&apos;s tag is a structural violation" classname="TaskProof" time="0.897791" file="test/task/proof.test.ts" line="258" assertions="8" />
+      <testcase name="tampering by deletion: deleting a test file that held another task&apos;s tag is a violation" classname="TaskProof" time="0.920624" file="test/task/proof.test.ts" line="283" assertions="5" />
+      <testcase name="unchanged broken: a change to a forbidden path fails the unchanged obligation" classname="TaskProof" time="0.832201" file="test/task/proof.test.ts" line="300" assertions="2" />
+      <testcase name="failing gate: a gate that exits non-zero fails its gate obligation with the exit code" classname="TaskProof" time="0.861246" file="test/task/proof.test.ts" line="319" assertions="4" />
+      <testcase name="skipped tag: an obligation whose tests are all skipped fails as skipped" classname="TaskProof" time="0.815264" file="test/task/proof.test.ts" line="334" assertions="4" />
+      <testcase name="failing tag in a describe: the reason holds the full title and the thrown message" classname="TaskProof" time="0.836235" file="test/task/proof.test.ts" line="352" assertions="4" />
+      <testcase name="unchanged reverted: a change that a later commit reverts still fails the unchanged obligation" classname="TaskProof" time="0.98329" file="test/task/proof.test.ts" line="375" assertions="1" />
+      <testcase name="working tree: a proof refuses a tree that is not at head or has changes" classname="TaskProof" time="0.848356" file="test/task/proof.test.ts" line="396" assertions="4" />
+      <testcase name="run: when the leader exits, the runner kills the processes that it left in its group" classname="TaskProof" time="0.04704" file="test/task/proof.test.ts" line="414" assertions="4" />
+      <testcase name="run: a command that passes its timeout reports exit 124 and leaves no process" classname="TaskProof" time="0.339115" file="test/task/proof.test.ts" line="428" assertions="4" />
+      <testcase name="run: a group member that ignores SIGTERM dies by SIGKILL after the cancel deadline" classname="TaskProof" time="1.33238" file="test/task/proof.test.ts" line="442" assertions="5" />
+    </testsuite>
+    <testsuite name="TaskProof environment" file="test/task/proof.test.ts" line="462" tests="4" assertions="4" failures="0" skipped="0" time="0.876" hostname="mac-studio-m1">
+      <testcase name="passes a proof command its tools, home, locale and git variables, and no key or token" classname="TaskProof environment" time="0.000394" file="test/task/proof.test.ts" line="463" assertions="1" />
+      <testcase name="matches Windows-cased names such as Path and ComSpec" classname="TaskProof environment" time="0.000166" file="test/task/proof.test.ts" line="484" assertions="1" />
+      <testcase name="proveTask: the tests load no .env file from the checkout" classname="TaskProof environment" time="0.855449" file="test/task/proof.test.ts" line="494" assertions="1" />
+      <testcase name="run: a command does not see a provider key that opencode&apos;s own environment holds" classname="TaskProof environment" time="0.021159" file="test/task/proof.test.ts" line="513" assertions="1" />
+    </testsuite>
+    <testsuite name="TaskProof logs" file="test/task/proof.test.ts" line="531" tests="2" assertions="14" failures="0" skipped="0" time="4.185" hostname="mac-studio-m1">
+      <testcase name="run: with a log, the output reaches the file within a second, both streams in arrival order" classname="TaskProof logs" time="3.241691" file="test/task/proof.test.ts" line="539" assertions="4" />
+      <testcase name="proveTask: the log holds each test and gate command, then its output, then how it ended" classname="TaskProof logs" time="0.944362" file="test/task/proof.test.ts" line="564" assertions="10" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/harness-wiring.test.ts" file="test/task/harness-wiring.test.ts" tests="15" assertions="96" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the harness-only tools" file="test/task/harness-wiring.test.ts" line="53" tests="1" assertions="3" failures="0" skipped="0" time="0.35" hostname="mac-studio-m1">
+      <testcase name="only the builder gets task_ready and only the verifier gets verdict" classname="the harness-only tools" time="0.350758" file="test/task/harness-wiring.test.ts" line="54" assertions="3" />
+    </testsuite>
+    <testsuite name="the hook routing (AD-11)" file="test/task/harness-wiring.test.ts" line="115" tests="4" assertions="14" failures="0" skipped="0" time="0.068" hostname="mac-studio-m1">
+      <testcase name="task_ready in a claimed builder session sends hook.ready to its owner and answers as today" classname="the hook routing (AD-11)" time="0.032428" file="test/task/harness-wiring.test.ts" line="116" assertions="2" />
+      <testcase name="verdict in a claimed verifier session sends hook.verdicts; an invalid verdict sends nothing" classname="the hook routing (AD-11)" time="0.017263" file="test/task/harness-wiring.test.ts" line="133" assertions="3" />
+      <testcase name="SV13 a tool call in a session with no owner records nothing and says so" classname="the hook routing (AD-11)" time="0.003553" file="test/task/harness-wiring.test.ts" line="151" assertions="3" />
+      <testcase name="a session whose owner has stopped records nothing; a re-claim by a respawned owner replaces it" classname="the hook routing (AD-11)" time="0.016947" file="test/task/harness-wiring.test.ts" line="172" assertions="6" />
+    </testsuite>
+    <testsuite name="the context of the tools&apos; execute (EFX-31)" file="test/task/harness-wiring.test.ts" line="197" tests="1" assertions="3" failures="0" skipped="0" time="0.006" hostname="mac-studio-m1">
+      <testcase name="runs each hook Effect with the context that createTaskHarnessTools captured" classname="the context of the tools&amp;apos; execute (EFX-31)" time="0.006904" file="test/task/harness-wiring.test.ts" line="198" assertions="3" />
+    </testsuite>
+    <testsuite name="the repetition stop over the hooks" file="test/task/harness-wiring.test.ts" line="224" tests="4" assertions="17" failures="0" skipped="0" time="0.11" hostname="mac-studio-m1">
+      <testcase name="the pure check matches only the last limit calls of one tool with one input" classname="the repetition stop over the hooks" time="0.057854" file="test/task/harness-wiring.test.ts" line="225" assertions="4" />
+      <testcase name="reads the limit from the owner&apos;s snapshot, ends the turn on a match and sends hook.repeated" classname="the repetition stop over the hooks" time="0.032727" file="test/task/harness-wiring.test.ts" line="237" assertions="5" />
+      <testcase name="reads the owner&apos;s own limit, and reads it before any send" classname="the repetition stop over the hooks" time="0.018968" file="test/task/harness-wiring.test.ts" line="251" assertions="5" />
+      <testcase name="never stops a session that is not watched or has no owner" classname="the repetition stop over the hooks" time="0.003681" file="test/task/harness-wiring.test.ts" line="272" assertions="3" />
+    </testsuite>
+    <testsuite name="the harness agents&apos; shell" file="test/task/harness-wiring.test.ts" line="286" tests="1" assertions="3" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="gets the proof allowlist: no provider key or token; other agents keep their environment" classname="the harness agents&amp;apos; shell" time="0.000286" file="test/task/harness-wiring.test.ts" line="287" assertions="3" />
+    </testsuite>
+    <testsuite name="the task command and agents" file="test/task/harness-wiring.test.ts" line="295" tests="2" assertions="51" failures="0" skipped="0" time="1.877" hostname="mac-studio-m1">
+      <testcase name="are always present, with the harness permissions" classname="the task command and agents" time="1.426776" file="test/task/harness-wiring.test.ts" line="296" assertions="41" />
+      <testcase name="keep the user&apos;s deny rules, and leave out the user&apos;s allow and ask rules" classname="the task command and agents" time="0.451508" file="test/task/harness-wiring.test.ts" line="331" assertions="10" />
+    </testsuite>
+    <testsuite name="a configured task command" file="test/task/harness-wiring.test.ts" line="363" tests="2" assertions="5" failures="0" skipped="0" time="0.768" hostname="mac-studio-m1">
+      <testcase name="does not replace the harness, and is reported by name" classname="a configured task command" time="0.127913" file="test/task/harness-wiring.test.ts" line="365" assertions="3" />
+      <testcase name="a skill named task does not replace the harness either, and is reported by name" classname="a configured task command" time="0.641496" file="test/task/harness-wiring.test.ts" line="389" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/recorder.test.ts" file="test/task/recorder.test.ts" tests="12" assertions="48" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="TaskRecorder.record" file="test/task/recorder.test.ts" line="124" tests="7" assertions="20" failures="0" skipped="0" time="5.556" hostname="mac-studio-m1">
+      <testcase name="stamps at from the clock, stores the fact on the run aggregate, then the run actor folds it" classname="TaskRecorder.record" time="0.282031" file="test/task/recorder.test.ts" line="125" assertions="5" />
+      <testcase name="keeps the store order and the fold order equal, and at never decreases, under concurrent records" classname="TaskRecorder.record" time="2.354945" file="test/task/recorder.test.ts" line="147" assertions="2" />
+      <testcase name="stores nothing once the run is done, and a record that waited on the permit stores nothing either" classname="TaskRecorder.record" time="1.119676" file="test/task/recorder.test.ts" line="182" assertions="2" />
+      <testcase name="stores and folds a fact or neither when its caller is interrupted between the store and the send" classname="TaskRecorder.record" time="0.244327" file="test/task/recorder.test.ts" line="212" assertions="2" />
+      <testcase name="fails without a send when the store fails, and after the run scope closed stores nothing" classname="TaskRecorder.record" time="0.186933" file="test/task/recorder.test.ts" line="243" assertions="3" />
+      <testcase name="stamps a resumed slice no earlier than its last stored fact, when the clock reads earlier" classname="TaskRecorder.record" time="0.182078" file="test/task/recorder.test.ts" line="266" assertions="1" />
+      <testcase name="SV26 stores nothing, logs, and fails once the run actor has an error" classname="TaskRecorder.record" time="1.189552" file="test/task/recorder.test.ts" line="278" assertions="5" />
+    </testsuite>
+    <testsuite name="the status writer" file="test/task/recorder.test.ts" line="324" tests="5" assertions="28" failures="0" skipped="0" time="0.968" hostname="mac-studio-m1">
+      <testcase name="writes once per committed macrostep, the done snapshot last, and nothing after it" classname="the status writer" time="0.322866" file="test/task/recorder.test.ts" line="325" assertions="13" />
+      <testcase name="rewrites the last snapshot on a touch, stamping aliveAt; a touch before the first change never fails" classname="the status writer" time="0.15147" file="test/task/recorder.test.ts" line="354" assertions="2" />
+      <testcase name="leaves at most one write pending for a burst of touches, and a touch after the run scope closed does nothing" classname="the status writer" time="0.317765" file="test/task/recorder.test.ts" line="373" assertions="9" />
+      <testcase name="logs a failed write and still writes the next macrostep" classname="the status writer" time="0.112828" file="test/task/recorder.test.ts" line="404" assertions="2" />
+      <testcase name="SV21 has stopped before a finalizer added to the run scope before the recorder runs" classname="the status writer" time="0.066204" file="test/task/recorder.test.ts" line="437" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/blend-messages.test.ts" file="test/task/blend-messages.test.ts" tests="30" assertions="37" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="BlendDocument.decode messages" file="test/task/blend-messages.test.ts" line="219" tests="28" assertions="28" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="a missing key at the top is reported on (root)" classname="BlendDocument.decode messages" time="0.000551" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a missing nested key is reported on its object" classname="BlendDocument.decode messages" time="0.000295" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="excess keys at the top are one message, sorted" classname="BlendDocument.decode messages" time="0.000216" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="excess keys of a nested object are one message, sorted" classname="BlendDocument.decode messages" time="0.000159" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a record key that fails its key pattern ($ref propertyNames)" classname="BlendDocument.decode messages" time="0.000149" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a record key that fails its key pattern (inline propertyNames)" classname="BlendDocument.decode messages" time="0.000174" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a string that matches neither pattern of a scenario-or-ref id" classname="BlendDocument.decode messages" time="0.000307" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a number where a scenario-or-ref id goes fails the type, not the patterns" classname="BlendDocument.decode messages" time="0.000228" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a boolean where a scenario-or-ref id goes fails the type" classname="BlendDocument.decode messages" time="0.000133" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a null where a scenario-or-ref id goes fails the type" classname="BlendDocument.decode messages" time="0.000112" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a proof string outside the oneOf" classname="BlendDocument.decode messages" time="0.000188" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a proof object outside the oneOf" classname="BlendDocument.decode messages" time="0.000236" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="an empty string (minLength 1)" classname="BlendDocument.decode messages" time="0.000294" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="an empty list (minItems 1)" classname="BlendDocument.decode messages" time="0.000062" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="VF3 a VERIFY.md with no ensures is reported on (root)" classname="BlendDocument.decode messages" time="0.000061" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="an empty mapping (minProperties 1)" classname="BlendDocument.decode messages" time="0.000077" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a repeated list item (uniqueItems)" classname="BlendDocument.decode messages" time="0.000082" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a number under its minimum of 1" classname="BlendDocument.decode messages" time="0.000107" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a number under its minimum of 0" classname="BlendDocument.decode messages" time="0.000105" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a fraction where an integer goes" classname="BlendDocument.decode messages" time="0.00012" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a string where an integer goes" classname="BlendDocument.decode messages" time="0.000357" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a boolean where an integer goes" classname="BlendDocument.decode messages" time="0.000145" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="a value other than the const" classname="BlendDocument.decode messages" time="0.000229" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="repr of a string with a single quote uses double quotes" classname="BlendDocument.decode messages" time="0.000113" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="repr of a string with both quotes escapes the single quote" classname="BlendDocument.decode messages" time="0.000079" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="repr of a string with a backslash doubles it" classname="BlendDocument.decode messages" time="0.000081" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="repr of a string with a newline escapes it" classname="BlendDocument.decode messages" time="0.000074" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+      <testcase name="repr of a string with a tab escapes it" classname="BlendDocument.decode messages" time="0.000081" file="test/task/blend-messages.test.ts" line="221" assertions="1" />
+    </testsuite>
+    <testsuite name="the JSON schemas and the Effect schemas require the same top-level keys" file="test/task/blend-messages.test.ts" line="247" tests="2" assertions="9" failures="0" skipped="0" time="0.006" hostname="mac-studio-m1">
+      <testcase name="VERIFY.md: both require ensures, and only ensures" classname="the JSON schemas and the Effect schemas require the same top-level keys" time="0.00329" file="test/task/blend-messages.test.ts" line="248" assertions="3" />
+      <testcase name="SPEC.md, TASK.md and scenario files: the two required lists are equal" classname="the JSON schemas and the Effect schemas require the same top-level keys" time="0.003124" file="test/task/blend-messages.test.ts" line="262" assertions="6" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/machine.test.ts" file="test/task/machine.test.ts" tests="48" assertions="8215" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="TaskMachine.config" file="test/task/machine.test.ts" line="67" tests="9" assertions="6326" failures="0" skipped="0" time="0.805" hostname="mac-studio-m1">
+      <testcase name="has a parallel root with active and outcome, and the release-notes regions in order" classname="TaskMachine.config" time="0.070112" file="test/task/machine.test.ts" line="68" assertions="5" />
+      <testcase name="gives each task region an evidence region of final obligation states, then work" classname="TaskMachine.config" time="0.04891" file="test/task/machine.test.ts" line="93" assertions="71" />
+      <testcase name="names states by explicit ids with `_` for `.`, and gives each unit state its meta" classname="TaskMachine.config" time="0.05097" file="test/task/machine.test.ts" line="126" assertions="397" />
+      <testcase name="tags every unit state from the closed vocabulary" classname="TaskMachine.config" time="0.069143" file="test/task/machine.test.ts" line="163" assertions="1729" />
+      <testcase name="holds no after, invoke or spawn, only assign and raise actions, and maxIterations 1000" classname="TaskMachine.config" time="0.171849" file="test/task/machine.test.ts" line="189" assertions="4104" />
+      <testcase name="gives a plan with no scenarios and no outside ids only task regions" classname="TaskMachine.config" time="0.081028" file="test/task/machine.test.ts" line="207" assertions="1" />
+      <testcase name="gives a task with no obligations only its work region" classname="TaskMachine.config" time="0.050745" file="test/task/machine.test.ts" line="214" assertions="2" />
+      <testcase name="moves an obligation only on its own task&apos;s facts, even with two parents in the plan" classname="TaskMachine.config" time="0.095662" file="test/task/machine.test.ts" line="229" assertions="10" />
+      <testcase name="gives a subtree plan an external region for each folder task it is after" classname="TaskMachine.config" time="0.171396" file="test/task/machine.test.ts" line="282" assertions="7" />
+    </testsuite>
+    <testsuite name="TaskMachine.machine" file="test/task/machine.test.ts" line="299" tests="3" assertions="4" failures="0" skipped="0" time="0.919" hostname="mac-studio-m1">
+      <testcase name="dies naming the id when two units collide after `.` becomes `_`" classname="TaskMachine.machine" time="0.039623" file="test/task/machine.test.ts" line="300" assertions="1" />
+      <testcase name="VF22 dies naming the spec when the plan holds no task" classname="TaskMachine.machine" time="0.017284" file="test/task/machine.test.ts" line="308" assertions="1" />
+      <testcase name="builds the release-notes machine, and its first snapshot is active" classname="TaskMachine.machine" time="0.863049" file="test/task/machine.test.ts" line="315" assertions="2" />
+    </testsuite>
+    <testsuite name="readiness and the cascade (AD-3)" file="test/task/machine.test.ts" line="325" tests="17" assertions="1754" failures="0" skipped="0" time="14.57" hostname="mac-studio-m1">
+      <testcase name="RM7 blocks T1.5 and T1 in the macrostep that exhausts T1.4, with the named cause" classname="readiness and the cascade (AD-3)" time="0.794303" file="test/task/machine.test.ts" line="340" assertions="12" />
+      <testcase name="RM15 orders a waiting task&apos;s rows: one blocked row per dependency and dead state, then ready" classname="readiness and the cascade (AD-3)" time="0.043204" file="test/task/machine.test.ts" line="360" assertions="7" />
+      <testcase name="RM15 moves a ready task back to waiting when a dependency leaves trusted" classname="readiness and the cascade (AD-3)" time="0.927275" file="test/task/machine.test.ts" line="386" assertions="4" />
+      <testcase name="RM9 cascades a death down the chain, and each dependant names its first dead dependency" classname="readiness and the cascade (AD-3)" time="1.067487" file="test/task/machine.test.ts" line="399" assertions="8" />
+      <testcase name="RM16 makes two siblings with no order between them ready in the same snapshot" classname="readiness and the cascade (AD-3)" time="0.545631" file="test/task/machine.test.ts" line="415" assertions="3" />
+      <testcase name="RM17 keeps a task after an untrusted outside id waiting, and readies it on the trust" classname="readiness and the cascade (AD-3)" time="0.938055" file="test/task/machine.test.ts" line="432" assertions="6" />
+      <testcase name="RM13 moves a scenario to ready, to parked on an outside need, and back on a trust or a reopen" classname="readiness and the cascade (AD-3)" time="0.996659" file="test/task/machine.test.ts" line="453" assertions="6" />
+      <testcase name="tags every state of a dependency other than trusted with its dependants&apos; waits tags" classname="readiness and the cascade (AD-3)" time="0.060271" file="test/task/machine.test.ts" line="475" assertions="38" />
+      <testcase name="has no row that targets its own state, and an oscillating copy fails instead of hanging" classname="readiness and the cascade (AD-3)" time="3.868318" file="test/task/machine.test.ts" line="489" assertions="1639" />
+      <testcase name="RM28 names no dead state of an outside id, and folds the observed facts to an active snapshot" classname="readiness and the cascade (AD-3)" time="0.784079" file="test/task/machine.test.ts" line="516" assertions="2" />
+      <testcase name="ignores outside.trusted that names a task: the identical snapshot" classname="readiness and the cascade (AD-3)" time="0.441045" file="test/task/machine.test.ts" line="530" assertions="1" />
+      <testcase name="leaves a dependant that is building alone when its dependency is reopened and then dies" classname="readiness and the cascade (AD-3)" time="0.697803" file="test/task/machine.test.ts" line="539" assertions="4" />
+      <testcase name="leaves a building dependant alone on the cascade plan, and the run ends budget_exhausted" classname="readiness and the cascade (AD-3)" time="0.109242" file="test/task/machine.test.ts" line="563" assertions="8" />
+      <testcase name="RM28 refuses a guard on an unknown state id, and every guard of a real config names a node" classname="readiness and the cascade (AD-3)" time="0.069771" file="test/task/machine.test.ts" line="582" assertions="3" />
+      <testcase name="RM29 refuses each gap of the totality scan with a line that names it" classname="readiness and the cascade (AD-3)" time="1.005328" file="test/task/machine.test.ts" line="615" assertions="7" />
+      <testcase name="RM29 refuses a config with T1.5&apos;s row for T1.4 budget_exhausted removed, before any fact" classname="readiness and the cascade (AD-3)" time="0.270552" file="test/task/machine.test.ts" line="673" assertions="1" />
+      <testcase name="RM29 passes the totality scan for every plan that loads" classname="readiness and the cascade (AD-3)" time="1.957602" file="test/task/machine.test.ts" line="687" assertions="5" />
+    </testsuite>
+    <testsuite name="the outcome region (AD-4)" file="test/task/machine.test.ts" line="703" tests="12" assertions="91" failures="0" skipped="0" time="4.281" hostname="mac-studio-m1">
+      <testcase name="rule 4: every task and every scenario trusted gives done with no reason" classname="the outcome region (AD-4)" time="0.062448" file="test/task/machine.test.ts" line="726" assertions="3" />
+      <testcase name="moves outcome between running and waiting with the work, and logs neither move" classname="the outcome region (AD-4)" time="0.788127" file="test/task/machine.test.ts" line="743" assertions="7" />
+      <testcase name="RM11 rule 1: the task that died first gives the outcome; lines for each dead task, then each blocked" classname="the outcome region (AD-4)" time="0.084879" file="test/task/machine.test.ts" line="760" assertions="1" />
+      <testcase name="RM10 waits for an independent task that is still building before it settles" classname="the outcome region (AD-4)" time="0.104657" file="test/task/machine.test.ts" line="779" assertions="7" />
+      <testcase name="RM12 owner ruling 1: every task trusted and a scenario rejected or failed gives failed" classname="the outcome region (AD-4)" time="0.087922" file="test/task/machine.test.ts" line="802" assertions="2" />
+      <testcase name="RM13 rule 4 with a parked scenario: done, with the not-run line" classname="the outcome region (AD-4)" time="1.115892" file="test/task/machine.test.ts" line="825" assertions="2" />
+      <testcase name="rule 3 with parked scenarios: the acceptance line first, and every untrusted outside need named" classname="the outcome region (AD-4)" time="0.262085" file="test/task/machine.test.ts" line="841" assertions="2" />
+      <testcase name="RM14 default 4: a cancel cancels every unfinished unit, keeps the finished ones and ends cancelled" classname="the outcome region (AD-4)" time="1.48314" file="test/task/machine.test.ts" line="867" assertions="15" />
+      <testcase name="keeps the stop rows on the units: no ancestor takes a stop, and active.onDone only raises" classname="the outcome region (AD-4)" time="0.07166" file="test/task/machine.test.ts" line="910" assertions="47" />
+      <testcase name="RM27 AC 4 outranks the spine: a stop after a death ends in the dead task&apos;s state" classname="the outcome region (AD-4)" time="0.085326" file="test/task/machine.test.ts" line="924" assertions="3" />
+      <testcase name="picks the earliest death by history order, and lists the dead in natural order" classname="the outcome region (AD-4)" time="0.090984" file="test/task/machine.test.ts" line="946" assertions="1" />
+      <testcase name="RM29 the totality scan requires a settle row for every final unit state" classname="the outcome region (AD-4)" time="0.050122" file="test/task/machine.test.ts" line="968" assertions="1" />
+    </testsuite>
+    <testsuite name="history, causes, times and spans (AD-5)" file="test/task/machine.test.ts" line="979" tests="7" assertions="40" failures="0" skipped="0" time="3.91" hostname="mac-studio-m1">
+      <testcase name="RM7 appends one entry per move with status names, and the blocked entries name their cause" classname="history, causes, times and spans (AD-5)" time="0.964937" file="test/task/machine.test.ts" line="983" assertions="4" />
+      <testcase name="logs no toggle and no judging step, but the primary move and the targetless rows" classname="history, causes, times and spans (AD-5)" time="0.586729" file="test/task/machine.test.ts" line="1006" assertions="8" />
+      <testcase name="logs no move of a scenario into or out of parked" classname="history, causes, times and spans (AD-5)" time="1.033641" file="test/task/machine.test.ts" line="1041" assertions="6" />
+      <testcase name="stamps each entry with its fact&apos;s time, or the last entry&apos;s for a raised event" classname="history, causes, times and spans (AD-5)" time="0.09235" file="test/task/machine.test.ts" line="1063" assertions="2" />
+      <testcase name="RM25 times and spans of the cascade plan, with a stale reopen restarting the clock" classname="history, causes, times and spans (AD-5)" time="0.111539" file="test/task/machine.test.ts" line="1088" assertions="13" />
+      <testcase name="shows a retry as building, proving and verifying spans again" classname="history, causes, times and spans (AD-5)" time="1.035158" file="test/task/machine.test.ts" line="1134" assertions="3" />
+      <testcase name="SD-14 ends the run&apos;s history with running&gt;done or running&gt;cancelled, and sets its end time" classname="history, causes, times and spans (AD-5)" time="0.089749" file="test/task/machine.test.ts" line="1172" assertions="4" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/engine-api.test.ts" file="test/task/engine-api.test.ts" tests="8" assertions="174" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="TaskEngineXState" file="test/task/engine-api.test.ts" line="21" tests="8" assertions="174" failures="0" skipped="0" time="2.719" hostname="mac-studio-m1">
+      <testcase name="initial gives an active snapshot, apply the next one, and view the State shape" classname="TaskEngineXState" time="0.064814" file="test/task/engine-api.test.ts" line="22" assertions="8" />
+      <testcase name="RM6 returns its input once the run is done, for any fact" classname="TaskEngineXState" time="0.059625" file="test/task/engine-api.test.ts" line="45" assertions="5" />
+      <testcase name="dies on a snapshot of another plan&apos;s machine, and ignores an unknown id" classname="TaskEngineXState" time="0.095856" file="test/task/engine-api.test.ts" line="56" assertions="5" />
+      <testcase name="returns the identical snapshot for a fact that changes nothing, and never mutates its input" classname="TaskEngineXState" time="0.503598" file="test/task/engine-api.test.ts" line="68" assertions="3" />
+      <testcase name="RM8a folds every stored fact type, a run.started with no path and a stored run.ended done" classname="TaskEngineXState" time="0.955555" file="test/task/engine-api.test.ts" line="81" assertions="124" />
+      <testcase name="reads units through tags and meta: unitState, tags, waitingOn, blockedBy and ended" classname="TaskEngineXState" time="0.9825" file="test/task/engine-api.test.ts" line="168" assertions="14" />
+      <testcase name="RM28 dies on a machine error after task.started, and on an error snapshot" classname="TaskEngineXState" time="0.059538" file="test/task/engine-api.test.ts" line="196" assertions="3" />
+      <testcase name="RM3 the engine module no longer defines the four machines or the fold code" classname="TaskEngineXState" time="0.002989" file="test/task/engine-api.test.ts" line="218" assertions="12" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/core-workspace.test.ts" file="test/task/core-workspace.test.ts" tests="11" assertions="37" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the harness workspace" file="test/task/core-workspace.test.ts" line="31" tests="11" assertions="37" failures="0" skipped="0" time="9.51" hostname="mac-studio-m1">
+      <testcase name="merges the verified head into the base branch, not a later commit on the branch" classname="the harness workspace" time="0.909504" file="test/task/core-workspace.test.ts" line="32" assertions="5" />
+      <testcase name="refuses to merge while the root checkout is on another branch" classname="the harness workspace" time="0.689549" file="test/task/core-workspace.test.ts" line="54" assertions="2" />
+      <testcase name="names the checked-out branch, none on a detached HEAD, and is not confused by a tag of the same name" classname="the harness workspace" time="0.320871" file="test/task/core-workspace.test.ts" line="70" assertions="3" />
+      <testcase name="lists tracked changes, staged or not, and untracked files; ignores ignored files and the harness folder" classname="the harness workspace" time="0.800147" file="test/task/core-workspace.test.ts" line="81" assertions="4" />
+      <testcase name="keeps the harness folder out of git through the local exclude file, never through a .gitignore" classname="the harness workspace" time="0.518388" file="test/task/core-workspace.test.ts" line="105" assertions="5" />
+      <testcase name="checks the whole repository from a subfolder, excluding the subfolder&apos;s harness folder" classname="the harness workspace" time="0.37168" file="test/task/core-workspace.test.ts" line="133" assertions="2" />
+      <testcase name="says why a checkout cannot take a run, or gives its base branch" classname="the harness workspace" time="2.824402" file="test/task/core-workspace.test.ts" line="146" assertions="5" />
+      <testcase name="restores a checkout to its HEAD after a judge: changes and new files go, ignored files stay" classname="the harness workspace" time="0.361093" file="test/task/core-workspace.test.ts" line="176" assertions="5" />
+      <testcase name="gives two runs&apos; leaves of the same id their own branches and worktrees" classname="the harness workspace" time="0.96642" file="test/task/core-workspace.test.ts" line="198" assertions="3" />
+      <testcase name="restarts a leaf whose branch the base already holds from the base head" classname="the harness workspace" time="1.110843" file="test/task/core-workspace.test.ts" line="209" assertions="2" />
+      <testcase name="reuses the worktree and its base on a later attempt" classname="the harness workspace" time="0.642726" file="test/task/core-workspace.test.ts" line="229" assertions="1" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/status-fixture.test.ts" file="test/task/status-fixture.test.ts" tests="7" assertions="148" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the status contract (AD-13)" file="test/task/status-fixture.test.ts" line="37" tests="7" assertions="148" failures="0" skipped="0" time="3.606" hostname="mac-studio-m1">
+      <testcase name="projects the observed facts with every contract field" classname="the status contract (AD-13)" time="0.768515" file="test/task/status-fixture.test.ts" line="38" assertions="19" />
+      <testcase name="tags each class as the AD-13 table says, in the AD-1 order, with no phase or waits tag" classname="the status contract (AD-13)" time="1.053585" file="test/task/status-fixture.test.ts" line="91" assertions="112" />
+      <testcase name="lists waits only for a waiting unit, splits out the outside ones, and never writes a null" classname="the status contract (AD-13)" time="0.533735" file="test/task/status-fixture.test.ts" line="124" assertions="8" />
+      <testcase name="names a subtree run&apos;s root task with its title, and its external regions" classname="the status contract (AD-13)" time="0.082861" file="test/task/status-fixture.test.ts" line="144" assertions="3" />
+      <testcase name="writes the refused form with its tags, spec id and title, and no records" classname="the status contract (AD-13)" time="0.000584" file="test/task/status-fixture.test.ts" line="158" assertions="2" />
+      <testcase name="stamps aliveAt on write only, and keeps it through the encoder" classname="the status contract (AD-13)" time="0.103058" file="test/task/status-fixture.test.ts" line="188" assertions="3" />
+      <testcase name="SV17 writes the shared projected fixture of the observed facts, byte for byte" classname="the status contract (AD-13)" time="1.067612" file="test/task/status-fixture.test.ts" line="205" assertions="1" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/harness.test.ts" file="test/task/harness.test.ts" tests="8" assertions="41" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="TaskHarness leases" file="test/task/harness.test.ts" line="44" tests="5" assertions="24" failures="0" skipped="0" time="0.141" hostname="mac-studio-m1">
+      <testcase name="answers none, then claimed, then busy with the live run, and frees the lease on release (SV8)" classname="TaskHarness leases" time="0.010415" file="test/task/harness.test.ts" line="45" assertions="8" />
+      <testcase name="releases a claim whose job does not start, in the same onExit, so the next claim succeeds" classname="TaskHarness leases" time="0.015493" file="test/task/harness.test.ts" line="68" assertions="4" />
+      <testcase name="keeps the claim of a job that started, so the next claim is busy, and hands start the lease&apos;s locks" classname="TaskHarness leases" time="0.014378" file="test/task/harness.test.ts" line="84" assertions="5" />
+      <testcase name="refers one directory written three ways to one lease: plain, with a slash, through a symlink" classname="TaskHarness leases" time="0.007797" file="test/task/harness.test.ts" line="106" assertions="3" />
+      <testcase name="holds the checkout and git locks of a lease, so two merges in one directory run one after the other" classname="TaskHarness leases" time="0.095897" file="test/task/harness.test.ts" line="120" assertions="4" />
+    </testsuite>
+    <testsuite name="TaskHarness session index" file="test/task/harness.test.ts" line="164" tests="1" assertions="6" failures="0" skipped="0" time="0.005" hostname="mac-studio-m1">
+      <testcase name="adds an owner entry, waits until the index holds it, and drops a run&apos;s entries with the run (SV13)" classname="TaskHarness session index" time="0.005975" file="test/task/harness.test.ts" line="165" assertions="6" />
+    </testsuite>
+    <testsuite name="TaskHarness registry" file="test/task/harness.test.ts" line="184" tests="2" assertions="11" failures="0" skipped="0" time="0.098" hostname="mac-studio-m1">
+      <testcase name="registers a run under run:&lt;runID&gt;, so running is true exactly while that actor lives" classname="TaskHarness registry" time="0.015639" file="test/task/harness.test.ts" line="185" assertions="5" />
+      <testcase name="SV20 forwards /task trust to the run supervisor of that directory only" classname="TaskHarness registry" time="0.083332" file="test/task/harness.test.ts" line="198" assertions="6" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/core-status.test.ts" file="test/task/core-status.test.ts" tests="12" assertions="80" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the status projection" file="test/task/core-status.test.ts" line="48" tests="12" assertions="80" failures="0" skipped="0" time="6.505" hostname="mac-studio-m1">
+      <testcase name="a new run is running its ready tasks, and each unit waits on its untrusted dependencies" classname="the status projection" time="0.473255" file="test/task/core-status.test.ts" line="49" assertions="13" />
+      <testcase name="trusted tasks and trusted outside ids leave waitingOn; an untrusted outside id stays" classname="the status projection" time="0.802882" file="test/task/core-status.test.ts" line="70" assertions="5" />
+      <testcase name="the run is running while a task builds, proves or verifies, or a scenario is judged" classname="the status projection" time="1.239967" file="test/task/core-status.test.ts" line="87" assertions="9" />
+      <testcase name="an ended run is shown with its outcome and reason" classname="the status projection" time="0.645254" file="test/task/core-status.test.ts" line="118" assertions="5" />
+      <testcase name="RM24 the observed facts project T1.5 and T1 as blocked, with the cause as their reason" classname="the status projection" time="0.840689" file="test/task/core-status.test.ts" line="140" assertions="6" />
+      <testcase name="a status file written before the contract does not decode with the contract&apos;s schema" classname="the status projection" time="0.032327" file="test/task/core-status.test.ts" line="162" assertions="1" />
+      <testcase name="a task folder plans its subtree; a folder task outside it is an external region it waits on" classname="the status projection" time="0.093643" file="test/task/core-status.test.ts" line="172" assertions="7" />
+      <testcase name="T2 waits only on its outside preconditions and its own siblings" classname="the status projection" time="1.894734" file="test/task/core-status.test.ts" line="190" assertions="22" />
+      <testcase name="a refused status names the rule and has no records" classname="the status projection" time="0.000501" file="test/task/core-status.test.ts" line="209" assertions="1" />
+      <testcase name="write replaces the status file atomically and leaves no temp file" classname="the status projection" time="0.479514" file="test/task/core-status.test.ts" line="232" assertions="4" />
+      <testcase name="a status write that fails is logged, not raised, and writes nothing" classname="the status projection" time="0.004853" file="test/task/core-status.test.ts" line="249" assertions="3" />
+      <testcase name="a proving pass makes its log at .opencode/task/proofs/&lt;name&gt;.log and empties it" classname="the status projection" time="0.004826" file="test/task/core-status.test.ts" line="264" assertions="4" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/core-sessions.test.ts" file="test/task/core-sessions.test.ts" tests="4" assertions="14" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the judge messages" file="test/task/core-sessions.test.ts" line="16" tests="3" assertions="11" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="a round carries the marker and one judge line per id, each text on one line" classname="the judge messages" time="0.00052" file="test/task/core-sessions.test.ts" line="17" assertions="3" />
+      <testcase name="a parent review judges the combined diff, not a test titled with the parent&apos;s id" classname="the judge messages" time="0.000273" file="test/task/core-sessions.test.ts" line="36" assertions="6" />
+      <testcase name="the follow-up for skipped ids judges exactly those, without a marker" classname="the judge messages" time="0.000145" file="test/task/core-sessions.test.ts" line="49" assertions="2" />
+    </testsuite>
+    <testsuite name="the builder message" file="test/task/core-sessions.test.ts" line="56" tests="1" assertions="3" failures="0" skipped="0" time="0.027" hostname="mac-studio-m1">
+      <testcase name="names the scenarios the task completes, and only those" classname="the builder message" time="0.02735" file="test/task/core-sessions.test.ts" line="61" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/summary.test.ts" file="test/task/summary.test.ts" tests="14" assertions="49" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="the closing summary&apos;s markdown (D18, UI7)" file="test/task/summary.test.ts" line="78" tests="9" assertions="33" failures="0" skipped="0" time="7.827" hostname="mac-studio-m1">
+      <testcase name="summary: holds the outcome, counts, stopped tasks, failed scenarios, not run, warning and task table" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.635892" file="test/task/summary.test.ts" line="79" assertions="1" />
+      <testcase name="summary: the outcome line follows the outcome rules, in the AC 4 order (UI20, SD-18)" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="2.620746" file="test/task/summary.test.ts" line="123" assertions="7" />
+      <testcase name="summary: a clean run leaves the empty sections out; a reason&apos;s newlines become spaces and are never cut" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.903979" file="test/task/summary.test.ts" line="197" assertions="8" />
+      <testcase name="summary: the usage sums the input, output and reasoning tokens and the cost of the run&apos;s sessions; no cache" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.000199" file="test/task/summary.test.ts" line="237" assertions="2" />
+      <testcase name="summary: EDGE-11 the spec title, the task title and a scenario title are escaped" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.91058" file="test/task/summary.test.ts" line="249" assertions="4" />
+      <testcase name="summary: EDGE-11 a stopped task&apos;s reason, a blocked line&apos;s reason and a stop&apos;s reason are escaped" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="1.046402" file="test/task/summary.test.ts" line="274" assertions="3" />
+      <testcase name="summary: a failed task&apos;s Stopped line names its state, attempts and time, then its reason" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.664653" file="test/task/summary.test.ts" line="301" assertions="2" />
+      <testcase name="summary: UI20 a spec check with failures warns the run, even when a later check validates again" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="1.049244" file="test/task/summary.test.ts" line="316" assertions="4" />
+      <testcase name="summary: model text is escaped for CommonMark (EDGE-11)" classname="the closing summary&amp;apos;s markdown (D18, UI7)" time="0.000156" file="test/task/summary.test.ts" line="329" assertions="2" />
+    </testsuite>
+    <testsuite name="the run supervisor&apos;s closing summary (AD-18, UI7, UI23, UI24)" file="test/task/summary.test.ts" line="392" tests="4" assertions="14" failures="0" skipped="0" time="4.812" hostname="mac-studio-m1">
+      <testcase name="summary: when the run is done the supervisor frees the lease, then says the summary once, then closes" classname="the run supervisor&amp;apos;s closing summary (AD-18, UI7, UI23, UI24)" time="0.860313" file="test/task/summary.test.ts" line="393" assertions="8" />
+      <testcase name="summary: UI20 a run whose spec checks all validated says no run-warning line" classname="the run supervisor&amp;apos;s closing summary (AD-18, UI7, UI23, UI24)" time="0.947102" file="test/task/summary.test.ts" line="411" assertions="2" />
+      <testcase name="summary: UI23 a say that fails is logged; the supervisor still closes and the lease is free" classname="the run supervisor&amp;apos;s closing summary (AD-18, UI7, UI23, UI24)" time="1.023643" file="test/task/summary.test.ts" line="419" assertions="2" />
+      <testcase name="summary: a cancel that outlasts the deadline drops the summary waiting on a turn, logs it, and the lease is free" classname="the run supervisor&amp;apos;s closing summary (AD-18, UI7, UI23, UI24)" time="1.982755" file="test/task/summary.test.ts" line="449" assertions="2" />
+    </testsuite>
+    <testsuite name="the job of a run" file="test/task/summary.test.ts" line="480" tests="1" assertions="2" failures="0" skipped="0" time="0.011" hostname="mac-studio-m1">
+      <testcase name="summary: the background job&apos;s output no longer carries an end message" classname="the job of a run" time="0.011049" file="test/task/summary.test.ts" line="481" assertions="2" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task/blend.test.ts" file="test/task/blend.test.ts" tests="62" assertions="202" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="Blend.load" file="test/task/blend.test.ts" line="69" tests="43" assertions="106" failures="0" skipped="0" time="4.405" hostname="mac-studio-m1">
+      <testcase name="accepts the golden T2 spec and derives its model" classname="Blend.load" time="0.08436" file="test/task/blend.test.ts" line="70" assertions="13" />
+      <testcase name="reads every negative case of the golden model" classname="Blend.load" time="0.000069" file="test/task/blend.test.ts" line="102" assertions="1" />
+      <testcase name="refuses negative case 01-R1-stray-file-in-a-task-folder with the expected failures" classname="Blend.load" time="0.06105" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 02-R1-leaf-without-verify-md with the expected failures" classname="Blend.load" time="0.050365" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 03-R1-stray-file-in-acceptance with the expected failures" classname="Blend.load" time="0.038258" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 04-R2-child-id-not-under-its-parent with the expected failures" classname="Blend.load" time="0.039275" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 05-R2-slug-with-capitals with the expected failures" classname="Blend.load" time="0.043273" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 06-R2-scenario-file-name-not-an-id with the expected failures" classname="Blend.load" time="0.042379" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 07-R3-duplicate-key with the expected failures" classname="Blend.load" time="0.046873" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 08-R3-change-outside-the-enum with the expected failures" classname="Blend.load" time="0.4144" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 09-R3-category-outside-the-vocabulary with the expected failures" classname="Blend.load" time="0.494347" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 10-R3-unknown-front-matter-key-state with the expected failures" classname="Blend.load" time="0.805831" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 11-R3-no-front-matter with the expected failures" classname="Blend.load" time="0.318541" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 12-R3-absolute-touch-path with the expected failures" classname="Blend.load" time="0.183553" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 13-R4-no-h1 with the expected failures" classname="Blend.load" time="0.11802" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 14-R4-no-goal-section with the expected failures" classname="Blend.load" time="0.071656" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 15-R4-scenario-line-id-differs-from-file with the expected failures" classname="Blend.load" time="0.05472" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 16-R4-prose-after-the-gherkin-block with the expected failures" classname="Blend.load" time="0.077444" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 17-R5-ref-id-equals-a-gate-id with the expected failures" classname="Blend.load" time="0.076293" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 18-R5-outside-repeats-a-folder-task with the expected failures" classname="Blend.load" time="0.056325" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 19-R6-after-names-an-unknown-task with the expected failures" classname="Blend.load" time="0.07893" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 20-R6-unknown-ref with the expected failures" classname="Blend.load" time="0.057394" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 21-R6-covers-an-unknown-scenario with the expected failures" classname="Blend.load" time="0.055434" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 22-R6-proof-names-a-missing-case with the expected failures" classname="Blend.load" time="0.067704" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 23-R6-rejects-names-a-missing-obligation with the expected failures" classname="Blend.load" time="0.059781" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 24-R6-needs-names-an-unknown-task with the expected failures" classname="Blend.load" time="0.070187" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 25-R7-two-siblings-after-each-other with the expected failures" classname="Blend.load" time="0.056051" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 26-R7-a-child-after-its-parent with the expected failures" classname="Blend.load" time="0.05448" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 27-R8-a-leaf-without-touches with the expected failures" classname="Blend.load" time="0.066952" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 28-R8-a-parent-with-a-test-proof with the expected failures" classname="Blend.load" time="0.059957" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 29-R8-a-leaf-ensures-without-a-category with the expected failures" classname="Blend.load" time="0.073979" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 30-R9-a-covered-scenario-does-not-need-the-task with the expected failures" classname="Blend.load" time="0.06898" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 31-R9-needs-names-a-parent with the expected failures" classname="Blend.load" time="0.06556" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 32-R10-forbids-an-unchanged-path-the-task-touches with the expected failures" classname="Blend.load" time="0.048482" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 33-R10-nothere-owned-by-the-task-itself with the expected failures" classname="Blend.load" time="0.04548" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 34-R13-an-override-drops-a-spec-judge with the expected failures" classname="Blend.load" time="0.051309" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 35-R13-an-override-raises-a-budget with the expected failures" classname="Blend.load" time="0.055164" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 36-R3-rejects-as-a-string-not-a-list with the expected failures" classname="Blend.load" time="0.046452" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 37-R3-environment-as-free-text with the expected failures" classname="Blend.load" time="0.038892" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses negative case 38-R11-a-checkbox-in-a-body with the expected failures" classname="Blend.load" time="0.090961" file="test/task/blend.test.ts" line="107" assertions="2" />
+      <testcase name="refuses leaves that are after each other and names the cycle" classname="Blend.load" time="0.05548" file="test/task/blend.test.ts" line="123" assertions="5" />
+      <testcase name="applies a task&apos;s lower budget to its effective policy" classname="Blend.load" time="0.064889" file="test/task/blend.test.ts" line="150" assertions="4" />
+      <testcase name="accepts the release-notes fixture tree" classname="Blend.load" time="0.017224" file="test/task/blend.test.ts" line="168" assertions="7" />
+    </testsuite>
+    <testsuite name="live-check folders" file="test/task/blend.test.ts" line="186" tests="7" assertions="65" failures="0" skipped="0" time="0.125" hostname="mac-studio-m1">
+      <testcase name="example-scenarios.spec has a title, ensures in every VERIFY.md, no source file, and touches that fit the seed" classname="live-check folders" time="0.014308" file="test/task/blend.test.ts" line="201" assertions="15" />
+      <testcase name="example-cascade.spec has a title, ensures in every VERIFY.md, no source file, and touches that fit the seed" classname="live-check folders" time="0.006589" file="test/task/blend.test.ts" line="201" assertions="29" />
+      <testcase name="a copy of example-scenarios.spec whose leaf T1-slugs.task/T1.1-slugify.task has no ensures key fails R3: the required-ensures schema applies" classname="live-check folders" time="0.015001" file="test/task/blend.test.ts" line="240" assertions="1" />
+      <testcase name="a copy of example-cascade.spec whose leaf T1-numbers.task/T1.2-mean.task has no ensures key fails R3: the required-ensures schema applies" classname="live-check folders" time="0.017768" file="test/task/blend.test.ts" line="240" assertions="1" />
+      <testcase name="example-scenarios has a parent T1, one leaf and scenario S1 proved by a [S1] test" classname="live-check folders" time="0.004711" file="test/task/blend.test.ts" line="258" assertions="6" />
+      <testcase name="example-cascade has T1.1 proved only by a failing gate with one attempt, T1.2 after it, T1.3 free" classname="live-check folders" time="0.01325" file="test/task/blend.test.ts" line="272" assertions="9" />
+      <testcase name="example-cascade&apos;s gate exits 1 on every run and names no file" classname="live-check folders" time="0.05602" file="test/task/blend.test.ts" line="290" assertions="4" />
+    </testsuite>
+    <testsuite name="the fault folders (D14)" file="test/task/blend.test.ts" line="305" tests="7" assertions="26" failures="0" skipped="0" time="0.056" hostname="mac-studio-m1">
+      <testcase name="example-format-faults.spec gives its planted rules and nothing else" classname="the fault folders (D14)" time="0.01479" file="test/task/blend.test.ts" line="347" assertions="2" />
+      <testcase name="example-cycle.spec gives its planted rules and nothing else" classname="the fault folders (D14)" time="0.013138" file="test/task/blend.test.ts" line="347" assertions="2" />
+      <testcase name="example-self-after.spec gives its planted rules and nothing else" classname="the fault folders (D14)" time="0.005633" file="test/task/blend.test.ts" line="347" assertions="2" />
+      <testcase name="example-unknown-after.spec gives its planted rules and nothing else" classname="the fault folders (D14)" time="0.012028" file="test/task/blend.test.ts" line="347" assertions="2" />
+      <testcase name="example-no-ensures.spec gives its planted rules and nothing else" classname="the fault folders (D14)" time="0.005429" file="test/task/blend.test.ts" line="347" assertions="2" />
+      <testcase name="example-outside-run.spec loads with no failure: T1.2 is after T1.1" classname="the fault folders (D14)" time="0.005969" file="test/task/blend.test.ts" line="356" assertions="4" />
+      <testcase name="each folder is the small spec with its planted file only: one parent, two leaves, one gate, no source file" classname="the fault folders (D14)" time="0.002791" file="test/task/blend.test.ts" line="372" assertions="12" />
+    </testsuite>
+    <testsuite name="BlendDocument.duplicateKeys" file="test/task/blend.test.ts" line="382" tests="5" assertions="5" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="block scalar with repeated key-like lines" classname="BlendDocument.duplicateKeys" time="0.000292" file="test/task/blend.test.ts" line="422" assertions="1" />
+      <testcase name="multi-line quoted scalar with key-like lines" classname="BlendDocument.duplicateKeys" time="0.000215" file="test/task/blend.test.ts" line="422" assertions="1" />
+      <testcase name="nested-mapping duplicate" classname="BlendDocument.duplicateKeys" time="0.000028" file="test/task/blend.test.ts" line="422" assertions="1" />
+      <testcase name="duplicate inside one sequence item" classname="BlendDocument.duplicateKeys" time="0.00002" file="test/task/blend.test.ts" line="422" assertions="1" />
+      <testcase name="two sequence items with the same keys" classname="BlendDocument.duplicateKeys" time="0.000031" file="test/task/blend.test.ts" line="422" assertions="1" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" tests="15" assertions="104" failures="0" skipped="1" time="0" hostname="mac-studio-m1">
+    <testsuite name="T1.4 print release notes for a git range" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="119" tests="15" assertions="104" failures="0" skipped="1" time="13.253" hostname="mac-studio-m1">
+      <testcase name="[T1.4.c1] the five pinned S1 commits print exactly the expected file" classname="T1.4 print release notes for a git range" time="0.876249" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="121" assertions="4" />
+      <testcase name="[T1.4.c2] the range and the current version follow the tags, the options and their defaults" classname="T1.4 print release notes for a git range" time="3.187119" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="134" assertions="11" />
+      <testcase name="[T1.4.c3] bad arguments print nothing on stdout and exit 2; --help and -h print usage and exit 0" classname="T1.4 print release notes for a git range" time="1.800744" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="212" assertions="30" />
+      <testcase name="[T1.4.c4] an empty folder, the .git folder and a bare repository exit 3 with git&apos;s message" classname="T1.4 print release notes for a git range" time="0.574272" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="254" assertions="9" />
+      <testcase name="[T1.4.c5] --current 1.x exits 2" classname="T1.4 print release notes for a git range" time="0.737864" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="279" assertions="6" />
+      <testcase name="[T1.4.c6] with no git on the PATH the real entry prints git not found and exits 4" classname="T1.4 print release notes for a git range" time="0.211034" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="293" assertions="3" />
+      <testcase name="[T1.4.c7] merges are left out, records stay whole, warnings go to stderr, and git is isolated" classname="T1.4 print release notes for a git range" time="1.766001" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="307" assertions="16" />
+      <testcase name="[T1.4.c8] the entry starts with the bun shebang and package.json has the bin entry" classname="T1.4 print release notes for a git range" time="0.000684" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="366" assertions="2" />
+      <testcase name="[S1] release notes and the next version for a known range" classname="T1.4 print release notes for a git range" time="0.944591" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="373" assertions="4" />
+      <testcase name="[S6] the default range starts at the latest tag" classname="T1.4 print release notes for a git range" time="0.975732" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="386" assertions="6" />
+      <testcase name="[S8] an unknown option explains the usage and exits 2" classname="T1.4 print release notes for a git range" time="1.032551" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="402" assertions="4" />
+      <testcase name="[S9] a folder that is not a repository exits 3" classname="T1.4 print release notes for a git range" time="0.165888" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="415" assertions="3" />
+      <testcase name="[S10] an invalid current version exits 2" classname="T1.4 print release notes for a git range" time="0.878218" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="428" assertions="3" />
+      <testcase name="[S11] a machine without git exits 4" classname="T1.4 print release notes for a git range" time="0.108093" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="440" assertions="3" />
+      <testcase name="[S13] the published package runs from the registry" classname="T1.4 print release notes for a git range" time="0" file="test/task-harness/release-notes-solution/test/verify-release-notes-S1.spec.ts" line="454" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" tests="5" assertions="63" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="T1.2 compute the next version" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="10" tests="5" assertions="63" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="[T1.2.c1] each type maps to its bump and the most significant change wins" classname="T1.2 compute the next version" time="0.000808" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="11" assertions="18" />
+      <testcase name="[T1.2.c2] the bump resets the lower parts, drops pre-release and build, and none keeps the version" classname="T1.2 compute the next version" time="0.000206" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="26" assertions="12" />
+      <testcase name="[T1.2.c3] an invalid version returns an error and never throws" classname="T1.2 compute the next version" time="0.000188" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="41" assertions="23" />
+      <testcase name="[T1.2.c4] parts beyond Number.MAX_SAFE_INTEGER stay exact" classname="T1.2 compute the next version" time="0.000077" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="64" assertions="3" />
+      <testcase name="[S3] the next version follows the most significant change" classname="T1.2 compute the next version" time="0.00026" file="test/task-harness/release-notes-solution/test/verify-release-notes-S3.spec.ts" line="73" assertions="7" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" tests="7" assertions="78" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="T1.1 parse a conventional-commit message" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="16" tests="7" assertions="78" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="[T1.1.c1] a valid header gives its lower-cased type, optional scope and subject" classname="T1.1 parse a conventional-commit message" time="0.000695" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="17" assertions="9" />
+      <testcase name="[T1.1.c2] &apos;!&apos; and BREAKING CHANGE / BREAKING-CHANGE footers make a commit breaking with its note" classname="T1.1 parse a conventional-commit message" time="0.00047" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="41" assertions="16" />
+      <testcase name="[T1.1.c3] Refs footers in any case give the keys, split and de-duplicated in first-seen order" classname="T1.1 parse a conventional-commit message" time="0.000233" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="71" assertions="5" />
+      <testcase name="[T1.1.c4] bodies, footers, continuation lines, &apos;!&apos; after the colon and CRLF parse at their boundaries" classname="T1.1 parse a conventional-commit message" time="0.000297" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="84" assertions="11" />
+      <testcase name="[T1.1.c5] a message that breaks the convention returns an invalid commit with its reason" classname="T1.1 parse a conventional-commit message" time="0.00045" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="121" assertions="32" />
+      <testcase name="[S2] a conventional message is read into its parts" classname="T1.1 parse a conventional-commit message" time="0.000136" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="149" assertions="2" />
+      <testcase name="[S7] a message that is not conventional is kept as invalid, not lost" classname="T1.1 parse a conventional-commit message" time="0.000155" file="test/task-harness/release-notes-solution/test/verify-release-notes-S2.spec.ts" line="179" assertions="3" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" tests="7" assertions="24" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="T1.3 render the release notes as Markdown" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="21" tests="7" assertions="24" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+      <testcase name="[T1.3.c1] the output follows the exact format" classname="T1.3 render the release notes as Markdown" time="0.000939" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="22" assertions="5" />
+      <testcase name="[T1.3.c2] breaking commits go only under Breaking changes, other types under Other, input order kept" classname="T1.3 render the release notes as Markdown" time="0.000243" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="72" assertions="3" />
+      <testcase name="[T1.3.c3] invalid commits are listed last under Unparsed commits" classname="T1.3 render the release notes as Markdown" time="0.000233" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="108" assertions="3" />
+      <testcase name="[T1.3.c4] commit text cannot inject a link, HTML or a table cell" classname="T1.3 render the release notes as Markdown" time="0.000443" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="137" assertions="2" />
+      <testcase name="[T1.3.c5] every input hash appears exactly once at the token that ends its line" classname="T1.3 render the release notes as Markdown" time="0.000923" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="179" assertions="2" />
+      <testcase name="[S4] notes are grouped under fixed headings with bold scopes and short hashes" classname="T1.3 render the release notes as Markdown" time="0.000505" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="192" assertions="2" />
+      <testcase name="[S12] every commit in the range appears exactly once" classname="T1.3 render the release notes as Markdown" time="0.000507" file="test/task-harness/release-notes-solution/test/verify-release-notes-S4.spec.ts" line="226" assertions="7" />
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" tests="5" assertions="74" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="T1.5 link issue references" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="70" tests="5" assertions="74" failures="0" skipped="0" time="2.282" hostname="mac-studio-m1">
+      <testcase name="[T1.5.c1] a matching key becomes a link from the template; other keys stay plain" classname="T1.5 link issue references" time="0.000811" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="71" assertions="8" />
+      <testcase name="[T1.5.c2] parseLinkConfig returns an error for every bad config and never throws" classname="T1.5 link issue references" time="0.000409" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="87" assertions="38" />
+      <testcase name="[T1.5.c3] a key cannot break the link, and the same key gives the same result every time" classname="T1.5 link issue references" time="0.00021" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="122" assertions="10" />
+      <testcase name="[T1.5.c4] the CLI reads the config from the top level; missing is silent, bad warns, refs always appear" classname="T1.5 link issue references" time="1.86219" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="141" assertions="15" />
+      <testcase name="[S5] issue references become links when the key is known" classname="T1.5 link issue references" time="0.420785" file="test/task-harness/release-notes-solution/test/verify-release-notes-S5.spec.ts" line="186" assertions="3" />
+    </testsuite>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,69 @@
+Thu 15 Oct 2026 22:27:57 BST
+a876ad50ff
+22:27  up 11 days, 17:16, 4 users, load averages: 6.76 8.11 12.37
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/config/config.test.ts:
+[21:30:29.010] INFO (#55239): creating instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-xuggnsb0nni",
+}
+[21:30:29.010] INFO (#55239): fromDirectory {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-xuggnsb0nni",
+}
+[21:30:29.153] INFO (#55257): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-42759/config/opencode/config.json",
+}
+[21:30:29.154] INFO (#55257): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-42759/config/opencode/opencode.json",
+}
+[21:30:29.154] INFO (#55257): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-42759/config/opencode/opencode.jsonc",
+}
+[21:30:29.212] INFO (#55262): disposing all instances
+[21:30:29.212] INFO (#55262): disposing instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-xuggnsb0nni",
+}
+
+test/plugin/github-copilot-models.test.ts:
+[21:30:51.039] WARN (#60506): Copilot model list failed {
+  error: {
+    _tag: "CopilotModels.Error",
+    message: "timeout",
+    cause: 475 |   expect(models["claude-opus-4.7"].api.npm).toBe("@ai-sdk/anthropic")
+476 |   expect(models["claude-opus-4.7"].variants).toBeUndefined()
+477 | })
+478 | 
+479 | test("remaps fallback oauth model urls to the enterprise host", async () => {
+480 |   stubFetch(() => Promise.reject(new Error("timeout")))
+                                           ^
+error: timeout
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:480:38)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:487:40)
+,
+  },
+} {
+  category: "provider.discovery",
+}
+
+test/server/httpapi-mdns.test.ts:
+[21:32:55.482] WARN (#1244513): mDNS enabled but hostname is loopback; skipping mDNS publish
+
+test/task/engine-xstate-graph.test.ts:
+(fail) the graph proof > RM19 walks the release-notes plan: no stuck state, every snapshot active or done [60008.38ms]
+  ^ this test timed out after 60000ms.
+example walk example-cascade.spec 108 keys 292 edges
+example walk example-outside-run.spec 29 keys 74 edges
+example walk example-scenarios.spec 23 keys 46 edges
+outside-run subtree walk 14 keys 35 edges
+release-notes walk 338 keys 746 edges
+(fail) the graph proof > RM21 finds the observed stuck state when the blocked rows are removed from a copy of the config [60024.84ms]
+  ^ this test timed out after 60000ms.
+negative control 398 keys 806 edges 33 stuck

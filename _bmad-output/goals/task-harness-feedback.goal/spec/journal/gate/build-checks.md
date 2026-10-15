@@ -36,3 +36,13 @@ Each check: `update <id> start`, the command from the repository root at the goa
     log). It failed 2 of 12 times alone at load 9: the test read the run actor's log as soon as the fact was stored,
     before the actor took it. Fixed in e61728a508 (it now waits for the log entry too): 0 of 20 failures. Attempt 5
     was stopped; no exit code recorded.
+  - Attempt 6 (22:28–22:52 BST, load 11–20, `check-BUILD-4-attempt6.log`): RM19 (the graph walk of the release-notes
+    plan) timed out at its 60 s bound. A JUnit timing of `test/task` at a load of 10 (`task-timing-junit.xml`: 633
+    pass, 792 s) put RM19 at 35 s, the only test within twice its bound (49 s alone at a load of 20). 2e3884adf5 gives
+    the walks a 180 s hang bound; no assertion changes. Attempt 6 was stopped; no exit code recorded.
+  - Attempt 7 (23:18–23:44 BST, `check-BUILD-4-attempt7.log`): the unknown-model `run-process` test failed again
+    (15.6 s) when the load rose to 48. goal.md says a test that also fails on dev is still ours to fix: 0286ea048f
+    widens its spawn timeout and duration bound from 15 s to 30 s (a hang still fails at the bound). Stopped; no exit
+    code recorded.
+  - From 23:52 BST, `autochecks.sh` (scratchpad) runs each further BUILD-4 attempt only when the 1-minute load is
+    below 15, records `complete --exit-code=0` only for a run that exits 0, and then does the same for BUILD-6.
