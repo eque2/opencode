@@ -339,9 +339,9 @@ describe("the status writer", () => {
       yield* Fiber.await(recorder.writer).pipe(Effect.timeout(2_000))
       // One write per recorded fact (each is one macrostep), after the initial one, and no other.
       expect(writes.length).toBe(1 + list.length)
-      expect(writes.map((item) => item.status.history.length)).toEqual(
-        writes.map((_, index) => (index === 0 ? 0 : (writes[index]?.status.history.length ?? 0))),
-      )
+      // Each write after the initial one holds one more history entry or more: no macrostep was written twice.
+      const lengths = writes.map((item) => item.status.history.length)
+      expect(lengths.slice(1).every((length, index) => length > (lengths[index] ?? 0))).toBe(true)
       expect(writes.at(-1)?.status.run).toMatchObject({ state: "cancelled", tags: ["ended", "stopped"] })
       expect(writes.find((item) => item.status.tasks["T1.1"]?.state === "trusted")).toBeDefined()
       // The writer ended with the done snapshot: a touch now writes nothing.
