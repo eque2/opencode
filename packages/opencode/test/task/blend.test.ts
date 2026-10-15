@@ -358,7 +358,7 @@ describe("the fault folders (D14)", () => {
       const result = yield* Blend.load(path.join(formatDir, "example-outside-run.spec"))
       expect(result.failures).toEqual([])
       const spec = result.spec
-      if (!spec) return yield* Effect.die("example-outside-run.spec did not load")
+      if (!spec) throw new Error("example-outside-run.spec did not load")
       expect(spec.tasks.map((task) => [task.id, task.after])).toEqual([
         ["T1", []],
         ["T1.1", []],
