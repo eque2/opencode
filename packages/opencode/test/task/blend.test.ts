@@ -278,6 +278,83 @@ describe("live-check folders", () => {
   )
 })
 
+describe("the fault folders (D14)", () => {
+  const T11 = "T1-words.task/T1.1-upper.task"
+  const T12 = "T1-words.task/T1.2-shout.task"
+  // Each folder's planted rules; a spec folder cannot hold its own expectation (R1), so it lives here.
+  const PLANTED: Record<string, ReadonlyArray<{ rule: string; path: string; message: string }>> = {
+    "example-format-faults.spec": [
+      {
+        rule: "R1",
+        path: "notes.txt",
+        message: "a `.spec` folder holds only SPEC.md, acceptance/ and `.task` folders",
+      },
+      {
+        rule: "R3",
+        path: `${T11}/TASK.md`,
+        message: "(root): Additional properties are not allowed ('colour' was unexpected)",
+      },
+      { rule: "R4", path: `${T12}/TASK.md`, message: "body does not start with `# <title>`" },
+    ],
+    "example-cycle.spec": [{ rule: "R7", path: `${T11}/TASK.md`, message: "order has a cycle: T1.1 → T1.2 → T1.1" }],
+    "example-self-after.spec": [{ rule: "R7", path: `${T11}/TASK.md`, message: "order has a cycle: T1.1 → T1.1" }],
+    "example-unknown-after.spec": [{ rule: "R6", path: `${T11}/TASK.md`, message: "after names unknown task T7" }],
+    "example-no-ensures.spec": [
+      { rule: "R3", path: `${T12}/VERIFY.md`, message: "(root): 'ensures' is a required property" },
+    ],
+  }
+  // Every file under a folder, relative to it.
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)))
+  // One parent and two leaves, each with TASK.md and VERIFY.md, and SPEC.md.
+  const SHAPE = [
+    "SPEC.md",
+    "T1-words.task/TASK.md",
+    "T1-words.task/VERIFY.md",
+    `${T11}/TASK.md`,
+    `${T11}/VERIFY.md`,
+    `${T12}/TASK.md`,
+    `${T12}/VERIFY.md`,
+  ]
+
+  for (const [name, planted] of Object.entries(PLANTED)) {
+    it.live(`${name} gives its planted rules and nothing else`, () =>
+      Effect.gen(function* () {
+        const result = yield* Blend.load(path.join(formatDir, name))
+        expect(result.failures).toEqual(planted)
+        expect(result.spec).toBeUndefined()
+      }),
+    )
+  }
+
+  it.live("example-outside-run.spec loads with no failure: T1.2 is after T1.1", () =>
+    Effect.gen(function* () {
+      const result = yield* Blend.load(path.join(formatDir, "example-outside-run.spec"))
+      expect(result.failures).toEqual([])
+      const spec = result.spec
+      if (!spec) return yield* Effect.die("example-outside-run.spec did not load")
+      expect(spec.tasks.map((task) => [task.id, task.after])).toEqual([
+        ["T1", []],
+        ["T1.1", []],
+        ["T1.2", ["T1.1"]],
+      ])
+      expect(Object.keys(spec.gates)).toEqual(["BUILD-1"])
+      expect(spec.outside).toEqual({})
+    }),
+  )
+
+  test("each folder is the small spec with its planted file only: one parent, two leaves, one gate, no source file", () => {
+    for (const name of [...Object.keys(PLANTED), "example-outside-run.spec"]) {
+      const dir = path.join(formatDir, name)
+      const extra = name === "example-format-faults.spec" ? ["notes.txt"] : []
+      expect(files(dir).toSorted()).toEqual([...SHAPE, ...extra].toSorted())
+      expect(Bun.file(path.join(dir, "SPEC.md")).size).toBeGreaterThan(0)
+    }
+  })
+})
+
 describe("BlendDocument.duplicateKeys", () => {
   const rows: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
     [
