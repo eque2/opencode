@@ -52,7 +52,7 @@
 | T4.3    | task       | completed                               |
 | T4.4    | task       | completed                               |
 | T4.5    | task       | completed                               |
-| T4.6    | task       | not_started                             |
+| T4.6    | task       | completed                               |
 | T4.7    | task       | not_started                             |
 | T4.8    | task       | not_started                             |
 | T4.9    | task       | not_started                             |
