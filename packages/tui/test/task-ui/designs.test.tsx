@@ -76,6 +76,10 @@ test("UI1 the Board's columns come from the tags; STOPPED runs in the STOPPED li
   const tagged = statusOf((raw) => Object.assign(tasksOf(raw)["T1.1"], { state: "building", tags: ["waiting"] }))
   expect(cardsIn(rows(tagged), "WAITING").map((item) => item.id)).toEqual(["T1.1"])
   expect(cardsIn(rows(tagged), "BUILDING")).toEqual([])
+  // A task whose state is waiting but whose tags say ended is a TRUSTED card.
+  const ended = statusOf((raw) => Object.assign(tasksOf(raw)["T1.1"], { state: "waiting", tags: ["ended"] }))
+  expect(cardsIn(rows(ended), "TRUSTED").map((item) => item.id)).toEqual(["T1.1", "T1.2", "T1.3"])
+  expect(cardsIn(rows(ended), "WAITING")).toEqual([])
   const { view } = await viewFor(classes, { design: 3 })
   const board = (
     await render(
@@ -120,6 +124,8 @@ test("UI11 card line 3: attempt and duration, the duration alone, or nothing; th
   ])
   const started = statusOf((raw) => Object.assign(tasksOf(raw)["T1.4"], { attempts: 0, startedAt: 0, endedAt: 45_000 }))
   expect(meta(started, "T1.4", 30)).toEqual([{ text: "45s", tone: "muted" }])
+  // A plain card's state line is its label, muted.
+  expect(cardLines(base, row(base, "T1.1"), "ended", 0, 30)[0]).toEqual({ text: "trusted", tone: "muted" })
   // T1.5 has no attempt and no start: no line 3.
   expect(meta(base, "T1.5", 30)).toEqual([])
   // The lines in order: state, line 3, proofs, reason.
@@ -130,6 +136,47 @@ test("UI11 card line 3: attempt and duration, the duration alone, or nothing; th
     "T1.4.c7: the test asserts only",
     "that 'topic change' appears",
   ])
+})
+
+// T1.2 building since 3m 12s before the heartbeat.
+const building = statusOf((raw) =>
+  Object.assign(tasksOf(raw)["T1.2"], {
+    state: "building",
+    tags: ["active"],
+    startedAt: raw.run.aliveAt - 192_000,
+    endedAt: undefined,
+  }),
+)
+
+test("UI11 a running task's duration counts to now while the view is live, and stops at the heartbeat when still", async () => {
+  const aliveAt = building.run.aliveAt ?? 0
+  for (const [after, shown] of [
+    [10_000, "3m 22s"],
+    [60_000, "3m 12s"],
+  ] as const) {
+    const { view } = await viewFor(building, { design: 3, now: aliveAt + after })
+    const board = (
+      await render(
+        () => <BoardView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={120} />,
+        120,
+        60,
+      )
+    ).text
+    expect({ after, board: board.includes(shown) }).toEqual({ after, board: true })
+    const matrix = linesOf(
+      (
+        await render(
+          () => <MatrixView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={110} />,
+          110,
+          40,
+        )
+      ).text,
+    )
+    expect({ after, matrix: matrix.find((line) => line.includes("◐ T1.2"))?.slice(60, 69) }).toEqual({
+      after,
+      matrix: shown.padStart(9),
+    })
+  }
 })
 
 test("UI5 a waiting card shows each wait sentence, plan ids first, in their tones; the trust command is never cut", async () => {
@@ -244,9 +291,7 @@ test("UI18 the Matrix legend adds ⊖ blocked; its old SCENARIOS block has moved
       40,
     )
   ).text
-  expect(shown).toContain(
-    "· pending   ◉ proof passed   ✓ trusted   ✗ failed or rejected   ~ stale   ○ waiting   ⊖ blocked",
-  )
+  expect(shown).toContain("· pending ◉ proof passed ✓ trusted ✗ failed or rejected ~ stale ○ waiting ⊖ blocked")
   expect(shown).not.toContain("SCENARIOS")
   expect(shown).not.toContain("⊖ S1")
 })
@@ -287,8 +332,14 @@ test("UI22 the Board's right pane: beside the board from 149 cells, below it und
   expect(lowPeek.x).toBe(1)
   expect(lowPeek.y).toBeGreaterThan(below.at("WAITING 0").y)
   const lowRegion = below.at("STOPPED 3", below.at("WAITING 0").y + 1)
-  expect(lowRegion.x).toBeGreaterThan(lowPeek.x + 40)
+  // The Peek takes half the width, at most 72 cells; the region starts after a 1-cell gap.
+  expect(lowRegion.x).toBe(1 + 72 + 1)
+  expect(below.at("╗", lowPeek.y).x).toBe(72)
   expect(lowRegion.y).toBe(lowPeek.y)
+  // 110: still side by side.
+  const edge = await screen(3, 110)
+  const edgePeek = edge.at("╔═ ◆ In the Flow · T1.4 details")
+  expect(edge.at("STOPPED 3", edge.at("WAITING 0").y + 1).y).toBe(edgePeek.y)
   // 109: the board, the Peek, then the region, stacked.
   const narrow = await screen(3, 109)
   const narrowPeek = narrow.at("╔═ ◆ In the Flow · T1.4 details")
