@@ -6,6 +6,7 @@ import { existsSync, readdirSync } from "node:fs"
 import path from "path"
 import { Blend } from "@/task/blend"
 import { BlendDocument } from "@/task/blend/document"
+import type { BlendModel } from "@/task/blend/model"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(NodeServices.layer)
@@ -282,7 +283,7 @@ describe("the fault folders (D14)", () => {
   const T11 = "T1-words.task/T1.1-upper.task"
   const T12 = "T1-words.task/T1.2-shout.task"
   // Each folder's planted rules; a spec folder cannot hold its own expectation (R1), so it lives here.
-  const PLANTED: Record<string, ReadonlyArray<{ rule: string; path: string; message: string }>> = {
+  const PLANTED: Record<string, ReadonlyArray<BlendModel.Failure>> = {
     "example-format-faults.spec": [
       {
         rule: "R1",
@@ -323,7 +324,7 @@ describe("the fault folders (D14)", () => {
     it.live(`${name} gives its planted rules and nothing else`, () =>
       Effect.gen(function* () {
         const result = yield* Blend.load(path.join(formatDir, name))
-        expect(result.failures).toEqual(planted)
+        expect(result.failures).toEqual([...planted])
         expect(result.spec).toBeUndefined()
       }),
     )
