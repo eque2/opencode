@@ -28,6 +28,15 @@ blend/
         VERIFY.md
       …
       T2.6-routing-decision-record.task/
+  release-notes.spec/                         the conformance fixture: a parent T1, five leaves, 13 scenarios
+  example-scenarios.spec/                     live check: one leaf and one scenario, ends done
+  example-cascade.spec/                       live check: a gate that never passes, ends budget_exhausted
+  example-format-faults.spec/                 fault folder: R1, R3 and R4
+  example-cycle.spec/                         fault folder: an `after` cycle (R7)
+  example-self-after.spec/                    fault folder: a task after itself (R7)
+  example-unknown-after.spec/                 fault folder: an unknown task in `after` (R6)
+  example-no-ensures.spec/                    fault folder: a leaf VERIFY.md with no `ensures` (R3)
+  example-outside-run.spec/                   valid; refused as the T1.2 subtree (R12)
 ```
 
 ## Design rules
@@ -355,20 +364,97 @@ The key is fine-grained. An edit to the text of `T2.2.c6` changes only the hash 
 invalidates that obligation's proof state and verdict, and keeps every other one. An edit to `Goal` or
 `Approach` changes the task hash, so the engine gives the task to the builder again.
 
-## Validating
+## Validation
 
-1. Parse each front matter with a YAML 1.2 parser that refuses duplicate keys. The `yaml` package does this by
-   default.
-2. Validate each front matter against its schema in [`schema/`](./schema/) with Ajv (`ajv/dist/2020`).
-3. Run R1–R13 on the parsed model.
+### Before any work starts
 
-A schema checks parsed front matter, not a markdown file. A command-line validator such as
-`npx ajv-cli validate --spec=draft2020 -s schema/task.schema.json -d <front-matter.json>` thus needs a separate
-extraction step. The engine does the extraction and the validation in one pass. The cross-file rules are the
-engine's own checks: no schema can express them.
+`/task <path>` runs `TaskCommand.run` (`packages/opencode/src/task/core/command.ts`). Its first check after the usage
+line is `Blend.load` on the `.spec` folder: the load comes before the git check, the plan, the claim and the job, so a
+spec that fails a rule starts no work, opens no worktree and makes no model request. The checks run in this order:
 
-A reference checker, `check_blend.py`, parses this example, runs R1–R13, and prints the model as JSON. The
-example passes it. The checker is not included. Ask for it if you want it.
+1. `Blend.load` runs R1–R11 and R13 on the folder. A spec with any failure is refused.
+2. A spec that loads with no task (only `SPEC.md`, or only `outside` preconditions and scenarios) is refused with the
+   one plain line "the spec holds no task".
+3. A `.task` path must be a `<task id>-<slug>.task` folder of a task of the spec (R2).
+4. A run that is live in the directory gets the busy reply.
+5. The checkout must be on a branch with no uncommitted change; a resumed run must be on the branch it started on.
+6. A subtree run needs every folder task outside it that a run task is after to be trusted (R12, D13).
+
+The rules run in two stages. R1–R4 (and R11) check each file on its own. The rules of R5–R13 that check the spec as a
+whole (R5–R10 and R13; R12 is a runtime check) run only once every file passes R1–R4: on a partial model they would
+report noise, for example every `after` that names a renamed folder. So a spec with an R3 fault and an R7 cycle reports only the R3 line until the R3 fault is
+fixed. Within the list, the failures are in rule order, then in file order.
+
+### Where each rule is enforced
+
+| Rule | Enforced in | When |
+| --- | --- | --- |
+| R1 | `blend/index.ts` (the folder walk) | load |
+| R2 | `blend/index.ts` (folder and file names) | load |
+| R3 | `blend/index.ts` with `blend/document.ts` (YAML 1.2, duplicate keys) and `blend/schema.ts` (the front-matter schemas) | load |
+| R4 | `blend/index.ts` (the H1, `## Goal`, the gherkin block) | load |
+| R5 | `blend/rules.ts` | load, after R1–R4 |
+| R6 | `blend/rules.ts` | load, after R1–R4 |
+| R7 | `blend/rules.ts` | load, after R1–R4 |
+| R8 | `blend/rules.ts` | load, after R1–R4 |
+| R9 | `blend/rules.ts` | load, after R1–R4 |
+| R10 | `blend/rules.ts` | load, after R1–R4 |
+| R11 | `blend/index.ts` (no checkbox in a body; the schemas refuse state in front matter) | load |
+| R12 | `core/command.ts` (a subtree run's folder tasks outside it) and the run machine (`outside` preconditions wait) | runtime |
+| R13 | `blend/rules.ts` | load, after R1–R4 |
+
+The paths are relative to `packages/opencode/src/task`. R12 is a runtime check: the loader only notes it. An
+`outside` precondition makes the dependent task and each scenario that needs it wait until `/task trust <id>` records
+it. A subtree run is refused at the start when a run task is after a folder task outside the run that the stored runs
+do not show as trusted.
+
+### How a refusal appears
+
+A refused `/task` writes one session message: a header, one line for each failure, and an optional hint. The status
+file shows `run: refused`, and `run.reason` holds only the failure lines, joined with a newline.
+
+| Refusal | Header | Lines | Hint |
+| --- | --- | --- | --- |
+| Loader failures | "Refused <path>: N failures. No work started." ("1 failure" for one) | `R<n> <path>: <message>`, each failure | "Fix each line, then type /task <path> again." |
+| A subtree after an untrusted folder task | "Refused <path>: N failures. No work started." | `R12 <task folder>: T1.3 is after T1.1, which is outside this run and not trusted` | "Run the whole spec, or a folder that holds T1.1." |
+| A plain line (the git checks, a spec with no task) | "Refused <path>. No work started." | the one line | none |
+
+`<path>` is the `/task` argument as typed; each failure path is relative to the `.spec` folder. While a run is live in
+the directory, a refusal answers in the session only and leaves that run's status file alone.
+
+### How the run machine holds the order
+
+The engine builds one run machine from the plan (`packages/opencode/src/task/engine-xstate/machine.ts`). A task is
+ready only when every task of its effective `after` (its own and each ancestor's) is trusted; nothing else starts it.
+A task whose dependency ends dead (`needs_human`, `budget_exhausted`, `failed` or `blocked`) moves to `blocked`, with
+the reason "blocked by T1.1: budget exhausted", and the cascade goes on to its own dependants. A parent waits for its
+children. The run ends only when every region is final; a graph proof walks every reachable state of each plan and
+finds none that is stuck.
+
+The loader refuses these graph faults, so no machine is built for them:
+
+- a cycle in `after`, including a task after itself (`T1.1 → T1.1`) (R7);
+- a task after its own ancestor or descendant (R7);
+- an unknown reference: an `after`, `needs` or `notHere.owner` that names no task, or a `refs`, `gates` or `covers`
+  that names nothing (R6);
+- a subtree run whose task is after a folder task outside this run that is not trusted (R12, refused by the command).
+
+### The example folders
+
+Each folder below is a small spec that the real `/task` command answers as shown. A spec folder cannot hold its own
+expected result (R1 refuses a stray file), so the expectations live in the tests
+`packages/opencode/test/task/blend.test.ts` and `packages/opencode/test/task/fault-folders.test.ts`.
+
+| Folder | Response of `/task` |
+| --- | --- |
+| `example-format-faults.spec` | Refused, 3 failures: R1 (the stray `notes.txt`), R3 (an unknown front-matter key), R4 (a `TASK.md` with no H1). |
+| `example-cycle.spec` | Refused, 1 failure: R7 "order has a cycle: T1.1 → T1.2 → T1.1". |
+| `example-self-after.spec` | Refused, 1 failure: R7 "order has a cycle: T1.1 → T1.1". |
+| `example-unknown-after.spec` | Refused, 1 failure: R6 "after names unknown task T7". |
+| `example-no-ensures.spec` | Refused, 1 failure: R3 "(root): 'ensures' is a required property". |
+| `example-outside-run.spec` | Loads with no failure and runs as a whole spec; as the T1.2 subtree it is refused with the R12 line for T1.2 and T1.1. |
+| `example-scenarios.spec` | A live check: T1.1 and T1 trusted, scenario S1 trusted, run `done`. |
+| `example-cascade.spec` | A live check: T1.1 `budget_exhausted` after one attempt, T1.2 and T1 `blocked` by T1.1, T1.3 trusted, run `budget_exhausted`. |
 
 ## What changed from formats 3, 4 and 5
 
