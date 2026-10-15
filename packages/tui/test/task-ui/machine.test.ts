@@ -1,7 +1,7 @@
 // The taskView machine (spine AD-16) on a SimulatedClock, with the feed's read replaced by a scripted one: what the
 // view holds, each cadence, the stop key, the liveness rows, and the adapter to Solid.
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, type Scope } from "effect"
+import { Data, Effect, Option, type Scope } from "effect"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -35,6 +35,7 @@ const settle = Effect.promise(async () => {
 })
 
 type Step = TaskView.Read | "fail"
+class Denied extends Data.TaggedError("Denied")<{ readonly message: string }> {}
 const file = (text: string, now = NOW): TaskView.Read => ({ exists: true, text, mtime: now, logs: [], now })
 const gone = (now = NOW): TaskView.Read => ({ exists: false, text: "", mtime: 0, logs: [], now })
 
@@ -42,11 +43,11 @@ const gone = (now = NOW): TaskView.Read => ({ exists: false, text: "", mtime: 0,
 const view = (steps: ReadonlyArray<Step>, design = 1) =>
   Effect.gen(function* () {
     const reads = { count: 0 }
-    const reader = fromEffect<{ directory: string }, TaskView.Read, Error, never>(() =>
+    const reader = fromEffect<{ directory: string }, TaskView.Read, Denied, never>(() =>
       Effect.suspend(() => {
         const step = steps[Math.min(reads.count, steps.length - 1)] ?? gone()
         reads.count++
-        return step === "fail" ? Effect.fail(new Error("EACCES: permission denied")) : Effect.succeed(step)
+        return step === "fail" ? Effect.fail(new Denied({ message: "EACCES: permission denied" })) : Effect.succeed(step)
       }),
     )
     const clock = new SimulatedClock()
