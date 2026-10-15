@@ -37,6 +37,7 @@ const Scenario = Schema.Struct({
   tags: Tags,
   title: Schema.optional(Schema.String),
   waitingOn: Schema.Array(Schema.String),
+  waitingOnOutside: Schema.optional(Schema.Array(Schema.String)),
   reason: Schema.optional(Reason),
 }).annotate({ identifier: "TaskUi.Scenario" })
 
