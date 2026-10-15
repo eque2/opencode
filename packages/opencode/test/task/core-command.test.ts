@@ -622,6 +622,12 @@ describe("the slice a /task starts from (SV3, RM8, SV26)", () => {
         ),
       )
       expect(TaskCommand.diedLine({ kind: "new", died: Option.none() })).toEqual(Option.none())
+      // The reply carries it after the header, and only then.
+      expect(TaskCommand.headerParts(plan, slice).map((part) => part.text)).toEqual([
+        "Implementing spec **Release notes from conventional commits**",
+        Option.getOrThrow(TaskCommand.diedLine(slice)),
+      ])
+      expect(TaskCommand.headerParts(plan, { kind: "new", died: Option.none() })).toHaveLength(1)
     }),
   )
 })

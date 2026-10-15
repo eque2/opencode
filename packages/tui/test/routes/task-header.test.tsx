@@ -91,9 +91,22 @@ test("header: the transcript splits the header part from the other text parts; a
   const split = splitHeader(parts)
   expect(split.header).toEqual(Option.some(whole))
   expect(split.texts).toEqual(["The stored run could not be resumed (x), so a new run started."])
+  // A synthetic part is not the user's: it is left out.
+  expect(splitHeader([...parts, { type: "text" as const, text: "context", synthetic: true }]).texts).toEqual([
+    "The stored run could not be resumed (x), so a new run started.",
+  ])
   // A plain message has no header and keeps every text.
   expect(splitHeader([{ type: "text" as const, text: "hello" }])).toEqual({ header: Option.none(), texts: ["hello"] })
   // Each message reads its own metadata: a later run's header does not change an older one.
   const older = splitHeader([{ type: "text" as const, text: "x", metadata: meta(subtree) }])
   expect(Option.map(older.header, (header) => header.task?.title)).toEqual(Option.some("Compute the next version"))
+})
+
+test("header: the session route's user message splits its parts and draws the header with TaskHeader", async () => {
+  // The route needs the app's providers to render; its user message reads the split and the component.
+  const route = await Bun.file(new URL("../../src/routes/session/index.tsx", import.meta.url)).text()
+  const user = route.slice(route.indexOf("function UserMessage("), route.indexOf("function AssistantMessage("))
+  expect(user).toContain("splitHeader(props.parts)")
+  expect(user).toContain("<TaskHeader theme={theme} header={value()} />")
+  expect(user).not.toMatch(/x\.type === "text" && !x\.synthetic && x\.text/)
 })
