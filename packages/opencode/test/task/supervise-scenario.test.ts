@@ -146,6 +146,37 @@ describe("the scenario supervisor", () => {
     }),
   )
 
+  it.live("asks for a missing verdict once per session, then a second session, then rejects with no verdict", () =>
+    Effect.gen(function* () {
+      const root = yield* repository()
+      const plan = yield* loadPlan("release-notes.spec")
+      const holder: { actor?: Supervisor } = {}
+      // The judge always calls verdict, never with S2's id.
+      const elsewhere = judging(holder, [{ id: "S9", verdict: "trusted" }])
+      const turns = [elsewhere, elsewhere, elsewhere, elsewhere, elsewhere, elsewhere]
+      const setup = { plan, ...(yield* runOf({ plan, directory: root, stored: verifyingS2(plan), turns })) }
+      holder.actor = yield* spawn(setup, "S2")
+      yield* stored(setup.id, 1)
+      yield* quiet(holder.actor)
+      yield* settle
+      expect(yield* storedFacts(setup.id)).toMatchObject([
+        { type: "scenario.verified", verdict: { id: "S2", verdict: "rejected", reason: "no verdict" } },
+      ])
+      // Session 1: ask, askMissing; session 2: ask, askMissing; no third ask in either session.
+      const prompts = setup.seen.prompts
+      expect(prompts).toHaveLength(4)
+      expect(prompts[1]?.session).toBe(prompts[0]?.session)
+      expect(prompts[3]?.session).toBe(prompts[2]?.session)
+      expect(prompts[2]?.session).not.toBe(prompts[0]?.session)
+      expect(prompts.map((item) => item.text.startsWith("task-harness role=verifier scenario=S2"))).toEqual([
+        true,
+        false,
+        true,
+        false,
+      ])
+    }),
+  )
+
   it.live("asks in a second session when the first gave nothing, and rejects with no verdict after that", () =>
     Effect.gen(function* () {
       const root = yield* repository()
