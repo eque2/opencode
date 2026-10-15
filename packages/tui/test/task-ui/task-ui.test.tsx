@@ -779,19 +779,18 @@ test("bar: UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ �
 })
 
 test("bar: UI14 UI12 the diamond moves only while live and with animations on; every Brand site carries it", async () => {
-  const motion = () => true
-  const props = async (input: Status, design: number, now?: number) => ({
+  const props = async (input: Status, design: number, now?: number, on = true) => ({
     ...(await view(none, input, design)),
-    motion,
+    motion: () => on,
     ...(now === undefined ? {} : { view: (await viewFor(input, { design, now })).view }),
   })
-  // The spinners at each site, motion on: the Ledger, the Dock, the HUD, the full screen, the Ticker dialog, the bar.
-  const sites = async (input: Status, now?: number) => {
-    const ledger = await props(input, 1, now)
-    const dock = await props(input, 2, now)
-    const hud = await props(input, 6, now)
-    const screen = await props(input, 3, now)
-    const ticker = await props(input, 7, now)
+  // Each site: the Ledger, the Dock, the HUD, the full screen, the Ticker dialog, the bar.
+  const sites = async (input: Status, now?: number, on = true) => {
+    const ledger = await props(input, 1, now, on)
+    const dock = await props(input, 2, now, on)
+    const hud = await props(input, 6, now, on)
+    const screen = await props(input, 3, now, on)
+    const ticker = await props(input, 7, now, on)
     return [
       await marks(() => <LedgerView {...ledger} width={38} />),
       await marks(() => <DockView {...dock} width={160} />),
@@ -799,13 +798,24 @@ test("bar: UI14 UI12 the diamond moves only while live and with animations on; e
       await marks(() => <Screen {...screen} width={160} height={40} />),
       await marks(() => <TickerDialog {...ticker} />),
       await marks(() => <ShortcutBar {...ledger} width={200} />),
-    ].map((site) => site.found.length)
+    ]
   }
   // Live, motion on: each site has the spinner.
-  expect((await sites(status)).map((found) => found >= 1)).toEqual([true, true, true, true, true, true])
-  // Ended, or standing still (a minute past the heartbeat), motion on: no spinner at any site, a static ◆.
-  expect(await sites(ended)).toEqual([0, 0, 0, 0, 0, 0])
-  expect(await sites(status, (status.run.aliveAt ?? 0) + 60_000)).toEqual([0, 0, 0, 0, 0, 0])
+  expect((await sites(status)).map((site) => site.found.length >= 1)).toEqual([true, true, true, true, true, true])
+  // Ended, standing still (a minute past the heartbeat) with motion on, or live with motion off: no spinner at any
+  // site, and each site shows the static mark.
+  const marked = ["◆ In the Flow", "◆ In the Flow", "◆ In the Flow", "◆ In the Flow Board", "◆ In the Flow tasks", "◆ In the Flow Ledger"]
+  for (const [name, shown] of [
+    ["ended", await sites(ended)],
+    ["still", await sites(status, (status.run.aliveAt ?? 0) + 60_000)],
+    ["off", await sites(status, undefined, false)],
+  ] as const) {
+    expect({ name, found: shown.map((site) => site.found.length) }).toEqual({ name, found: [0, 0, 0, 0, 0, 0] })
+    expect({ name, marked: shown.map((site, index) => site.text.includes(marked[index] ?? "")) }).toEqual({
+      name,
+      marked: [true, true, true, true, true, true],
+    })
+  }
   const offProps = { ...(await view(none, status, 1)), motion: () => false }
   const off = await marks(() => <LedgerView {...offProps} width={38} />)
   expect(off.found).toHaveLength(0)
