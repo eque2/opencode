@@ -305,24 +305,28 @@ test("UI14 the plugin's mark moves for a live run with animations on, and stays 
   await writeStatus(dir.path, { ...fixture, run: { ...fixture.run, aliveAt: Date.now() } })
   const first = await load(dir.path)
   expect(await first.shows("In the Flow run: running")).toBe(true)
-  // The cell before the name, sampled for a second: the spinner's frames, more than one of them.
-  const marks = async (plugin: typeof first) => {
+  // The cell before the name, sampled for a second, in the Ledger's header and in the shortcut bar: the spinner's
+  // frames, more than one of them.
+  const marks = async (plugin: typeof first, after: string) => {
     const seen = new Set<string>()
     for (let sample = 0; sample < 20; sample++) {
-      const line = (await plugin.frame()).split("\n").find((item) => item.includes(" In the Flow run: running")) ?? ""
-      seen.add(line.slice(line.indexOf(" In the Flow run: running") - 1, line.indexOf(" In the Flow run: running")))
+      const line = (await plugin.frame()).split("\n").find((item) => item.includes(after)) ?? ""
+      seen.add(line.slice(line.indexOf(after) - 1, line.indexOf(after)))
       await Bun.sleep(50)
     }
     return seen
   }
-  const moving = await marks(first)
-  expect(moving.size).toBeGreaterThan(1)
-  expect([...moving].every((cell) => ["·", "⬩", "⬪", "⬥", "◆"].includes(cell))).toBe(true)
+  for (const after of [" In the Flow run: running", " In the Flow Ledger  "]) {
+    const moving = await marks(first, after)
+    expect({ after, moving: moving.size > 1 }).toEqual({ after, moving: true })
+    expect([...moving].every((cell) => ["·", "⬩", "⬪", "⬥", "◆"].includes(cell))).toBe(true)
+  }
   first.kv.set("animations_enabled", false)
   await first.unload()
   await using second = await load(dir.path, { kv: first.kv })
   expect(await second.shows("In the Flow run: running")).toBe(true)
-  expect([...(await marks(second))]).toEqual(["◆"])
+  for (const after of [" In the Flow run: running", " In the Flow Ledger  "])
+    expect({ after, cells: [...(await marks(second, after))] }).toEqual({ after, cells: ["◆"] })
   await first[Symbol.asyncDispose]()
 })
 

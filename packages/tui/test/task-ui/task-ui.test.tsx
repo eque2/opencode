@@ -716,8 +716,12 @@ test("UI16 the bar's parts per design: the run warning and the outside wait firs
   expect(await barOf(alerted, 7, 300)).toEndWith(
     "In the Flow Ticker  ! spec  /task trust T9 outside wait  3/6 trusted  · 2 stopped  ⊘ T1.4 budget exhausted  ctrl+x o expand  tab select task  ctrl+x w watch",
   )
-  // Not live: the select key reads ctrl+x j/k.
+  // Not live: the select key reads ctrl+x j/k, after the run ended and while it stands still.
   expect(await barOf(ended, 1)).toContain("ctrl+x j/k select task")
+  const still = { ...(await view(none, status, 1)), view: (await viewFor(status, { design: 1, now: (status.run.aliveAt ?? 0) + 60_000 })).view }
+  const stillBar = lineWith(await frame(() => <ShortcutBar {...still} width={240} />, 240, 3), "In the Flow") ?? ""
+  expect(stillBar).toContain("ctrl+x j/k select task")
+  expect(stillBar).not.toContain("tab select task")
   // A narrow bar drops parts from the end and keeps the warning and the outside wait.
   expect(await barOf(alerted, 3, 110)).toEndWith("In the Flow Board  ! spec  /task trust T9 outside wait")
   // The tones: the warning parts in the warning tone, the stopped count in the error tone.
@@ -766,6 +770,7 @@ test("bar: UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ �
   expect(still.found).toHaveLength(0)
   const diamond = still.spans.lines.flatMap((line) => line.spans).find((span) => span.text.startsWith("◆"))
   expect(((diamond?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(false)
+  expect([diamond?.fg.r, diamond?.fg.g, diamond?.fg.b]).toEqual([theme.accent.r, theme.accent.g, theme.accent.b])
   // The name keeps its weight when the mark stops: bold in both forms.
   const stillName = still.spans.lines.flatMap((line) => line.spans).find((span) => span.text.includes("In the Flow"))
   expect(((stillName?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(true)
@@ -854,6 +859,51 @@ test("bar: UI14 each design's own mark gets the host's motion setting from its c
     expect({ design, on: (await hosted(design, true)) > 0 }).toEqual({ design, on: true })
     expect({ design, off: await hosted(design, false) }).toEqual({ design, off: 0 })
   }
+})
+
+test("bar: UI14 the watch view's band gets the host's motion setting from its context", async () => {
+  const banded = async (motion: boolean) => {
+    const { view, listen } = await viewFor(live({ "T1.4": "building" }), { design: 1 })
+    view.select("T1.4")
+    view.setWatching(true)
+    await settle()
+    const slots: Record<string, () => JSX.Element> = {}
+    const api = {
+      slots: { register: (input: { slots: Record<string, () => JSX.Element> }) => void Object.assign(slots, input.slots) },
+      state: { session: { get: () => undefined, permission: () => [], question: () => [] } },
+      route: { current: { name: "home" }, navigate: () => {} },
+      keymap: { registerLayer: () => () => {}, getCommands: () => [] },
+      ui: { toast: () => {} },
+    }
+    const ctx: Ctx = {
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) registerWatch reads only the slots, state, route, keymap and ui members above
+      api: api as unknown as TuiPluginApi,
+      view,
+      sessions: none,
+      theme: () => theme,
+      active: () => true,
+      leader: "ctrl+x",
+      root: () => "ses_root",
+      owns: () => true,
+      harness: () => builders.map((item) => ({ ...item, unit: "T1.4", tokens: 0, cost: 0 })),
+      logs: () => [],
+      motion: () => motion,
+    }
+    const stop = createRoot((dispose) => {
+      registerWatch(ctx, listen)
+      return dispose
+    })
+    await settle()
+    const node = slots.session_watch
+    if (!node) throw new Error("the watch view registered no slot")
+    const shown = await marks(node, 120, 20)
+    stop()
+    return shown
+  }
+  const on = await banded(true)
+  expect(on.text).toContain("watch only")
+  expect(on.found).toHaveLength(1)
+  expect((await banded(false)).found).toHaveLength(0)
 })
 
 test("bar: UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
