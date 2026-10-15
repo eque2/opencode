@@ -119,6 +119,47 @@ describe("the taskView machine (AD-16)", () => {
       }),
     ))
 
+  test("select.next and select.previous step one row forward and back through three rows, wrapping round", () =>
+    run(
+      Effect.gen(function* () {
+        const three = statusText(
+          {},
+          {
+            "T1.1": { state: "building", tags: ["active"], attempts: 1, waitingOn: [] },
+            "T1.2": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.1"] },
+            "T1.3": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.2"] },
+          },
+        )
+        const v = yield* view([file(three)])
+        yield* settle
+        const selected = Effect.map(v.context, TaskView.selected)
+        expect(yield* selected).toEqual(Option.some("T1.1"))
+        yield* v.send({ type: "select.next" })
+        expect(yield* selected).toEqual(Option.some("T1.2"))
+        yield* v.send({ type: "select.next" })
+        expect(yield* selected).toEqual(Option.some("T1.3"))
+        yield* v.send({ type: "select.next" })
+        expect(yield* selected).toEqual(Option.some("T1.1"))
+        yield* v.send({ type: "select.previous" })
+        expect(yield* selected).toEqual(Option.some("T1.3"))
+        yield* v.send({ type: "select.previous" })
+        expect(yield* selected).toEqual(Option.some("T1.2"))
+      }),
+    ))
+
+  test("an unchanged status text read later moves the clock: a heartbeat that stops makes the view still", () =>
+    run(
+      Effect.gen(function* () {
+        const text = statusText({ tags: ["active"], aliveAt: NOW })
+        const v = yield* view([file(text, NOW), file(text, NOW + 15_001)])
+        yield* settle
+        expect(stateOf((yield* v.snapshot).value, "liveness")).toBe("live")
+        yield* v.advance(1_000)
+        expect((yield* v.context).now).toBe(NOW + 15_001)
+        expect(stateOf((yield* v.snapshot).value, "liveness")).toBe("still")
+      }),
+    ))
+
   test("keeps the read's mtime, proof logs and clock in the context", () =>
     run(
       Effect.gen(function* () {
