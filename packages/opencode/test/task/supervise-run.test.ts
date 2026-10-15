@@ -156,6 +156,7 @@ const inputOf = (setup: Setup, options: Options): RunSupervisor.Input => ({
   resumed: options.resumed ?? false,
   path: setup.plan.path,
   trusts: options.trusts ?? Effect.succeed([]),
+  externals: [],
   release: options.release ?? Effect.void,
   writer: setup.recorder.writer,
 })
@@ -235,12 +236,17 @@ describe("the run supervisor's start", () => {
         const plan = yield* loadPlan("release-notes.spec")
         const setup = yield* runSetup(plan, [])
         const gate = yield* Deferred.make<void>()
-        const slowStart = fromEffect(({ input }: { input: { run: TaskWorkers.Run; resumed: boolean; path: string } }) =>
-          Effect.gen(function* () {
-            yield* Deferred.await(gate)
-            yield* TaskWorkers.record(input.run, { type: "run.started", base: input.run.base, path: input.path })
-            return yield* Clock.currentTimeMillis
-          }),
+        const slowStart = fromEffect(
+          ({
+            input,
+          }: {
+            input: { run: TaskWorkers.Run; resumed: boolean; path: string; externals: ReadonlyArray<string> }
+          }) =>
+            Effect.gen(function* () {
+              yield* Deferred.await(gate)
+              yield* TaskWorkers.record(input.run, { type: "run.started", base: input.run.base, path: input.path })
+              return yield* Clock.currentTimeMillis
+            }),
         )
         const actor = yield* supervise(setup, { actors: { start: slowStart }, trusts: Effect.succeed(["T9"]) })
         expect((yield* actor.getSnapshot).value).toBe("starting")
@@ -1141,12 +1147,17 @@ describe("the job's cancel (SV4, SV25)", () => {
       const setup = yield* runSetup(plan, [facts().runStarted()])
       const harness = yield* TaskHarness.make
       const gate = yield* Deferred.make<void>()
-      const slowStart = fromEffect(({ input }: { input: { run: TaskWorkers.Run; resumed: boolean; path: string } }) =>
-        Effect.gen(function* () {
-          yield* Deferred.await(gate)
-          yield* TaskWorkers.record(input.run, { type: "run.resumed", base: input.run.base, path: input.path })
-          return yield* Clock.currentTimeMillis
-        }),
+      const slowStart = fromEffect(
+        ({
+          input,
+        }: {
+          input: { run: TaskWorkers.Run; resumed: boolean; path: string; externals: ReadonlyArray<string> }
+        }) =>
+          Effect.gen(function* () {
+            yield* Deferred.await(gate)
+            yield* TaskWorkers.record(input.run, { type: "run.resumed", base: input.run.base, path: input.path })
+            return yield* Clock.currentTimeMillis
+          }),
       )
       yield* harness.spawnRun(setup.id, logicOf({ actors: { start: slowStart } }), inputOf(setup, { resumed: true }))
       const cancelling = yield* Effect.forkChild(RunSupervisor.cancel(harness, setup.run))

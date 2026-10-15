@@ -21,7 +21,7 @@ import { TaskRecorder } from "./recorder"
 import type { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
 import { RunSupervisor } from "./supervise/run"
-import type { TaskWorkers } from "./workers"
+import { TaskWorkers } from "./workers"
 import { TaskWorkspace } from "./workspace"
 
 // `/task` of the task harness. `SessionPrompt.command` calls `run` before it reads any template, so no model
@@ -120,6 +120,10 @@ export const plan = (input: {
   }
 }
 
+/** The scenarios a plan leaves out: each needs a task that is neither in the run nor an `outside` precondition. */
+export const leftOut = (plan: Plan): ReadonlyArray<string> =>
+  plan.spec.scenarios.filter((scenario) => !plan.scenarios.includes(scenario)).map((scenario) => scenario.id)
+
 /** The one line a `/task` gets while another run is live in the directory (AD-19; EXPERIENCE "Busy reply"). */
 export const busyLine = (live: TaskHarness.Live) =>
   `Not started: the run of ${live.spec} is live in this directory (/task ${live.path}). One run at a time: wait for it to end, or stop it in its own session with ctrl+x w, then esc twice.`
@@ -166,6 +170,52 @@ export const sliceOf = (plan: Plan, stored: ReadonlyArray<Fact>, path: string): 
       ),
   })
 
+/** What the D13 trust walk found for a folder task outside a subtree run (AD-15, SD-13). */
+export type FolderTrust =
+  | { readonly kind: "trusted" }
+  | { readonly kind: "untrusted" }
+  /** A slice newer than any deciding slice whose path no longer loads, or whose fold dies. */
+  | { readonly kind: "blocked"; readonly path: string }
+
+// The plan a stored slice ran, from its path; none when the path no longer names the spec or one of its task folders.
+const slicePlan = (spec: BlendModel.Spec, specPath: string, path: string): Option.Option<Plan> => {
+  if (path === specPath) return Option.some(plan({ spec, specPath, path, root: Option.none() }))
+  if (!path.startsWith(`${specPath}/`)) return Option.none()
+  const rel = path.slice(specPath.length + 1)
+  const root = Option.fromNullishOr(TASK_FOLDER.exec(rel.split("/").at(-1) ?? "")?.[1])
+  if (Option.isNone(root) || TaskWorkers.folderOf(spec, root.value) !== rel) return Option.none()
+  return Option.some(plan({ spec, specPath, path, root }))
+}
+
+/**
+ * The trust of a folder task outside a subtree run (AD-15, SD-13): the stored slices from the newest back, each folded
+ * through its own plan's machine; the first whose plan holds the task, as a task or an external region, decides. A
+ * slice whose path no longer loads blocks the walk when it comes before that slice. Trust typed with `/task trust`
+ * never counts: it lives on the directory aggregate.
+ */
+export const folderTrust = (
+  spec: BlendModel.Spec,
+  specPath: string,
+  stored: ReadonlyArray<Fact>,
+  id: string,
+): Effect.Effect<FolderTrust> => {
+  const walk = (slices: ReadonlyArray<ReadonlyArray<Fact>>): Effect.Effect<FolderTrust> => {
+    const facts = slices.at(-1)
+    if (facts === undefined) return Effect.succeed({ kind: "untrusted" })
+    const path = pathOf(facts, specPath)
+    const own = slicePlan(spec, specPath, path)
+    if (Option.isNone(own)) return Effect.succeed({ kind: "blocked", path })
+    if (!own.value.tasks.some((task) => task.id === id) && !own.value.external.includes(id)) return walk(slices.slice(0, -1))
+    return Effect.try(() => TaskEvents.fold(TaskEngineXState.XStateEngine, own.value, facts)).pipe(
+      Effect.map((snapshot): FolderTrust => ({
+        kind: TaskEngineXState.unitState(snapshot, id) === "trusted" ? "trusted" : "untrusted",
+      })),
+      Effect.orElseSucceed((): FolderTrust => ({ kind: "blocked", path })),
+    )
+  }
+  return walk(TaskEvents.slices(stored))
+}
+
 /**
  * The base branch a resumed slice started on: a resume must use the same branch, because the leaves merged so far are
  * there. None for a new slice, or a slice stored before `run.started` recorded its base.
@@ -179,14 +229,14 @@ export const unfinishedBase = (slice: Slice): Option.Option<string> =>
  * The reply to a `/task` that started its job. A stored slice whose fold died is named, so the user knows the run did
  * not resume (SV26).
  */
-export const startedLine = (args: string, slice: Slice) =>
+export const startedLine = (args: string, slice: Slice, left: ReadonlyArray<string> = []) =>
   `Task harness: running ${args} in the background. Its status is in .opencode/task/status.json.${Option.match(
     slice.kind === "new" ? slice.died : Option.none<string>(),
     {
       onNone: () => "",
       onSome: (error) => ` The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
     },
-  )}`
+  )}${left.length === 0 ? "" : ` Left out: ${left.join(", ")} — they need tasks outside this run.`}`
 
 /** Everything the job of a run needs, resolved by `/task`. */
 export interface Start {
@@ -200,6 +250,8 @@ export interface Start {
   /** The `/task` path, normalised: the slice's `path`. */
   readonly path: string
   readonly slice: Slice
+  /** The external regions the D13 walk found trusted (AD-15). */
+  readonly externals: ReadonlyArray<string>
   readonly root: SessionID
   readonly model: TaskSessions.Model
   readonly limits: TaskLimits.Limits
@@ -257,6 +309,7 @@ export const job = Effect.fn("TaskCommand.job")(function* (start: Start) {
         resumed: start.slice.kind === "resume",
         path: start.path,
         trusts,
+        externals: start.externals,
         release: start.harness.release(start.directory, start.id),
         writer: recorder.writer,
       })
@@ -323,8 +376,8 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const failed = (spec: string, lines: ReadonlyArray<string>) =>
       refuse(spec, lines, Option.some(`Fix each line, then type /task ${args} again.`))
     const plain = (spec: string, line: string) => refuse(spec, [line], Option.none())
-    // The checks run in the AD-19 order: usage, loader, task folder, the live run, git, the unfinished base, then the
-    // claim and the job.
+    // The checks run in the AD-19 order: usage, loader, task folder, the live run, git, the unfinished base, the D13
+    // check of a subtree run, then the claim and the job.
     if (Option.isNone(found)) return yield* failed(args, [`R1 ${args}: not inside a \`<slug>.spec\` folder`])
     const specDir = found.value
     const specPath = path.relative(directory, specDir)
@@ -364,7 +417,8 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const runPath = normalizedPath(path, directory, target)
     const runPlan = plan({ spec, specPath, path: runPath, root })
     const id = TaskEvents.runID(directory, specPath)
-    const slice = yield* sliceOf(runPlan, yield* TaskEvents.read(env.db, id), runPath)
+    const stored = yield* TaskEvents.read(env.db, id)
+    const slice = yield* sliceOf(runPlan, stored, runPath)
     // A resumed slice must keep its base branch: the leaves merged so far are there.
     const startedOn = unfinishedBase(slice)
     if (Option.isSome(startedOn) && startedOn.value !== base) {
@@ -373,7 +427,25 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
         `the unfinished run of ${specPath} started on the branch ${startedOn.value}; switch back to it to resume the run`,
       )
     }
-    // The D13 check of a subtree run (T3.4) goes here, before the claim.
+    // A subtree run needs each folder task outside it that a run task is after to be trusted (D13, AD-15).
+    const trusts = yield* Effect.forEach(runPlan.external, (other) =>
+      Effect.map(folderTrust(spec, specPath, stored, other), (trust) => ({ other, trust })),
+    )
+    const blocked = trusts.flatMap((item) => (item.trust.kind === "blocked" ? [item.trust.path] : []))[0]
+    if (blocked !== undefined) {
+      return yield* plain(
+        specPath,
+        `the stored run of /task ${blocked} no longer loads; run the whole spec once to record a newer run`,
+      )
+    }
+    const untrusted = trusts.filter((item) => item.trust.kind === "untrusted").map((item) => item.other)
+    if (untrusted.length > 0) {
+      const lines = untrusted.map((other) => {
+        const task = runPlan.tasks.find((item) => item.afterEffective.includes(other))?.id ?? Option.getOrElse(root, () => "")
+        return `R12 ${TaskWorkers.folderOf(spec, task)}: ${task} is after ${other}, which is outside this run and not trusted`
+      })
+      return yield* refuse(specPath, lines, Option.some(`Run the whole spec, or a folder that holds ${untrusted.join(" and ")}.`))
+    }
 
     const claimed = yield* harness.claim({ directory, runID: id, spec: specPath, path: runPath })
     if (claimed.kind === "busy") return yield* reply(busyLine(claimed))
@@ -395,6 +467,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
           plan: runPlan,
           path: runPath,
           slice,
+          externals: runPlan.external,
           root: input.sessionID,
           model,
           limits,
@@ -409,7 +482,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
       yield* harness.release(directory, id)
       return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
     }
-    return yield* reply(startedLine(args, slice))
+    return yield* reply(startedLine(args, slice, leftOut(runPlan)))
   }, Effect.provide(platform))
 
 export * as TaskCommand from "./command"

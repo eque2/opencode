@@ -126,6 +126,14 @@ export const latestRun = (facts: ReadonlyArray<Fact>): Option.Option<ReadonlyArr
   return start < 0 ? Option.none() : Option.some(facts.slice(start))
 }
 
+/** Every stored slice, oldest first: each from its `run.started` up to the next. */
+export const slices = (facts: ReadonlyArray<Fact>): ReadonlyArray<ReadonlyArray<Fact>> =>
+  facts.flatMap((fact, index) => {
+    if (fact.type !== "run.started") return []
+    const next = facts.findIndex((other, at) => at > index && other.type === "run.started")
+    return [facts.slice(index, next < 0 ? facts.length : next)]
+  })
+
 /** The `outside` ids that the facts record as trusted. */
 export const trustedOutside = (facts: ReadonlyArray<Fact>): ReadonlyArray<string> =>
   facts.flatMap((fact) => (fact.type === "outside.trusted" ? [fact.id] : []))

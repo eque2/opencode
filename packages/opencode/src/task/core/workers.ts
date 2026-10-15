@@ -482,8 +482,8 @@ export interface Stale {
 
 const staleOf = (spec: Option.Option<BlendModel.Spec>, stale: Stale["stale"]): Stale => ({ spec, stale })
 
-// A task's folder, relative to the spec folder: `T1-release-notes.task/T1.2-version-bump.task`.
-const folderOf = (spec: BlendModel.Spec, id: string): string => {
+/** A task's folder, relative to the spec folder: `T1-release-notes.task/T1.2-version-bump.task`. */
+export const folderOf = (spec: BlendModel.Spec, id: string): string => {
   const task = spec.tasks.find((item) => item.id === id)
   if (task === undefined) return id
   const own = `${task.id}-${task.slug}.task`

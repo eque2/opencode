@@ -42,6 +42,8 @@ export interface Input {
   readonly path: string
   /** The outside ids the directory recorded as trusted before this run. */
   readonly trusts: Effect.Effect<ReadonlyArray<string>>
+  /** The external regions the command found trusted in the stored slices (AD-15): trusted directly after the start. */
+  readonly externals: ReadonlyArray<string>
   /** Frees the directory lease on the harness root (AD-19). */
   readonly release: Effect.Effect<void>
   /** The Recorder's status writer: it ends after it has written the `done` snapshot. */
@@ -69,6 +71,7 @@ interface Context {
   readonly resumed: boolean
   readonly path: string
   readonly trusts: Effect.Effect<ReadonlyArray<string>>
+  readonly externals: ReadonlyArray<string>
   readonly release: Effect.Effect<void>
   readonly writer: Fiber.Fiber<void, unknown>
   /** The current spec (AD-12): the plan's, then each valid reload. */
@@ -152,15 +155,27 @@ export const readyScenarios = (plan: Plan, snapshot: RunSnapshot) =>
 
 // --- the run's workers ---------------------------------------------------------------------------------------------------
 
-/** The first fact of the job, then the time it was recorded: the run's start. */
-const startRun = (input: { readonly run: TaskWorkers.Run; readonly resumed: boolean; readonly path: string }) =>
+/**
+ * The first fact of the job, then `outside.trusted` for each trusted external region not yet trusted (AD-15: the only
+ * path that moves one), then the time the first fact was recorded: the run's start.
+ */
+const startRun = (input: {
+  readonly run: TaskWorkers.Run
+  readonly resumed: boolean
+  readonly path: string
+  readonly externals: ReadonlyArray<string>
+}) =>
   Effect.gen(function* () {
     yield* TaskWorkers.record(input.run, {
       type: input.resumed ? "run.resumed" : "run.started",
       base: input.run.base,
       path: input.path,
     })
-    return yield* Clock.currentTimeMillis
+    const start = yield* Clock.currentTimeMillis
+    const snapshot = yield* input.run.recorder.actor.getSnapshot
+    for (const id of input.externals.filter((id) => TaskEngineXState.unitState(snapshot, id) === "untrusted"))
+      yield* TaskWorkers.record(input.run, { type: "outside.trusted", id })
+    return start
   })
 
 /** Records `outside.trusted` once for each id that names an untrusted outside region; external regions and tasks never. */
@@ -406,6 +421,7 @@ export const machine = setup({
     resumed: input.resumed,
     path: input.path,
     trusts: input.trusts,
+    externals: input.externals,
     release: input.release,
     writer: input.writer,
     spec: input.run.plan.spec,
@@ -430,7 +446,12 @@ export const machine = setup({
       on: { "run.trust": { actions: assign({ pending: ({ context, event }) => [...context.pending, event.id] }) } },
       invoke: {
         src: "start",
-        input: ({ context }) => ({ run: context.run, resumed: context.resumed, path: context.path }),
+        input: ({ context }) => ({
+          run: context.run,
+          resumed: context.resumed,
+          path: context.path,
+          externals: context.externals,
+        }),
         onDone: {
           target: "trusting",
           actions: assign({ runStart: ({ event }) => Option.getOrElse(event.output, () => 0) }),
