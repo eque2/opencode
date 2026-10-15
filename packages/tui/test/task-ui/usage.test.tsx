@@ -205,3 +205,14 @@ test("UI15 the Ticker dialog's heading names the run's cost", async () => {
   expect(none.captureCharFrame()).not.toContain("$")
   none.renderer.destroy()
 })
+
+test("UI15 the prompt footer reads its text from footerText over the synced sessions, in place of today's figure", async () => {
+  // The prompt needs the app's providers to render; its footer reads the root's own figure and the run's usage.
+  const prompt = await Bun.file(new URL("../../src/component/prompt/index.tsx", import.meta.url)).text()
+  expect(prompt).toContain("return footerText(own, runOf(sync.data.session, props.sessionID), room)")
+  expect(prompt).toContain("<Match when={Option.getOrUndefined(footer())}>")
+  expect(prompt).not.toContain("<Match when={Option.getOrUndefined(usage())}>")
+  // The adapter gives plugins the same synced children.
+  const adapters = await Bun.file(new URL("../../src/plugin/adapters.tsx", import.meta.url)).text()
+  expect(adapters).toContain("return sync.data.session.filter((item) => item.parentID === sessionID)")
+})
