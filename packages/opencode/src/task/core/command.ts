@@ -236,17 +236,34 @@ export const unfinishedBase = (slice: Slice): Option.Option<string> =>
     : Option.none()
 
 /**
- * The reply to a `/task` that started its job. A stored slice whose fold died is named, so the user knows the run did
- * not resume (SV26).
+ * The run header (D17, AD-13): `Implementing spec **<title>**`, or for a subtree run `Implementing **<id> <title>**
+ * from spec **<title>**`, then the scenarios it leaves out; the same as structured metadata, which the TUI draws from.
+ * An empty H1 reads as the spec id; the metadata keeps the title as written.
  */
-export const startedLine = (args: string, slice: Slice, left: ReadonlyArray<string> = []) =>
-  `Task harness: running ${args} in the background. Its status is in .opencode/task/status.json.${Option.match(
-    slice.kind === "new" ? slice.died : Option.none<string>(),
-    {
-      onNone: () => "",
-      onSome: (error) => ` The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+export const header = (plan: Plan) => {
+  const id = TaskStatus.specIdOf(plan.specPath)
+  const title = plan.spec.title === "" ? id : plan.spec.title
+  const root = plan.tasks.find((task) => task.id === plan.root)
+  const left = leftOut(plan)
+  const head = root ? `Implementing **${root.id} ${root.title}** from spec **${title}**` : `Implementing spec **${title}**`
+  // The `Header` as JSON, the type a text part's metadata takes.
+  const task: ReadonlyArray<[string, Schema.MutableJson]> = root ? [["task", { id: root.id, title: root.title }]] : []
+  return {
+    text: left.length === 0 ? head : `${head}\nLeft out: ${left.join(", ")} — they need tasks outside this run.`,
+    metadata: {
+      taskHarness: {
+        header: Object.fromEntries([["spec", { id, title: plan.spec.title }], ...task, ["leftOut", [...left]]]),
+      },
     },
-  )}${left.length === 0 ? "" : ` Left out: ${left.join(", ")} — they need tasks outside this run.`}`
+  }
+}
+
+/** The note after the header when a stored slice's fold died, so the user knows the run did not resume (SV26). */
+export const diedLine = (slice: Slice) =>
+  Option.map(
+    slice.kind === "new" ? slice.died : Option.none<string>(),
+    (error) => `The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+  )
 
 /** Everything the job of a run needs, resolved by `/task`. */
 export interface Start {
@@ -487,7 +504,17 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
       yield* harness.release(directory, id)
       return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
     }
-    return yield* reply(startedLine(args, slice, leftOut(runPlan)))
+    // The run header, then the note of a stored run that could not resume, as its own part.
+    return yield* ops.prompt({
+      sessionID: input.sessionID,
+      agent: input.agent ?? "",
+      model,
+      parts: [
+        { type: "text", ...header(runPlan) },
+        ...Option.toArray(Option.map(diedLine(slice), (text) => ({ type: "text" as const, text }))),
+      ],
+      noReply: true,
+    })
   }, Effect.provide(platform))
 
 export * as TaskCommand from "./command"

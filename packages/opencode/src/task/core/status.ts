@@ -146,7 +146,7 @@ const encode = Schema.encodeSync(Schema.fromJsonString(Status))
 const has = <V>(value: V | undefined): value is V => value !== undefined
 
 /** The spec id of a spec folder: its last path segment. */
-const specIdOf = (spec: string) => spec.split("/").filter((part) => part !== "").at(-1) ?? spec
+export const specIdOf = (spec: string) => spec.split("/").filter((part) => part !== "").at(-1) ?? spec
 
 /**
  * The status of a run (AD-13): the snapshot's meta (through `view`), tags and context, and the plan's static text
