@@ -6,6 +6,7 @@ import {
   type EventObject,
   fromCallback,
   fromEffect,
+  logWarning,
   raise,
   setup,
 } from "@jambudipa/xstate-effect"
@@ -270,6 +271,15 @@ export const machine = setup({
     batchFailureLeft: ({ context }) => context.batchFailures + 1 < MAX_FAILURES,
   },
   actions: {
+    // A failed touch or stale check is logged; it counts toward no failure rule and records no fact.
+    logTouchFailure: logWarning(
+      ({ context, event }) =>
+        `task harness: a heartbeat touch failed in ${context.run.id}: ${message("error" in event ? event.error : event)}`,
+    ),
+    logStaleFailure: logWarning(
+      ({ context, event }) =>
+        `task harness: a stale check failed in ${context.run.id}: ${message("error" in event ? event.error : event)}`,
+    ),
     // Follows a new snapshot: the unit supervisors to spawn and stop, and `unit.moved` for each new entry.
     dispatch: enqueueActions(({ context, event, enqueue }) => {
       if (event.type !== "run.changed") return
@@ -479,7 +489,10 @@ export const machine = setup({
                 src: "touch",
                 input: ({ context }) => ({ run: context.run }),
                 onDone: "beating",
-                onError: "beating",
+                onError: {
+                  target: "beating",
+                  actions: "logTouchFailure",
+                },
               },
             },
             stopped: { type: "final" },
@@ -532,7 +545,10 @@ export const machine = setup({
                       enqueue.sendTo(childId(context.run, kind, unit), { type: "spec.reloaded", spec: spec.value })
                   }),
                 },
-                onError: "waiting",
+                onError: {
+                  target: "waiting",
+                  actions: "logStaleFailure",
+                },
               },
             },
             stopped: { type: "final" },
