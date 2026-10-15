@@ -1,0 +1,1 @@
+A stray file: a spec folder holds only SPEC.md, acceptance/ and task folders.
