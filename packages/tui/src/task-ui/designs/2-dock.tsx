@@ -2,8 +2,12 @@
 import { For, Show } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Peek } from "../peek"
+import { SharedRegion } from "../shared"
 import { bar, counts, glyph, stateColor } from "../store"
 import { Brand, runText, stateText, trustedText, type Ctx, type ViewProps } from "../ui"
+
+/** The rows the Dock gives the shared region; it scrolls beyond them. */
+const REGION = 10
 
 export function DockView(props: ViewProps & { width: number }) {
   const toggle = (id: string) => (props.view.selected() === id ? props.view.toggleExpanded() : props.view.select(id))
@@ -17,6 +21,12 @@ export function DockView(props: ViewProps & { width: number }) {
             {(unit) => (
               <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={props.width} lines={4} />
             )}
+          </Show>
+          {/* The shared region above the strip; the mouse wheel scrolls it (the prompt keeps the keys). */}
+          <Show when={props.view.expanded()}>
+            <box paddingLeft={1} paddingRight={1} backgroundColor={props.theme().backgroundPanel}>
+              <SharedRegion theme={props.theme} view={props.view} width={props.width - 2} height={REGION} />
+            </box>
           </Show>
           <box
             flexDirection="row"

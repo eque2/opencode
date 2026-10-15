@@ -2,12 +2,15 @@
 // floats out under it.
 import { Show } from "solid-js"
 import { Peek } from "../peek"
+import { SharedRegion } from "../shared"
 import { bar, counts, cut, elapsed, glyph, stateColor } from "../store"
 import { Brand, runText, stateText, trustedText, type Ctx, type ViewProps } from "../ui"
 import { span } from "./5-gantt"
 
 const WIDTH = 44
 const PEEK = 64
+/** The rows the HUD gives the shared region; it scrolls beyond them. */
+const REGION = 14
 
 export function HudView(props: ViewProps) {
   const selected = () => props.view.rows().find((row) => row.id === props.view.selected())
@@ -56,6 +59,12 @@ export function HudView(props: ViewProps) {
                 <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={PEEK} lines={5} />
               </box>
             )}
+          </Show>
+          {/* The shared region under the peek; the mouse wheel scrolls it (the prompt keeps the keys). */}
+          <Show when={props.view.expanded()}>
+            <box backgroundColor={props.theme().backgroundPanel} paddingLeft={1} paddingRight={1}>
+              <SharedRegion theme={props.theme} view={props.view} width={PEEK - 2} height={REGION} />
+            </box>
           </Show>
         </box>
       )}

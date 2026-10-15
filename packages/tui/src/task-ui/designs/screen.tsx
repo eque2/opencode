@@ -1,8 +1,10 @@
 // The full-screen frame of designs 3 (Board), 4 (Matrix) and 5 (Gantt): one plugin route, which is how these designs
 // expand. It always shows the selected task's details beside or under the design.
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { Match, Show, Switch, createEffect, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Peek } from "../peek"
+import { SharedRegion, pageBy, regionRows } from "../shared"
 import { DESIGNS, bar, counts, cut, tone } from "../store"
 import { Brand, runText, trustedText, type Ctx, type ViewProps } from "../ui"
 import { BoardView } from "./3-board"
@@ -16,10 +18,26 @@ export const SCREENS: Record<number, "right" | "bottom"> = { 3: "right", 4: "bot
 
 const PEEK_RIGHT = 56
 
-export function Screen(props: ViewProps & { width: number; height: number }) {
+/** The fewest rows the shared region keeps (UI22). */
+export const REGION_MIN = 8
+
+/** Below this many content rows, the Peek's activity lines shrink to one each, before the shared region shrinks. */
+const TALL = 32
+
+export function Screen(props: ViewProps & { width: number; height: number; onScroll?: (box: ScrollBoxRenderable) => void }) {
   const name = () => DESIGNS.find((design) => design.id === props.view.design())?.name ?? ""
   const right = () => SCREENS[props.view.design()] === "right" && Boolean(props.view.selected())
   const body = () => Math.max(20, props.width - 2 - (right() ? PEEK_RIGHT + 1 : 0))
+  // The rows left for the design, the Peek and the shared region: less the header, the reason, the gap and the keys.
+  const room = () => {
+    const status = props.view.status()
+    return props.height - 3 - (status?.run.reason && tone(status.run.state) !== "good" ? 1 : 0)
+  }
+  const lines = () => (room() < TALL ? 1 : right() ? 8 : 4)
+  const region = () => {
+    const status = props.view.status()
+    return status ? Math.max(REGION_MIN, Math.min(regionRows(status, props.width - 2), Math.floor(room() / 2))) : REGION_MIN
+  }
   return (
     <box flexDirection="column" width={props.width} height={props.height} paddingLeft={1} paddingRight={1}>
       <Show when={props.view.status()} fallback={<text fg={props.theme().textMuted}>No task run in this directory.</text>}>
@@ -45,7 +63,7 @@ export function Screen(props: ViewProps & { width: number; height: number }) {
                 {cut(status().run.reason ?? "", props.width - 2)}
               </text>
             </Show>
-            <box flexDirection={SCREENS[props.view.design()] === "right" ? "row" : "column"} flexGrow={1} gap={1} marginTop={1}>
+            <box flexDirection={SCREENS[props.view.design()] === "right" ? "row" : "column"} flexGrow={1} flexShrink={1} gap={1} marginTop={1}>
               <box flexDirection="column" flexGrow={1} flexShrink={1}>
                 <Switch
                   fallback={
@@ -71,13 +89,14 @@ export function Screen(props: ViewProps & { width: number; height: number }) {
                     sessions={props.sessions}
                     unit={unit}
                     width={right() ? PEEK_RIGHT : props.width - 2}
-                    lines={right() ? 8 : 4}
+                    lines={lines()}
                   />
                 )}
               </Show>
             </box>
+            <SharedRegion theme={props.theme} view={props.view} width={props.width - 2} height={region()} onScroll={props.onScroll} />
             <text fg={props.theme().textMuted} wrapMode="none" flexShrink={0}>
-              {`j/k select task · v next design · ${props.leader} w ${props.view.watching() ? "stop watching" : "watch"} · esc collapse`}
+              {`j/k select task · v next design · pgup/pgdn scroll · ${props.leader} w ${props.view.watching() ? "stop watching" : "watch"} · esc collapse`}
             </text>
           </>
         )}
@@ -103,18 +122,25 @@ export function registerScreen(ctx: Ctx) {
       name: ROUTE,
       render: () => {
         const dimensions = useTerminalDimensions()
+        // The shared region's scroll box, for pageup and pagedown.
+        let region: ScrollBoxRenderable | undefined
+        const page = (by: 1 | -1) => () => pageBy(region, by)
         const dispose = ctx.api.keymap.registerLayer({
           commands: [
             { name: "task_ui.screen.collapse", run: () => ctx.view.setExpanded(false) },
             { name: "task_ui.screen.next", run: ctx.view.next },
             { name: "task_ui.screen.previous", run: ctx.view.previous },
             { name: "task_ui.screen.design", run: ctx.view.cycleDesign },
+            { name: "task_ui.screen.page_down", run: page(1) },
+            { name: "task_ui.screen.page_up", run: page(-1) },
           ],
           bindings: [
             { key: "escape,q", cmd: "task_ui.screen.collapse", desc: "Collapse to the session" },
             { key: "j,down", cmd: "task_ui.screen.next", desc: "Select the next task" },
             { key: "k,up", cmd: "task_ui.screen.previous", desc: "Select the previous task" },
             { key: "v", cmd: "task_ui.screen.design", desc: "Switch to the next task design" },
+            { key: "pagedown", cmd: "task_ui.screen.page_down", desc: "Scroll the shared region down" },
+            { key: "pageup", cmd: "task_ui.screen.page_up", desc: "Scroll the shared region up" },
           ],
         })
         onCleanup(dispose)
@@ -126,6 +152,7 @@ export function registerScreen(ctx: Ctx) {
             leader={ctx.leader}
             width={dimensions().width}
             height={dimensions().height}
+            onScroll={(box) => (region = box)}
           />
         )
       },

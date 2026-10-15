@@ -1,12 +1,16 @@
 // Design 7, Ticker: the quietest. Its line is the status part of the shortcut bar beside the prompt; it adds a toast
 // when a task changes state, a notification when the run ends, and expands to a dialog over the session.
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { For, Show, createEffect, on, onCleanup } from "solid-js"
 import { Peek } from "../peek"
+import { SharedRegion, pageBy } from "../shared"
 import { ENDED, MARK, NAME, label, tone, type Status } from "../store"
 import { Brand, TaskLine, type Ctx, type ViewProps } from "../ui"
 
 const LIST = 30
 const PEEK = 72
+/** The rows the dialog gives the shared region; pageup and pagedown scroll it. */
+const REGION = 12
 
 /** The state changes between two snapshots: the run's, then each task's, as `T1.4 building → proving`. */
 export const changes = (before: Status, after: Status) => [
@@ -16,33 +20,36 @@ export const changes = (before: Status, after: Status) => [
   ),
 ]
 
-export function TickerDialog(props: ViewProps) {
+export function TickerDialog(props: ViewProps & { onScroll?: (box: ScrollBoxRenderable) => void }) {
   return (
-    <box flexDirection="row" gap={2} paddingLeft={2} paddingRight={2} paddingBottom={1}>
-      <box flexDirection="column" width={LIST} flexShrink={0}>
-        <text wrapMode="none">
-          <Brand theme={props.theme} />
-          <span style={{ fg: props.theme().textMuted }}> tasks</span>
-        </text>
-        <For each={props.view.rows()}>
-          {(row) => (
-            <TaskLine
-              theme={props.theme}
-              row={row}
-              selected={row.id === props.view.selected()}
-              width={LIST}
-              prefix={"  ".repeat(row.depth)}
-              onClick={() => props.view.select(row.id)}
-            />
-          )}
-        </For>
-        <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
-          j/k select task · esc collapse
-        </text>
+    <box flexDirection="column" paddingLeft={2} paddingRight={2} paddingBottom={1}>
+      <box flexDirection="row" gap={2}>
+        <box flexDirection="column" width={LIST} flexShrink={0}>
+          <text wrapMode="none">
+            <Brand theme={props.theme} />
+            <span style={{ fg: props.theme().textMuted }}> tasks</span>
+          </text>
+          <For each={props.view.rows()}>
+            {(row) => (
+              <TaskLine
+                theme={props.theme}
+                row={row}
+                selected={row.id === props.view.selected()}
+                width={LIST}
+                prefix={"  ".repeat(row.depth)}
+                onClick={() => props.view.select(row.id)}
+              />
+            )}
+          </For>
+          <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
+            j/k select task · pgup/pgdn scroll · esc collapse
+          </text>
+        </box>
+        <Show when={props.view.selected()} keyed>
+          {(unit) => <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={PEEK} lines={6} />}
+        </Show>
       </box>
-      <Show when={props.view.selected()} keyed>
-        {(unit) => <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={PEEK} lines={6} />}
-      </Show>
+      <SharedRegion theme={props.theme} view={props.view} width={LIST + 2 + PEEK} height={REGION} onScroll={props.onScroll} />
     </box>
   )
 }
@@ -77,18 +84,33 @@ export function registerTicker(ctx: Ctx) {
       shown = true
       ctx.api.ui.dialog.replace(
         () => {
+          // The shared region's scroll box, for pageup and pagedown.
+          let region: ScrollBoxRenderable | undefined
+          const page = (by: 1 | -1) => () => pageBy(region, by)
           const dispose = ctx.api.keymap.registerLayer({
             commands: [
               { name: "task_ui.dialog.next", run: ctx.view.next },
               { name: "task_ui.dialog.previous", run: ctx.view.previous },
+              { name: "task_ui.dialog.page_down", run: page(1) },
+              { name: "task_ui.dialog.page_up", run: page(-1) },
             ],
             bindings: [
               { key: "j,down", cmd: "task_ui.dialog.next", desc: "Select the next task" },
               { key: "k,up", cmd: "task_ui.dialog.previous", desc: "Select the previous task" },
+              { key: "pagedown", cmd: "task_ui.dialog.page_down", desc: "Scroll the shared region down" },
+              { key: "pageup", cmd: "task_ui.dialog.page_up", desc: "Scroll the shared region up" },
             ],
           })
           onCleanup(dispose)
-          return <TickerDialog theme={ctx.theme} view={ctx.view} sessions={ctx.sessions} leader={ctx.leader} />
+          return (
+            <TickerDialog
+              theme={ctx.theme}
+              view={ctx.view}
+              sessions={ctx.sessions}
+              leader={ctx.leader}
+              onScroll={(box) => (region = box)}
+            />
+          )
         },
         () => {
           shown = false

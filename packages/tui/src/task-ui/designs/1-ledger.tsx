@@ -1,6 +1,7 @@
 // Design 1, Ledger: the task tree at the top of the sidebar, always in view, with the peek opening under it.
 import { For, Show } from "solid-js"
 import { Peek } from "../peek"
+import { SharedRegion, regionRows } from "../shared"
 import { bar, counts, cut, tone } from "../store"
 import { Brand, TaskLine, runText, treePrefix, trustedText, type Ctx, type ViewProps } from "../ui"
 
@@ -45,6 +46,15 @@ export function LedgerView(props: ViewProps & { width: number }) {
             {(unit) => (
               <Peek theme={props.theme} view={props.view} sessions={props.sessions} unit={unit} width={props.width} lines={3} />
             )}
+          </Show>
+          {/* The shared region at its full height: it scrolls with the sidebar. */}
+          <Show when={props.view.expanded()}>
+            <SharedRegion
+              theme={props.theme}
+              view={props.view}
+              width={props.width}
+              height={regionRows(status(), props.width)}
+            />
           </Show>
         </box>
       )}
