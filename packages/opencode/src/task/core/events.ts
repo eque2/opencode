@@ -104,15 +104,15 @@ const PAGE = 500
 
 /** Every fact of an aggregate, oldest first. */
 export const read = Effect.fn("TaskCore.read")(function* (db: Database.Interface["db"], aggregateID: string) {
-  const loop = (after: number, done: ReadonlyArray<Fact>): Effect.Effect<ReadonlyArray<Fact>> =>
+  const fromSeq = (after: number, done: ReadonlyArray<Fact>): Effect.Effect<ReadonlyArray<Fact>> =>
     Effect.gen(function* () {
       const page = yield* EventV2.readAggregate(db, { aggregateID, after, limit: PAGE, manifest })
       const facts = [...done, ...page.events.map((event) => asFact(event.data.fact))]
       const last = Option.fromNullishOr(page.events.at(-1)?.durable?.seq)
       if (!page.hasMore || Option.isNone(last)) return facts
-      return yield* loop(last.value, facts)
+      return yield* fromSeq(last.value, facts)
     })
-  return yield* loop(-1, [])
+  return yield* fromSeq(-1, [])
 })
 
 /** The facts of the latest run: from its `run.started` on. None when no run ever started. */
