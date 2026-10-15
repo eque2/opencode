@@ -49,7 +49,8 @@ const LIMIT = {
   // measured: 36 353 keys, 361 474 edges (the opt-in stale walk, 55 min at load 5-13)
   stale: 1_100_000,
 }
-const WALK = 60_000
+// The release-notes walk takes 35–50 s alone on a loaded 20-core host; the bound is a hang guard, not an assertion.
+const WALK = 180_000
 const STALE_WALK = 4 * 3_600_000
 
 const stale =
