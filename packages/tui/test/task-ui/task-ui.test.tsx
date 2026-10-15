@@ -823,6 +823,24 @@ test("the Peek reads the session list on each 2 s tick and a session's activity 
   made.dispose()
 })
 
+test("the proof tail is read again on each 500 ms tick of the view", async () => {
+  const folder = await Bun.$`mktemp -d`.text()
+  const file = `${folder.trim()}/T1.4.log`
+  await Bun.write(file, "$ bun test\n")
+  const made = await viewFor(live({ "T1.4": "proving" }))
+  const read = createRoot((dispose) => ({ tail: liveTail(file, made.view), dispose }))
+  for (let tries = 0; tries < 100 && read.tail().text === ""; tries++) await settle()
+  expect(read.tail().text).toBe("$ bun test\n")
+  await Bun.write(file, "$ bun test\n 3 pass\n")
+  await settle()
+  expect(read.tail().text).toBe("$ bun test\n")
+  await made.advance(500)
+  for (let tries = 0; tries < 100 && !read.tail().text.includes("3 pass"); tries++) await settle()
+  expect(read.tail().text).toBe("$ bun test\n 3 pass\n")
+  read.dispose()
+  made.dispose()
+})
+
 test("an esc armed while the run is live stops nothing once the run has ended", async () => {
   const over = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { "T1.4": "budget_exhausted" })
   const plugin = await wired({ status: live({ "T1.4": "building" }), harness: harnessOfT14, later: [over] })

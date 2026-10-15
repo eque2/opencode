@@ -270,7 +270,11 @@ export function liveTail(file: string, view: Pick<View, "ticks">) {
     () => view.ticks().tail,
     () =>
       Effect.runPromise(
-        Effect.tryPromise(() => Bun.file(file).slice(-PROOF_TAIL_BYTES).text()).pipe(
+        // From an offset: a negative slice longer than the file reads nothing.
+        Effect.tryPromise(() => {
+          const log = Bun.file(file)
+          return log.slice(Math.max(0, log.size - PROOF_TAIL_BYTES)).text()
+        }).pipe(
           Effect.map((text) => ({ text, partial: Bun.file(file).size > PROOF_TAIL_BYTES })),
           Effect.orElseSucceed(() => ({ text: "", partial: false })),
         ),
