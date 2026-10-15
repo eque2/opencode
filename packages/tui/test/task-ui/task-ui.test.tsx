@@ -230,7 +230,8 @@ test("every design shows the stopped run", async () => {
   expect(board).toContain("STOPPED 3")
   expect(board).toContain("TRUSTED 3")
   const matrix = await frame(() => <MatrixView {...props} width={110} />)
-  expect(matrix).toContain("SCENARIOS")
+  // T4.6 moved the Matrix's SCENARIOS block to the shared region; its legend names the blocked glyph.
+  expect(matrix).toContain("⊖ blocked")
   expect(matrix).toContain("✗ T1.4.c7 failed")
   expect(await frame(() => <GanttView {...props} width={110} />)).toContain("budget exhausted · attempt 3")
   expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attempt 3")
@@ -255,10 +256,11 @@ test("RM26 the Board shows the blocked tasks of the projected status in STOPPED 
   const board = await frame(() => <BoardView {...props} width={110} />, 110, 40)
   expect(board).toContain("WAITING 0")
   expect(board).toContain("STOPPED 3")
-  // Both blocked cards: the display table's ⊖ (no longer the fallback •), the label, and the reason across the lines.
+  // Both blocked cards: the display table's ⊖ (no longer the fallback •) and the reason across the lines. T4.6
+  // re-baselined the card: a blocked card's state line is its reason, so no separate "blocked" label line.
   expect(board).toContain("⊖ T1.5")
   expect(board).toMatch(/⊖ T1 /)
-  expect(board.match(/│ blocked {2,}│/g)).toHaveLength(2)
+  expect(board.match(/│ blocked {2,}│/g)).toBeNull()
   expect(board.match(/│ blocked by {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ T1\.4: budget {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ exhausted {2,}│/g)).toHaveLength(2)
