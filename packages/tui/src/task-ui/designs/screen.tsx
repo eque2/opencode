@@ -15,6 +15,7 @@ import {
   WarningLines,
   moving,
   reasonLine,
+  refused,
   runText,
   runTitle,
   type Ctx,
@@ -148,7 +149,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                   }
                 >
                   {/* A refused run has no tasks to draw: the body says so, with every reason line (UI17). */}
-                  <Match when={status().run.state === "refused"}>
+                  <Match when={refused(status())}>
                     <text fg={props.theme().text} wrapMode="none">
                       No work started: the spec was refused.
                     </text>

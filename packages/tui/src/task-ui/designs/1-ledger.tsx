@@ -11,6 +11,7 @@ import {
   TrustedCount,
   WarningLines,
   moving,
+  refused,
   runText,
   runTitle,
   treePrefix,
@@ -54,7 +55,7 @@ export function LedgerView(props: ViewProps & { width: number }) {
           </For>
           {/* A refused run has no tasks: every reason line shows (UI17); else the one run reason line. */}
           <Show
-            when={status().run.state === "refused"}
+            when={refused(status())}
             fallback={<ReasonLine theme={props.theme} status={status()} width={props.width} />}
           >
             <For each={(status().run.reason ?? "").split("\n").filter(Boolean)}>

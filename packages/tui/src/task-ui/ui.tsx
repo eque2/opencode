@@ -105,6 +105,12 @@ export const stoppedText = (status: Status) => {
   return stopped > 0 ? ` · ${stopped} stopped` : ""
 }
 
+/**
+ * A refused run (UI17): it stopped with no task at all, as a spec that does not load has none. The tags give a refusal
+ * no tag of its own (AD-13), and the task-ui classifies no state by name (AD-16).
+ */
+export const refused = (status: Status) => tagged(status.run, "stopped") && Object.keys(status.tasks).length === 0
+
 /** The run's title (UI6); the spec id when the spec has none. */
 export const runTitle = (status: Status) =>
   status.run.title || status.run.specId || (status.run.spec.split("/").filter(Boolean).at(-1) ?? status.run.spec)
