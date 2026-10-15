@@ -529,6 +529,25 @@ it.instance("loop exits without an LLM request for interrupted orphan tool calls
   }),
 )
 
+it.instance("a /task header's text part keeps its metadata (T4.10)", () =>
+  Effect.gen(function* () {
+    yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+    const metadata = {
+      taskHarness: { header: { spec: { id: "release-notes.spec", title: "Release notes" }, leftOut: ["S1"] } },
+    }
+    const message = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Implementing spec **Release notes**", metadata }],
+    })
+    expect(message.parts.find((part) => part.type === "text")?.metadata).toEqual(metadata)
+  }),
+)
+
 it.instance("loop calls LLM and returns assistant message", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

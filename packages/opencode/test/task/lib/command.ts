@@ -93,15 +93,15 @@ export const services = (jobs: Jobs) => {
   )
 }
 
-// `/task <args>` in the instance: the replies it sent.
-export const runTask = (harness: TaskHarness.Interface, args: string = SPEC, jobs: Jobs = jobsOf()) =>
+// `/task <args>` in the instance: the prompts it sent, each with its parts and their metadata.
+export const runTaskInputs = (harness: TaskHarness.Interface, args: string = SPEC, jobs: Jobs = jobsOf()) =>
   Effect.gen(function* () {
-    const replies: string[] = []
+    const inputs: TaskOps.PromptInput[] = []
     const ops: TaskOps.Ops = {
       // The reply's message is not read.
       prompt: (input) =>
         Effect.sync(() => {
-          replies.push(input.parts.map((part) => part.text).join(""))
+          inputs.push(input)
           // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the command never reads the reply message, and a real WithParts needs a stored session
           return {} as SessionV1.WithParts
         }),
@@ -109,8 +109,14 @@ export const runTask = (harness: TaskHarness.Interface, args: string = SPEC, job
       currentModel: () => Effect.succeed({ providerID: "test", modelID: "test" }),
     }
     yield* TaskCommand.run({ sessionID: SESSION, arguments: args }, ops, harness).pipe(Effect.provide(services(jobs)))
-    return replies
+    return inputs
   })
+
+// `/task <args>` in the instance: the replies it sent, a reply's parts one line each.
+export const runTask = (harness: TaskHarness.Interface, args: string = SPEC, jobs: Jobs = jobsOf()) =>
+  Effect.map(runTaskInputs(harness, args, jobs), (inputs) =>
+    inputs.map((input) => input.parts.map((part) => part.text).join("\n")),
+  )
 
 export const statusFile = (directory: string) => path.join(directory, ".opencode", "task", "status.json")
 

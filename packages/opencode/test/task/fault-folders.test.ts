@@ -90,9 +90,8 @@ describe("the fault folders under /task (D14)", () => {
         yield* seed(spec)
         const jobs = jobsOf()
         const replies = yield* runTask(yield* TaskHarness.make, spec, jobs)
-        expect(replies).toEqual([
-          `Task harness: running ${spec} in the background. Its status is in .opencode/task/status.json.`,
-        ])
+        // T4.10 re-baselined: the run header names the spec's title.
+        expect(replies).toEqual(["Implementing spec **Word helpers (a subtree run with a folder task outside it)**"])
         expect(jobs.starts).toHaveLength(1)
       }),
     { git: true },

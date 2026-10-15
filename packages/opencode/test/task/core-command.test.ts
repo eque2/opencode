@@ -16,7 +16,19 @@ import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
 import { exhaustLeaf, facts, loadPlan, trustLeaf } from "./lib/machine"
-import { backgroundOf, git, jobsOf, refusalOf, runTask, seed, SESSION, SPEC, statusFile } from "./lib/command"
+import {
+  backgroundOf,
+  git,
+  jobsOf,
+  refusalOf,
+  runTask,
+  runTaskInputs,
+  seed,
+  SESSION,
+  SPEC,
+  statusFile,
+} from "./lib/command"
+import { TaskStatus } from "@/task/core/status"
 import { boundary, eventually } from "./lib/supervise"
 
 // `/task` (spine AD-8, AD-19, AD-6), through the harness of `./lib/command`: the event store, the database and the
@@ -367,7 +379,7 @@ describe("one run per directory (AD-19, SV8)", () => {
         const jobs = jobsOf()
         jobs.mode = "run"
         const replies = yield* runTask(harness, `./${SPEC}/`, jobs)
-        expect(replies[0]).toStartWith("Task harness: running")
+        expect(replies[0]).toStartWith("Implementing spec **Release notes from conventional commits**")
         yield* eventually(
           Effect.map(TaskEvents.read(db.db, id), (list) => list.some((fact) => fact.type === "run.resumed")),
           "run.resumed",
@@ -410,9 +422,7 @@ describe("one run per directory (AD-19, SV8)", () => {
         const harness = yield* TaskHarness.make
         const jobs = jobsOf()
         const replies = yield* runTask(harness, `./${SPEC}/`, jobs)
-        expect(replies).toEqual([
-          `Task harness: running ./${SPEC}/ in the background. Its status is in .opencode/task/status.json.`,
-        ])
+        expect(replies).toEqual(["Implementing spec **Release notes from conventional commits**"])
         const id = TaskEvents.runID(directory, SPEC)
         expect(jobs.starts).toHaveLength(1)
         expect(jobs.starts[0]).toMatchObject({
@@ -441,7 +451,7 @@ describe("one run per directory (AD-19, SV8)", () => {
         expect(Exit.isFailure(failed)).toBe(true)
         expect(yield* harness.live(directory)).toEqual(Option.none())
         jobs.mode = "start"
-        expect((yield* runTask(harness, SPEC, jobs))[0]).toStartWith("Task harness: running")
+        expect((yield* runTask(harness, SPEC, jobs))[0]).toStartWith("Implementing spec")
         expect(jobs.starts).toHaveLength(1)
       }),
     { git: true },
@@ -605,12 +615,13 @@ describe("the slice a /task starts from (SV3, RM8, SV26)", () => {
       // The defect is logged, and the start reply says that a new run started instead of the stored one.
       expect(JSON.stringify(messages)).toContain("task harness: the stored run could not be folded")
       expect(JSON.stringify(messages)).toContain(slice.died.value.slice(0, 40))
-      expect(TaskCommand.startedLine(SPEC, slice)).toBe(
-        `Task harness: running ${SPEC} in the background. Its status is in .opencode/task/status.json. The stored run could not be resumed (${slice.died.value.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+      // T4.10 re-baselined: the note is the header message's second part.
+      expect(TaskCommand.diedLine(slice)).toEqual(
+        Option.some(
+          `The stored run could not be resumed (${slice.died.value.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+        ),
       )
-      expect(TaskCommand.startedLine(SPEC, { kind: "new", died: Option.none() })).toBe(
-        `Task harness: running ${SPEC} in the background. Its status is in .opencode/task/status.json.`,
-      )
+      expect(TaskCommand.diedLine({ kind: "new", died: Option.none() })).toEqual(Option.none())
     }),
   )
 })
@@ -855,7 +866,7 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
         const jobs = jobsOf()
         jobs.mode = "run"
         const replies = yield* runTask(harness, SUB(T1_3), jobs)
-        expect(replies[0]).toStartWith("Task harness: running")
+        expect(replies[0]).toStartWith("Implementing **T1.3 Render the release notes as Markdown** from spec")
         const id = TaskEvents.runID(directory, SPEC)
         const slice = Effect.map(TaskEvents.read(db.db, id), (stored) =>
           Option.getOrElse(TaskEvents.latestRun(stored), (): ReadonlyArray<Fact> => []),
@@ -931,7 +942,9 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
         // The T1.4 subtree's plan holds T1.4 and the external regions T1.2 and T1.3, not T1.1.
         yield* storeSlices(directory, yield* trustedSlice, [f.runStarted(SUB(T1_4))])
         const jobs = jobsOf()
-        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3), jobs))[0]).toStartWith("Task harness: running")
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3), jobs))[0]).toStartWith(
+          "Implementing **T1.3 Render the release notes as Markdown** from spec",
+        )
         expect(jobs.starts).toHaveLength(1)
       }),
     { git: true },
@@ -945,7 +958,9 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
         const plan = yield* loadPlan("release-notes.spec")
         const f = facts()
         yield* storeSlices(directory, [f.runStarted(), ...trustLeaf(plan, f, "T1.1"), f.ended("done")])
-        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith(
+          "Implementing **T1.3 Render the release notes as Markdown** from spec",
+        )
       }),
     { git: true },
   )
@@ -960,7 +975,9 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
           { type: "run.started", at: 1, base: branch, path: SUB(T1_3) },
           { type: "outside.trusted", at: 2, id: "T1.1" },
         ])
-        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith(
+          "Implementing **T1.3 Render the release notes as Markdown** from spec",
+        )
       }),
     { git: true },
   )
@@ -972,7 +989,9 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
         const directory = yield* seeded
         const f = facts(100)
         yield* storeSlices(directory, [f.runStarted(SUB("T1.9-gone.task"))], yield* trustedSlice)
-        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith("Task harness: running")
+        expect((yield* runTask(yield* TaskHarness.make, SUB(T1_3)))[0]).toStartWith(
+          "Implementing **T1.3 Render the release notes as Markdown** from spec",
+        )
       }),
     { git: true },
   )
@@ -1030,8 +1049,23 @@ describe("a subtree run and the folder tasks outside it (D13, AD-15)", () => {
           .filter((scenario) => scenario.needs.some((id) => id !== "T1.1" && !(id in plan.spec.outside)))
           .map((scenario) => scenario.id)
         expect(leftOut.length).toBeGreaterThan(0)
-        expect(yield* runTask(yield* TaskHarness.make, SUB(T1_1))).toEqual([
-          `Task harness: running ${SUB(T1_1)} in the background. Its status is in .opencode/task/status.json. Left out: ${leftOut.join(", ")} — they need tasks outside this run.`,
+        // T4.10 re-baselined: the header names the task and the spec, and lists the left-out scenarios in its
+        // text and its metadata.
+        const [reply] = yield* runTaskInputs(yield* TaskHarness.make, SUB(T1_1))
+        expect(reply?.parts).toEqual([
+          {
+            type: "text",
+            text: `Implementing **T1.1 Parse a conventional-commit message** from spec **Release notes from conventional commits**\nLeft out: ${leftOut.join(", ")} — they need tasks outside this run.`,
+            metadata: {
+              taskHarness: {
+                header: {
+                  spec: { id: "release-notes.spec", title: "Release notes from conventional commits" },
+                  task: { id: "T1.1", title: "Parse a conventional-commit message" },
+                  leftOut,
+                },
+              },
+            },
+          },
         ])
       }),
     { git: true },
@@ -1052,4 +1086,82 @@ describe("the plan of a subtree (AD-15)", () => {
       expect(plan.external).toEqual(["T1.1"])
     }),
   )
+})
+
+describe("the run header (T4.10: UI6, VF8)", () => {
+  it.instance(
+    "header: a whole-spec run's first message reads Implementing spec and the title, with the header as metadata (UI6)",
+    () =>
+      Effect.gen(function* () {
+        yield* seeded
+        const inputs = yield* runTaskInputs(yield* TaskHarness.make, SPEC)
+        expect(inputs).toHaveLength(1)
+        expect(inputs[0]?.noReply).toBe(true)
+        expect(inputs[0]?.parts).toEqual([
+          {
+            type: "text",
+            text: "Implementing spec **Release notes from conventional commits**",
+            metadata: {
+              taskHarness: {
+                header: {
+                  spec: { id: "release-notes.spec", title: "Release notes from conventional commits" },
+                  leftOut: [],
+                },
+              },
+            },
+          },
+        ])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "header: an empty H1 falls back to the spec id in the same bold style; the metadata keeps the empty title",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const fs = yield* FileSystem.FileSystem
+        const file = path.join(directory, SPEC, "SPEC.md")
+        const text = yield* fs.readFileString(file)
+        yield* fs.writeFileString(file, text.replace("# Release notes from conventional commits", "#"))
+        yield* git(directory, "commit", "-qam", "untitled spec")
+        const [reply] = yield* runTaskInputs(yield* TaskHarness.make, SPEC)
+        expect(reply?.parts[0]?.text).toBe("Implementing spec **release-notes.spec**")
+        expect(reply?.parts[0]?.metadata).toEqual({
+          taskHarness: { header: { spec: { id: "release-notes.spec", title: "" }, leftOut: [] } },
+        })
+      }),
+    { git: true },
+  )
+
+  it.live("header: status.json carries the title, the spec id when it is empty, and a subtree run's task", () =>
+    Effect.gen(function* () {
+      const whole = yield* loadPlan("release-notes.spec")
+      const started = facts().runStarted()
+      const status = TaskStatus.project(whole, [started])
+      expect(status.run.title).toBe("Release notes from conventional commits")
+      expect("task" in status.run).toBe(false)
+      expect(TaskStatus.project({ ...whole, spec: { ...whole.spec, title: "" } }, [started]).run.title).toBe(
+        "release-notes.spec",
+      )
+      const subtree = yield* loadPlan("release-notes.spec", "T1.2")
+      expect(TaskStatus.project(subtree, [started]).run.task).toEqual({ id: "T1.2", title: "Compute the next version" })
+      expect(TaskCommand.header(subtree).text).toStartWith(
+        "Implementing **T1.2 Compute the next version** from spec **Release notes from conventional commits**",
+      )
+    }),
+  )
+
+  test("header: the reply rides the Ops text parts with their metadata; src/task imports no SessionPrompt", async () => {
+    const files = Array.from(new Bun.Glob("**/*.ts").scanSync({ cwd: path.join(import.meta.dir, "../../src/task") }))
+    expect(files.length).toBeGreaterThan(10)
+    for (const file of files) {
+      const text = await Bun.file(path.join(import.meta.dir, "../../src/task", file)).text()
+      expect({ file, imports: /from "@\/session\/prompt"/.test(text) }).toEqual({ file, imports: false })
+    }
+    // SessionPrompt's taskOps hands the parts on whole, metadata included.
+    const prompt = await Bun.file(path.join(import.meta.dir, "../../src/session/prompt.ts")).text()
+    const ops = prompt.slice(prompt.indexOf("const taskOps: TaskOps.Ops = {"), prompt.indexOf("cancel: (sessionID) =>"))
+    expect(ops).toContain("parts: input.parts,")
+  })
 })
