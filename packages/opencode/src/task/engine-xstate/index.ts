@@ -1,892 +1,188 @@
-import { Effect } from "effect"
-import { and, assign, getInitialSnapshot, not, or, setup, stateIn, transition } from "@jambudipa/xstate-effect"
+import { Effect, Option, Predicate } from "effect"
+import { transition, initialTransition } from "@jambudipa/xstate-effect"
 import type {
-  Engine,
   Fact,
-  History,
   ObligationModel,
   ObligationState,
   Plan,
-  Result,
   RunState,
   ScenarioModel,
   ScenarioState,
   State,
   TaskModel,
   TaskState,
-  Verdict,
 } from "@/task/core/model"
+import {
+  byId,
+  CLASS,
+  type Cause,
+  type Meta,
+  type RunMachine,
+  type RunSnapshot,
+  type Slot,
+  TAGS,
+  TaskMachine,
+} from "./machine"
 
-// The task harness's engine: the lifecycle on @jambudipa/xstate-effect. The runner records facts; this module folds
-// them into `State` (`@/task/core/model`), history included.
+// The task harness's engine (spine AD-6): a pure fold of the stored facts through the run machine of the plan
+// (`./machine`). The runner records each fact; this module folds it into the machine's snapshot and reads the
+// snapshot back.
 //
-// The lifecycle is four machines, joined by fold code: obligation, task, scenario and run. A task is one machine with
-// two parallel regions: `evidence` holds what the task's obligations prove (open, proved, reopened, stale, trusted),
-// and `work` holds the task's own state (waiting ... trusted, and the end states). The context holds the attempts,
-// the budget, the worktree/branch/base/head/session, the reason and one slot per obligation (its state, hash and
-// reason). Facts are the events. Guards are named entries of each machine's registry; every context change is a
-// named `assign` action. One obligation's move is a transition of the obligation machine, which the evidence
-// region's `moveObligations` action runs for each slot. The run follows a task into its end states through the
-// internal `task.moved` event, which the fold sends after every task move; `cancel` cancels the tasks before the
-// run. A machine config is static, but a run's tasks, obligations and scenarios come from its spec, so the fold
-// keeps one machine per unit and rebuilds only the unit a fact names.
-//
-// `apply` is a pure fold step: it rebuilds the affected unit's snapshot from `State` (`machine.resolveState` from
-// the state value and the context), runs the pure `transition` synchronously (the machines have no actors and no
-// delays) and maps the next snapshot back to `State`. Each transition's actions append their history entries
-// (`context.log`) in document order: the evidence region comes first, so its obligation entries precede the task's.
-// A step whose log stays empty changed nothing, and `apply` returns the state it received. Resume is the same fold
-// over the stored facts.
-//
-// - Timeouts are not delayed transitions: a pure fold over stored facts cannot fire a delay. The runner measures
-//   stream stalls, proof time-outs and wall clocks and records them as facts (`task.stalled`, `task.proved` with a
-//   `timed out` reason, ...).
-// - Cost: about 250 µs per `apply` on the release-notes plan (one machine resolved and transitioned per unit a
-//   fact touches; a proof or verdict fact runs the obligation machine once per obligation of the task). A run
-//   folds a few hundred facts, so this stays far below a model turn.
-// - `State` has no field for the evidence region (it keeps only the obligation states). A rebuilt snapshot
-//   therefore puts the region in its transient `assessing` state, whose eventless rows settle it on what the slots
-//   show within the step. No guard reads the region, so this changes no decision.
+// - `initial(plan)` is the machine's first snapshot; `apply(plan, snapshot, fact)` is one pure `transition`. When a
+//   fact changes nothing, the port returns the identical snapshot and `apply` returns it. Resume is the same fold
+//   over the stored facts of the slice.
+// - `apply` returns its input once the run is `done`: a live actor drops events after `done`, but a pure
+//   `transition` on a `done` snapshot still runs a microstep. Any other status that is not `active` is a defect
+//   (SD-16): a machine error must never become a run that stands still.
+// - A snapshot belongs to the machine that made it, so `apply` dies on a snapshot of another plan's machine.
+// - The selectors read a snapshot through its tags, its meta and its context; `view` gives the `State` shape that
+//   the status projection reads. No function takes a `State` to compute a next state.
+// - Cost: about 1–10 ms for a fact on the release-notes plan (the machine checks every eventless row of the units
+//   that have not started on each microstep), and tens of ms for `initial`. A fold of a few hundred facts stays
+//   near a second, far below a model turn.
 
-type FactOf<T extends Fact["type"]> = Extract<Fact, { readonly type: T }>
-type TaskFact = Extract<Fact, { readonly task: string }>
+export type { RunSnapshot }
+export { byId }
 
-/** A task machine's events: its own facts, the cancel of the run and the staleness of one of its obligations. */
-type TaskEvent = TaskFact | FactOf<"run.cancelled" | "obligation.stale">
-
-/** What the fold sends the run after a task moved; the run follows the task into some of its end states. */
-interface TaskMoved {
-  readonly type: "task.moved"
-  readonly at: number
-  readonly task: string
-  readonly state: TaskState
-  readonly reason?: string
+/** The harness engine: a pure fold of facts into the run machine's snapshot. */
+export interface Engine {
+  readonly name: "xstate"
+  readonly initial: (plan: Plan) => RunSnapshot
+  readonly apply: (plan: Plan, snapshot: RunSnapshot, fact: Fact) => RunSnapshot
 }
 
-type RunEvent = FactOf<"run.started" | "run.resumed" | "run.ended" | "run.cancelled" | "outside.trusted"> | TaskMoved
-type ScenarioEvent = FactOf<"scenario.proved" | "scenario.verified">
+// The boundary of the synchronous engine: every Effect here is pure and synchronous (no actors, no delays), and a
+// failure is a defect of the machine.
+const runPure = <A, E>(effect: Effect.Effect<A, E>): A => Effect.runSync(Effect.orDie(effect))
 
-/** The params of the action that records a move: the unit's state before and after it. */
-interface Move<S extends string> {
-  readonly from: S
-  readonly to: S
-}
+const defect = (message: string): never => Effect.runSync(Effect.die(new Error(message)))
 
-/**
- * A setup's phantom `types`: the setup reads them for their types only. Every member is optional, so `{}` is one,
- * with no `{} as { ... }` assertion.
- */
-interface Phantom<C, E, I> {
-  readonly context?: C
-  readonly events?: E
-  readonly input?: I
-}
-
-const phantom = <C, E, I = undefined>(): Phantom<C, E, I> => ({})
-
-/** The run's unit id in `history`. */
-const RUN = "run"
-
-/**
- * Where a rebuild puts a unit whose `State` value its machine does not name: only a `State` that the fold never
- * made holds one. `resolveState` fails on such a value, and a unit in it must ignore its own facts, so each
- * machine has an `other` state with no rows for the unit's own facts.
- */
-const OTHER = "other"
-
-// --- reads shared by the guards and actions ----------------------------------------------------------------------
-
-const resultOf = (event: TaskEvent, id: string): Result | undefined => {
-  if (event.type !== "task.proved") return undefined
-  return event.results.find((result) => result.id === id)
-}
-
-const verdictOf = (event: TaskEvent | ScenarioEvent, id: string): Verdict | undefined => {
-  if (event.type === "task.verified") return event.verdicts.find((verdict) => verdict.id === id)
-  if (event.type === "scenario.verified" && event.verdict.id === id) return event.verdict
-  return undefined
-}
-
-const joined = (parts: ReadonlyArray<string | undefined>) => {
-  const text = parts.filter((part): part is string => part !== undefined && part !== "").join("; ")
-  if (text === "") return undefined
-  return text
-}
-
-const entry = (at: number, unit: string, from: string, to: string, reason: string | undefined): History => ({
-  at,
-  unit,
-  from,
-  to,
-  reason,
-})
-
-// --- the obligation machine --------------------------------------------------------------------------------------
-
-/** One obligation as its machine sees it. Its state is the machine's state value. */
-interface ObligationContext {
-  readonly id: string
-  readonly hash: string
-  readonly reason?: string
-  /** A parent's review obligation: a proof round that gives it no result leaves it waiting for the reviewer. */
-  readonly review: boolean
-  readonly log: ReadonlyArray<History>
-}
-
-const obligationReason = (event: TaskEvent, id: string, to: ObligationState) => {
-  if (to === "failed") return resultOf(event, id)?.reason
-  if (to === "rejected") return verdictOf(event, id)?.reason
-  return undefined
-}
-
-const obligationMove = (from: ObligationState, to: ObligationState) =>
-  ({ type: "enter", params: { from, to } }) as const
-
-const failRow = (from: ObligationState) =>
-  ({ guard: "resultFailed", target: "failed", actions: obligationMove(from, "failed") }) as const
-
-const passRow = (from: ObligationState) =>
-  ({ guard: "resultPassed", target: "trusted", actions: obligationMove(from, "trusted") }) as const
-
-const proofRows = (from: ObligationState) =>
-  [
-    failRow(from),
-    passRow(from),
-    { guard: "resultNeedsJudge", target: "passed", actions: obligationMove(from, "passed") },
-  ] as const
-
-const reviewRow = (from: ObligationState) =>
-  ({ guard: "unprovedReview", target: "passed", actions: obligationMove(from, "passed") }) as const
-
-const verdictRows = (from: ObligationState) =>
-  [
-    { guard: "verdictTrusted", target: "trusted", actions: obligationMove(from, "trusted") },
-    { guard: "verdictRejected", target: "rejected", actions: obligationMove(from, "rejected") },
-  ] as const
-
-const staleRow = (from: ObligationState) =>
-  ({ guard: "named", target: "stale", actions: ["rehash", obligationMove(from, "stale")] }) as const
-
-/**
- * One obligation. A trusted one takes no verdict and stays trusted on `needs-judge`: only a failure or staleness
- * reopens it. A `passed` one already waits for a judge, so `needs-judge` leaves it as it is.
- */
-export const obligationMachine = setup({
-  types: phantom<ObligationContext, TaskEvent, ObligationContext>(),
-  guards: {
-    resultFailed: ({ context, event }) => resultOf(event, context.id)?.status === "failed",
-    /** A machine-judged proof (gate, unchanged) passed: no judge is needed. */
-    resultPassed: ({ context, event }) => resultOf(event, context.id)?.status === "passed",
-    resultNeedsJudge: ({ context, event }) => resultOf(event, context.id)?.status === "needs-judge",
-    unprovedReview: ({ context, event }) =>
-      event.type === "task.proved" && context.review && resultOf(event, context.id) === undefined,
-    verdictTrusted: ({ context, event }) => verdictOf(event, context.id)?.verdict === "trusted",
-    verdictRejected: ({ context, event }) => verdictOf(event, context.id)?.verdict === "rejected",
-    /** The staleness fact names this obligation. */
-    named: ({ context, event }) => event.type === "obligation.stale" && event.id === context.id,
-  },
-  actions: {
-    enter: assign(({ context, event }, move: Move<ObligationState>) => {
-      const reason = obligationReason(event, context.id, move.to)
-      return { reason, log: [...context.log, entry(event.at, context.id, move.from, move.to, reason)] }
-    }),
-    rehash: assign(({ context, event }) => ({ hash: event.type === "obligation.stale" ? event.hash : context.hash })),
-  },
-}).createMachine({
-  id: "obligation",
-  context: ({ input }) => input,
-  initial: "pending",
-  states: {
-    pending: {
-      on: { "task.proved": [...proofRows("pending"), reviewRow("pending")], "task.verified": verdictRows("pending") },
-    },
-    passed: {
-      on: {
-        "task.proved": [failRow("passed"), passRow("passed")],
-        "task.verified": verdictRows("passed"),
-        "obligation.stale": staleRow("passed"),
-      },
-    },
-    failed: { on: { "task.proved": proofRows("failed"), "task.verified": verdictRows("failed") } },
-    trusted: { on: { "task.proved": failRow("trusted"), "obligation.stale": staleRow("trusted") } },
-    rejected: { on: { "task.proved": proofRows("rejected"), "task.verified": verdictRows("rejected") } },
-    stale: {
-      on: { "task.proved": [...proofRows("stale"), reviewRow("stale")], "task.verified": verdictRows("stale") },
-    },
-    // A state that `State` names and this machine does not (see `OTHER`): it takes no event.
-    other: {},
-  },
-})
-
-// --- the task machine --------------------------------------------------------------------------------------------
-
-/** One obligation of a task, as the task's context keeps it. */
-interface Slot {
-  readonly id: string
-  readonly state: ObligationState
-  readonly hash: string
-  readonly reason?: string
-  readonly review: boolean
-}
-
-interface TaskContext {
-  readonly id: string
-  readonly leaf: boolean
-  /** `policy.budgets.taskAttempts` of the task. */
-  readonly budget: number
-  /** Returns to the builder: 1 for the first build; parents stay 0 until reviewed, then 1. */
-  readonly attempts: number
-  readonly worktree?: string
-  readonly branch?: string
-  readonly base?: string
-  readonly head?: string
-  readonly session?: string
-  readonly reason?: string
-  /** The task's obligations, in plan order. */
-  readonly obligations: ReadonlyArray<Slot>
-  readonly log: ReadonlyArray<History>
-}
-
-type TaskInput = Pick<TaskContext, "id" | "leaf" | "budget" | "obligations">
-
-const slots = (context: Pick<TaskContext, "obligations">) => context.obligations
-
-// The reason a task's new state carries, read from the context after the fact's obligation moves.
-const taskReason = (context: TaskContext, event: TaskEvent, to: TaskState) => {
-  switch (event.type) {
-    case "task.proved":
-      if (to === "verifying") return undefined
-      return joined([
-        event.reason,
-        ...event.results
-          .filter((result) => result.status === "failed")
-          .map((result) => `${result.id}: ${result.reason ?? "failed"}`),
-      ])
-    case "task.verified":
-      if (to === "trusted") return undefined
-      return joined(
-        slots(context)
-          .filter((slot) => slot.state !== "trusted")
-          .map((slot) =>
-            slot.state === "rejected" ? `${slot.id}: ${slot.reason ?? "rejected"}` : `${slot.id}: not judged`,
-          ),
-      )
-    case "task.stalled":
-    case "task.repeated":
-    case "task.needs_human":
-    case "task.failed":
-    case "run.cancelled":
-      return event.reason
-    case "obligation.stale":
-      return `stale: ${event.id}`
-    default:
-      return undefined
-  }
-}
-
-// One obligation's machine snapshot, from its slot.
-const obligationSnapshot = (slot: Slot) => {
-  const context = { id: slot.id, hash: slot.hash, reason: slot.reason, review: slot.review, log: [] }
-  return obligationMachine
-    .resolveState({ value: slot.state, context })
-    .pipe(Effect.catch(() => obligationMachine.resolveState({ value: OTHER, context })))
-}
-
-// One obligation's move: its machine's snapshot from the slot, the pure transition, the slot and log after it.
-const stepObligation = (slot: Slot, event: TaskEvent) =>
-  Effect.gen(function* () {
-    const snapshot = yield* obligationSnapshot(slot)
-    const [next] = yield* transition(obligationMachine, snapshot, event)
-    // `other` takes no event, so a step that moved the obligation never ends there.
-    if (next.context.log.length === 0 || next.value === OTHER) return { slot, log: [] }
-    const moved: Slot = { ...slot, state: next.value, hash: next.context.hash, reason: next.context.reason }
-    return { slot: moved, log: next.context.log }
-  }).pipe(Effect.orDie)
-
-const taskMove = (from: TaskState, to: TaskState) => ({ type: "enter", params: { from, to } }) as const
-
-const inWork = (state: TaskState) => stateIn<TaskContext, TaskEvent>({ work: state })
-
-// The facts that end an active task, from each state that has a builder or proof round going on.
-const halts = (from: TaskState) =>
-  ({
-    "task.needs_human": { target: "needs_human", actions: taskMove(from, "needs_human") },
-    "task.failed": { target: "failed", actions: taskMove(from, "failed") },
-    "run.cancelled": { target: "cancelled", actions: taskMove(from, "cancelled") },
-  }) as const
-
-/** A task, leaf or parent (told apart by the `leaf` and `parent` guards). */
-export const taskMachine = setup({
-  types: phantom<TaskContext, TaskEvent, TaskInput>(),
-  guards: {
-    leaf: ({ context }) => context.leaf,
-    parent: ({ context }) => !context.leaf,
-    underBudget: ({ context }) => context.attempts < context.budget,
-    proofFailed: ({ event }) =>
-      event.type === "task.proved" && event.results.some((result) => result.status === "failed"),
-    /** A leaf's proof failed and it may go back to the builder. */
-    retryProof: and(["leaf", "proofFailed", "underBudget"]),
-    /** A leaf's proof failed and its budget is spent. */
-    exhaustProof: and(["leaf", "proofFailed", not("underBudget")]),
-    /** The task is in a proof round: a leaf proving, or a parent waiting for its review proof. */
-    inProof: or([inWork("proving"), and([inWork("waiting"), "parent"])]),
-    inVerification: inWork("verifying"),
-    /** Every obligation of the task is trusted. */
-    allTrusted: ({ context }) => slots(context).every((slot) => slot.state === "trusted"),
-    /** A parent whose review trusted every obligation: it counts its one review. */
-    parentTrusted: and(["allTrusted", "parent"]),
-    anyStale: ({ context }) => slots(context).some((slot) => slot.state === "stale"),
-    /** An obligation failed its proof or was rejected: the task goes back to the builder. */
-    anyReopened: ({ context }) => slots(context).some((slot) => slot.state === "failed" || slot.state === "rejected"),
-    /** Nothing is proved yet. */
-    allOpen: ({ context }) => slots(context).every((slot) => slot.state === "pending"),
-    /** The machine of the obligation that the staleness fact names takes it: that obligation goes stale. */
-    staleable: ({ context, event }) => {
-      const slot = slots(context).find((item) => event.type === "obligation.stale" && item.id === event.id)
-      if (slot === undefined) return false
-      return Effect.orDie(Effect.flatMap(obligationSnapshot(slot), (snapshot) => snapshot.can(event)))
-    },
-  },
-  actions: {
-    /** Runs the obligation machine of every slot on the fact, in plan order. */
-    moveObligations: assign(({ context, event }) =>
-      Effect.map(
-        Effect.forEach(slots(context), (slot) => stepObligation(slot, event)),
-        (steps) => ({
-          obligations: steps.map((step) => step.slot),
-          log: [...context.log, ...steps.flatMap((step) => step.log)],
-        }),
-      ),
-    ),
-    start: assign(({ event }) =>
-      event.type === "task.started"
-        ? { attempts: 1, worktree: event.worktree, branch: event.branch, base: event.base, session: event.session }
-        : {},
-    ),
-    ready: assign(({ event }) => (event.type === "task.ready" ? { head: event.head } : {})),
-    /** A return to the builder. */
-    retry: assign(({ context }) => ({ attempts: context.attempts + 1 })),
-    /** A parent counts its one review. */
-    reviewed: assign({ attempts: 1 }),
-    enter: assign(({ context, event }, move: Move<TaskState>) => {
-      const reason = taskReason(context, event, move.to)
-      return { reason, log: [...context.log, entry(event.at, context.id, move.from, move.to, reason)] }
-    }),
-  },
-}).createMachine({
-  id: "task",
-  type: "parallel",
-  context: ({ input }) => ({ ...input, attempts: 0, log: [] }),
-  states: {
-    // First in document order, so its obligation moves (and their history) come before the work region's.
-    evidence: {
-      initial: "open",
-      on: {
-        "task.proved": { guard: "inProof", target: ".assessing", actions: "moveObligations" },
-        "task.verified": { guard: "inVerification", target: ".assessing", actions: "moveObligations" },
-        "obligation.stale": { target: ".assessing", actions: "moveObligations" },
-      },
-      states: {
-        open: {},
-        proved: {},
-        reopened: {},
-        stale: {},
-        trusted: {},
-        // Reads the slots and settles on the state they show. A rebuilt snapshot starts here (see the header).
-        assessing: {
-          always: [
-            { guard: "anyStale", target: "stale" },
-            { guard: "anyReopened", target: "reopened" },
-            { guard: "allTrusted", target: "trusted" },
-            { guard: "allOpen", target: "open" },
-            { target: "proved" },
-          ],
-        },
-      },
-    },
-    work: {
-      initial: "waiting",
-      states: {
-        waiting: {
-          on: {
-            "task.started": { guard: "leaf", target: "building", actions: ["start", taskMove("waiting", "building")] },
-            "task.proved": { guard: "parent", target: "verifying", actions: taskMove("waiting", "verifying") },
-            "task.failed": { target: "failed", actions: taskMove("waiting", "failed") },
-          },
-        },
-        building: {
-          on: {
-            "task.ready": { target: "proving", actions: ["ready", taskMove("building", "proving")] },
-            // The runner cut the stream and prompts the same attempt again.
-            "task.stalled": { actions: taskMove("building", "building") },
-            "task.repeated": [
-              { guard: "underBudget", actions: ["retry", taskMove("building", "building")] },
-              { target: "budget_exhausted", actions: taskMove("building", "budget_exhausted") },
-            ],
-            ...halts("building"),
-          },
-        },
-        proving: {
-          on: {
-            "task.proved": [
-              { guard: "retryProof", target: "building", actions: ["retry", taskMove("proving", "building")] },
-              { guard: "exhaustProof", target: "budget_exhausted", actions: taskMove("proving", "budget_exhausted") },
-              { target: "verifying", actions: taskMove("proving", "verifying") },
-            ],
-            ...halts("proving"),
-          },
-        },
-        verifying: {
-          on: { "task.verified": { target: "judging" }, ...halts("verifying") },
-        },
-        // The verdicts have moved the obligations: decide on the context after them.
-        judging: {
-          always: [
-            {
-              guard: "parentTrusted",
-              target: "trusted",
-              actions: ["reviewed", taskMove("verifying", "trusted")],
-            },
-            { guard: "allTrusted", target: "trusted", actions: taskMove("verifying", "trusted") },
-            // A parent is never rebuilt.
-            { guard: "parent", target: "failed", actions: taskMove("verifying", "failed") },
-            { guard: "underBudget", target: "building", actions: ["retry", taskMove("verifying", "building")] },
-            { target: "budget_exhausted", actions: taskMove("verifying", "budget_exhausted") },
-          ],
-        },
-        trusted: {
-          on: {
-            "obligation.stale": { guard: "staleable", target: "proving", actions: taskMove("trusted", "proving") },
-          },
-        },
-        // A state of the model that no fact enters (a stall keeps the task building), here so that every
-        // `TaskState` resolves.
-        stalled: {},
-        needs_human: { type: "final" },
-        budget_exhausted: { type: "final" },
-        cancelled: { type: "final" },
-        failed: { type: "final" },
-        // A state that `State` names and this machine does not (see `OTHER`): the task takes no fact, while the
-        // evidence region still moves its obligations on a staleness fact.
-        other: {},
-      },
-    },
-  },
-})
-
-// --- the scenario machine ----------------------------------------------------------------------------------------
-
-interface ScenarioContext {
-  readonly id: string
-  readonly reason?: string
-  readonly log: ReadonlyArray<History>
-}
-
-const scenarioReason = (event: ScenarioEvent, to: ScenarioState) => {
-  if (event.type === "scenario.proved" && to === "failed") return event.reason
-  if (event.type === "scenario.verified" && to === "rejected") return event.verdict.reason
-  return undefined
-}
-
-const scenarioMove = (from: ScenarioState, to: ScenarioState) => ({ type: "enter", params: { from, to } }) as const
-
-const scenarioProved = (from: ScenarioState) =>
-  [
-    { guard: "scenarioPassed", target: "verifying", actions: scenarioMove(from, "verifying") },
-    { target: "failed", actions: scenarioMove(from, "failed") },
-  ] as const
-
-/** A scenario: its tests run once its needs are trusted, then a scenario verifier judges it. */
-export const scenarioMachine = setup({
-  types: phantom<ScenarioContext, ScenarioEvent, { readonly id: string }>(),
-  guards: {
-    scenarioPassed: ({ event }) => event.type === "scenario.proved" && event.status === "passed",
-    verdictTrusted: ({ context, event }) => verdictOf(event, context.id)?.verdict === "trusted",
-  },
-  actions: {
-    enter: assign(({ context, event }, move: Move<ScenarioState>) => {
-      const reason = scenarioReason(event, move.to)
-      return { reason, log: [...context.log, entry(event.at, context.id, move.from, move.to, reason)] }
-    }),
-  },
-}).createMachine({
-  id: "scenario",
-  context: ({ input }) => ({ id: input.id, log: [] }),
-  initial: "waiting",
-  states: {
-    waiting: { on: { "scenario.proved": scenarioProved("waiting") } },
-    pending: { on: { "scenario.proved": scenarioProved("pending") } },
-    verifying: {
-      on: {
-        "scenario.verified": [
-          { guard: "verdictTrusted", target: "trusted", actions: scenarioMove("verifying", "trusted") },
-          { target: "rejected", actions: scenarioMove("verifying", "rejected") },
-        ],
-      },
-    },
-    trusted: { type: "final" },
-    rejected: { type: "final" },
-    failed: { type: "final" },
-    // A state that `State` names and this machine does not (see `OTHER`): it takes no event.
-    other: {},
-  },
-})
-
-// --- the run machine ---------------------------------------------------------------------------------------------
-
-interface RunContext {
-  /**
-   * The run's state as `State` holds it when the step starts: the `from` of the run's history entry, also for a
-   * value that the machine does not name.
-   */
-  readonly from: string
-  readonly reason?: string
-  readonly log: ReadonlyArray<History>
-}
-
-// `reason` is what the run keeps; `noted` is what its history entry says.
-const runWhy = (event: RunEvent): { readonly reason?: string; readonly noted?: string } => {
-  switch (event.type) {
-    case "run.resumed":
-      return { noted: "resumed" }
-    case "run.ended":
-    case "run.cancelled":
-      return { reason: event.reason, noted: event.reason }
-    case "task.moved": {
-      const why = event.reason === undefined ? event.task : `${event.task}: ${event.reason}`
-      return { reason: why, noted: why }
-    }
-    default:
-      return {}
-  }
-}
-
-const runMove = (to: RunState) => ({ type: "enter", params: { to } }) as const
-
-// What a run that has not ended takes in any state: an outside trust, and the task end states it follows.
-const follows = {
-  "outside.trusted": { actions: "trustOutside" },
-  "task.moved": [
-    {
-      guard: { type: "taskReached", params: { state: "needs_human" } },
-      target: "needs_human",
-      actions: runMove("needs_human"),
-    },
-    {
-      guard: { type: "taskReached", params: { state: "budget_exhausted" } },
-      target: "budget_exhausted",
-      actions: runMove("budget_exhausted"),
-    },
-    { guard: { type: "taskReached", params: { state: "failed" } }, target: "failed", actions: runMove("failed") },
-  ],
-} as const
-
-// A live run (running or waiting): the run facts too.
-const live = {
-  "run.started": { target: "running", actions: runMove("running") },
-  "run.resumed": { target: "running", actions: runMove("running") },
-  "run.ended": [
-    { guard: "endedDone", target: "done", actions: runMove("done") },
-    { target: "failed", actions: runMove("failed") },
-  ],
-  "run.cancelled": { target: "cancelled", actions: runMove("cancelled") },
-  ...follows,
-} as const
-
-/** The run. Its end states are final: a run in one of them takes no event, and nothing else changes either. */
-export const runMachine = setup({
-  types: phantom<RunContext, RunEvent>(),
-  guards: {
-    endedDone: ({ event }) => event.type === "run.ended" && event.state === "done",
-    taskReached: ({ event }, params: { readonly state: TaskState }) =>
-      event.type === "task.moved" && event.state === params.state,
-  },
-  actions: {
-    enter: assign(({ context, event }, move: { readonly to: RunState }) => {
-      const why = runWhy(event)
-      return { reason: why.reason, log: [...context.log, entry(event.at, RUN, context.from, move.to, why.noted)] }
-    }),
-    /** An `outside` precondition the state store records as trusted: a history entry, no state change. */
-    trustOutside: assign(({ context, event }) =>
-      event.type === "outside.trusted"
-        ? { log: [...context.log, { at: event.at, unit: event.id, to: "trusted", reason: "outside" }] }
-        : {},
-    ),
-  },
-}).createMachine({
-  id: "run",
-  context: { from: "running", log: [] },
-  initial: "running",
-  states: {
-    running: { on: live },
-    waiting: { on: live },
-    refused: { type: "final" },
-    done: { type: "final" },
-    cancelled: { type: "final" },
-    needs_human: { type: "final" },
-    budget_exhausted: { type: "final" },
-    failed: { type: "final" },
-    // A state that `State` names and this machine does not (see `OTHER`): it takes no run fact, yet records an
-    // outside trust and follows a task into an end state.
-    other: { on: follows },
-  },
-})
-
-// --- the fold ----------------------------------------------------------------------------------------------------
-
-// The boundary of the synchronous `Engine` interface: every Effect here is pure and synchronous (no actors, no
-// delays), and a failure is a defect of the machine definitions.
-const runPure = <A>(effect: Effect.Effect<A, unknown>): A => Effect.runSync(Effect.orDie(effect))
-
-const appended = (state: State, log: ReadonlyArray<History>): ReadonlyArray<History> => [...state.history, ...log]
-
-// A unit's state after a step that moved it, or at the start: never `other`, which no row enters, nor the work
-// region's transient `judging`, whose last row has no guard.
-const settled = <S extends string>(value: S | typeof OTHER | "judging"): Effect.Effect<S> =>
-  value === OTHER || value === "judging" ? Effect.die(`a machine ended a step in \`${value}\``) : Effect.succeed(value)
-
-const isReview = (plan: Plan, id: string) =>
-  plan.spec.obligations.some((obligation) => obligation.id === id && obligation.proof.kind === "review")
-
-const taskInput = (plan: Plan, state: State, task: TaskModel): TaskInput => ({
-  id: task.id,
-  leaf: task.leaf,
-  budget: plan.budget(task.id),
-  obligations: Object.values(state.obligations)
-    .filter((obligation) => obligation.task === task.id)
-    .map((obligation) => ({
-      id: obligation.id,
-      state: obligation.state,
-      hash: obligation.hash,
-      reason: obligation.reason,
-      review: !task.leaf && isReview(plan, obligation.id),
-    })),
-})
-
-// The task's worktree, branch, base, head and session from the context: only the ones it has, so a task model gains
-// a key only when a fact gives it a value.
-const taskFields = (context: TaskContext): Partial<TaskModel> => ({
-  ...(context.worktree === undefined ? {} : { worktree: context.worktree }),
-  ...(context.branch === undefined ? {} : { branch: context.branch }),
-  ...(context.base === undefined ? {} : { base: context.base }),
-  ...(context.head === undefined ? {} : { head: context.head }),
-  ...(context.session === undefined ? {} : { session: context.session }),
-})
-
-const runSnapshot = (state: State) => {
-  const context = { from: state.run.state, reason: state.run.reason, log: [] }
-  return runMachine
-    .resolveState({ value: state.run.state, context })
-    .pipe(Effect.catch(() => runMachine.resolveState({ value: OTHER, context })))
-}
-
-// The run on one event: unchanged when its machine takes no transition.
-const stepRun = (state: State, event: RunEvent) =>
-  Effect.gen(function* () {
-    const [next] = yield* transition(runMachine, yield* runSnapshot(state), event)
-    const log = next.context.log
-    if (log.length === 0) return state
-    if (!log.some((item) => item.unit === RUN)) return { ...state, history: appended(state, log) }
-    const run = { ...state.run, state: yield* settled(next.value), reason: next.context.reason }
-    return { ...state, run, history: appended(state, log) }
+const errorOf = (snapshot: RunSnapshot) =>
+  Option.match(Option.fromNullishOr(snapshot.error), {
+    onNone: () => "no error",
+    onSome: (error) => String(error),
   })
 
-// One task on one event; then the run follows the task's move.
-const stepTask = (plan: Plan, state: State, id: string, event: TaskEvent) =>
-  Effect.gen(function* () {
-    const task: TaskModel | undefined = state.tasks[id]
-    if (task === undefined) return state
-    const input = taskInput(plan, state, task)
-    const context: TaskContext = {
-      ...input,
-      attempts: task.attempts,
-      worktree: task.worktree,
-      branch: task.branch,
-      base: task.base,
-      head: task.head,
-      session: task.session,
-      reason: task.reason,
-      log: [],
-    }
-    // `State` keeps no evidence state: the region starts in `assessing` and settles on what the slots show.
-    const snapshot = yield* taskMachine
-      .resolveState({ value: { evidence: "assessing", work: task.state }, context })
-      .pipe(Effect.catch(() => taskMachine.resolveState({ value: { evidence: "assessing", work: OTHER }, context })))
-    const [next] = yield* transition(taskMachine, snapshot, event)
-    const log = next.context.log
-    if (log.length === 0) return state
-    const movedIds = log.map((item) => item.unit)
-    const obligations = Object.fromEntries(
-      next.context.obligations
-        .filter((slot) => movedIds.includes(slot.id))
-        .map((slot): [string, ObligationModel] => [
-          slot.id,
-          { ...state.obligations[slot.id], state: slot.state, hash: slot.hash, reason: slot.reason },
-        ]),
-    )
-    const after: State = {
-      ...state,
-      obligations: { ...state.obligations, ...obligations },
-      history: appended(state, log),
-    }
-    if (!movedIds.includes(id)) return after
-    const work = yield* settled(next.value.work)
-    const moved: TaskModel = {
-      ...task,
-      ...taskFields(next.context),
-      state: work,
-      attempts: next.context.attempts,
-      reason: next.context.reason,
-    }
-    return yield* stepRun(
-      { ...after, tasks: { ...after.tasks, [id]: moved } },
-      { type: "task.moved", at: event.at, task: id, state: work, reason: next.context.reason },
-    )
-  })
+// One first snapshot per plan, as one machine per plan: it is pure, and its first macrostep enters every unit state.
+const initials = new WeakMap<Plan, RunSnapshot>()
 
-// Cancel: when the run takes it, every active task is cancelled first, then the run.
-const cancel = (plan: Plan, state: State, fact: FactOf<"run.cancelled">) =>
-  Effect.gen(function* () {
-    if (!(yield* (yield* runSnapshot(state)).can(fact))) return state
-    const tasks = yield* Effect.reduce(
-      Object.keys(state.tasks),
-      () => state,
-      (current, id) => stepTask(plan, current, id, fact),
-    )
-    return yield* stepRun(tasks, fact)
-  })
+/** The run's first snapshot: each unit in its first state, after the first macrostep's readiness rows. */
+export const initial = (plan: Plan): RunSnapshot => {
+  const found = initials.get(plan)
+  if (found !== undefined) return found
+  const [snapshot] = runPure(initialTransition(TaskMachine.machine(plan)))
+  if (snapshot.status !== "active")
+    return defect(`the first snapshot of ${plan.path} has status ${snapshot.status}: ${errorOf(snapshot)}`)
+  initials.set(plan, snapshot)
+  return snapshot
+}
 
-// The staleness of an obligation whose task the state does not hold (a `State` the fold never makes): the
-// obligation's own machine moves it without a task row.
-const staleAlone = (state: State, obligation: ObligationModel, fact: FactOf<"obligation.stale">) =>
-  Effect.gen(function* () {
-    const { id, state: current, hash, reason } = obligation
-    const step = yield* stepObligation({ id, state: current, hash, reason, review: false }, fact)
-    if (step.log.length === 0) return state
-    const moved: ObligationModel = {
-      ...obligation,
-      state: step.slot.state,
-      hash: step.slot.hash,
-      reason: step.slot.reason,
-    }
-    return {
-      ...state,
-      obligations: { ...state.obligations, [id]: moved },
-      history: appended(state, step.log),
-    }
-  })
+/** One fold step on a given machine: the `apply` of a plan's machine, and of a machine a test builds. */
+export const applyTo = (machine: RunMachine, snapshot: RunSnapshot, fact: Fact): RunSnapshot => {
+  if (snapshot.machine !== machine) return defect("a snapshot of another plan's machine was applied")
+  if (snapshot.status === "done") return snapshot
+  if (snapshot.status !== "active") return defect(`the run machine has status ${snapshot.status}: ${errorOf(snapshot)}`)
+  const [next] = runPure(transition(machine, snapshot, fact))
+  if (next.status === "error") return defect(`the run machine failed on ${fact.type}: ${errorOf(next)}`)
+  return next
+}
 
-const stepScenario = (state: State, fact: ScenarioEvent) =>
-  Effect.gen(function* () {
-    const id = fact.type === "scenario.proved" ? fact.id : fact.verdict.id
-    const scenario: ScenarioModel | undefined = state.scenarios[id]
-    if (scenario === undefined) return state
-    const context = { id, reason: scenario.reason, log: [] }
-    const snapshot = yield* scenarioMachine
-      .resolveState({ value: scenario.state, context })
-      .pipe(Effect.catch(() => scenarioMachine.resolveState({ value: OTHER, context })))
-    const [next] = yield* transition(scenarioMachine, snapshot, fact)
-    const log = next.context.log
-    if (log.length === 0) return state
-    const moved: ScenarioModel = { ...scenario, state: yield* settled(next.value), reason: next.context.reason }
-    return { ...state, scenarios: { ...state.scenarios, [id]: moved }, history: appended(state, log) }
-  })
-
-/** The first state of a run: each unit in its machine's initial state. */
-export const initial = (plan: Plan): State =>
-  runPure(
-    Effect.gen(function* () {
-      const empty: State = {
-        run: { state: "running", spec: plan.specPath, path: plan.path },
-        tasks: {},
-        obligations: {},
-        scenarios: {},
-        history: [],
-      }
-      const run = yield* getInitialSnapshot(runMachine)
-      const tasks = yield* Effect.forEach(plan.tasks, (task) =>
-        Effect.gen(function* () {
-          const snapshot = yield* getInitialSnapshot(taskMachine, {
-            id: task.id,
-            leaf: task.children.length === 0,
-            budget: plan.budget(task.id),
-            obligations: [],
-          })
-          const model: TaskModel = {
-            id: task.id,
-            leaf: snapshot.context.leaf,
-            state: yield* settled(snapshot.value.work),
-            attempts: snapshot.context.attempts,
-          }
-          return [task.id, model] as const
-        }),
-      )
-      const ids = plan.tasks.map((task) => task.id)
-      const obligations = yield* Effect.forEach(
-        plan.spec.obligations.filter((obligation) => ids.includes(obligation.task)),
-        (obligation) =>
-          Effect.gen(function* () {
-            const snapshot = yield* getInitialSnapshot(obligationMachine, {
-              id: obligation.id,
-              hash: obligation.hash,
-              review: false,
-              log: [],
-            })
-            const model: ObligationModel = {
-              id: obligation.id,
-              task: obligation.task,
-              state: yield* settled(snapshot.value),
-              hash: snapshot.context.hash,
-            }
-            return [obligation.id, model] as const
-          }),
-      )
-      const scenarios = yield* Effect.forEach(plan.scenarios, (scenario) =>
-        Effect.gen(function* () {
-          const snapshot = yield* getInitialSnapshot(scenarioMachine, { id: scenario.id })
-          const model: ScenarioModel = { id: scenario.id, state: yield* settled(snapshot.value) }
-          return [scenario.id, model] as const
-        }),
-      )
-      return {
-        ...empty,
-        run: { ...empty.run, state: yield* settled(run.value) },
-        tasks: Object.fromEntries(tasks),
-        obligations: Object.fromEntries(obligations),
-        scenarios: Object.fromEntries(scenarios),
-      }
-    }),
-  )
-
-/** One fold step. Pure: the same plan, state and fact always give the same new state. */
-export const apply = (plan: Plan, state: State, fact: Fact): State =>
-  runPure(
-    Effect.gen(function* () {
-      if ((yield* runSnapshot(state)).status === "done") return state
-      switch (fact.type) {
-        case "outside.trusted":
-        case "run.started":
-        case "run.resumed":
-        case "run.ended":
-          return yield* stepRun(state, fact)
-        case "run.cancelled":
-          return yield* cancel(plan, state, fact)
-        case "obligation.stale": {
-          const obligation: ObligationModel | undefined = state.obligations[fact.id]
-          if (obligation === undefined) return state
-          const task: TaskModel | undefined = state.tasks[obligation.task]
-          if (task === undefined) return yield* staleAlone(state, obligation, fact)
-          return yield* stepTask(plan, state, obligation.task, fact)
-        }
-        case "scenario.proved":
-        case "scenario.verified":
-          return yield* stepScenario(state, fact)
-        default:
-          return yield* stepTask(plan, state, fact.task, fact)
-      }
-    }),
-  )
+/** One fold step. Pure: the same plan, snapshot and fact always give the same snapshot. */
+export const apply = (plan: Plan, snapshot: RunSnapshot, fact: Fact): RunSnapshot =>
+  applyTo(TaskMachine.machine(plan), snapshot, fact)
 
 export const XStateEngine: Engine = { name: "xstate", initial, apply }
+
+// --- selectors -------------------------------------------------------------------------------------------------------
+
+const isMeta = (value: unknown): value is Meta =>
+  Predicate.isObject(value) && "unit" in value && "kind" in value && "state" in value
+
+const metas = (snapshot: RunSnapshot): ReadonlyArray<Meta> => Object.values(snapshot.getMeta()).filter(isMeta)
+
+/** The status name of a unit's state (`run` for the outcome), from its state's meta. */
+export const unitState = (snapshot: RunSnapshot, id: string): string | undefined =>
+  metas(snapshot).find((meta) => meta.unit === id)?.state
+
+/** A unit's class tags, in the contract's order. */
+export const tags = (snapshot: RunSnapshot, id: string) => TAGS.filter((tag) => snapshot.hasTag(`${id}:${tag}`))
+
+/** What a waiting unit waits on: the dependency of each of its `waits:` tags, in natural order; else nothing. */
+export const waitingOn = (snapshot: RunSnapshot, id: string): ReadonlyArray<string> => {
+  if (!snapshot.hasTag(`${id}:waiting`)) return []
+  const prefix = `${id}:waits:`
+  return snapshot.tags
+    .filter((tag) => tag.startsWith(prefix))
+    .map((tag) => tag.slice(prefix.length))
+    .toSorted(byId)
+}
+
+/** The cause of a blocked unit: the dead dependency its `blocked` row named. */
+export const blockedBy = (snapshot: RunSnapshot, id: string): Cause | undefined => {
+  if (!snapshot.hasTag(`${id}:blocked`)) return undefined
+  return snapshot.context.units[id]?.blockedBy
+}
+
+/** Whether the run has ended: its machine is final, so nothing moves any more. */
+export const ended = (snapshot: RunSnapshot) => snapshot.status === "done"
+
+// The status name of a state, typed by the names its kind shows in `CLASS`.
+const showsIn = <T extends Readonly<Record<string, { readonly shows: string }>>>(states: T, state: string) =>
+  Object.entries(states).find(([name]) => name === state)?.[1].shows as T[keyof T]["shows"] | undefined
+
+const optional = (slot: Slot) => ({
+  ...(slot.worktree === undefined ? {} : { worktree: slot.worktree }),
+  ...(slot.branch === undefined ? {} : { branch: slot.branch }),
+  ...(slot.base === undefined ? {} : { base: slot.base }),
+  ...(slot.head === undefined ? {} : { head: slot.head }),
+  ...(slot.session === undefined ? {} : { session: slot.session }),
+  ...(slot.reason === undefined ? {} : { reason: slot.reason }),
+})
+
+/** The snapshot as the `State` shape that the status projection and the phase-1 runner read. */
+export const view = (snapshot: RunSnapshot): State => {
+  const context = snapshot.context
+  const units = Object.entries(context.units)
+  const run = context.units.run
+  const runState: RunState = showsIn(CLASS.run, run?.state ?? "running") ?? "running"
+  const tasks = units.flatMap(([id, slot]): ReadonlyArray<[string, TaskModel]> => {
+    if (slot.kind !== "task") return []
+    const state: TaskState = showsIn(CLASS.task, slot.state) ?? "waiting"
+    return [[id, { id, leaf: slot.leaf ?? true, state, attempts: slot.attempts ?? 0, ...optional(slot) }]]
+  })
+  const obligations = units.flatMap(([id, slot]): ReadonlyArray<[string, ObligationModel]> => {
+    if (slot.kind !== "obligation") return []
+    const state: ObligationState = showsIn(CLASS.obligation, slot.state) ?? "pending"
+    return [
+      [
+        id,
+        {
+          id,
+          task: slot.task ?? "",
+          state,
+          hash: slot.hash ?? "",
+          ...(slot.reason === undefined ? {} : { reason: slot.reason }),
+        },
+      ],
+    ]
+  })
+  const scenarios = units.flatMap(([id, slot]): ReadonlyArray<[string, ScenarioModel]> => {
+    if (slot.kind !== "scenario") return []
+    const state: ScenarioState = showsIn(CLASS.scenario, slot.state) ?? "waiting"
+    return [[id, { id, state, ...(slot.reason === undefined ? {} : { reason: slot.reason }) }]]
+  })
+  return {
+    run: {
+      state: runState,
+      ...(run?.reason === undefined ? {} : { reason: run.reason }),
+      spec: context.spec,
+      path: context.path,
+    },
+    tasks: Object.fromEntries(tasks),
+    obligations: Object.fromEntries(obligations),
+    scenarios: Object.fromEntries(scenarios),
+    history: context.log,
+  }
+}
 
 export * as TaskEngineXState from "."

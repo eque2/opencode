@@ -98,12 +98,17 @@ export const plan = (input: {
     onSome: (root) => spec.tasks.filter((task) => task.id === root || task.id.startsWith(`${root}.`)),
   })
   const ids = tasks.map((task) => task.id)
+  const outsideRun = (id: string) => !ids.includes(id) && !(id in spec.outside)
   return {
     spec,
     specPath: input.specPath,
     path: input.path,
     tasks,
     scenarios: spec.scenarios.filter((scenario) => scenario.needs.every((id) => ids.includes(id) || id in spec.outside)),
+    external: tasks
+      .flatMap((task) => task.afterEffective.filter(outsideRun))
+      .filter((id, index, all) => all.indexOf(id) === index)
+      .toSorted(TaskEngineXState.byId),
     budget: (id) =>
       spec.tasks.find((task) => task.id === id)?.policy.budgets.taskAttempts ?? spec.policy.budgets.taskAttempts,
   }

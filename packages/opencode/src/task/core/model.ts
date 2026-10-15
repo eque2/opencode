@@ -1,8 +1,9 @@
 import type { BlendModel } from "@/task/blend/model"
 
 // The task harness's state and the facts that move it. The engine (`@/task/engine-xstate`) folds the facts through
-// xstate-effect machines. The runner (`@/task/core/runner`) records each fact as a durable EventV2 event and never
-// changes state any other way, so a resume is the same fold over the stored events.
+// the run machine of the plan; `State` is only the shape its `view` selector reads out of the snapshot. The runner
+// (`@/task/core/runner`) records each fact as a durable EventV2 event and never changes state any other way, so a
+// resume is the same fold over the stored events.
 
 export type RunState = "running" | "refused" | "waiting" | "done" | "cancelled" | "needs_human" | "budget_exhausted" | "failed"
 export type TaskState =
@@ -16,8 +17,16 @@ export type TaskState =
   | "budget_exhausted"
   | "cancelled"
   | "failed"
+  | "blocked"
 export type ObligationState = "pending" | "passed" | "failed" | "trusted" | "rejected" | "stale"
-export type ScenarioState = "waiting" | "pending" | "verifying" | "trusted" | "rejected" | "failed"
+export type ScenarioState =
+  | "waiting"
+  | "pending"
+  | "trusted"
+  | "rejected"
+  | "failed"
+  | "blocked"
+  | "cancelled"
 
 export interface History {
   readonly at: number
@@ -116,15 +125,10 @@ export interface Plan {
   readonly tasks: ReadonlyArray<BlendModel.Task>
   /** The scenarios whose `needs` are all under the path or `outside`. */
   readonly scenarios: ReadonlyArray<BlendModel.Scenario>
+  /** The folder tasks outside the path that a task under it is after (a subtree run), in natural order. */
+  readonly external: ReadonlyArray<string>
   /** `policy.budgets.taskAttempts` of each task's effective policy. */
   readonly budget: (task: string) => number
-}
-
-/** The harness engine: a pure fold of facts into state. */
-export interface Engine {
-  readonly name: "xstate"
-  readonly initial: (plan: Plan) => State
-  readonly apply: (plan: Plan, state: State, fact: Fact) => State
 }
 
 export * as TaskCoreModel from "./model"

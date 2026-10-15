@@ -15,8 +15,9 @@ export type TaskState =
   | "budget_exhausted"
   | "cancelled"
   | "failed"
+  | "blocked"
 export type ObligationState = "pending" | "passed" | "failed" | "trusted" | "rejected" | "stale"
-export type ScenarioState = "waiting" | "pending" | "trusted" | "rejected" | "failed"
+export type ScenarioState = "waiting" | "pending" | "trusted" | "rejected" | "failed" | "blocked" | "cancelled"
 
 export type TaskStatus = { state: TaskState; attempts: number; waitingOn: string[]; worktree?: string; reason?: string }
 export type HistoryEntry = { at: number; unit: string; from?: string; to: string; reason?: string }

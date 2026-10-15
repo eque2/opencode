@@ -1,29 +1,29 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, Option } from "effect"
-import path from "path"
-import { Blend } from "@/task/blend"
-import { TaskCommand } from "@/task/core/command"
-import { TaskEvents } from "@/task/core/events"
-import type { Fact, Plan, Result, State, Verdict } from "@/task/core/model"
-import { TaskEngineXState } from "@/task/engine-xstate"
+import { Effect } from "effect"
+import { createActor } from "@jambudipa/xstate-effect"
+import type { Fact, History, Plan, Result, Verdict } from "@/task/core/model"
+import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
+import { TaskMachine } from "@/task/engine-xstate/machine"
 import { testEffect } from "../lib/effect"
+import { loadPlan } from "./lib/machine"
 
-// The engine on seeded random fact lists over the release-notes plan: facts in any order, unknown ids included. The
-// invariants hold for any pure fold of facts into state, so they need no second engine to compare with.
+// The engine on seeded random fact lists over the release-notes plan (spine AD-5, AD-6): facts in any order,
+// facts after a run is done, and unknown ids. For every seed, three paths must reach the same snapshot: the pure
+// fold through `apply`, a live actor of the run machine sent the same facts, and an actor restored from the
+// persisted fold of a prefix and sent the rest. Along the fold, every change is logged, and an entry with no other
+// change is the note of a targetless row.
 
 const it = testEffect(NodeServices.layer)
+const engine = TaskEngineXState
 
-const RELEASE_NOTES = "task-formats/blend/release-notes.spec"
-const formatDir = path.resolve(import.meta.dir, "../../../../task-formats/blend")
-
-// The plan of `/task task-formats/blend/release-notes.spec`.
-const releaseNotesPlan = Effect.gen(function* () {
-  const loaded = yield* Blend.load(path.join(formatDir, "release-notes.spec"))
-  expect(loaded.failures).toEqual([])
-  if (!loaded.spec) return yield* Effect.die("release-notes.spec did not load")
-  return TaskCommand.plan({ spec: loaded.spec, specPath: RELEASE_NOTES, path: RELEASE_NOTES, root: Option.none() })
-})
+const SEEDS = 40
+const STEPS = 100
+// Random facts that each slice keeps after its run is done: the fold, the live actor and the restored actor all get
+// them, and each must leave the done snapshot as it is (AD-6).
+const AFTER_DONE = 6
+// Each seed folds its facts three times on the real machine, which takes seconds under load.
+const PER_SEED = 600_000
 
 // A seeded generator (mulberry32): every run folds the same fact lists.
 const generator = (seed: number) => {
@@ -61,24 +61,41 @@ const KINDS = [
 
 type Kind = (typeof KINDS)[number]
 
-// The facts a task's state most likely meets next, so that the folds reach every state.
+// The facts a task most likely meets next, by its phase tag, so that the folds reach every state.
 const LIKELY: Record<string, ReadonlyArray<Kind>> = {
-  waiting: ["started"],
+  ready: ["started"],
   building: ["ready", "ready", "ready", "repeated"],
   proving: ["proved"],
   verifying: ["verified"],
-  trusted: ["stale"],
 }
-// A waiting parent moves on its review proof, not on a start.
-const PARENT_WAITING: ReadonlyArray<Kind> = ["proved"]
+// A ready parent moves on its review proof, a trusted task on a staleness, a ready scenario on its proof.
+const PARENT_READY: ReadonlyArray<Kind> = ["proved"]
+const TRUSTED: ReadonlyArray<Kind> = ["stale"]
+const SCENARIO: ReadonlyArray<Kind> = ["scenario.proved", "scenario.verified"]
 
-// One random fact: mostly one that moves the chosen task on, otherwise any fact (unknown ids included).
-const randomFact = (plan: Plan, state: State, { next, pick }: Random, at: number): Fact => {
-  const task = pick([...plan.tasks.map((item) => item.id), "T7"])
-  const own = plan.spec.obligations.filter((item) => item.task === task).map((item) => item.id)
+const phaseOf = (snapshot: RunSnapshot, id: string) =>
+  ["ready", "building", "proving", "verifying"].find((tag) => snapshot.hasTag(`${id}:${tag}`))
+
+// One random fact: mostly one that moves the chosen task on, otherwise any fact (unknown ids included). The task is
+// mostly one with work in hand, so that a slice reaches the later moves before a stop ends it: a task waits until its
+// dependencies are trusted, so a uniform choice spends most facts on tasks that cannot move.
+const randomFact = (plan: Plan, snapshot: RunSnapshot, { next, pick }: Random, at: number): Fact => {
+  const working = plan.tasks.map((item) => item.id).filter((id) => phaseOf(snapshot, id) !== undefined)
   // `T7` is in no plan.
-  const current = Object.hasOwn(state.tasks, task) ? state.tasks[task] : undefined
-  const likely = current?.leaf === false && current.state === "waiting" ? PARENT_WAITING : LIKELY[current?.state ?? ""]
+  const task = working.length > 0 && next() < 0.8 ? pick(working) : pick([...plan.tasks.map((item) => item.id), "T7"])
+  const own = plan.spec.obligations.filter((item) => item.task === task).map((item) => item.id)
+  const leaf = plan.tasks.find((item) => item.id === task)?.children.length === 0
+  const phase = phaseOf(snapshot, task)
+  const scenarios = plan.scenarios.map((item) => item.id)
+  const active = scenarios.filter((id) => phaseOf(snapshot, id) !== undefined)
+  const likely =
+    phase === "ready" && !leaf
+      ? PARENT_READY
+      : engine.unitState(snapshot, task) === "trusted"
+        ? TRUSTED
+        : active.length > 0 && next() < 0.3
+          ? SCENARIO
+          : LIKELY[phase ?? ""]
   const kind = next() < 0.75 && likely !== undefined ? pick(likely) : pick(KINDS)
   const maybe = (text: string) => (next() < 0.3 ? `${text} ${at}` : undefined)
   switch (kind) {
@@ -123,12 +140,12 @@ const randomFact = (plan: Plan, state: State, { next, pick }: Random, at: number
       return {
         type: "scenario.proved",
         at,
-        id: pick([...plan.scenarios.map((item) => item.id), "S99"]),
+        id: pick([...(active.length > 0 ? active : scenarios), "S99"]),
         status: next() < 0.8 ? "passed" : "failed",
         reason: maybe("tests failed"),
       }
     case "scenario.verified": {
-      const id = pick(plan.scenarios.map((item) => item.id))
+      const id = pick(active.length > 0 ? active : scenarios)
       const verdict: Verdict =
         next() < 0.8 ? { id, verdict: "trusted" } : { id, verdict: "rejected", reason: maybe("no") }
       return { type: "scenario.verified", at, verdict }
@@ -151,7 +168,7 @@ const randomFact = (plan: Plan, state: State, { next, pick }: Random, at: number
 }
 
 // What a history entry moved, for the coverage check: the unit's kind and its two states.
-const moveOf = (plan: Plan, item: State["history"][number]) => {
+const moveOf = (plan: Plan, item: History) => {
   const kind =
     item.unit === "run"
       ? "run"
@@ -165,51 +182,138 @@ const moveOf = (plan: Plan, item: State["history"][number]) => {
   return `${kind}:${item.from}>${item.to}`
 }
 
+// The slices of one seed: 100 random facts; a slice whose run is done keeps AFTER_DONE more, then the next starts.
+const slicesOf = (plan: Plan, seed: number) => {
+  const random = generator(seed)
+  const slices: Array<ReadonlyArray<Fact>> = []
+  let snapshot = engine.initial(plan)
+  let slice: Array<Fact> = []
+  let after = 0
+  for (let step = 1; step <= STEPS; step++) {
+    const fact = randomFact(plan, snapshot, random, step)
+    snapshot = engine.apply(plan, snapshot, fact)
+    slice.push(fact)
+    if (!engine.ended(snapshot)) continue
+    if (after++ < AFTER_DONE) continue
+    slices.push(slice)
+    slice = []
+    after = 0
+    snapshot = engine.initial(plan)
+  }
+  if (slice.length > 0) slices.push(slice)
+  return slices
+}
+
+// The parts of a snapshot that the three paths must agree on.
+const shape = (snapshot: RunSnapshot) => ({ status: snapshot.status, value: snapshot.value, context: snapshot.context })
+
+const withoutLog = (snapshot: RunSnapshot) => {
+  const { log: _, ...rest } = snapshot.context
+  return { value: snapshot.value, context: rest }
+}
+
 describe("XStateEngine on random facts", () => {
-  it.live("folds 4,000 random facts without a throw, purely, and reaches the lifecycle's later moves", () =>
-    Effect.gen(function* () {
-      const plan = yield* releaseNotesPlan
-      const engine = TaskEngineXState.XStateEngine
-      const moves = new Set<string>()
-      let facts = 0
-      for (let seed = 1; seed <= 40; seed++) {
-        const random = generator(seed)
-        let state = engine.initial(plan)
-        let run: Fact[] = []
-        for (let step = 1; step <= 100; step++) {
-          // A run in an end state takes no fact: start a new one.
-          if (TaskEvents.ended(state.run.state)) {
-            state = engine.initial(plan)
-            run = []
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    it.live(
+      `seed ${seed}: the fold, a live actor and a restored actor agree, and the history grows only with a change`,
+      () =>
+        Effect.gen(function* () {
+          const plan = yield* loadPlan("release-notes.spec")
+          const machine = TaskMachine.machine(plan)
+          for (const slice of slicesOf(plan, seed)) {
+            // The pure fold, step by step.
+            const prefix = Math.floor(slice.length / 2)
+            let folded = engine.initial(plan)
+            let half = folded
+            for (const [index, fact] of slice.entries()) {
+              const next = engine.apply(plan, folded, fact)
+              const added = next.context.log.slice(folded.context.log.length)
+              expect(next.context.log.slice(0, folded.context.log.length)).toEqual([...folded.context.log])
+              const changed = JSON.stringify(withoutLog(next)) !== JSON.stringify(withoutLog(folded))
+              // Every change is logged. A history entry with no other change is a note of a targetless row (a run
+              // start or resume, a stall): AD-5 has those rows write their own entry, from a state to itself.
+              if (changed) expect(added.length).toBeGreaterThan(0)
+              if (!changed) expect(added.filter((item) => item.from !== item.to)).toEqual([])
+              if (added.length === 0) expect(next).toBe(folded)
+              if (engine.ended(folded)) expect(next).toBe(folded)
+              folded = next
+              if (index + 1 === prefix) half = folded
+            }
+            // A fact after the run is done changes nothing: the step above returned the done snapshot itself.
+
+            // A live actor sent the same facts.
+            const live = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const actor = yield* createActor(machine)
+                yield* actor.start
+                for (const fact of slice) yield* actor.send(fact)
+                return yield* actor.getSnapshot
+              }),
+            )
+            expect(shape(live)).toEqual(shape(folded))
+
+            // An actor restored from the persisted fold of the prefix, sent the rest.
+            const persisted = yield* machine.getPersistedSnapshot(half)
+            const restored = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const actor = yield* createActor(machine, { snapshot: persisted })
+                yield* actor.start
+                for (const fact of slice.slice(prefix)) yield* actor.send(fact)
+                return yield* actor.getSnapshot
+              }),
+            )
+            expect(shape(restored)).toEqual(shape(folded))
           }
-          const fact = randomFact(plan, state, random, step)
-          const next = engine.apply(plan, state, fact)
-          // History only grows, and a fact that adds none changes nothing: the engine gives back the very state.
-          expect(next.history.slice(0, state.history.length)).toStrictEqual([...state.history])
-          if (next.history.length === state.history.length) expect(next).toBe(state)
-          for (const item of next.history.slice(state.history.length)) moves.add(moveOf(plan, item))
-          run = [...run, fact]
-          state = next
-          facts += 1
-        }
-        // A resume is the same fold over the stored facts: folding them again gives an equal state.
-        expect(run.reduce((acc, fact) => engine.apply(plan, acc, fact), engine.initial(plan))).toStrictEqual(state)
-      }
-      expect(facts).toBe(4000)
-      for (const move of [
-        "task:verifying>trusted",
-        "task:proving>building",
-        "task:verifying>building",
-        "task:trusted>proving",
-        "task:building>budget_exhausted",
-        "obligation:passed>stale",
-        "obligation:trusted>stale",
-        "obligation:rejected>passed",
-        "scenario:verifying>trusted",
-        "run:running>done",
-        "run:running>cancelled",
-      ])
-        expect(moves).toContain(move)
-    }),
+        }),
+      PER_SEED,
+    )
+  }
+
+  it.live(
+    "reaches the lifecycle's later moves across the seeds",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("release-notes.spec")
+        const moves = new Set<string>()
+        const ids = new Set<string>()
+        let afterDone = 0
+        for (let seed = 1; seed <= SEEDS; seed++)
+          for (const slice of slicesOf(plan, seed)) {
+            let folded = engine.initial(plan)
+            for (const fact of slice) {
+              if (engine.ended(folded)) afterDone++
+              folded = engine.apply(plan, folded, fact)
+              ids.add(
+                "task" in fact
+                  ? fact.task
+                  : fact.type === "scenario.verified"
+                    ? fact.verdict.id
+                    : "id" in fact
+                      ? fact.id
+                      : "",
+              )
+            }
+            for (const item of folded.context.log) moves.add(moveOf(plan, item))
+          }
+        // The folds met facts after a run was done, and facts for ids in no plan.
+        expect(afterDone).toBeGreaterThan(SEEDS)
+        for (const id of ["T7", "T7.c1", "S99"]) expect([...ids]).toContain(id)
+        for (const move of [
+          "task:waiting>blocked",
+          "task:verifying>trusted",
+          "task:proving>building",
+          "task:verifying>building",
+          "task:trusted>proving",
+          "task:building>budget_exhausted",
+          "obligation:passed>stale",
+          "obligation:trusted>stale",
+          "obligation:rejected>passed",
+          "scenario:pending>trusted",
+          "run:running>done",
+          "run:running>cancelled",
+        ])
+          expect([...moves]).toContain(move)
+      }),
+    PER_SEED,
   )
 })

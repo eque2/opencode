@@ -1,7 +1,8 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, test } from "bun:test"
 import { Effect, FileSystem, Schema } from "effect"
-import { readdirSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { existsSync, readdirSync } from "node:fs"
 import path from "path"
 import { Blend } from "@/task/blend"
 import { BlendDocument } from "@/task/blend/document"
@@ -175,6 +176,104 @@ describe("Blend.load", () => {
       expect(Object.keys(spec.outside)).toEqual(["T8", "T9"])
       expect(spec.tasks.find((each) => each.id === "T1.5")?.afterEffective).toEqual(["T1.3", "T1.4", "T9"])
       expect(spec.scenarios.find((each) => each.id === "S13")?.environment?.kind).toBe("deployed")
+    }),
+  )
+})
+
+// The two live-check folders (D15): small valid specs that target the demo seed, so a paid run is short and its
+// outcome does not depend on a model's judgement.
+describe("live-check folders", () => {
+  const seedDir = path.resolve(import.meta.dir, "../task-harness/release-notes-repo")
+  const load = (name: string) =>
+    Effect.gen(function* () {
+      const result = yield* Blend.load(path.join(formatDir, name))
+      expect(result.failures).toEqual([])
+      if (!result.spec) return yield* Effect.die(`${name} did not load`)
+      return result.spec
+    })
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? files(path.join(dir, entry.name)) : [path.join(dir, entry.name)],
+    )
+
+  for (const name of ["example-scenarios.spec", "example-cascade.spec"]) {
+    it.live(`${name} has a title, ensures in every VERIFY.md, no source file, and touches that fit the seed`, () =>
+      Effect.gen(function* () {
+        const spec = yield* load(name)
+        expect(spec.title.length).toBeGreaterThan(0)
+        const all = files(path.join(formatDir, name))
+        expect(all.filter((file) => file.endsWith(".ts"))).toEqual([])
+        const verifies = all.filter((file) => path.basename(file) === "VERIFY.md")
+        expect(verifies).toHaveLength(spec.tasks.length)
+        for (const task of spec.tasks)
+          expect(
+            spec.obligations.filter((item) => item.task === task.id && item.kind === "ensures").length,
+          ).toBeGreaterThan(0)
+        for (const touch of spec.tasks.flatMap((task) => task.touches))
+          expect(existsSync(path.join(seedDir, touch.path))).toBe(touch.change !== "new")
+        // Each leaf is a one-line change: one new file, a one-sentence goal, and an approach that says so, so a real
+        // builder reaches task_ready well inside the live task wall clock.
+        const leaves = spec.tasks.filter((task) => task.children.length === 0)
+        expect(leaves.length).toBeGreaterThan(0)
+        for (const leaf of leaves) {
+          expect(leaf.touches.map((touch) => touch.change)).toEqual(["new"])
+          expect(leaf.goal.trim().split("\n")).toHaveLength(1)
+          expect((leaf.approach ?? "").replace(/\s+/g, " ")).toContain("One line of code is enough.")
+        }
+        // A leaf's test path (its VERIFY.md hint) is the builder's to create, in a folder the seed already has.
+        for (const hint of leaves.flatMap((leaf) => (leaf.hint ? [leaf.hint] : []))) {
+          expect(path.isAbsolute(hint)).toBe(false)
+          expect(path.relative(seedDir, path.join(seedDir, hint)).startsWith("..")).toBe(false)
+          expect(existsSync(path.join(seedDir, hint))).toBe(false)
+          expect(existsSync(path.dirname(path.join(seedDir, hint)))).toBe(true)
+        }
+      }),
+    )
+  }
+
+  it.live("example-scenarios has a parent T1, one leaf and scenario S1 proved by a [S1] test", () =>
+    Effect.gen(function* () {
+      const spec = yield* load("example-scenarios.spec")
+      expect(spec.tasks.map((task) => task.id)).toEqual(["T1", "T1.1"])
+      expect(spec.tasks[1]?.parent).toBe("T1")
+      expect(spec.obligations.map((item) => [item.id, item.proof.kind])).toEqual([
+        ["T1.e1", "review"],
+        ["T1.1.c1", "test"],
+      ])
+      expect(spec.scenarios.map((scenario) => [scenario.id, scenario.needs])).toEqual([["S1", ["T1.1"]]])
+      expect(spec.outside).toEqual({})
+    }),
+  )
+
+  it.live("example-cascade has T1.1 proved only by a failing gate with one attempt, T1.2 after it, T1.3 free", () =>
+    Effect.gen(function* () {
+      const spec = yield* load("example-cascade.spec")
+      const task = (id: string) => spec.tasks.find((each) => each.id === id)
+      expect(spec.tasks.map((each) => each.id)).toEqual(["T1", "T1.1", "T1.2", "T1.3"])
+      expect(spec.obligations.filter((item) => item.task === "T1").map((item) => [item.id, item.proof.kind])).toEqual([
+        ["T1.e1", "review"],
+      ])
+      const gated = spec.obligations.filter((item) => item.task === "T1.1")
+      expect(gated.length).toBeGreaterThan(0)
+      expect(gated.every((item) => item.proof.kind === "gate")).toBe(true)
+      expect(task("T1.1")?.policy.budgets.taskAttempts).toBe(1)
+      expect(task("T1.2")?.after).toEqual(["T1.1"])
+      expect(task("T1.3")?.after).toEqual([])
+      expect(spec.scenarios).toEqual([])
+    }),
+  )
+
+  it.live("example-cascade's gate exits 1 on every run and names no file", () =>
+    Effect.gen(function* () {
+      const spec = yield* load("example-cascade.spec")
+      const gates = spec.obligations.flatMap((item) => (item.proof.kind === "gate" ? [item.proof.gate] : []))
+      for (const gate of new Set(gates)) {
+        const command = spec.gates[gate]?.command ?? ""
+        // A builder can edit only files, so a gate that names none cannot be made to pass.
+        const words = command.split(/[\s'"]+/).filter((word) => word.length > 0)
+        expect(words.filter((word) => /[/.]/.test(word) || existsSync(path.join(seedDir, word)))).toEqual([])
+        for (const _ of [1, 2]) expect(spawnSync("sh", ["-c", command], { cwd: seedDir }).status).toBe(1)
+      }
     }),
   )
 })

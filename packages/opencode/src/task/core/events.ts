@@ -2,7 +2,8 @@ import { Effect, Option, Result, Schema } from "effect"
 import { EventV2 } from "@opencode-ai/core/event"
 import type { Database } from "@opencode-ai/core/database/database"
 import { Event } from "@opencode-ai/schema/event"
-import type { Engine, Fact, Plan, RunState, State } from "./model"
+import type { Engine, RunSnapshot } from "@/task/engine-xstate"
+import type { Fact, Plan } from "./model"
 
 // The durable store of the task harness. Every fact of a run is one EventV2 event on the run's own aggregate,
 // `task_<16 hex>`, never on a session aggregate: a session's event stream must not carry harness facts. The
@@ -78,11 +79,6 @@ export const runID = (directory: string, specPath: string) => `task_${sha256(`${
 /** The aggregate of the `outside` preconditions recorded in one directory. */
 export const directoryID = (directory: string) => `taskdir_${sha256(directory).slice(0, 16)}`
 
-/** The run states after which nothing moves: a `/task` then starts a new run. */
-export const ENDED: ReadonlyArray<RunState> = ["refused", "cancelled", "needs_human", "budget_exhausted", "failed", "done"]
-
-export const ended = (state: RunState) => ENDED.includes(state)
-
 export const publish = Effect.fn("TaskCore.publish")(function* (
   events: EventV2.Interface,
   aggregateID: string,
@@ -116,8 +112,8 @@ export const latestRun = (facts: ReadonlyArray<Fact>): Option.Option<ReadonlyArr
 export const trustedOutside = (facts: ReadonlyArray<Fact>): ReadonlyArray<string> =>
   facts.flatMap((fact) => (fact.type === "outside.trusted" ? [fact.id] : []))
 
-/** The state of a run: its facts folded over the engine's first state. */
-export const fold = (engine: Engine, plan: Plan, facts: ReadonlyArray<Fact>): State =>
-  facts.reduce((state, fact) => engine.apply(plan, state, fact), engine.initial(plan))
+/** The snapshot of a run: its facts folded over the engine's first snapshot. */
+export const fold = (engine: Engine, plan: Plan, facts: ReadonlyArray<Fact>): RunSnapshot =>
+  facts.reduce((snapshot, fact) => engine.apply(plan, snapshot, fact), engine.initial(plan))
 
 export * as TaskEvents from "./events"
