@@ -703,7 +703,7 @@ test("gantt: UI5 the HUD panel shows the outside wait line under the run warning
   const two = await hud(waiting(["T9", "T8"]))
   expect(two.lines.slice(head + 1, head + 3)).toEqual(["waiting on T8 (outside) — run", "/task trust T8 +1"])
   // No outside wait, no line; no warning, no warning line.
-  expect(outsideCollapsed(hudStatus)).toBeUndefined()
+  expect(outsideCollapsed(hudStatus)).toBe("")
   expect((await hud(hudStatus)).lines.join("\n")).not.toContain("spec no longer validates")
 })
 

@@ -183,7 +183,7 @@ export function WarningLines(props: { theme: Accessor<TuiThemeCurrent>; status: 
           </text>
         )}
       </Show>
-      <For each={wrap(outsideCollapsed(props.status) ?? "", props.width)}>
+      <For each={wrap(outsideCollapsed(props.status), props.width)}>
         {(line) => (
           <text fg={props.theme().warning} wrapMode="none" flexShrink={0}>
             {line}

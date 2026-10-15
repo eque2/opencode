@@ -103,7 +103,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
     return (
       (older(status) ? wrap(OLDER_LINE, inner()).length : 0) +
       (status.run.warning ? 1 : 0) +
-      wrap(outsideCollapsed(status) ?? "", inner()).length +
+      wrap(outsideCollapsed(status), inner()).length +
       (Option.isSome(reasonLine(status)) ? 1 : 0)
     )
   }

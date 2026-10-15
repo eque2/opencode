@@ -118,7 +118,7 @@ export function HudView(props: ViewProps) {
                 </text>
               )}
             </Show>
-            <For each={wrap(outsideCollapsed(status()) ?? "", inner)}>
+            <For each={wrap(outsideCollapsed(status()), inner)}>
               {(line) => (
                 <text fg={props.theme().warning} wrapMode="none">
                   {line}
