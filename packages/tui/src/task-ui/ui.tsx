@@ -1,21 +1,26 @@
 // Pieces several designs share: the HARNESS brand, a task line, the shortcut bar, and the context each design gets.
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { RGBA } from "@opentui/core"
-import { For, Show, createEffect, onCleanup, type Accessor } from "solid-js"
+import { Option } from "effect"
+import { For, Show, createEffect, on, onCleanup, type Accessor } from "solid-js"
 import type { Harness, Sessions } from "./peek"
 import {
   DESIGNS,
   MARK,
   NAME,
+  OLDER_LINE,
   counts,
   cut,
   glyph,
   label,
+  older,
   stateColor,
+  tagged,
   type ProofLog,
   type Row,
   type Status,
 } from "./store"
+import { outsideCollapsed, warningOf, wrap } from "./shared"
 import type { View } from "./view"
 
 /** What a design gets: the host API, the shared view state, the peek's session source, and whether it is selected. */
@@ -64,6 +69,108 @@ export const runText = (status: Status) => `run: ${label(status.run.state)}`
 export const trustedText = (status: Status) => {
   const count = counts(status)
   return `${count.trusted}/${count.total} trusted`
+}
+
+/** ` · 2 stopped` after a trusted count, in the error tone; nothing at 0 (EXPERIENCE "Stopped count"). */
+export const stoppedText = (status: Status) => {
+  const stopped = counts(status).stopped
+  return stopped > 0 ? ` · ${stopped} stopped` : ""
+}
+
+/** The run's title (UI6); the spec id when the spec has none. */
+export const runTitle = (status: Status) =>
+  status.run.title || status.run.specId || (status.run.spec.split("/").filter(Boolean).at(-1) ?? status.run.spec)
+
+/**
+ * The run reason line (EXPERIENCE "Component Patterns"): the first `run.reason` line, then " (+N more)"; in the error
+ * tone when the run has the `stopped` tag, else muted, as a done run's "not run" line (AD-16, UI19).
+ */
+export const reasonLine = (status: Status) => {
+  const lines = (status.run.reason ?? "").split("\n").filter(Boolean)
+  if (lines.length === 0) return Option.none<{ text: string; tone: "error" | "muted" }>()
+  return Option.some({
+    text: `${lines[0]}${lines.length > 1 ? ` (+${lines.length - 1} more)` : ""}`,
+    tone: tagged(status.run, "stopped") ? ("error" as const) : ("muted" as const),
+  })
+}
+
+/** The warning toast's message when the run warning appears between two statuses (UI16); none otherwise. */
+export const warningToast = (before: Status | undefined, after: Status | undefined) => {
+  const count = after?.run.warning ? after.run.warning.split("\n").length : 0
+  if (count === 0 || before?.run.warning) return Option.none<string>()
+  return Option.some(
+    `The spec no longer validates (${count} ${count === 1 ? "failure" : "failures"}). The run keeps the plan it loaded.`,
+  )
+}
+
+/** In every design, a warning toast each time the run warning appears in the status the view follows (UI16). */
+export function registerWarning(ctx: {
+  readonly view: View
+  readonly toast: (toast: { variant: "warning"; title: string; message: string }) => void
+}) {
+  createEffect(
+    on(ctx.view.status, (after, before) =>
+      Option.map(warningToast(before, after), (message) => ctx.toast({ variant: "warning", title: MARK, message })),
+    ),
+  )
+}
+
+/** The trusted count and, after it, the stopped count in the error tone. */
+export function TrustedCount(props: { theme: Accessor<TuiThemeCurrent>; status: Status; bar: string }) {
+  return (
+    <text wrapMode="none">
+      <span style={{ fg: props.theme().success }}>{`${props.bar ? `${props.bar} ` : ""}${trustedText(props.status)}`}</span>
+      <span style={{ fg: props.theme().error }}>{stoppedText(props.status)}</span>
+    </text>
+  )
+}
+
+/** The muted older-status line (UI25), wrapped to `width`, for a status written before the tags. */
+export function OlderLine(props: { theme: Accessor<TuiThemeCurrent>; status: Status; width: number }) {
+  return (
+    <For each={older(props.status) ? wrap(OLDER_LINE, props.width) : []}>
+      {(line) => (
+        <text fg={props.theme().textMuted} wrapMode="none" flexShrink={0}>
+          {line}
+        </text>
+      )}
+    </For>
+  )
+}
+
+/** The collapsed run warning line and the outside wait line under it, wrapped to `width` (UI16, UI5). */
+export function WarningLines(props: { theme: Accessor<TuiThemeCurrent>; status: Status; width: number }) {
+  return (
+    <>
+      <Show when={warningOf(props.status)}>
+        {(warning) => (
+          <text fg={props.theme().warning} wrapMode="none" flexShrink={0}>
+            {cut(warning().head, props.width)}
+          </text>
+        )}
+      </Show>
+      <For each={wrap(outsideCollapsed(props.status) ?? "", props.width)}>
+        {(line) => (
+          <text fg={props.theme().warning} wrapMode="none" flexShrink={0}>
+            {line}
+          </text>
+        )}
+      </For>
+    </>
+  )
+}
+
+/** The run reason line, cut to `width`; nothing without a reason. */
+export function ReasonLine(props: { theme: Accessor<TuiThemeCurrent>; status: Status; width: number }) {
+  return (
+    <Show when={Option.getOrUndefined(reasonLine(props.status))}>
+      {(line) => (
+        <text fg={line().tone === "error" ? props.theme().error : props.theme().textMuted} wrapMode="none" flexShrink={0}>
+          {cut(line().text, props.width)}
+        </text>
+      )}
+    </Show>
+  )
 }
 
 /** `├ ` or `└ ` indented by depth; nothing for a root task. */

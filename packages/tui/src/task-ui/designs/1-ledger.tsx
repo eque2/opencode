@@ -2,8 +2,20 @@
 import { For, Show } from "solid-js"
 import { Peek } from "../peek"
 import { SharedRegion, regionRows } from "../shared"
-import { bar, counts, cut, tone } from "../store"
-import { Brand, TaskLine, runText, treePrefix, trustedText, type Ctx, type ViewProps } from "../ui"
+import { bar, counts, cut } from "../store"
+import {
+  Brand,
+  OlderLine,
+  ReasonLine,
+  TaskLine,
+  TrustedCount,
+  WarningLines,
+  runText,
+  runTitle,
+  treePrefix,
+  type Ctx,
+  type ViewProps,
+} from "../ui"
 
 // The sidebar is 42 columns with 2 of padding on each side.
 const WIDTH = 38
@@ -19,11 +31,11 @@ export function LedgerView(props: ViewProps & { width: number }) {
             <span style={{ fg: props.theme().textMuted }}> {runText(status())}</span>
           </text>
           <text fg={props.theme().textMuted} wrapMode="none">
-            {cut(
-              `${status().run.spec.split("/").at(-1)} ${bar(counts(status()).trusted, counts(status()).total, 6)} ${trustedText(status())}`,
-              props.width,
-            )}
+            {cut(runTitle(status()), props.width)}
           </text>
+          <TrustedCount theme={props.theme} status={status()} bar={bar(counts(status()).trusted, counts(status()).total, 6)} />
+          <OlderLine theme={props.theme} status={status()} width={props.width} />
+          <WarningLines theme={props.theme} status={status()} width={props.width} />
           <For each={props.view.rows()}>
             {(row) => (
               <TaskLine
@@ -37,10 +49,18 @@ export function LedgerView(props: ViewProps & { width: number }) {
               />
             )}
           </For>
-          <Show when={status().run.reason && tone(status().run.state) !== "good"}>
-            <text fg={props.theme().error} wrapMode="word">
-              {cut(status().run.reason ?? "", props.width * 3)}
-            </text>
+          {/* A refused run has no tasks: every reason line shows (UI17); else the one run reason line. */}
+          <Show
+            when={status().run.state === "refused"}
+            fallback={<ReasonLine theme={props.theme} status={status()} width={props.width} />}
+          >
+            <For each={(status().run.reason ?? "").split("\n").filter(Boolean)}>
+              {(line) => (
+                <text fg={props.theme().error} wrapMode="none">
+                  {cut(line, props.width)}
+                </text>
+              )}
+            </For>
           </Show>
           <Show when={props.view.expanded() && props.view.selected()} keyed>
             {(unit) => (
