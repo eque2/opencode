@@ -126,6 +126,16 @@ export const blockedBy = (snapshot: RunSnapshot, id: string): Cause | undefined 
 /** Whether the run has ended: its machine is final, so nothing moves any more. */
 export const ended = (snapshot: RunSnapshot) => snapshot.status === "done"
 
+/** The stop the run took, if any: `run.cancelled`, or the state of `run.ended`, with its reason (AD-4). */
+export const stopOf = (snapshot: RunSnapshot) => Option.fromNullishOr(snapshot.context.stop)
+
+/**
+ * Whether a spec check found failures during the run (D12, AD-18): a `spec.checked` with failures logged an entry,
+ * even when a later check validated again and cleared the warning.
+ */
+export const warned = (snapshot: RunSnapshot) =>
+  snapshot.context.log.some((entry) => entry.reason !== undefined && /^spec\.checked: \d+ failures?$/.test(entry.reason))
+
 // The status name of a state, typed by the names its kind shows in `CLASS`.
 const showsIn = <T extends Readonly<Record<string, { readonly shows: string }>>>(states: T, state: string) =>
   Object.entries(states).find(([name]) => name === state)?.[1].shows as T[keyof T]["shows"] | undefined
