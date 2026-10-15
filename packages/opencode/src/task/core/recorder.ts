@@ -1,4 +1,4 @@
-import { Clock, Effect, Option, Queue, Schema, Semaphore, Stream } from "effect"
+import { Clock, Effect, type FileSystem, Option, type Path, Queue, Schema, Semaphore, Stream } from "effect"
 import { createActor, initialTransition } from "@jambudipa/xstate-effect"
 import type { EventV2 } from "@opencode-ai/core/event"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
@@ -40,6 +40,11 @@ export const make = Effect.fn("TaskRecorder.make")(function* (input: {
   readonly stored: ReadonlyArray<Fact>
   readonly events: EventV2.Interface
   readonly machine?: RunMachine
+  /** Writes one status with its heartbeat; `TaskStatus.write` into `directory` by default. */
+  readonly write?: (
+    status: TaskStatus.Status,
+    aliveAt: number,
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path>
 }) {
   const machine = input.machine ?? TaskMachine.machine(input.plan)
   const [first] = yield* initialTransition(machine)
@@ -49,6 +54,7 @@ export const make = Effect.fn("TaskRecorder.make")(function* (input: {
   // A resume in a new process may read a clock behind its stored facts: `at` never goes back (AD-5).
   const floor = input.stored.reduce((latest, fact) => Math.max(latest, fact.at), 0)
   const permit = yield* Semaphore.make(1)
+  const write = input.write ?? ((status, aliveAt) => TaskStatus.write(input.directory, status, aliveAt))
 
   const record = (fact: Unstamped) =>
     permit.withPermit(
@@ -90,9 +96,7 @@ export const make = Effect.fn("TaskRecorder.make")(function* (input: {
       Option.match(last, {
         onNone: () => Effect.void,
         onSome: (snapshot) =>
-          Effect.flatMap(Clock.currentTimeMillis, (now) =>
-            TaskStatus.write(input.directory, TaskStatus.project(input.plan, snapshot), now),
-          ),
+          Effect.flatMap(Clock.currentTimeMillis, (now) => write(TaskStatus.project(input.plan, snapshot), now)),
       }),
     ),
     Effect.forkScoped,
