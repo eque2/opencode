@@ -13,6 +13,8 @@ const Reason = Schema.NullOr(Schema.String).annotate({ identifier: "TaskUi.Reaso
 // know is kept and read by nothing.
 const Tags = Schema.optional(Schema.Array(Schema.String))
 const At = Schema.optional(Schema.Number)
+// A task id as the status file names it.
+const TaskId = Schema.String.pipe(Schema.brand("TaskUi.TaskId"))
 const Span = Schema.Struct({ state: Schema.String, from: Schema.Number, to: At }).annotate({ identifier: "TaskUi.Span" })
 
 const Task = Schema.Struct({
@@ -23,7 +25,9 @@ const Task = Schema.Struct({
   waitingOnOutside: Schema.optional(Schema.Array(Schema.String)),
   worktree: Schema.optional(Reason),
   reason: Schema.optional(Reason),
-  blockedBy: Schema.optional(Schema.Struct({ id: Schema.String, state: Schema.String })),
+  blockedBy: Schema.optional(
+    Schema.Struct({ id: TaskId, state: Schema.String }).annotate({ identifier: "TaskUi.Cause" }),
+  ),
   startedAt: At,
   endedAt: At,
   spans: Schema.optional(Schema.Array(Span)),
@@ -62,7 +66,7 @@ export const Status = Schema.Struct({
     specId: Schema.optional(Schema.String),
     path: Schema.String,
     title: Schema.optional(Schema.String),
-    task: Schema.optional(Schema.Struct({ id: Schema.String, title: Schema.String })),
+    task: Schema.optional(Schema.Struct({ id: TaskId, title: Schema.String }).annotate({ identifier: "TaskUi.RunTask" })),
     startedAt: At,
     endedAt: At,
     // The heartbeat (AD-9): the status writer's latest write.

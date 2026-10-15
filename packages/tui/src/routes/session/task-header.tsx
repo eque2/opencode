@@ -5,12 +5,19 @@ import type { RGBA } from "@opentui/core"
 import { Option, Schema } from "effect"
 import { Show } from "solid-js"
 
-const Named = Schema.Struct({ id: Schema.String, title: Schema.String })
+// eslint-disable-next-line effect/prefer-schema-brand -- (b) the spec id and task id are display text of the run's metadata; nothing joins them to another id
+const Named = Schema.Struct({ id: Schema.String, title: Schema.String }).annotate({ identifier: "TaskHeader.Named" })
 
-const Header = Schema.Struct({ spec: Named, task: Schema.optional(Named), leftOut: Schema.Array(Schema.String) })
+const Header = Schema.Struct({
+  spec: Named,
+  task: Schema.optional(Named),
+  leftOut: Schema.Array(Schema.String),
+}).annotate({ identifier: "TaskHeader.Header" })
 export type Header = typeof Header.Type
 
-const Metadata = Schema.Struct({ taskHarness: Schema.Struct({ header: Header }) })
+const Metadata = Schema.Struct({ taskHarness: Schema.Struct({ header: Header }) }).annotate({
+  identifier: "TaskHeader.Metadata",
+})
 
 /** The header a text part's metadata holds; none for any other metadata. */
 export const headerOf = (metadata: unknown) =>
