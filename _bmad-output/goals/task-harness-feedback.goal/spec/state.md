@@ -34,8 +34,8 @@
 | T2.10   | task       | completed                               |
 | T2.11   | task       | completed                               |
 | T2.12   | task       | completed                               |
-| T2.13   | task       | not_started                             |
-| T2.14   | task       | not_started                             |
+| T2.13   | task       | completed                               |
+| T2.14   | task       | building                                |
 | T3.1    | task       | not_started                             |
 | T3.2    | task       | not_started                             |
 | T3.3    | task       | not_started                             |
