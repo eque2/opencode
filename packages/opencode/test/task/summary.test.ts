@@ -298,6 +298,21 @@ describe("the closing summary's markdown (D18, UI7)", () => {
     }),
   )
 
+  it.live("summary: a failed task's Stopped line names its state, attempts and time, then its reason", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const status = ended(plan)
+      Object.assign(status.tasks["T1.4"] ?? {}, {
+        state: "failed",
+        tags: ["ended", "stopped", "dead"],
+        reason: "harness error: the worker failed 3 times",
+      })
+      const lines = TaskSummary.markdown({ plan, status, stop: none, warned: false, usage: spent }).split("\n")
+      expect(lines).toContain("- ⊘ **T1.4** failed after 3 attempts · 6m 40s")
+      expect(lines).toContain("  harness error: the worker failed 3 times")
+    }),
+  )
+
   it.live("summary: UI20 a spec check with failures warns the run, even when a later check validates again", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
