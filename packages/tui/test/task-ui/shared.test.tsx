@@ -4,7 +4,7 @@
 // designs, its scroll keys and its clicks.
 import { expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { ScrollBoxRenderable, type Renderable } from "@opentui/core"
 import { Option, Result } from "effect"
 import type { JSX } from "solid-js"
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
@@ -33,6 +33,9 @@ import { DockView } from "../../src/task-ui/designs/2-dock"
 import { HudView } from "../../src/task-ui/designs/6-hud"
 import { TickerDialog, registerTicker } from "../../src/task-ui/designs/7-ticker"
 import { Screen, registerScreen } from "../../src/task-ui/designs/screen"
+import { BoardView, boardRows } from "../../src/task-ui/designs/3-board"
+import { MatrixView, matrixRows } from "../../src/task-ui/designs/4-matrix"
+import { GanttView, ganttRows } from "../../src/task-ui/designs/5-gantt"
 import projected from "./fixture-projected.json"
 import { settle, viewFor } from "./view"
 
@@ -197,6 +200,28 @@ test("UI9 STOPPED: one line per state and reason, ids in natural order, dead the
   expect(frame).toContain("⊘ T1.4 budget exhausted — T1.4.c7: the test asserts only that 'topic change' appears")
   expect(frame).toContain("⊖ T1, T1.5 blocked by T1.4: budget exhausted")
   expect(frame).toContain("– T1.2 cancelled — user stop")
+  // Two blocked tasks with different causes get a line each; one reason in two states gets a line for each state.
+  const causes = statusOf((raw) => {
+    Object.assign(tasksOf(raw)["T1.5"], {
+      reason: "blocked by T1.2: failed",
+      blockedBy: { id: "T1.2", state: "failed" },
+    })
+    Object.assign(tasksOf(raw)["T1.3"], {
+      state: "cancelled",
+      tags: ["ended", "stopped"],
+      reason: "blocked by T1.4: budget exhausted",
+    })
+  })
+  expect(stoppedLines(causes).map((line) => [line.state, line.ids, line.reason])).toEqual([
+    ["budget_exhausted", ["T1.4"], "T1.4.c7: the test asserts only that 'topic change' appears"],
+    ["blocked", ["T1"], "blocked by T1.4: budget exhausted"],
+    ["blocked", ["T1.5"], "blocked by T1.2: failed"],
+    ["cancelled", ["T1.3"], "blocked by T1.4: budget exhausted"],
+  ])
+  const shown = await regionFrame(causes)
+  expect(shown).toContain("⊖ T1 blocked by T1.4: budget exhausted")
+  expect(shown).toContain("⊖ T1.5 blocked by T1.2: failed")
+  expect(shown).toContain("– T1.3 cancelled — blocked by T1.4: budget exhausted")
 })
 
 test("UI9 a STOPPED line: the ids in the state's tone, the reason muted, a blocked reason in the warning tone", () => {
@@ -224,6 +249,9 @@ test("UI9 ids that do not fit end with +N; under 30 cells the reason goes and th
   const [dead, blocked] = stoppedLines(base)
   expect(textOf(stoppedPieces(dead, 29))).toBe("⊘ T1.4 budget exhausted")
   expect(textOf(stoppedPieces(blocked, 29))).toBe("⊖ T1, T1.5 blocked")
+  // At 30 cells the reason stays, cut with ….
+  expect(textOf(stoppedPieces(dead, 30))).toBe("⊘ T1.4 budget exhausted — T1.…")
+  expect(textOf(stoppedPieces(blocked, 30))).toBe("⊖ T1, T1.5 blocked by T1.4: b…")
   // A long line is cut with … to its width.
   expect(textOf(stoppedPieces(dead, 40))).toHaveLength(40)
   expect(textOf(stoppedPieces(dead, 40))).toEndWith("…")
@@ -260,6 +288,9 @@ test("UI10 SCENARIOS: the heading with the trusted count, one entry per scenario
     for (const id of ["S2", "S3"]) Object.assign(scenariosOf(raw)[id], { state: "trusted", tags: ["ended"] })
   })
   expect(scenariosHeading(two)).toBe("SCENARIOS 13 · 2/13 trusted")
+  // The count reads the tags: a passed scenario (active) is not trusted yet.
+  const passed = statusOf((raw) => Object.assign(scenariosOf(raw)["S2"], { state: "passed", tags: ["active"] }))
+  expect(scenariosHeading(passed)).toBe("SCENARIOS 13 · 0/13 trusted")
   expect(scenarioEntries(base).map((entry) => entry.id)).toEqual(Array.from({ length: 13 }, (_, i) => `S${i + 1}`))
   // The status lists the scenarios backwards: the entries still run S1, S2, …, S10, …, S13.
   const backwards = statusOf((raw) =>
@@ -323,6 +354,9 @@ test("UI10 a blocked entry shows its reason; a rejected or failed reason goes un
   const at = frame.findIndex((line) => line.startsWith("✗ S4 rejected"))
   expect(frame.slice(at + 1, at + 3)).toEqual([...under])
   expect(frame[at + 3]).toStartWith("⊖ S5")
+  const s7 = frame.findIndex((line) => line.startsWith("✗ S7 failed"))
+  expect(frame[s7 + 1]).toBe("    exit 1")
+  expect(frame[s7 + 2]).toStartWith("⊖ S8")
   // A blocked scenario's reason is its label, never a line under it.
   expect(scenarioEntries(base)[4].reason).toBe("")
 })
@@ -357,6 +391,11 @@ test("the glyph, id and state label are never cut; a wait list is cut before the
   expect(text.length).toBeLessThanOrEqual(50)
   expect(TITLE_MIN).toBe(12)
   expect(pieces.at(-1)?.text.length).toBeGreaterThanOrEqual(12)
+  // A blocked reason longer than a 38-cell column: the entry is cut to the column with ….
+  const narrow = textOf(entryPieces(scenarioEntries(base)[9], 38))
+  expect(narrow).toHaveLength(38)
+  expect(narrow).toStartWith("⊖ S10 blocked by T1.4: budget")
+  expect(narrow).toEndWith("…")
   // A state label is kept whole even when the title gets less than 12 cells.
   const rejected = entryPieces(
     scenarioEntries(
@@ -369,20 +408,37 @@ test("the glyph, id and state label are never cut; a wait list is cut before the
 
 // --- the seven designs -----------------------------------------------------------------------------------------------
 
-// Every entry the region can show, scrolling it with the mouse wheel until the frame stops changing.
+// The scroll boxes under a renderable.
+const scrollBoxes = (node: Renderable): ReadonlyArray<ScrollBoxRenderable> => [
+  ...(node instanceof ScrollBoxRenderable ? [node] : []),
+  ...node.getChildren().flatMap(scrollBoxes),
+]
+
+// The cells of the frame inside `box`: the region's own rows, never a design's rows around it.
+const inBox = (frame: string, box: ScrollBoxRenderable) =>
+  linesOf(frame)
+    .slice(box.y, box.y + box.height)
+    .map((line) => line.slice(box.x, box.x + box.width))
+    .join("\n")
+
+// The region's scroll box: the one whose cells hold the SCENARIOS heading of the shared region.
+const regionBox = (app: Awaited<ReturnType<typeof render>>) => {
+  const frame = app.captureCharFrame()
+  const box = scrollBoxes(app.renderer.root).find((item) => inBox(frame, item).includes("SCENARIOS 13 ·"))
+  if (!box) throw new Error("no shared region")
+  return box
+}
+
+// Every entry the region shows, inside its own box, scrolling it with the mouse wheel until it stops moving.
 async function regionContent(app: Awaited<ReturnType<typeof render>>) {
-  const seen: string[] = []
-  let frame = app.captureCharFrame()
+  const box = regionBox(app)
+  const seen = [inBox(app.captureCharFrame(), box)]
   for (let tries = 0; tries < 20; tries++) {
-    seen.push(frame)
-    // The wheel goes to the cell under the SCENARIOS heading, where the region is in each design.
-    const row = rowOf(frame, "SCENARIOS")
-    if (row < 0) break
-    await app.mockMouse.scroll(linesOf(frame)[row].indexOf("SCENARIOS") + 1, row + 1, "down")
+    const top = box.scrollTop
+    await app.mockMouse.scroll(box.x + 1, box.y + 1, "down")
     await app.renderOnce()
-    const next = app.captureCharFrame()
-    if (next === frame) break
-    frame = next
+    if (box.scrollTop === top) break
+    seen.push(inBox(app.captureCharFrame(), box))
   }
   return seen.join("\n")
 }
@@ -421,6 +477,126 @@ test("the release-notes status at 120 × 40 holds S1–S13 in the region of each
     app.renderer.destroy()
     dispose()
   }
+})
+
+test("the full-screen designs at 120 × 40 never draw over the Peek; its activity lines shrink when the view is too tall", async () => {
+  const activity = Array.from({ length: 8 }, (_, i) => ({
+    glyph: "›",
+    tone: "idle" as const,
+    text: `activity line ${i + 1}`,
+  }))
+  const sessions: Sessions = {
+    children: () => () => [{ id: "b", role: "builder", again: false, created: 1, updated: 1 }],
+    activity: () => () => activity,
+    all: () => () => [],
+  }
+  for (const design of [3, 4, 5]) {
+    for (const height of [40, 80]) {
+      const { view, dispose } = await viewFor(base, { design })
+      view.select("T1.4")
+      await settle()
+      const app = await render(
+        () => (
+          <Screen theme={() => theme} view={view} sessions={sessions} leader="ctrl+x" width={120} height={height} />
+        ),
+        120,
+        height,
+      )
+      const lines = linesOf(app.captureCharFrame())
+      const top = lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details · read-only ═"))
+      // The Peek's title border is whole.
+      expect({ design, height, titled: top >= 0 }).toEqual({ design, height, titled: true })
+      if (top < 0) continue
+      const left = lines[top].indexOf("╔")
+      const right = lines[top].indexOf("╗")
+      const bottom = lines.findIndex((line, row) => row > top && line[left] === "╚")
+      // Every row of the Peek has both its borders, and the BUILDER line is whole: nothing is drawn over it.
+      const rows = lines.slice(top + 1, bottom)
+      expect({ design, height, framed: rows.every((line) => line[left] === "║" && line[right] === "║") }).toEqual({
+        design,
+        height,
+        framed: true,
+      })
+      expect(rows.map((line) => line.slice(left, right + 1))).toContainEqual(
+        `║ BUILDER  budget exhausted · attempt 3 · 0s`.padEnd(right - left, " ") + "║",
+      )
+      // Too tall for 40 rows: one activity line; at 80 rows the view fits and the Peek keeps more.
+      const shown = rows.filter((line) => line.includes("activity line")).length
+      expect({ design, height, shrunk: shown === 1 }).toEqual({ design, height, shrunk: height === 40 })
+      app.renderer.destroy()
+      dispose()
+    }
+  }
+})
+
+test("each full-screen design's row count is the rows it renders", async () => {
+  const cases: ReadonlyArray<
+    [
+      number,
+      number,
+      (view: Awaited<ReturnType<typeof viewFor>>["view"]) => JSX.Element,
+      (view: Awaited<ReturnType<typeof viewFor>>["view"]) => number,
+    ]
+  > = [
+    [
+      3,
+      61,
+      (view) => <BoardView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={61} />,
+      (view) => boardRows(view, 61),
+    ],
+    [
+      3,
+      118,
+      (view) => <BoardView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={118} />,
+      (view) => boardRows(view, 118),
+    ],
+    [
+      4,
+      118,
+      (view) => <MatrixView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={118} />,
+      (view) => matrixRows(view, 118),
+    ],
+    [
+      4,
+      30,
+      (view) => <MatrixView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={30} />,
+      (view) => matrixRows(view, 30),
+    ],
+    [
+      5,
+      118,
+      (view) => <GanttView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={118} />,
+      (view) => ganttRows(view),
+    ],
+  ]
+  for (const [design, width, node, count] of cases) {
+    const { view, dispose } = await viewFor(base, { design })
+    view.select("T1.4")
+    await settle()
+    const app = await render(() => node(view), 120, 100)
+    const lines = linesOf(app.captureCharFrame())
+    const used = lines.findLastIndex((line) => line.trim() !== "") + 1
+    expect({ design, width, rows: count(view) }).toEqual({ design, width, rows: used })
+    app.renderer.destroy()
+    dispose()
+  }
+})
+
+test("in the Ledger an outside wait line that wraps gets its rows, so the region shows S13 without a scroll", async () => {
+  const { view, dispose } = await viewFor(statusOf(waitsOnT9), { design: 1 })
+  view.setExpanded(true)
+  await settle()
+  const app = await render(
+    () => <LedgerView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={38} />,
+    120,
+    80,
+  )
+  const box = regionBox(app)
+  const text = inBox(app.captureCharFrame(), box)
+  expect(text).toContain("S13 ")
+  expect(text.replace(/\s+/g, " ")).toContain("waiting on T9 (outside) — run /task trust T9")
+  app.renderer.destroy()
+  dispose()
 })
 
 // --- scrolling ---------------------------------------------------------------------------------------------------------
@@ -574,7 +750,8 @@ test("UI22 at 120 × 24, 13 scenarios and 5 stopped tasks: the region keeps 8 ro
     )
     return { app, view, dispose, box: () => box }
   }
-  const tall = await shown(40)
+  // At 80 rows everything fits: the Peek keeps its activity lines.
+  const tall = await shown(80)
   const tallLines = linesOf(tall.app.captureCharFrame()).filter((line) => line.includes("activity line")).length
   tall.app.renderer.destroy()
   tall.dispose()
@@ -585,11 +762,14 @@ test("UI22 at 120 × 24, 13 scenarios and 5 stopped tasks: the region keeps 8 ro
   expect(linesOf(frame).filter((line) => line.includes("activity line")).length).toBe(1)
   expect(short.box()?.height ?? 0).toBeGreaterThanOrEqual(8)
   // pagedown, page by page, reaches every STOPPED line and every scenario.
-  const seen = [frame]
+  // Only the region's own rows count: the Board's cards show the same ids.
+  const region = short.box()
+  if (!region) throw new Error("no shared region")
+  const seen = [inBox(frame, region)]
   for (let page = 0; page < 10; page++) {
-    pageBy(short.box(), 1)
+    pageBy(region, 1)
     await short.app.renderOnce()
-    seen.push(short.app.captureCharFrame())
+    seen.push(inBox(short.app.captureCharFrame(), region))
   }
   const all = seen.join("\n")
   for (const text of [
