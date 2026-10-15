@@ -1,62 +1,119 @@
 // Design 3, Board: a full-screen kanban. One column for each stage of the harness's work, one card for each task;
-// the peek opens on the right.
-import { For, Show } from "solid-js"
-import { cut, glyph, label, obligationsOf, stateColor, type Row } from "../store"
-import { wrap } from "../shared"
-import { attemptText, type ViewProps } from "../ui"
+// the peek opens on the right. The tags choose each card's column (AD-16, UI1).
+import { Option } from "effect"
+import { For } from "solid-js"
+import {
+  cut,
+  durationOf,
+  glyph,
+  label,
+  obligationsOf,
+  stateColor,
+  stoppedGroup,
+  tagged,
+  columnOf,
+  type Column,
+  type Liveness,
+  type Row,
+  type Status,
+} from "../store"
+import { pieceColor, waitSentences, wrap, type Piece } from "../shared"
+import type { ViewProps } from "../ui"
 import type { View } from "../view"
 
-const COLUMNS = [
-  { name: "WAITING", states: ["waiting"] },
-  { name: "BUILDING", states: ["building"] },
-  { name: "PROVING", states: ["proving"] },
-  { name: "VERIFYING", states: ["verifying"] },
-  { name: "TRUSTED", states: ["trusted"] },
-  // Every other state stops the task until the developer acts: stalled, needs_human, budget_exhausted, …
-  { name: "STOPPED", states: [] },
-]
+const COLUMNS: ReadonlyArray<Column> = ["WAITING", "BUILDING", "PROVING", "VERIFYING", "TRUSTED", "STOPPED"]
 
-const columnOf = (state: string) =>
-  COLUMNS.find((column) => column.states.includes(state)) ?? COLUMNS[COLUMNS.length - 1]
+/** The cards of a column, in tree order; STOPPED in the STOPPED list order: dead, then blocked, then the rest. */
+export const cardsIn = (list: ReadonlyArray<Row>, column: Column) => {
+  const cards = list.filter((row) => Option.getOrUndefined(columnOf(row.task)) === column)
+  return column === "STOPPED" ? cards.toSorted((a, b) => stoppedGroup(a.task) - stoppedGroup(b.task)) : cards
+}
 
-// A card's rows: its border, the id and state lines, then each line it shows.
-const cardRows = (row: Row, proofs: number, width: number) =>
-  4 +
-  (attemptText(row) ? 1 : 0) +
-  (proofs > 0 ? 1 : 0) +
-  (row.task.waitingOn.length > 0 ? 1 : 0) +
-  (row.task.reason ? wrap(cut(row.task.reason, (width - 4) * 3), width - 4).length : 0)
+// Text in lines of `width`, at most `max` of them, the last cut with `…`.
+const clamp = (text: string, width: number, max: number) => {
+  const lines = wrap(text, width)
+  return lines.length <= max ? lines : [...lines.slice(0, max - 1), cut(lines.slice(max - 1).join(" "), width)]
+}
 
-/** The rows the Board takes at `width`: the headings, then its tallest column of cards. */
+/**
+ * A card's lines under its id (EXPERIENCE "Board card"), each `inner` cells at most: the state line (a blocked task's
+ * cause in the warning tone, a waiting task's wait sentences, else the state label muted), "attempt N · <duration>"
+ * (the duration on its own line when they do not fit), "proofs k/n", then a reason in at most 3 lines, in the error
+ * tone with the `dead` tag and muted without it.
+ */
+export const cardLines = (
+  status: Status,
+  row: Row,
+  liveness: Liveness,
+  now: number,
+  inner: number,
+): ReadonlyArray<Piece> => {
+  const task = row.task
+  const blocked = tagged(task, "blocked")
+  const state: ReadonlyArray<Piece> = blocked
+    ? [{ text: task.reason ?? label(task.state), tone: "warning" }]
+    : tagged(task, "waiting") && task.waitingOn.length > 0
+      ? waitSentences(status, task)
+      : [{ text: label(task.state), tone: "muted" }]
+  const attempt = task.attempts > 0 ? `attempt ${task.attempts}` : ""
+  const duration = durationOf(task, status.run, liveness, now)
+  const meta =
+    attempt && duration && `${attempt} · ${duration}`.length <= inner
+      ? [`${attempt} · ${duration}`]
+      : [attempt, duration]
+  const proofs = obligationsOf(status, row.id)
+  return [
+    ...state.flatMap((piece) => wrap(piece.text, inner).map((text) => ({ ...piece, text }))),
+    ...meta.filter(Boolean).map((text) => ({ text, tone: "muted" as const })),
+    ...(proofs.length > 0
+      ? [
+          {
+            text: cut(`proofs ${proofs.filter((item) => item.state === "trusted").length}/${proofs.length}`, inner),
+            tone: "text" as const,
+          },
+        ]
+      : []),
+    ...(task.reason && !blocked
+      ? clamp(task.reason, inner, 3).map((text) => ({
+          text,
+          tone: tagged(task, "dead") ? ("bad" as const) : ("muted" as const),
+        }))
+      : []),
+  ]
+}
+
+const cardWidth = (width: number) => Math.max(14, Math.floor(width / COLUMNS.length) - 1)
+
+/** The rows the Board takes at `width`: the headings, then its tallest column of cards (a border, the id, the lines). */
 export const boardRows = (view: View, width: number) => {
   const status = view.status()
   if (!status) return 0
-  const cards = Math.max(14, Math.floor(width / COLUMNS.length) - 1)
+  const inner = cardWidth(width) - 4
   return (
     1 +
     Math.max(
       0,
       ...COLUMNS.map((column) =>
-        view
-          .rows()
-          .filter((row) => columnOf(row.task.state) === column)
-          .reduce((sum, row) => sum + cardRows(row, obligationsOf(status, row.id).length, cards), 0),
+        cardsIn(view.rows(), column).reduce(
+          (sum, row) => sum + 3 + cardLines(status, row, view.liveness(), view.now(), inner).length,
+          0,
+        ),
       ),
     )
   )
 }
 
 export function BoardView(props: ViewProps & { width: number }) {
-  const width = () => Math.max(14, Math.floor(props.width / COLUMNS.length) - 1)
+  const width = () => cardWidth(props.width)
   return (
     <box flexDirection="row" gap={1}>
       <For each={COLUMNS}>
         {(column) => {
-          const cards = () => props.view.rows().filter((row) => columnOf(row.task.state) === column)
+          const cards = () => cardsIn(props.view.rows(), column)
           return (
             <box flexDirection="column" width={width()} flexShrink={0}>
               <text fg={props.theme().textMuted} wrapMode="none">
-                <b>{`${column.name} ${cards().length}`}</b>
+                <b>{`${column} ${cards().length}`}</b>
               </text>
               <For each={cards()}>{(row) => <Card {...props} row={row} width={width()} />}</For>
             </box>
@@ -69,11 +126,11 @@ export function BoardView(props: ViewProps & { width: number }) {
 
 function Card(props: ViewProps & { row: Row; width: number }) {
   const selected = () => props.view.selected() === props.row.id
-  const proofs = () => {
-    const status = props.view.status()
-    return status ? obligationsOf(status, props.row.id) : []
-  }
   const inner = () => props.width - 4
+  const lines = () => {
+    const status = props.view.status()
+    return status ? cardLines(status, props.row, props.view.liveness(), props.view.now(), inner()) : []
+  }
   return (
     <box
       border
@@ -89,29 +146,13 @@ function Card(props: ViewProps & { row: Row; width: number }) {
       <text fg={stateColor(props.theme(), props.row.task.state)} wrapMode="none">
         <b>{cut(`${glyph(props.row.task.state)} ${props.row.id}`, inner())}</b>
       </text>
-      <text fg={props.theme().textMuted} wrapMode="none">
-        {cut(label(props.row.task.state), inner())}
-      </text>
-      <Show when={attemptText(props.row)}>
-        <text fg={props.theme().textMuted} wrapMode="none">
-          {attemptText(props.row)}
-        </text>
-      </Show>
-      <Show when={proofs().length > 0}>
-        <text fg={props.theme().text} wrapMode="none">
-          {cut(`proofs ${proofs().filter((item) => item.state === "trusted").length}/${proofs().length}`, inner())}
-        </text>
-      </Show>
-      <Show when={props.row.task.waitingOn.length > 0}>
-        <text fg={props.theme().textMuted} wrapMode="none">
-          {cut(`waits on ${props.row.task.waitingOn.join(", ")}`, inner())}
-        </text>
-      </Show>
-      <Show when={props.row.task.reason}>
-        <text fg={props.theme().error} wrapMode="word">
-          {cut(props.row.task.reason ?? "", inner() * 3)}
-        </text>
-      </Show>
+      <For each={lines()}>
+        {(line) => (
+          <text fg={pieceColor(props.theme(), line)} wrapMode="none">
+            {line.text}
+          </text>
+        )}
+      </For>
     </box>
   )
 }

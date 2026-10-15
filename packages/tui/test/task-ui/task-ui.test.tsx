@@ -263,7 +263,8 @@ test("RM26 the Board shows the blocked tasks of the projected status in STOPPED 
   expect(board.match(/│ blocked {2,}│/g)).toBeNull()
   expect(board.match(/│ blocked by {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ T1\.4: budget {2,}│/g)).toHaveLength(2)
-  expect(board.match(/│ exhausted {2,}│/g)).toHaveLength(2)
+  // The third "exhausted" is T1.4's own state label, which wraps in the 13-cell card too.
+  expect(board.match(/│ exhausted {2,}│/g)).toHaveLength(3)
 })
 
 // --- the store on the AD-13 status (T4.2) ---------------------------------------------------------------------------
