@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 // The task-ui plugin as opencode loads it: in the built-in list, and through its entry with the plugin API, a real
 // keymap and the host's slot registry, over a status file (or none) in a temporary directory.
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { testRender, useRenderer } from "@opentui/solid"
@@ -359,18 +359,28 @@ test("each plugin instance has its own view actor: a design chosen in one leaves
 test("an unloaded plugin's view actor stops: no more reads, no more toasts for a rewritten status", async () => {
   await using dir = await tmpdir()
   await writeStatus(dir.path, fixture)
+  // Every read of the status file goes through Bun.file: the actor's feed reads it once a second while it runs.
+  const files = spyOn(Bun, "file")
+  const reads = () => files.mock.calls.filter(([file]) => String(file) === statusFile(dir.path)).length
   await using plugin = await load(dir.path, { session: ROOT })
   plugin.openPicker().select(7)
   expect(await plugin.shows("◆ In the Flow Ticker  3/6 trusted")).toBe(true)
+  const before = reads()
+  expect(await until(() => reads() > before)).toBe(true)
   await plugin.unload()
+  await Bun.sleep(100)
+  const after = reads()
   const requests = plugin.requests.length
   const toasts = plugin.toasts.length
   const next = structuredClone(fixture)
   Object.assign(next.tasks["T1.4"], { state: "trusted", tags: ["ended"] })
   await writeStatus(dir.path, next)
   await Bun.sleep(2500)
+  // The actor stopped with the plugin's scope: the feed reads the file no more.
+  expect(reads()).toBe(after)
   expect(plugin.requests.length).toBe(requests)
   expect(plugin.toasts.length).toBe(toasts)
+  files.mockRestore()
 })
 
 test("UI3 Tab selects tasks only while the run is live and the root owns its harness sessions", async () => {

@@ -605,6 +605,8 @@ async function wired(input: {
   harness?: ReadonlyArray<Harness>
   /** The statuses of the next reads of the feed, one for each second `advance` moves. */
   later?: ReadonlyArray<Status>
+  /** Whether the root owns the run's harness sessions; true by default. */
+  owns?: () => boolean
 }) {
   const made = await viewFor(input.status, { design: input.design ?? 1, later: input.later })
   const navigations: Array<Record<string, unknown> | undefined> = []
@@ -659,7 +661,7 @@ async function wired(input: {
       active: () => true,
       leader: "ctrl+x",
       root: () => ROOT,
-      owns: () => true,
+      owns: input.owns ?? (() => true),
       harness: () => input.harness ?? [],
       logs: () => [],
     }
@@ -855,6 +857,44 @@ test("an esc armed while the run is live stops nothing once the run has ended", 
     await Bun.sleep(100)
     expect(plugin.aborted).toEqual([])
     expect(plugin.toasts).toEqual(["Press esc again to stop the run"])
+  } finally {
+    plugin.app.renderer.destroy()
+  }
+})
+
+test("with the watch on and the run live, esc stops nothing from a root that no longer owns the run's sessions", async () => {
+  const [owns, setOwns] = createSignal(true)
+  const plugin = await wired({ status: live({ "T1.4": "building" }), harness: harnessOfT14, owns })
+  try {
+    plugin.toggle()
+    await plugin.app.renderOnce()
+    // The developer moved to a session that owns no harness session: the esc keys leave the run alone.
+    setOwns(false)
+    await settle()
+    plugin.app.mockInput.pressEscape()
+    await Bun.sleep(150)
+    expect(plugin.toasts).toEqual([])
+    plugin.app.mockInput.pressEscape()
+    await Bun.sleep(150)
+    expect(plugin.toasts).toEqual([])
+    expect(plugin.aborted).toEqual([])
+    // Owned again, the first esc warns.
+    setOwns(true)
+    await settle()
+    plugin.app.mockInput.pressEscape()
+    expect(await until(() => plugin.toasts.length === 1)).toBe(true)
+  } finally {
+    plugin.app.renderer.destroy()
+  }
+})
+
+test("ctrl+x w does not turn the watch view on for a root that owns no harness session of the run", async () => {
+  const plugin = await wired({ status: live({ "T1.4": "building" }), harness: harnessOfT14, owns: () => false })
+  try {
+    plugin.toggle()
+    await settle()
+    expect(plugin.view.watching()).toBe(false)
+    expect(plugin.navigations).toEqual([])
   } finally {
     plugin.app.renderer.destroy()
   }
