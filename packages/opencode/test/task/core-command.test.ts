@@ -1,5 +1,5 @@
 import { NodeServices } from "@effect/platform-node"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Fiber, FileSystem, Layer, Logger, Option, Path } from "effect"
 import path from "path"
 import { assign, setup } from "@jambudipa/xstate-effect"
@@ -7,6 +7,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Blend } from "@/task/blend"
+import type { BlendModel } from "@/task/blend/model"
 import { TaskCommand } from "@/task/core/command"
 import { TaskEvents } from "@/task/core/events"
 import { TaskHarness } from "@/task/core/harness"
@@ -254,6 +255,23 @@ describe('the refusal message (D10, EXPERIENCE "Refusal")', () => {
       }),
     { git: true },
   )
+})
+
+describe("the refusal lines of a load (D10)", () => {
+  const failure = (rule: BlendModel.RuleId, path: string, message: string) => ({ rule, path, message })
+
+  test("lists every failure as one `<rule> <path>: <message>` line, in the load's order", () => {
+    expect(
+      TaskCommand.loadFailures({
+        failures: [failure("R1", "notes.txt", "a stray file"), failure("R4", "T1.task/TASK.md", "no H1")],
+        notes: [],
+      }),
+    ).toEqual(["R1 notes.txt: a stray file", "R4 T1.task/TASK.md: no H1"])
+  })
+
+  test("gives the one fallback line for a load with neither a spec nor a failure", () => {
+    expect(TaskCommand.loadFailures({ failures: [], notes: [] })).toEqual(["R1 .: the spec did not load"])
+  })
 })
 
 describe("one run per directory (AD-19, SV8)", () => {
