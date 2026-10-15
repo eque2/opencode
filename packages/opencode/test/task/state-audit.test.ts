@@ -299,6 +299,11 @@ const FINAL: ReadonlyArray<Entry> = [
     reason: "The proof-log flush: it copies process output to the log file inside one proof process's scope.",
   },
   {
+    file: ui("actor.ts"),
+    identifier: "fromActor",
+    reason: "Solid renders only from signals: the one adapter copies the view actor's snapshot and decides nothing.",
+  },
+  {
     file: opencode("proof/process.ts"),
     identifier: "awaitGroupGone",
     reason: "A bounded poll for a process group to exit (Effect.timeoutOption): operating-system teardown.",

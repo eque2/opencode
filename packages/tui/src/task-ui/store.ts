@@ -36,7 +36,15 @@ const History = Schema.Struct({
 }).annotate({ identifier: "TaskUi.History" })
 
 export const Status = Schema.Struct({
-  run: Schema.Struct({ state: Schema.String, reason: Schema.optional(Reason), spec: Schema.String, path: Schema.String }),
+  run: Schema.Struct({
+    state: Schema.String,
+    // The class tags (AD-13) and the heartbeat: absent in a file written before them.
+    tags: Schema.optional(Schema.Array(Schema.String)),
+    aliveAt: Schema.optional(Schema.Number),
+    reason: Schema.optional(Reason),
+    spec: Schema.String,
+    path: Schema.String,
+  }),
   tasks: Schema.Record(Schema.String, Task),
   obligations: Schema.Record(Schema.String, Unit),
   scenarios: Schema.Record(Schema.String, Scenario),
