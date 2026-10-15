@@ -430,6 +430,52 @@ describe("verifierPrompt", () => {
   )
 })
 
+describe("scenarioJudge", () => {
+  it.live(
+    "asks a scenario's judge in the root checkout for its owner, again in a new session, and for a missing verdict",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("release-notes.spec")
+        const { run, seen } = yield* runOf({ plan, directory: "/root", stored: [facts().runStarted()] })
+        const scenario = plan.spec.scenarios.find((item) => item.id === "S2")
+        if (scenario === undefined) throw new Error("no S2")
+        const owner = "scenario:run:S2"
+        const ask = yield* TaskWorkers.scenarioJudge(run, { scenario, session: Option.none(), attempt: 1, owner })
+        expect(seen.created).toEqual([{ directory: "in /root", title: "S2 verifier", agent: TaskHooks.VERIFIER }])
+        expect(seen.claims).toEqual([{ session: ask.session, owner, watch: false }])
+        const lines = (seen.prompts[0]?.text ?? "").split("\n")
+        expect(lines[0]).toBe("task-harness role=verifier scenario=S2")
+        expect(lines[1]).toBe(`judge S2: ${scenario.title}`)
+        expect(lines).toContain(`You judge scenario S2: ${scenario.title}.`)
+        for (const step of scenario.steps) expect(lines).toContain(step)
+        // The judge gave no verdict: the second attempt asks in a new session.
+        const again = yield* TaskWorkers.scenarioJudge(run, { scenario, session: Option.none(), attempt: 2, owner })
+        expect(again.session).not.toBe(ask.session)
+        expect(seen.created[1]).toEqual({
+          directory: "in /root",
+          title: "S2 verifier (again)",
+          agent: TaskHooks.VERIFIER,
+        })
+        // A missing verdict is asked for in the same session, with no marker.
+        const missing = yield* TaskWorkers.scenarioJudge(run, {
+          scenario,
+          session: Option.some(again.session),
+          attempt: 2,
+          owner,
+        })
+        expect(missing.session).toBe(again.session)
+        expect(seen.created).toHaveLength(2)
+        expect(seen.prompts[2]?.text.split("\n")[0]).toBe(`judge S2: ${scenario.title}`)
+        expect(seen.prompts[2]?.text).not.toContain("task-harness role=")
+        expect(seen.prompts.map((item) => item.agent)).toEqual([
+          TaskHooks.VERIFIER,
+          TaskHooks.VERIFIER,
+          TaskHooks.VERIFIER,
+        ])
+      }),
+  )
+})
+
 describe("merge", () => {
   it.live("merges the proved head, not a later commit on the branch, once, under the checkout lock", () =>
     Effect.gen(function* () {
@@ -665,7 +711,9 @@ describe("an interrupted proof", () => {
           'import { test } from "bun:test"',
           'import { writeFileSync } from "fs"',
           `test("[T1.1.c1] hangs", async () => {`,
-          `  writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))`,
+          // A child in the same process group: only a group kill ends it, a kill of the leader alone would not.
+          '  const child = Bun.spawn(["sleep", "600"])',
+          `  writeFileSync(${JSON.stringify(pidFile)}, \`\${process.pid} \${child.pid}\`)`,
           "  await new Promise(() => {})",
           "}, 600_000)",
           "",
@@ -688,9 +736,11 @@ describe("an interrupted proof", () => {
       })
       const proving = yield* Effect.forkChild(TaskWorkers.proof(run, taskOf(plan, "T1.1"), plan.spec))
       for (let tries = 0; tries < 400 && !(yield* fs.exists(pidFile)); tries++) yield* Effect.sleep(25)
-      const pid = Number(yield* fs.readFileString(pidFile))
-      expect(pid).toBeGreaterThan(0)
-      const alive = () => {
+      for (let tries = 0; tries < 200 && !(yield* fs.readFileString(pidFile)).includes(" "); tries++)
+        yield* Effect.sleep(25)
+      const pids = (yield* fs.readFileString(pidFile)).split(" ").map(Number)
+      expect(pids).toHaveLength(2)
+      const alive = (pid: number) => {
         try {
           process.kill(pid, 0)
           return true
@@ -698,11 +748,11 @@ describe("an interrupted proof", () => {
           return false
         }
       }
-      expect(alive()).toBe(true)
+      expect(pids.map(alive)).toEqual([true, true])
       yield* Fiber.interrupt(proving).pipe(Effect.timeout(10_000))
-      // SIGTERM to the group, then SIGKILL after limits.cancelDeadline (1 s): gone within a few seconds.
-      for (let tries = 0; tries < 120 && alive(); tries++) yield* Effect.sleep(25)
-      expect(alive()).toBe(false)
+      // SIGTERM to the group, then SIGKILL after limits.cancelDeadline (1 s): the test process and its child both go.
+      for (let tries = 0; tries < 120 && pids.some(alive); tries++) yield* Effect.sleep(25)
+      expect(pids.map(alive)).toEqual([false, false])
     }),
   )
 })
