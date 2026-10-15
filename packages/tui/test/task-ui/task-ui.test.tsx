@@ -29,17 +29,14 @@ import { json } from "../fixture/tui-sdk"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
 import projected from "./fixture-projected.json"
-import { Peek, lines, type Sessions } from "../../src/task-ui/peek"
+import { Peek, liveSessions, lines, type Sessions } from "../../src/task-ui/peek"
 import {
-  ACTIVE,
   DISPLAY,
   ENDED,
-  LIVE_WINDOW,
   OLDER_LINE,
   bySeverity,
   columnOf,
   counts,
-  createView,
   durationOf,
   elapsed,
   focus,
@@ -48,7 +45,6 @@ import {
   obligationsOf,
   older,
   parse,
-  poll,
   rows,
   stoppedGroup,
   tone,
@@ -70,11 +66,13 @@ import {
   WatchBand,
   bandText,
   chooseWatch,
+  liveTail,
   proofTail,
   recentProof,
   registerWatch,
-  stopper,
 } from "../../src/task-ui/watch"
+import * as Store from "../../src/task-ui/store"
+import { settle, viewFor } from "./view"
 import type { Child, Harness } from "../../src/task-ui/peek"
 
 // The base status is the shared projected fixture (T1.1–T1.3 trusted, T1.4 budget exhausted, T1.5 and T1 blocked by
@@ -113,8 +111,13 @@ const ended = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] },
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 const none: Sessions = { children: () => () => [], activity: () => () => [], all: () => () => [] }
 
-const view = (sessions: Sessions = none, input: Status = status, design = 1) =>
-  createRoot(() => ({ theme: () => theme, sessions, leader: "ctrl+x", view: createView({ status: () => input, now: () => 0, design }) }))
+// The design props over a real view actor that holds `input` (see ./view.ts).
+const view = async (sessions: Sessions = none, input: Status = status, design = 1) => ({
+  theme: () => theme,
+  sessions,
+  leader: "ctrl+x",
+  view: (await viewFor(input, { design })).view,
+})
 
 // The first line of a captured frame that holds `text`, without the frame's padding.
 const lineWith = (captured: string, text: string) =>
@@ -158,19 +161,21 @@ test("orders the tasks as a tree and finds each task's own obligations", () => {
   expect(focus(rows(status))).toBe("T1.4")
 })
 
-test("moves the selection round the tree and cycles the designs", () => {
-  createRoot((dispose) => {
-    const state = createView({ status: () => status, now: () => 0, design: 7 })
-    expect(state.selected()).toBe("T1.4")
-    state.next()
-    state.next()
-    expect(state.selected()).toBe("T1")
-    state.previous()
-    expect(state.selected()).toBe("T1.5")
-    state.cycleDesign()
-    expect(state.design()).toBe(1)
-    dispose()
-  })
+test("moves the selection round the tree and cycles the designs", async () => {
+  const { view: state, dispose } = await viewFor(status, { design: 7 })
+  expect(state.selected()).toBe("T1.4")
+  state.next()
+  await settle()
+  state.next()
+  await settle()
+  expect(state.selected()).toBe("T1")
+  state.previous()
+  await settle()
+  expect(state.selected()).toBe("T1.5")
+  state.cycleDesign()
+  await settle()
+  expect(state.design()).toBe(1)
+  dispose()
 })
 
 // The Gantt draws its lane from the history until T4.7 moves it to the spans: the older file has that history.
@@ -213,7 +218,7 @@ test("turns harness tool calls into peek lines", () => {
 })
 
 test("every design shows the stopped run", async () => {
-  const props = view(none, ended)
+  const props = await view(none, ended)
   const ledger = await frame(() => <LedgerView {...props} width={38} />)
   expect(ledger).toContain("◆ In the Flow run: budget exhausted")
   expect(ledger).toContain("├ ⊘ T1.4")
@@ -244,7 +249,8 @@ test("SV17 decodes the shared projected status and a status file from before the
 // task-ui decodes the new state as an open string and draws it in the fallback column.
 test("RM26 the Board shows the blocked tasks of the projected status in STOPPED with their cause", async () => {
   const input = Option.getOrThrow(parse(JSON.stringify(projected)))
-  const board = await frame(() => <BoardView {...view(none, input)} width={110} />, 110, 40)
+  const props = await view(none, input)
+  const board = await frame(() => <BoardView {...props} width={110} />, 110, 40)
   expect(board).toContain("WAITING 0")
   expect(board).toContain("STOPPED 3")
   // Both blocked cards: the display table's ⊖ (no longer the fallback •), the label, and the reason across the lines.
@@ -348,10 +354,8 @@ test("durations: 45s, 3m 12s, 1h 4m; live to now, still to the heartbeat, fixed 
   expect(durationOf({ startedAt: 10_000 }, {}, "still", 55_000)).toBe("")
 })
 
-test("the old exports stay until T4.3, T4.7 and T4.8 retire their importers", () => {
-  expect(typeof poll).toBe("function")
-  expect(LIVE_WINDOW).toBe(300_000)
-  expect(ACTIVE).toContain("building")
+test("poll, LIVE_WINDOW, ACTIVE and the view signals have left the store; ENDED waits for the Gantt and the Ticker", () => {
+  for (const gone of ["poll", "LIVE_WINDOW", "ACTIVE", "createView"]) expect(Store).not.toHaveProperty(gone)
   expect(ENDED).toContain("done")
 })
 
@@ -378,7 +382,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
         : [{ glyph: "✓", tone: "good", text: "T1.4.c1 trusted" }],
     all: () => () => [],
   }
-  const props = view(sessions)
+  const props = await view(sessions)
   const peek = await frame(() => <Peek {...props} unit="T1.4" width={70} lines={3} />)
   expect(peek).toContain("◆ In the Flow · T1.4 details · read-only")
   expect(peek).toContain("BUILDER  attempt 3 · budget exhausted")
@@ -392,7 +396,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
 })
 
 test("the shortcut bar names the design, its keys, and drops keys before it overflows", async () => {
-  const ledger = view(none, ended)
+  const ledger = await view(none, ended)
   const wide = await frame(() => <ShortcutBar {...ledger} width={200} />, 200, 3)
   // The run has ended, so Tab switches agents again and the bar offers `ctrl+x j/k` to select a task.
   expect(wide).toContain(
@@ -402,10 +406,11 @@ test("the shortcut bar names the design, its keys, and drops keys before it over
   const narrow = await frame(() => <ShortcutBar {...ledger} width={100} />, 100, 3)
   expect(narrow).toContain("◆ In the Flow Ledger  ctrl+x o expand  /task-design switch")
   expect(narrow).not.toContain("select task")
-  const ticker = view(none, ended, 7)
+  const ticker = await view(none, ended, 7)
   const line = await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)
   expect(line).toContain("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted  ctrl+x o expand")
   ticker.view.toggleExpanded()
+  await settle()
   expect(await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)).toContain("ctrl+x o collapse")
 })
 
@@ -426,7 +431,7 @@ const child = (id: string, role: string, created: number, again = false): Child 
 const builders = [child("b1", "builder", 1), child("b2", "builder", 3), child("v1", "verifier", 2)]
 const everyLoaded = () => true
 
-test("Tab in the watch view moves to the next task in work, and does nothing with one or none", () => {
+test("Tab in the watch view moves to the next task in work, and does nothing with one or none", async () => {
   const two = rows(live({ "T1.2": "proving", "T1.4": "building" }))
   expect(nextRunning(two, "T1.4", 1)).toEqual(Option.some("T1.2"))
   expect(nextRunning(two, "T1.2", 1)).toEqual(Option.some("T1.4"))
@@ -436,28 +441,31 @@ test("Tab in the watch view moves to the next task in work, and does nothing wit
   const one = rows(live({ "T1.4": "building" }))
   expect(Option.isNone(nextRunning(one, "T1.4", 1))).toBe(true)
   expect(Option.isNone(nextRunning(rows(ended), "T1.4", 1))).toBe(true)
-  createRoot((dispose) => {
-    const state = createView({ status: () => live({ "T1.2": "verifying", "T1.4": "building" }), now: () => 0, design: 1 })
-    expect(state.selected()).toBe("T1.2")
-    state.nextRunning()
-    expect(state.selected()).toBe("T1.4")
-    state.nextRunning()
-    expect(state.selected()).toBe("T1.2")
-    dispose()
-  })
+  const { view: state, dispose } = await viewFor(live({ "T1.2": "verifying", "T1.4": "building" }))
+  expect(state.selected()).toBe("T1.2")
+  state.nextRunning()
+  await settle()
+  expect(state.selected()).toBe("T1.4")
+  state.nextRunning()
+  await settle()
+  expect(state.selected()).toBe("T1.2")
+  dispose()
 })
 
-test("a run is active until it ends, and waits on its waiting tasks' dependencies", () => {
+test("a run is active until it ends, and waits on its waiting tasks' dependencies", async () => {
   expect(runActive(ended)).toBe(false)
   expect(runActive(live({ "T1.4": "building" }))).toBe(true)
   expect(waitsOn(live({}))).toEqual(["T1.4"])
-  // Without a live signal of its own, the view is live while the status says the run has not ended.
-  createRoot((dispose) => {
-    expect(createView({ status: () => ended, now: () => 0, design: 1 }).live()).toBe(false)
-    expect(createView({ status: () => live({}), now: () => 0, design: 1 }).live()).toBe(true)
-    expect(createView({ status: () => live({}), now: () => 0, design: 1, live: () => false }).live()).toBe(false)
-    dispose()
-  })
+  // The view is live while the run has not ended and its heartbeat is fresh (UI3).
+  const liveness = async (input: Status, now?: number) => {
+    const made = await viewFor(input, { now })
+    const result = [made.view.liveness(), made.view.live()]
+    made.dispose()
+    return result
+  }
+  expect(await liveness(ended)).toEqual(["ended", false])
+  expect(await liveness(live({}))).toEqual(["live", true])
+  expect(await liveness(live({}), 1791000000000 + 15_001)).toEqual(["still", false])
 })
 
 test("the TUI reads the proof log where the harness writes it", () => {
@@ -540,7 +548,7 @@ test("a watched task out of work keeps its last session on screen until Tab move
 })
 
 test("the band and the note say what is watched, that it is watch only, and how to stop the run", async () => {
-  const theme = view().theme
+  const theme = (await view()).theme
   const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T1.4", children: builders, loaded: everyLoaded })
   const band = await frame(() => <WatchBand theme={theme} watch={watch} width={120} live={true} />, 120, 3)
   expect(band).toContain("◆ In the Flow watching T1.4 builder · attempt 3 · watch only")
@@ -551,7 +559,7 @@ test("the band and the note say what is watched, that it is watch only, and how 
 })
 
 test("the proof panel shows the log's last lines as a shell call, or says there is no output yet", async () => {
-  const theme = view().theme
+  const theme = (await view()).theme
   const log = "$ bun test --reporter=junit\nbun test v1.3.14\n\n 3 pass\n$ exit 0\n"
   expect(proofTail(log, 3, 80)).toEqual(["", " 3 pass", "$ exit 0"])
   expect(proofTail("", 3, 80)).toEqual([])
@@ -569,45 +577,20 @@ test("the proof panel shows the log's last lines as a shell call, or says there 
 })
 
 test("while a run is active the bar offers Tab; in the watch view it shows only the watch keys", async () => {
-  const running = view(none, live({ "T1.4": "building" }))
+  const running = await view(none, live({ "T1.4": "building" }))
   const bar = await frame(() => <ShortcutBar {...running} width={200} />, 200, 3)
   expect(bar).toContain("tab select task")
   expect(bar).toContain("ctrl+x w watch")
   running.view.setWatching(true)
+  await settle()
   const watching = await frame(() => <ShortcutBar {...running} width={200} />, 200, 3)
   expect(lineWith(watching, "◆")).toBe("◆ In the Flow Ledger  tab next running  ctrl+x w stop watching  esc stop run")
   // After the run ends, Tab and esc no longer act on the run: `ctrl+x j/k` selects, and the toggle stays.
-  const stopped = view(none, ended)
+  const stopped = await view(none, ended)
   stopped.view.setWatching(true)
+  await settle()
   const after = await frame(() => <ShortcutBar {...stopped} width={200} />, 200, 3)
   expect(lineWith(after, "◆")).toBe("◆ In the Flow Ledger  ctrl+x j/k select task  ctrl+x w stop watching")
-})
-
-test("esc twice stops the run: the first press warns, the second stops, autocomplete keeps the key", async () => {
-  const calls: string[] = []
-  const state = { open: false }
-  const [press, dispose] = createRoot((done) => [
-    stopper({
-      open: () => state.open,
-      warn: () => calls.push("warn"),
-      stop: () => calls.push("stop"),
-      window: "50 millis",
-    }),
-    done,
-  ])
-  expect(press()).toBe(true)
-  expect(press()).toBe(true)
-  expect(calls).toEqual(["warn", "stop"])
-  // A second press after the window has passed asks again instead of stopping.
-  expect(press()).toBe(true)
-  await Bun.sleep(150)
-  expect(press()).toBe(true)
-  expect(calls).toEqual(["warn", "stop", "warn", "warn"])
-  // While the autocomplete shows, esc belongs to it.
-  state.open = true
-  expect(press()).toBe(false)
-  expect(calls).toHaveLength(4)
-  dispose()
 })
 
 // --- the plugin's keys and route, with the plugin API fixture and a real keymap --------------------------------------
@@ -616,7 +599,14 @@ const ROOT = "ses_root"
 
 // The watch view and the Tab layer over a fixed status, on the root session's route. Tab that the plugin does not
 // take reaches a stand-in for opencode's agent key. A real SDK client over a fetch records each abort.
-async function wired(input: { status: Status; design?: number; harness?: ReadonlyArray<Harness> }) {
+async function wired(input: {
+  status: Status
+  design?: number
+  harness?: ReadonlyArray<Harness>
+  /** The statuses of the next reads of the feed, one for each second `advance` moves. */
+  later?: ReadonlyArray<Status>
+}) {
+  const made = await viewFor(input.status, { design: input.design ?? 1, later: input.later })
   const navigations: Array<Record<string, unknown> | undefined> = []
   const aborted: string[] = []
   const toasts: string[] = []
@@ -663,7 +653,7 @@ async function wired(input: { status: Status; design?: number; harness?: Readonl
     }
     const ctx: Ctx = {
       api,
-      view: createView({ status: () => input.status, now: () => 0, design: input.design ?? 1 }),
+      view: made.view,
       sessions: none,
       theme: () => theme,
       active: () => true,
@@ -674,7 +664,7 @@ async function wired(input: { status: Status; design?: number; harness?: Readonl
       logs: () => [],
     }
     handles.ctx = ctx
-    handles.toggle = registerWatch(ctx)
+    handles.toggle = registerWatch(ctx, made.listen)
     registerTab(ctx)
     return (
       <OpencodeKeymapProvider keymap={keymap}>
@@ -685,7 +675,7 @@ async function wired(input: { status: Status; design?: number; harness?: Readonl
   const app = await testRender(() => <Harness />, { width: 80, height: 10 })
   const { ctx, toggle } = handles
   if (!ctx || !toggle) throw new Error("the plugin did not register")
-  return { app, view: ctx.view, toggle, navigations, aborted, toasts, agent }
+  return { app, view: ctx.view, toggle, navigations, aborted, toasts, agent, advance: made.advance }
 }
 
 // Waits until `done` holds: keys and the SDK answer on later ticks.
@@ -700,14 +690,16 @@ test("ctrl+x w from an expanded Board collapses it and puts the builder in the s
   const plugin = await wired({ status: live({ "T1.4": "building" }), design: 3, harness: harnessOfT14 })
   try {
     plugin.view.setExpanded(true)
+    await settle()
     plugin.toggle()
+    await settle()
     expect(plugin.view.expanded()).toBe(false)
     expect(plugin.view.watching()).toBe(true)
-    expect(await until(() => plugin.navigations.length > 0)).toBe(true)
+    expect(await until(() => plugin.navigations.at(-1)?.watch === "b2")).toBe(true)
     expect(plugin.navigations.at(-1)).toEqual({ sessionID: ROOT, watch: "b2" })
     // The toggle again returns the root's own transcript.
     plugin.toggle()
-    expect(await until(() => plugin.navigations.length > 1)).toBe(true)
+    expect(await until(() => plugin.navigations.at(-1)?.watch === undefined)).toBe(true)
     expect(plugin.navigations.at(-1)).toEqual({ sessionID: ROOT })
   } finally {
     plugin.app.renderer.destroy()
@@ -739,6 +731,7 @@ test("Tab selects the next task while the run is live, the next one in work in t
     expect(await until(() => plugin.view.selected() === "T1.3")).toBe(true)
     // Watching from a task out of work starts on the next task in work; Tab then skips T1.3 and T1.5.
     plugin.toggle()
+    await settle()
     expect(plugin.view.selected()).toBe("T1.4")
     plugin.app.mockInput.pressTab()
     expect(await until(() => plugin.view.selected() === "T1.2")).toBe(true)
@@ -756,6 +749,94 @@ test("after the run ends, Tab is not taken: it reaches the agent key", async () 
     plugin.app.mockInput.pressTab()
     expect(await until(() => plugin.agent.moves === 1)).toBe(true)
     expect(plugin.view.selected()).toBe("T1.4")
+  } finally {
+    plugin.app.renderer.destroy()
+  }
+})
+
+// --- the view actor's reads and keys (T4.3) ---------------------------------------------------------------------------
+
+test("UI21 with nothing running and the run waiting only on T9, the band gives its trust command; an external id gets none", () => {
+  const onT9 = restate(
+    { state: "running", tags: ["active"] },
+    { T1: "waiting", "T1.4": "trusted", "T1.5": "waiting" },
+    { "T1.5": ["T9"], T1: ["T1.5"] },
+  )
+  expect(bandText(chooseWatch({ status: onT9, task: "T1.5", children: [], loaded: everyLoaded }))).toBe(
+    "◆ In the Flow Nothing is running. The run is waiting on T9 (outside) — run /task trust T9. · watch only",
+  )
+  // A subtree run that waits on the folder task T1.1, an external region: no trust command for it.
+  const copy = structuredClone(projected)
+  Object.assign(copy, { external: { "T1.1": { state: "untrusted", tags: ["waiting"] } } })
+  copy.run.tags = ["active"]
+  const tasks: Record<string, { state: string; tags: string[]; waitingOn: string[] }> = copy.tasks
+  for (const id of ["T1", "T1.2", "T1.3", "T1.4"]) Object.assign(tasks[id], { state: "trusted", tags: ["ended"] })
+  Object.assign(tasks["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T1.1"] })
+  const external = Option.getOrThrow(parse(JSON.stringify(copy)))
+  const band = bandText(chooseWatch({ status: external, task: "T1.5", children: [], loaded: everyLoaded }))
+  expect(band).toBe("◆ In the Flow Nothing is running. The run waits on T1.1. · watch only")
+  expect(band).not.toContain("/task trust")
+})
+
+test("the watch view reads the tags: a task whose state says building but whose tags say ended is not in work", () => {
+  const copy = structuredClone(projected)
+  Object.assign(copy.tasks["T1.4"], { state: "building", tags: ["ended"] })
+  const odd = Option.getOrThrow(parse(JSON.stringify(copy)))
+  expect(bandText(chooseWatch({ status: odd, task: "T1.4", children: builders, loaded: everyLoaded }))).toStartWith(
+    "◆ In the Flow Nothing is running",
+  )
+  // And a task the tags put in work is watched whatever its state's name.
+  const tagged = restate({ state: "running", tags: ["active"] }, { "T1.4": "building" })
+  expect(chooseWatch({ status: tagged, task: "T1.4", children: builders, loaded: everyLoaded }).session).toBe("b2")
+})
+
+test("the Peek reads the session list on each 2 s tick and a session's activity on each 1.5 s tick of the view", async () => {
+  const made = await viewFor(live({}))
+  made.view.send({ type: "route.changed", session: ROOT })
+  await settle()
+  const calls = { children: 0, messages: 0 }
+  const client = {
+    session: {
+      children: async () => {
+        calls.children++
+        return { data: [] }
+      },
+      messages: async () => {
+        calls.messages++
+        return { data: [] }
+      },
+    },
+  }
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) liveSessions reads only `client.session.children` and `.messages`
+  const api = { client } as unknown as TuiPluginApi
+  const read = createRoot((dispose) => {
+    const sessions = liveSessions(api, made.view)
+    return { all: sessions.all(), activity: sessions.activity("ses_b"), dispose }
+  })
+  await settle()
+  expect(calls).toEqual({ children: 1, messages: 1 })
+  await made.advance(1_500)
+  expect(calls).toEqual({ children: 1, messages: 2 })
+  await made.advance(500)
+  expect(calls).toEqual({ children: 2, messages: 2 })
+  read.dispose()
+  made.dispose()
+})
+
+test("an esc armed while the run is live stops nothing once the run has ended", async () => {
+  const over = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { "T1.4": "budget_exhausted" })
+  const plugin = await wired({ status: live({ "T1.4": "building" }), harness: harnessOfT14, later: [over] })
+  try {
+    plugin.toggle()
+    await plugin.app.renderOnce()
+    plugin.app.mockInput.pressEscape()
+    expect(await until(() => plugin.toasts.length === 1)).toBe(true)
+    await plugin.advance(1_000)
+    expect(plugin.view.liveness()).toBe("ended")
+    plugin.app.mockInput.pressEscape()
+    await Bun.sleep(100)
+    expect(plugin.aborted).toEqual([])
+    expect(plugin.toasts).toEqual(["Press esc again to stop the run"])
   } finally {
     plugin.app.renderer.destroy()
   }

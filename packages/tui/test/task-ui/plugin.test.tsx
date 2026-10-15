@@ -58,15 +58,21 @@ async function writeStatus(directory: string, status: unknown) {
 
 // Loads the plugin entry the way the runtime does, with no options. The sidebar and the shortcut bar's slot are on
 // screen, and Tab that the plugin does not take reaches opencode's agent key. `kv` is the TUI's kv store from an
-// earlier load (a fresh one by default); `session` opens that session's route instead of home. The SDK client answers
-// every request with an empty list: the session has no harness children.
-async function load(directory: string, options: { kv?: TuiPluginApi["kv"]; session?: string } = {}) {
+// earlier load (a fresh one by default); `session` opens that session's route instead of home, and `navigate` moves
+// it. The SDK client records each request path; it answers a session's children with one harness session for each
+// title in `harness` (none by default), records an abort, and answers anything else with an empty list.
+async function load(
+  directory: string,
+  options: { kv?: TuiPluginApi["kv"]; session?: string; harness?: ReadonlyArray<string> } = {},
+) {
+  const requests: string[] = []
+  const aborted: string[] = []
   const toasts: TuiToast[] = []
   const agent = { moves: 0 }
   const pickers: Picker[] = []
   const disposers: TuiDispose[] = []
   const slots = createSlots()
-  const handles: { api?: TuiPluginApi; slashes?: Slash } = {}
+  const handles: { api?: TuiPluginApi; slashes?: Slash; navigate?: (sessionID: string) => void } = {}
   const [loaded, setLoaded] = createSignal(false)
 
   function Slashes() {
@@ -85,19 +91,45 @@ async function load(directory: string, options: { kv?: TuiPluginApi["kv"]; sessi
     // opencode's agent key, bound the way the app binds it.
     keymap.registerLayer({ commands: [{ name: "agent.cycle", run: () => void agent.moves++ }] })
     keymap.registerLayer({ mode: OPENCODE_BASE_MODE, bindings: keybinds.gather("app", ["agent.cycle"]) })
+    const answer = async (request: RequestInfo | URL) => {
+      const url = new URL(request instanceof Request ? request.url : String(request))
+      requests.push(url.pathname)
+      if (/^\/session\/[^/]+\/children$/.test(url.pathname))
+        return Response.json(
+          (options.harness ?? []).map((title, index) => ({
+            id: `ses_harness_${index}`,
+            title,
+            time: { created: index + 1, updated: index + 1 },
+          })),
+        )
+      const abort = /^\/session\/([^/]+)\/abort$/.exec(url.pathname)
+      if (abort) {
+        aborted.push(decodeURIComponent(abort[1]))
+        return Response.json(true)
+      }
+      return Response.json([])
+    }
     const client = createOpencodeClient({
       baseUrl: "http://localhost:4096",
-      fetch: Object.assign(async () => Response.json([]), { preconnect: fetch.preconnect }),
+      fetch: Object.assign(answer, { preconnect: fetch.preconnect }),
     })
     const base = createTuiPluginApi({ renderer, keymap, client })
+    const [current, setCurrent] = createSignal(
+      options.session ? { name: "session", params: { sessionID: options.session } } : base.route.current,
+    )
+    handles.navigate = (sessionID: string) => setCurrent({ name: "session", params: { sessionID } })
     const host = slots.setup(base)
     let count = 0
     handles.api = {
       ...base,
       kv: options.kv ?? base.kv,
-      route: options.session
-        ? { ...base.route, current: { name: "session", params: { sessionID: options.session } } }
-        : base.route,
+      route: {
+        ...base.route,
+        navigate: (name, params) => setCurrent(params ? { name, params } : { name }),
+        get current() {
+          return current()
+        },
+      },
       state: { ...base.state, path: { ...base.state.path, directory } },
       slots: {
         register(plugin: TuiSlotPlugin) {
@@ -191,9 +223,16 @@ async function load(directory: string, options: { kv?: TuiPluginApi["kv"]; sessi
     shows,
     agent,
     kv: api.kv,
+    requests,
+    aborted,
+    navigate: (sessionID: string) => handles.navigate?.(sessionID),
     pressTab: () => app.mockInput.pressTab(),
+    /** Disposes the plugin only, as the runtime does on a reload; the host stays on screen. */
+    async unload() {
+      for (const dispose of disposers.splice(0)) await dispose()
+    },
     async [Symbol.asyncDispose]() {
-      for (const dispose of disposers) await dispose()
+      for (const dispose of disposers.splice(0)) await dispose()
       app.renderer.destroy()
     },
   }
@@ -279,4 +318,95 @@ test("without a status file the plugin shows nothing in its slots and leaves Tab
   plugin.pressTab()
   for (let tries = 0; tries < 100 && plugin.agent.moves === 0; tries++) await Bun.sleep(10)
   expect(plugin.agent.moves).toBe(1)
+})
+
+// --- the view actor (T4.3) ----------------------------------------------------------------------------------------
+
+const ROOT = "ses_root"
+
+// The projected status with its heartbeat moved: fresh for the next minute (live), or a minute old (still).
+const beating = (offset: number) => ({ ...structuredClone(fixture), run: { ...fixture.run, aliveAt: Date.now() + offset } })
+
+// Waits until `done` holds, polling every 10 ms for up to 3 s.
+async function until(done: () => boolean) {
+  for (let tries = 0; tries < 300 && !done(); tries++) await Bun.sleep(10)
+  return done()
+}
+
+// Presses Tab once the plugin has read the status and the root's harness sessions, and says whether Tab was taken.
+async function tabTaken(plugin: Awaited<ReturnType<typeof load>>) {
+  expect(await plugin.shows(MARK)).toBe(true)
+  expect(await until(() => plugin.requests.includes(`/session/${ROOT}/children`))).toBe(true)
+  await Bun.sleep(300)
+  plugin.pressTab()
+  await Bun.sleep(300)
+  return plugin.agent.moves === 0
+}
+
+test("each plugin instance has its own view actor: a design chosen in one leaves the other on its own", async () => {
+  await using one = await tmpdir()
+  await using two = await tmpdir()
+  await writeStatus(one.path, fixture)
+  await writeStatus(two.path, fixture)
+  await using first = await load(one.path)
+  await using second = await load(two.path)
+  first.openPicker().select(6)
+  expect(await first.shows("◆ In the Flow HUD ")).toBe(true)
+  expect(second.openPicker().current).toBe(1)
+  expect(await second.shows("◆ In the Flow Ledger")).toBe(true)
+})
+
+test("an unloaded plugin's view actor stops: no more reads, no more toasts for a rewritten status", async () => {
+  await using dir = await tmpdir()
+  await writeStatus(dir.path, fixture)
+  await using plugin = await load(dir.path, { session: ROOT })
+  plugin.openPicker().select(7)
+  expect(await plugin.shows("◆ In the Flow Ticker  3/6 trusted")).toBe(true)
+  await plugin.unload()
+  const requests = plugin.requests.length
+  const toasts = plugin.toasts.length
+  const next = structuredClone(fixture)
+  Object.assign(next.tasks["T1.4"], { state: "trusted", tags: ["ended"] })
+  await writeStatus(dir.path, next)
+  await Bun.sleep(2500)
+  expect(plugin.requests.length).toBe(requests)
+  expect(plugin.toasts.length).toBe(toasts)
+})
+
+test("UI3 Tab selects tasks only while the run is live and the root owns its harness sessions", async () => {
+  await using dir = await tmpdir()
+  await writeStatus(dir.path, beating(60_000))
+  {
+    await using plugin = await load(dir.path, { session: ROOT, harness: ["T1.4 builder"] })
+    expect(await tabTaken(plugin)).toBe(true)
+  }
+  {
+    // Live, but the root owns no harness session: Tab goes to the agent.
+    await using plugin = await load(dir.path, { session: ROOT })
+    expect(await tabTaken(plugin)).toBe(false)
+  }
+  await writeStatus(dir.path, beating(-60_000))
+  {
+    // The heartbeat is a minute old: the run stands still, and Tab goes to the agent.
+    await using plugin = await load(dir.path, { session: ROOT, harness: ["T1.4 builder"] })
+    expect(await tabTaken(plugin)).toBe(false)
+  }
+})
+
+test("the root follows the route into the machine: the session list is read for the session on screen", async () => {
+  await using dir = await tmpdir()
+  await writeStatus(dir.path, beating(60_000))
+  await using plugin = await load(dir.path, { session: ROOT })
+  expect(await until(() => plugin.requests.includes(`/session/${ROOT}/children`))).toBe(true)
+  plugin.navigate("ses_other")
+  expect(await until(() => plugin.requests.includes("/session/ses_other/children"))).toBe(true)
+})
+
+test("the plugin's view state and reads live in the machine: no signal, poll or timer of their own", async () => {
+  const source = async (file: string) => Bun.file(path.join(import.meta.dir, "../../src/task-ui", file)).text()
+  for (const file of ["index.tsx", "watch.tsx", "peek.tsx", "store.ts", "view.ts"]) {
+    const text = await source(file)
+    for (const construct of ["createSignal", "poll(", "Effect.sleep", "Effect.repeat", "Schedule.", "setInterval", "LIVE_WINDOW"])
+      expect({ file, construct, found: text.includes(construct) }).toEqual({ file, construct, found: false })
+  }
 })
