@@ -297,7 +297,7 @@ describe("the status writer", () => {
       const seen: Array<boolean> = []
       // The first finalizer of the run scope, as the lease release is (AD-19): it runs last.
       const writer = yield* Effect.gen(function* () {
-        const holder: { fiber?: Fiber.Fiber<void> } = {}
+        const holder: { fiber?: Fiber.Fiber<void, unknown> } = {}
         yield* Effect.addFinalizer(() => Effect.sync(() => seen.push(holder.fiber?.pollUnsafe() !== undefined)))
         const recorder = yield* TaskRecorder.make({ plan, runID: runID(), directory, stored: [], events })
         holder.fiber = recorder.writer
