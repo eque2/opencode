@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, Exit, Fiber, FileSystem, Option } from "effect"
+import { Effect, Exit, Fiber, FileSystem, Option, Schema } from "effect"
 import { assign, setup } from "@jambudipa/xstate-effect"
 import path from "path"
 import { TaskHarness } from "@/task/core/harness"
@@ -21,18 +21,22 @@ const claim = (directory: string, runID: string) => ({
 
 // A run supervisor stand-in for the forwarding tests: it keeps the trusts it receives.
 const listener = setup({
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- xstate reads `types` for its type parameters only
   types: {} as { context: { trusts: ReadonlyArray<string> }; events: { type: "run.trust"; id: string } },
 }).createMachine({
   context: { trusts: [] },
   on: { "run.trust": { actions: assign({ trusts: ({ context, event }) => [...context.trusts, event.id] }) } },
 })
 
+const decodeTrusts = Schema.decodeUnknownSync(
+  Schema.Struct({ context: Schema.Struct({ trusts: Schema.Array(Schema.String) }) }),
+)
+
 const trustsOf = (harness: TaskHarness.Interface, runID: string) =>
   Effect.gen(function* () {
     const ref = yield* harness.system.get(`run:${runID}`)
     if (Option.isNone(ref)) return yield* Effect.die(new Error(`no actor run:${runID}`))
-    const snapshot = yield* ref.value.getSnapshot
-    return (snapshot as { readonly context: { readonly trusts: ReadonlyArray<string> } }).context.trusts
+    return decodeTrusts(yield* ref.value.getSnapshot).context.trusts
   })
 
 describe("TaskHarness leases", () => {
@@ -110,6 +114,7 @@ describe("TaskHarness leases", () => {
       expect(order).toEqual(["one start", "one end", "two start", "two end"])
       // The git lock (worktree creation) is a second lock of the same lease.
       expect(claimed.locks.git).not.toBe(claimed.locks.checkout)
+      return yield* Effect.void
     }),
   )
 })
