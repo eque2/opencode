@@ -955,6 +955,7 @@
       "name": "@opencode-ai/tui",
       "version": "1.18.32",
       "dependencies": {
+        "@jambudipa/xstate-effect": "catalog:",
         "@opencode-ai/core": "workspace:*",
         "@opencode-ai/plugin": "workspace:*",
         "@opencode-ai/sdk": "workspace:*",
