@@ -126,6 +126,11 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
 
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  /** Appends one complete assistant text message with no model call, behind any turn in flight (AD-18). */
+  readonly say: (input: {
+    readonly sessionID: SessionID
+    readonly text: string
+  }) => Effect.Effect<void, Session.NotFound>
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
@@ -1404,6 +1409,61 @@ const layer = Layer.effect(
 
     // What the task harness needs from this service. Passed in: the harness prompts sessions itself, so it
     // cannot import this module without a cycle.
+    // The closing summary (AD-18): one complete assistant message with no model call, answering the run header.
+    const say = Effect.fn("SessionPrompt.say")(function* (input: {
+      readonly sessionID: SessionID
+      readonly text: string
+    }) {
+      // A session that is gone fails here, before the run lock is taken.
+      yield* sessions.get(input.sessionID)
+      // The write waits behind a turn of the session in flight: the runner hands back that turn's result without
+      // running it, so it is offered again until it ran. A turn the user aborts ends the wait the same way.
+      let wrote = false
+      const write = Effect.gen(function* () {
+        const msgs = yield* sessions.messages({ sessionID: input.sessionID })
+        const header = msgs.findLast(
+          (msg) =>
+            msg.info.role === "user" &&
+            msg.parts.some((part) => part.type === "text" && part.metadata?.taskHarness !== undefined),
+        )
+        const parent = header ?? msgs.findLast((msg) => msg.info.role === "user")
+        if (parent?.info.role !== "user")
+          return yield* Effect.die(new PromptInvariantError({ message: "no user message to answer" }))
+        const model = yield* currentModel(input.sessionID)
+        const ctx = yield* InstanceState.context
+        const now = yield* Clock.currentTimeMillis
+        const info: SessionV1.Assistant = {
+          id: MessageID.ascending(),
+          parentID: parent.info.id,
+          role: "assistant",
+          mode: parent.info.agent,
+          agent: parent.info.agent,
+          path: { cwd: ctx.directory, root: ctx.worktree },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: model.modelID,
+          providerID: model.providerID,
+          time: { created: now, completed: now },
+          finish: "stop",
+          sessionID: input.sessionID,
+        }
+        yield* sessions.updateMessage(info)
+        const part = yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: info.id,
+          sessionID: input.sessionID,
+          type: "text",
+          text: input.text,
+          time: { start: now, end: now },
+        } satisfies SessionV1.TextPart)
+        wrote = true
+        return { info, parts: [part] }
+      }).pipe(Effect.orDie)
+      yield* state
+        .ensureRunning(input.sessionID, lastAssistant(input.sessionID), write)
+        .pipe(Effect.repeat({ while: () => !wrote }))
+    })
+
     const taskOps: TaskOps.Ops = {
       prompt: (input) =>
         prompt({
@@ -1416,6 +1476,7 @@ const layer = Layer.effect(
           parts: input.parts,
           noReply: input.noReply,
         }).pipe(Effect.catch(Effect.die)),
+      say,
       cancel: (sessionID) => cancel(sessionID),
       currentModel: (sessionID) =>
         currentModel(sessionID).pipe(Effect.map((model) => ({ providerID: model.providerID, modelID: model.modelID }))),
@@ -1556,6 +1617,7 @@ const layer = Layer.effect(
 
     return Service.of({
       cancel,
+      say,
       prompt,
       loop,
       shell,

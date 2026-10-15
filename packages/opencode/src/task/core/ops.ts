@@ -34,6 +34,11 @@ export interface PromptInput {
 export interface Ops {
   /** `SessionPrompt.prompt`: runs the turn in the current instance and returns the last message. */
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts>
+  /**
+   * Appends one assistant-role text message to a session with no model call (AD-18): the closing summary. It waits
+   * behind a turn of the session in flight, and it still writes after the user aborts the session.
+   */
+  readonly say: (input: { readonly sessionID: SessionID; readonly text: string }) => Effect.Effect<void, unknown>
   /** `SessionPrompt.cancel` in the current instance. */
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   /** The model the session would use next. */
