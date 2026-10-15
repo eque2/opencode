@@ -538,6 +538,66 @@ test("UI11 the Gantt's duration counts to now while the view is live", async () 
   expect((lines.find((line) => line.includes("◐ T1.2")) ?? "").slice(11 + 79, 11 + 79 + 8)).toBe("  3m 22s")
 })
 
+test("the Gantt view reads the live range and ends an open span at run.endedAt; the HUD line counts live", async () => {
+  const lane120 = (text: string, id: string) =>
+    (linesOf(text).find((line) => line.includes(id)) ?? "").slice(11, 11 + 79)
+  // Live, 10 s after a heartbeat at 100 s: the range runs to now (110 s), so the open span from 90 s takes 14 cells.
+  const open = statusOf((raw) => {
+    Object.assign(raw.run, { startedAt: 0, aliveAt: 100_000 })
+    Object.assign(tasksOf(raw)["T1.2"], {
+      state: "building",
+      tags: ["active"],
+      spans: [{ state: "building", from: 90_000 }],
+    })
+  })
+  const { view: live } = await viewFor(open, { design: 5, now: 110_000 })
+  const liveLane = lane120(
+    (
+      await render(
+        () => <GanttView theme={() => theme} view={live} sessions={none} leader="ctrl+x" width={120} />,
+        120,
+        30,
+      )
+    ).text,
+    "◐ T1.2",
+  )
+  expect(liveLane.trimEnd()).toBe(" ".repeat(65) + "▓".repeat(14))
+  // Ended at 100 s with the span still open: it stops at 100 s, and the tail's 2 cells stay blank.
+  const ended = statusOf((raw) => {
+    Object.assign(raw.run, { state: "cancelled", tags: ["ended", "stopped"], startedAt: 0, endedAt: 100_000 })
+    Object.assign(tasksOf(raw)["T1.2"], { spans: [{ state: "building", from: 90_000 }] })
+  })
+  const { view: over } = await viewFor(ended, { design: 5 })
+  const overLane = lane120(
+    (
+      await render(
+        () => <GanttView theme={() => theme} view={over} sessions={none} leader="ctrl+x" width={120} />,
+        120,
+        30,
+      )
+    ).text,
+    "T1.2",
+  )
+  expect(overLane).toBe(" ".repeat(69) + "▓".repeat(8) + "  ")
+  // The HUD's selected-task line counts a running task to now while live: 3m 22s, not the heartbeat's 3m 12s.
+  const running = statusOf((raw) =>
+    Object.assign(tasksOf(raw)["T1.4"], {
+      state: "building",
+      tags: ["active"],
+      reason: null,
+      startedAt: raw.run.aliveAt - 192_000,
+      endedAt: undefined,
+    }),
+  )
+  const { view: hudView } = await viewFor(running, { design: 6, now: (running.run.aliveAt ?? 0) + 10_000 })
+  hudView.select("T1.4")
+  await settle()
+  const panel = (
+    await render(() => <HudView theme={() => theme} view={hudView} sessions={none} leader="ctrl+x" />, 80, 30)
+  ).text
+  expect(panel).toContain("▸ ◐ T1.4 building · attempt 3 · 3m 22s")
+})
+
 test("the Gantt and the HUD read the spans and the run span, not the ENDED list or the Gantt's span", async () => {
   const gantt = await Bun.file(new URL("../../src/task-ui/designs/5-gantt.tsx", import.meta.url)).text()
   const hud = await Bun.file(new URL("../../src/task-ui/designs/6-hud.tsx", import.meta.url)).text()
