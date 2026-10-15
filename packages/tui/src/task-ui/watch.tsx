@@ -443,7 +443,8 @@ export function registerWatch(ctx: Ctx, listen: Listen) {
       view.setWatching(false)
       return
     }
-    if (!view.status() || !ctx.owns()) return
+    // The watch key acts only on a live run (EXPERIENCE "Liveness"); a watch that is on always turns off, above.
+    if (!view.live() || !ctx.owns()) return
     // The full-screen designs and the Ticker's dialog cover the session area, where the watch view shows.
     if (SCREENS[view.design()] || view.design() === 7) view.setExpanded(false)
     const selected = view.rows().find((row) => row.id === view.selected())
