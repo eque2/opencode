@@ -43,12 +43,7 @@ const planOf = (spec: BlendModel.Spec, specPath: string, sub?: { folder: string;
 const foldOf = (plan: Plan, list: ReadonlyArray<Fact>) =>
   list.reduce((snapshot, fact) => TaskEngineXState.apply(plan, snapshot, fact), TaskEngineXState.initial(plan))
 
-const project = (plan: Plan, list: ReadonlyArray<Fact> = []) =>
-  TaskStatus.project({ plan, snapshot: foldOf(plan, list) })
-
-// The phase-1 status of the observed release-notes run, shared with the task-ui test (RM26). `UPDATE_FIXTURE=1`
-// rewrites it.
-const FIXTURE = path.resolve(import.meta.dir, "../../../tui/test/task-ui/fixture-phase1.json")
+const project = (plan: Plan, list: ReadonlyArray<Fact> = []) => TaskStatus.project(plan, foldOf(plan, list))
 
 describe("the status projection", () => {
   it.live("a new run is running its ready tasks, and each unit waits on its untrusted dependencies", () =>
@@ -56,17 +51,18 @@ describe("the status projection", () => {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
       const status = project(plan)
       // Re-baselined: T1.1 and T1.2 are ready, so the machine's outcome is running.
-      expect(status.run).toEqual({ state: "running", spec: RELEASE_NOTES, path: RELEASE_NOTES })
-      expect(status.tasks["T1.1"]).toEqual({ state: "waiting", attempts: 0, waitingOn: [] })
+      // Re-baselined (AD-13): every record gains its tags and the contract's fields, so these name the fields they check.
+      expect(status.run).toMatchObject({ state: "running", tags: ["active"], spec: RELEASE_NOTES, path: RELEASE_NOTES })
+      expect(status.tasks["T1.1"]).toMatchObject({ state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: [] })
       expect(status.tasks["T1.2"]?.waitingOn).toEqual([])
       expect(status.tasks["T1.3"]?.waitingOn).toEqual(["T1.1"])
       expect(status.tasks["T1.4"]?.waitingOn).toEqual(["T1.2", "T1.3"])
       expect(status.tasks["T1.5"]?.waitingOn).toEqual(["T1.3", "T1.4", "T9"])
       expect(status.tasks["T1"]?.waitingOn).toEqual(["T1.1", "T1.2", "T1.3", "T1.4", "T1.5"])
-      expect(status.scenarios["S13"]).toEqual({ state: "waiting", waitingOn: ["T1.4", "T8"] })
+      expect(status.scenarios["S13"]).toMatchObject({ state: "waiting", waitingOn: ["T1.4", "T8"] })
       expect(status.scenarios["S1"]?.waitingOn).toEqual(["T1.1", "T1.2", "T1.3", "T1.4"])
       expect(Object.keys(status.obligations)).toHaveLength(31)
-      expect(status.obligations["T1.1.c1"]).toEqual({ state: "pending" })
+      expect(status.obligations["T1.1.c1"]).toEqual({ state: "pending", tags: ["waiting"] })
       expect(status.history).toEqual([])
     }),
   )
@@ -81,9 +77,9 @@ describe("the status projection", () => {
         f.outside("T9"),
       ])
       expect(status.tasks["T1.5"]?.waitingOn).toEqual([])
-      expect(status.scenarios["S13"]).toEqual({ state: "waiting", waitingOn: ["T8"] })
+      expect(status.scenarios["S13"]).toMatchObject({ state: "waiting", waitingOn: ["T8"] })
       // A scenario whose needs are trusted is ready to prove: it shows pending and waits on nothing.
-      expect(status.scenarios["S1"]).toEqual({ state: "pending", waitingOn: [] })
+      expect(status.scenarios["S1"]).toMatchObject({ state: "pending", waitingOn: [] })
       expect(status.scenarios["S5"]?.waitingOn).toEqual(["T1.5"])
     }),
   )
@@ -124,8 +120,9 @@ describe("the status projection", () => {
       const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
       const f = facts()
       const cancelled = project(plan, [f.runStarted(), f.cancelled("user stop")])
-      expect(cancelled.run).toEqual({
+      expect(cancelled.run).toMatchObject({
         state: "cancelled",
+        tags: ["ended", "stopped"],
         reason: "user stop",
         spec: RELEASE_NOTES,
         path: RELEASE_NOTES,
@@ -146,26 +143,16 @@ describe("the status projection", () => {
       const status = project(plan, observed(plan))
       expect(status.tasks["T1.4"]).toMatchObject({ state: "budget_exhausted", attempts: 3 })
       for (const id of ["T1.5", "T1"])
-        expect(status.tasks[id]).toEqual({
+        expect(status.tasks[id]).toMatchObject({
           state: "blocked",
+          tags: ["ended", "stopped", "blocked"],
           attempts: 0,
           waitingOn: [],
           reason: "blocked by T1.4: budget exhausted",
+          blockedBy: { id: "T1.4", state: "budget_exhausted" },
         })
       expect(status.scenarios["S1"]).toMatchObject({ state: "blocked", reason: "blocked by T1.4: budget exhausted" })
       expect(status.history.filter((entry) => entry.to === "blocked").map((entry) => entry.unit)).toContain("T1.5")
-    }),
-  )
-
-  it.live("RM26 writes the phase-1 fixture of the observed facts, byte for byte", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      const directory = yield* fs.makeTempDirectoryScoped()
-      const plan = planOf(yield* load("release-notes.spec"), RELEASE_NOTES)
-      yield* TaskStatus.write(directory, project(plan, observed(plan)))
-      const written = yield* fs.readFileString(path.join(directory, ".opencode", "task", "status.json"))
-      if (process.env.UPDATE_FIXTURE === "1") yield* fs.writeFileString(FIXTURE, written)
-      expect(yield* fs.readFileString(FIXTURE)).toBe(written)
     }),
   )
 
@@ -221,10 +208,20 @@ describe("the status projection", () => {
     Effect.sync(() => {
       const status = TaskStatus.refused({ spec: RELEASE_NOTES, path: RELEASE_NOTES, reason: "R7 .: cycle" })
       expect(status).toEqual({
-        run: { state: "refused", reason: "R7 .: cycle", spec: RELEASE_NOTES, path: RELEASE_NOTES },
+        run: {
+          state: "refused",
+          tags: ["ended", "stopped"],
+          reason: "R7 .: cycle",
+          spec: RELEASE_NOTES,
+          specId: "release-notes.spec",
+          path: RELEASE_NOTES,
+          title: "release-notes.spec",
+        },
         tasks: {},
         obligations: {},
         scenarios: {},
+        outside: {},
+        external: {},
         history: [],
       })
     }),

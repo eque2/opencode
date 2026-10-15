@@ -15,7 +15,7 @@ import { createTuiPluginApi } from "../fixture/tui-plugin"
 import { json } from "../fixture/tui-sdk"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
-import phase1 from "./fixture-phase1.json"
+import projected from "./fixture-projected.json"
 import { Peek, lines, type Sessions } from "../../src/task-ui/peek"
 import { counts, createView, focus, obligationsOf, parse, rows, type Status } from "../../src/task-ui/store"
 import { LedgerView } from "../../src/task-ui/designs/1-ledger"
@@ -159,10 +159,20 @@ test("every design shows the stopped run", async () => {
   expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ In the Flow · T1.4 details · read-only")
 })
 
-// RM26: the phase-1 harness writes the status of the observed run (T1.4 budget exhausted, T1.5 and T1 blocked by it);
-// the unchanged task-ui decodes the new state as an open string and draws it in the fallback column.
-test("RM26 the Board shows the phase-1 blocked tasks in STOPPED with their cause", async () => {
-  const input = Option.getOrThrow(parse(JSON.stringify(phase1)))
+// SV17: the harness projection writes the shared fixture (packages/opencode test/task/status-fixture.test.ts), and the
+// TUI schema decodes it, as it still decodes a status file written before the AD-13 contract.
+test("SV17 decodes the shared projected status and a status file from before the contract", () => {
+  const decoded = Option.getOrThrow(parse(JSON.stringify(projected)))
+  expect(decoded.run.state).toBe("running")
+  expect(decoded.tasks["T1.5"]).toMatchObject({ state: "blocked", reason: "blocked by T1.4: budget exhausted" })
+  expect(Object.keys(decoded.scenarios)).toContain("S13")
+  expect(Option.isSome(parse(JSON.stringify(fixture)))).toBe(true)
+})
+
+// RM26: the harness writes the status of the observed run (T1.4 budget exhausted, T1.5 and T1 blocked by it); the
+// task-ui decodes the new state as an open string and draws it in the fallback column.
+test("RM26 the Board shows the blocked tasks of the projected status in STOPPED with their cause", async () => {
+  const input = Option.getOrThrow(parse(JSON.stringify(projected)))
   const board = await frame(() => <BoardView {...view(none, input)} width={110} />, 110, 40)
   expect(board).toContain("WAITING 0")
   expect(board).toContain("STOPPED 3")

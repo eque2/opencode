@@ -68,7 +68,9 @@ describe("delegate", () => {
     () =>
       Effect.gen(function* () {
         const report = yield* delegate("packages/tui", "test/task-ui/task-ui.test.tsx", "RM26")
-        expect(report.passed).toEqual(["RM26 the Board shows the phase-1 blocked tasks in STOPPED with their cause"])
+        expect(report.passed).toEqual([
+          "RM26 the Board shows the blocked tasks of the projected status in STOPPED with their cause",
+        ])
       }),
     NESTED,
   )
