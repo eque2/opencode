@@ -919,9 +919,16 @@ describe("spec.checked and the run warning (D12, AD-12, VF4, VF5)", () => {
         expect(TaskEngineXState.view(yield* runSnapshot(setup)).run.warning).toBe(warned.map(lineOf).join("\n"))
         yield* edit(T11_VERIFY, changeText)
         yield* check
+        // The Recorder stores a fact, then the run actor takes it: wait for both before reading either.
         yield* eventually(
           Effect.map(storedTypes(setup.id), (types) => types.includes("obligation.stale")),
           "obligation.stale",
+        )
+        yield* eventually(
+          Effect.map(runSnapshot(setup), (snapshot) =>
+            snapshot.context.log.some((item) => item.unit === "T1.1.c1" && item.to === "stale"),
+          ),
+          "the stale entry in the run's log",
         )
 
         // The stored slice is folded, not stored again: the store holds this job's facts only.
