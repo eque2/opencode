@@ -1,12 +1,15 @@
-// Design 4, Matrix: the evidence at a glance. One row per task, one column per obligation id (c1…, e1, p1, f1…),
-// the scenarios underneath, and the selected task's open obligations with their reasons.
+// Design 4, Matrix: the evidence at a glance. One row per task, one column per obligation id (c1…, e1, p1, f1…), a
+// time column, and the selected task's open obligations with their reasons. The scenarios are in the shared region.
 import { For, Show, createMemo } from "solid-js"
-import { byId, bySeverity, cut, glyph, label, obligationsOf, stateColor } from "../store"
+import { byId, bySeverity, cut, durationOf, glyph, label, obligationsOf, stateColor } from "../store"
 import { treePrefix, type ViewProps } from "../ui"
 import type { View } from "../view"
 
 const LABEL = 12
 const CELL = 4
+// The time column: a 2-cell gap, then 7 cells, right-aligned (EXPERIENCE "Durations").
+const GAP = 2
+const TIME = 7
 // ensures (c), the parent's own (e), preserves (p), forbids (f): the order the blend format lists them in.
 const KINDS = ["c", "e", "p", "f"]
 
@@ -16,25 +19,15 @@ const kindOf = (local: string) => {
 }
 
 /**
- * The rows the Matrix takes at `width`: the header, the task rows, the scenarios, the legend and the selected task's
- * open obligations. The full-screen view sizes the Peek from it (EXPERIENCE "Shared region" → Height).
+ * The rows the Matrix takes: the header, the task rows, the legend and the selected task's open obligations. The
+ * full-screen view sizes the Peek from it (EXPERIENCE "Shared region" → Height).
  */
-export const matrixRows = (view: View, width: number) => {
+export const matrixRows = (view: View) => {
   const status = view.status()
   if (!status) return 0
-  // The scenario chips wrap with a 2-cell gap.
-  const chips = Object.entries(status.scenarios).reduce(
-    (acc, [id, scenario]) => {
-      const size = `${glyph(scenario.state)} ${id}`.length
-      return acc.used > 0 && acc.used + 2 + size <= width
-        ? { rows: acc.rows, used: acc.used + 2 + size }
-        : { rows: acc.rows + 1, used: size }
-    },
-    { rows: 0, used: 0 },
-  ).rows
   const id = view.selected()
   const open = id ? obligationsOf(status, id).filter((item) => item.state !== "trusted").length : 0
-  return 1 + view.rows().length + 2 + chips + 2 + (open > 0 ? open + 2 : 0)
+  return 1 + view.rows().length + 2 + (open > 0 ? open + 2 : 0)
 }
 
 export function MatrixView(props: ViewProps & { width: number }) {
@@ -47,9 +40,8 @@ export function MatrixView(props: ViewProps & { width: number }) {
       .filter((local, index, all) => all.indexOf(local) === index)
       .sort((a, b) => kindOf(a) - kindOf(b) || byId(a, b))
   })
-  const scenarios = createMemo(() =>
-    Object.entries(props.view.status()?.scenarios ?? {}).sort(([a], [b]) => byId(a, b)),
-  )
+  // The label column cuts first; the cells and the time column keep their width.
+  const labelWidth = () => Math.max(0, Math.min(LABEL, props.width - columns().length * CELL - GAP - TIME))
   const open = createMemo(() => {
     const status = props.view.status()
     const id = props.view.selected()
@@ -59,7 +51,7 @@ export function MatrixView(props: ViewProps & { width: number }) {
   return (
     <box flexDirection="column" width={props.width}>
       <text fg={props.theme().textMuted} wrapMode="none">
-        {"".padEnd(LABEL) + columns().map((local) => local.padEnd(CELL)).join("")}
+        {"".padEnd(labelWidth()) + columns().map((local) => local.padEnd(CELL)).join("") + " ".repeat(GAP) + "time".padStart(TIME)}
       </text>
       <For each={props.view.rows()}>
         {(row) => {
@@ -68,6 +60,10 @@ export function MatrixView(props: ViewProps & { width: number }) {
             const own = status ? obligationsOf(status, row.id) : []
             return columns().map((local) => own.find((item) => item.local === local))
           }
+          const duration = () => {
+            const status = props.view.status()
+            return status ? durationOf(row.task, status.run, props.view.liveness(), props.view.now()) : ""
+          }
           return (
             <text
               wrapMode="none"
@@ -75,7 +71,7 @@ export function MatrixView(props: ViewProps & { width: number }) {
               onMouseDown={() => props.view.select(row.id)}
             >
               <span style={{ fg: stateColor(props.theme(), row.task.state) }}>
-                {cut(`${treePrefix(row)}${glyph(row.task.state)} ${row.id}`, LABEL - 1).padEnd(LABEL)}
+                {cut(`${treePrefix(row)}${glyph(row.task.state)} ${row.id}`, labelWidth() - 1).padEnd(labelWidth())}
               </span>
               <For each={cells()}>
                 {(cell) => (
@@ -84,24 +80,15 @@ export function MatrixView(props: ViewProps & { width: number }) {
                   </span>
                 )}
               </For>
+              <span style={{ fg: props.theme().textMuted }}>
+                {" ".repeat(GAP) + duration().padStart(TIME)}
+              </span>
             </text>
           )
         }}
       </For>
       <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
-        <b>SCENARIOS</b>
-      </text>
-      <box flexDirection="row" flexWrap="wrap" columnGap={2} width={props.width}>
-        <For each={scenarios()}>
-          {([id, scenario]) => (
-            <text fg={stateColor(props.theme(), scenario.state)} wrapMode="none">
-              {`${glyph(scenario.state)} ${id}`}
-            </text>
-          )}
-        </For>
-      </box>
-      <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
-        · pending   ◉ proof passed   ✓ trusted   ✗ failed or rejected   ~ stale   ○ waiting
+        · pending ◉ proof passed ✓ trusted ✗ failed or rejected ~ stale ○ waiting ⊖ blocked
       </text>
       <Show when={open().length > 0}>
         <text fg={props.theme().text} wrapMode="none" marginTop={1}>

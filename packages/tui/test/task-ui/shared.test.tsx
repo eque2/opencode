@@ -554,13 +554,13 @@ test("each full-screen design's row count is the rows it renders", async () => {
       4,
       118,
       (view) => <MatrixView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={118} />,
-      (view) => matrixRows(view, 118),
+      (view) => matrixRows(view),
     ],
     [
       4,
       30,
       (view) => <MatrixView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={30} />,
-      (view) => matrixRows(view, 30),
+      (view) => matrixRows(view),
     ],
     [
       5,
