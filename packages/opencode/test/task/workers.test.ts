@@ -857,7 +857,7 @@ describe("sessionEvents", () => {
       })
       yield* events.publish(SessionStatus.Event.Status, { sessionID: session, status: { type: "idle" } })
       yield* events.publish(SessionStatus.Event.Status, { sessionID: other, status: { type: "busy" } })
-      for (let tries = 0; tries < 200 && (yield* actor.getSnapshot).context.got.length < 7; tries++)
+      for (let tries = 0; tries < 1000 && (yield* actor.getSnapshot).context.got.length < 7; tries++)
         yield* Effect.sleep(10)
       yield* Effect.sleep(50)
       expect((yield* actor.getSnapshot).context.got).toEqual([

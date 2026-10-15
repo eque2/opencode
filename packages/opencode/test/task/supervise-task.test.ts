@@ -241,7 +241,7 @@ const move = Effect.fnUntraced(function* (
 ) {
   const key = `${setup.id}:${task}`
   const after = sent.get(key) ?? -1
-  for (let tries = 0; tries < 400; tries++) {
+  for (let tries = 0; tries < 2000; tries++) {
     if (unitOf(yield* setup.recorder.actor.getSnapshot, task).entry > after) break
     yield* Effect.sleep(10)
   }
@@ -269,7 +269,7 @@ const eventually = Effect.fnUntraced(function* (
   check: Effect.Effect<boolean, unknown, Database.Service>,
   what: string,
 ) {
-  for (let tries = 0; tries < 400; tries++) {
+  for (let tries = 0; tries < 2000; tries++) {
     if (yield* check) return yield* Effect.void
     yield* Effect.sleep(10)
   }

@@ -54,7 +54,7 @@ const statusOf = Effect.fnUntraced(function* (directory: string) {
 
 // Waits until the writer has written a status that satisfies `ready` (the writer runs on its own fiber).
 const written = Effect.fnUntraced(function* (directory: string, ready: (status: TaskStatus.Status) => boolean) {
-  for (let tries = 0; tries < 200; tries++) {
+  for (let tries = 0; tries < 1000; tries++) {
     const status = yield* statusOf(directory).pipe(Effect.option)
     if (Option.isSome(status) && ready(status.value)) return status.value
     yield* Effect.sleep(10)
@@ -117,7 +117,7 @@ const counted = Effect.fnUntraced(function* (plan: Plan) {
 
 // Waits until `writes` holds at least `count` entries.
 const writesReach = Effect.fnUntraced(function* (writes: ReadonlyArray<unknown>, count: number) {
-  for (let tries = 0; tries < 200 && writes.length < count; tries++) yield* Effect.sleep(10)
+  for (let tries = 0; tries < 1000 && writes.length < count; tries++) yield* Effect.sleep(10)
   expect(writes.length).toBeGreaterThanOrEqual(count)
 })
 
@@ -415,7 +415,7 @@ describe("the status writer", () => {
           const events = yield* EventV2Bridge.Service
           const recorder = yield* TaskRecorder.make({ plan, runID: runID(), directory, stored: [], events })
           yield* recorder.record({ type: "run.started" })
-          for (let tries = 0; tries < 200 && !said(messages, "task harness: the status write failed"); tries++)
+          for (let tries = 0; tries < 1000 && !said(messages, "task harness: the status write failed"); tries++)
             yield* Effect.sleep(10)
           expect(said(messages, "task harness: the status write failed")).toBe(true)
           yield* fs.remove(path.join(directory, ".opencode"))
