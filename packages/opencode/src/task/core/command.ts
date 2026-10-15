@@ -175,6 +175,19 @@ export const unfinishedBase = (slice: Slice): Option.Option<string> =>
     ? Option.fromNullishOr(slice.facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0])
     : Option.none()
 
+/**
+ * The reply to a `/task` that started its job. A stored slice whose fold died is named, so the user knows the run did
+ * not resume (SV26).
+ */
+export const startedLine = (args: string, slice: Slice) =>
+  `Task harness: running ${args} in the background. Its status is in .opencode/task/status.json.${Option.match(
+    slice.kind === "new" ? slice.died : Option.none<string>(),
+    {
+      onNone: () => "",
+      onSome: (error) => ` The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+    },
+  )}`
+
 /** Everything the job of a run needs, resolved by `/task`. */
 export interface Start {
   readonly harness: TaskHarness.Interface
@@ -382,13 +395,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
       yield* harness.release(directory, id)
       return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
     }
-    const note = Option.match(slice.kind === "new" ? slice.died : Option.none<string>(), {
-      onNone: () => "",
-      onSome: (error) => ` The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
-    })
-    return yield* reply(
-      `Task harness: running ${args} in the background. Its status is in .opencode/task/status.json.${note}`,
-    )
+    return yield* reply(startedLine(args, slice))
   }, Effect.provide(platform))
 
 export * as TaskCommand from "./command"
