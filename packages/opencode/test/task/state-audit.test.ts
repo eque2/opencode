@@ -439,6 +439,41 @@ describe("the state audit", () => {
       })
   })
 
+  test("SV19 holds exactly the AD-17 entries for the harness tree, none of them interim", () => {
+    // The AD-17 table, for packages/opencode/src/task: the status schemas, the machine's DEAD and CLASS, the
+    // FactSchema vocabulary (with its verdict and result-status members), and the two proof-process loops.
+    const expected = [
+      "core/events.ts FactSchema",
+      "core/events.ts Result_",
+      "core/events.ts Verdict",
+      "core/status.ts ObligationStateSchema",
+      "core/status.ts OutsideStateSchema",
+      "core/status.ts RunStateSchema",
+      "core/status.ts ScenarioStateSchema",
+      "core/status.ts TaskStateSchema",
+      "engine-xstate/machine.ts CLASS",
+      "engine-xstate/machine.ts DEAD",
+      "proof/process.ts appender",
+      "proof/process.ts awaitGroupGone",
+    ]
+    const harness = ALLOWLIST.filter((entry) => entry.file.startsWith(opencode("")))
+    expect(harness.map((entry) => `${entry.file.slice(opencode("").length)} ${entry.identifier}`).toSorted()).toEqual(
+      expected,
+    )
+    expect(harness.filter((entry) => entry.until !== undefined).map(key)).toEqual([])
+  })
+
+  test("keeps no interim entry for the polled runner, its builder watch or its hook maps; each left names a T4 task", () => {
+    expect(INTERIM.filter((entry) => !entry.file.startsWith(UI)).map(key)).toEqual([])
+    for (const file of ["core/runner.ts", "core/sessions.ts", "core/hooks.ts"])
+      expect(ALLOWLIST.filter((entry) => entry.file === opencode(file)).map(key)).toEqual([])
+    for (const entry of INTERIM)
+      expect({ entry: key(entry), until: entry.until }).toEqual({
+        entry: key(entry),
+        until: expect.stringMatching(/^T4\.\d+$/),
+      })
+  })
+
   test("passes on the current tree with the allowlist", () => {
     const findings = files().flatMap((file) => scan(file, fs.readFileSync(path.join(ROOT, file), "utf8")))
     const result = audit(findings, ALLOWLIST)
