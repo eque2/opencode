@@ -299,7 +299,9 @@ describe('the refusal message (D10, EXPERIENCE "Refusal")', () => {
         const bare = "task-formats/blend/bare.spec"
         yield* taskless(directory, bare)
         expect(yield* loaderLines(directory, bare)).toEqual([])
-        expect(yield* runTask(harness, bare, jobs)).toEqual([`Refused ${bare}. No work started.\nthe spec holds no task`])
+        expect(yield* runTask(harness, bare, jobs)).toEqual([
+          `Refused ${bare}. No work started.\nthe spec holds no task`,
+        ])
         expect(yield* refusalOf(directory)).toMatchObject({
           state: "refused",
           spec: bare,

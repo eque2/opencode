@@ -307,31 +307,45 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const path = yield* Path.Path
     const target = path.resolve(directory, args)
     const found = specFolder(path, directory, target)
-    // While a run is live, a refusal answers in the session only: the live run's status file stays (AD-19).
-    const refuse = (spec: string, reason: string) =>
+    // A refusal (EXPERIENCE "Refusal", D10): a header, the lines of `run.reason`, then a hint. Rule failures get a
+    // counted header and the hint; a plain line says what to do on its own. While a run is live, a refusal answers in
+    // the session only: the live run's status file stays (AD-19).
+    const refuse = (spec: string, lines: ReadonlyArray<string>, hint: Option.Option<string>) =>
       Effect.gen(function* () {
+        const reason = lines.join("\n")
         if (Option.isNone(yield* harness.live(directory)))
           yield* TaskStatus.write(directory, TaskStatus.refused({ spec, path: args, reason }))
-        return yield* reply(`Task harness: refused ${args}: ${reason}`)
+        const header = Option.isSome(hint)
+          ? `Refused ${args}: ${lines.length} ${lines.length === 1 ? "failure" : "failures"}. No work started.`
+          : `Refused ${args}. No work started.`
+        return yield* reply([header, ...lines, ...Option.toArray(hint)].join("\n"))
       })
+    const failed = (spec: string, lines: ReadonlyArray<string>) =>
+      refuse(spec, lines, Option.some(`Fix each line, then type /task ${args} again.`))
+    const plain = (spec: string, line: string) => refuse(spec, [line], Option.none())
     // The checks run in the AD-19 order: usage, loader, task folder, the live run, git, the unfinished base, then the
     // claim and the job.
-    if (Option.isNone(found)) return yield* refuse(args, `R1 ${args}: not inside a \`<slug>.spec\` folder`)
+    if (Option.isNone(found)) return yield* failed(args, [`R1 ${args}: not inside a \`<slug>.spec\` folder`])
     const specDir = found.value
     const specPath = path.relative(directory, specDir)
     const loaded = yield* Blend.load(specDir)
-    const first = loaded.failures[0]
-    if (first) return yield* refuse(specPath, `${first.rule} ${first.path}: ${first.message}`)
-    if (!loaded.spec) return yield* refuse(specPath, `R1 .: the spec did not load`)
+    if (loaded.failures.length > 0) {
+      return yield* failed(
+        specPath,
+        loaded.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`),
+      )
+    }
+    if (!loaded.spec) return yield* failed(specPath, [`R1 .: the spec did not load`])
     const spec = loaded.spec
+    if (spec.tasks.length === 0) return yield* plain(specPath, "the spec holds no task")
 
     const folder = target === specDir ? Option.none<string>() : Option.some(path.basename(target))
     const root = Option.flatMap(folder, (name) => Option.fromNullishOr(TASK_FOLDER.exec(name)?.[1]))
     if (Option.isSome(folder) && Option.isNone(root)) {
-      return yield* refuse(specPath, `R2 ${path.relative(specDir, target)}: not a \`<task id>-<slug>.task\` folder`)
+      return yield* failed(specPath, [`R2 ${path.relative(specDir, target)}: not a \`<task id>-<slug>.task\` folder`])
     }
     if (Option.isSome(root) && !spec.tasks.some((task) => task.id === root.value)) {
-      return yield* refuse(specPath, `R2 ${path.relative(specDir, target)}: no task ${root.value} in the spec`)
+      return yield* failed(specPath, [`R2 ${path.relative(specDir, target)}: no task ${root.value} in the spec`])
     }
 
     // One live run per directory (owner ruling 3): a valid spec gets the busy reply and starts nothing.
@@ -342,7 +356,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const ready = yield* TaskWorkspace.readiness(directory, limits).pipe(
       Effect.catch((error) => Effect.succeed(Result.fail(`git could not read the checkout: ${error.message}`))),
     )
-    if (Result.isFailure(ready)) return yield* refuse(specPath, ready.failure)
+    if (Result.isFailure(ready)) return yield* plain(specPath, ready.failure)
     const base = ready.success
 
     // The services are resolved only once nothing refuses, so a refusal needs no session runtime.
@@ -354,7 +368,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     // A resumed slice must keep its base branch: the leaves merged so far are there.
     const startedOn = unfinishedBase(slice)
     if (Option.isSome(startedOn) && startedOn.value !== base) {
-      return yield* refuse(
+      return yield* plain(
         specPath,
         `the unfinished run of ${specPath} started on the branch ${startedOn.value}; switch back to it to resume the run`,
       )
