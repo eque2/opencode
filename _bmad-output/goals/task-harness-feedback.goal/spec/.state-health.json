@@ -1,7 +1,7 @@
 {
   "command": "health",
   "ok": true,
-  "timestamp": "2026-10-15T13:38:59.999Z",
+  "timestamp": "2026-10-15T14:20:42.167Z",
   "version": "0.67.1",
   "specFolder": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/_bmad-output/goals/task-harness-feedback.goal/spec",
   "checks": {
@@ -36,5 +36,5 @@
       "detail": "source=committed-file file=/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/state/integrity-key.json (tracked) activeKeyId=53bde7c7 keys=[53bde7c7] referenced-missing=[] events=172 verified/0 failed"
     }
   },
-  "heartbeatAt": "2026-10-15T13:38:59.999Z"
+  "heartbeatAt": "2026-10-15T14:20:42.167Z"
 }
