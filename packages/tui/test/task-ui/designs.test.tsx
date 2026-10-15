@@ -58,6 +58,9 @@ const row = (status: Status, id: string) => {
   return found
 }
 
+// Each test's name starts with its task's pattern in the spec (definitions.json): board (T4.6), gantt (T4.7),
+// ledger (T4.8), so `bun test -t <pattern>` selects the task's cases.
+
 // --- columns (UI1) ---------------------------------------------------------------------------------------------------
 
 // One task in each class: T1.1 waiting, T1.2 building, T1.3 verifying, T1.4 dead, T1.5 blocked, T1 cancelled; the
@@ -69,7 +72,7 @@ const classes = statusOf((raw) => {
   Object.assign(tasksOf(raw)["T1"], { state: "cancelled", tags: ["ended", "stopped"], reason: "user stop" })
 })
 
-test("UI1 the Board's columns come from the tags; STOPPED runs in the STOPPED list order", async () => {
+test("board: UI1 the Board's columns come from the tags; STOPPED runs in the STOPPED list order", async () => {
   const list = rows(classes)
   expect(cardsIn(list, "WAITING").map((item) => item.id)).toEqual(["T1.1"])
   expect(cardsIn(list, "BUILDING").map((item) => item.id)).toEqual(["T1.2"])
@@ -101,7 +104,7 @@ test("UI1 the Board's columns come from the tags; STOPPED runs in the STOPPED li
 
 // --- cards (UI5, UI11, UI18) -----------------------------------------------------------------------------------------
 
-test("UI18 a blocked card shows ⊖ and its cause in the warning tone, with no separate state label", async () => {
+test("board: UI18 a blocked card shows ⊖ and its cause in the warning tone, with no separate state label", async () => {
   expect(cardLines(base, row(base, "T1.5"), "live", 0, 30)).toEqual([
     { text: "blocked by T1.4: budget", tone: "warning" },
     { text: "exhausted", tone: "warning" },
@@ -119,7 +122,7 @@ test("UI18 a blocked card shows ⊖ and its cause in the warning tone, with no s
   expect(shown.text).not.toMatch(/│ blocked +│/)
 })
 
-test("UI11 card line 3: attempt and duration, the duration alone, or nothing; the duration moves down and is never cut", () => {
+test("board: UI11 card line 3: attempt and duration, the duration alone, or nothing; the duration moves down and is never cut", () => {
   const ran = statusOf((raw) => Object.assign(tasksOf(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 }))
   const meta = (status: Status, id: string, inner: number) =>
     cardLines(status, row(status, id), "ended", 0, inner).filter((line) => /attempt|^\d+[smh]/.test(line.text))
@@ -155,7 +158,7 @@ const building = statusOf((raw) =>
   }),
 )
 
-test("UI11 a running task's duration counts to now while the view is live, and stops at the heartbeat when still", async () => {
+test("board: UI11 a running task's duration counts to now while the view is live, and stops at the heartbeat when still", async () => {
   const aliveAt = building.run.aliveAt ?? 0
   for (const [after, shown] of [
     [10_000, "3m 22s"],
@@ -186,7 +189,7 @@ test("UI11 a running task's duration counts to now while the view is live, and s
   }
 })
 
-test("UI5 a waiting card shows each wait sentence, plan ids first, in their tones; the trust command is never cut", async () => {
+test("board: UI5 a waiting card shows each wait sentence, plan ids first, in their tones; the trust command is never cut", async () => {
   const waiting = statusOf((raw) => {
     Object.assign(tasksOf(raw)["T1.5"], {
       state: "waiting",
@@ -221,7 +224,7 @@ test("UI5 a waiting card shows each wait sentence, plan ids first, in their tone
   expect(board).not.toContain("trust…")
 })
 
-test("a dead card's reason is in the error tone, at most 3 lines, cut with …; without dead it is muted", async () => {
+test("board: a dead card's reason is in the error tone, at most 3 lines, cut with …; without dead it is muted", async () => {
   const long = statusOf((raw) =>
     Object.assign(tasksOf(raw)["T1.4"], {
       reason: "T1.4.c7 rejected: the multiline-message test asserts only that the words topic change appear somewhere",
@@ -247,7 +250,7 @@ test("a dead card's reason is in the error tone, at most 3 lines, cut with …; 
 
 // --- the Matrix (UI11, UI18) -----------------------------------------------------------------------------------------
 
-test("the Matrix: a time column after the proof cells, a 2-cell gap, 7 cells right-aligned; the label column cuts first", async () => {
+test("board: the Matrix: a time column after the proof cells, a 2-cell gap, 7 cells right-aligned; the label column cuts first", async () => {
   const timed = statusOf((raw) => {
     Object.assign(tasksOf(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 })
     Object.assign(tasksOf(raw)["T1.1"], { startedAt: 0, endedAt: 45_000 })
@@ -289,7 +292,7 @@ test("the Matrix: a time column after the proof cells, a 2-cell gap, 7 cells rig
   expect(narrow.some((line) => line.endsWith("6m 40s"))).toBe(true)
 })
 
-test("UI18 the Matrix legend adds ⊖ blocked; its old SCENARIOS block has moved to the shared region", async () => {
+test("board: UI18 the Matrix legend adds ⊖ blocked; its old SCENARIOS block has moved to the shared region", async () => {
   const { view } = await viewFor(base, { design: 4 })
   const shown = (
     await render(
@@ -324,7 +327,7 @@ async function screen(design: number, width: number, height = 60) {
   return { lines, at }
 }
 
-test("UI22 the Board's right pane: beside the board from 149 cells, below it under 149, side by side from 110, else stacked", async () => {
+test("board: UI22 the Board's right pane: beside the board from 149 cells, below it under 149, side by side from 110, else stacked", async () => {
   // 149: the Peek, then the region, in a 56-cell pane right of the board.
   const wide = await screen(3, 149)
   const peek = wide.at("╔═ ◆ In the Flow · T1.4 details")
@@ -359,7 +362,7 @@ test("UI22 the Board's right pane: beside the board from 149 cells, below it und
     expect(shown.at("⊖ T1, T1.5 blocked by T1.4: budget exhausted").y).toBeGreaterThan(0)
 })
 
-test("the Matrix and the Gantt put the shared region above the Peek, at the bottom as today", async () => {
+test("board: the Matrix and the Gantt put the shared region above the Peek, at the bottom as today", async () => {
   for (const design of [4, 5]) {
     const shown = await screen(design, 120, 70)
     const peek = shown.at("╔═ ◆ In the Flow · T1.4 details")
@@ -402,7 +405,7 @@ const timed = statusOf((raw) => {
   Object.assign(tasksOf(raw)["T1.4"], { startedAt: 0, endedAt: 400_000 })
 })
 
-test("UI4 a lane cell shows the span holding its middle time; a zero-length span takes its one cell; blank outside the spans", () => {
+test("gantt: UI4 a lane cell shows the span holding its middle time; a zero-length span takes its one cell; blank outside the spans", () => {
   // The ended run's span keeps a 3% tail: 0 to 103 s, so 103 cells are 1 s each.
   const range = ganttRange(timed, "ended", 0)
   expect(range).toEqual({ start: 0, end: 103_000 })
@@ -429,7 +432,7 @@ test("UI4 a lane cell shows the span holding its middle time; a zero-length span
   expect(ganttRange(short, "ended", 0)).toEqual({ start: 0, end: 11_000 })
 })
 
-test("UI4 an open span runs to now while live and to the heartbeat while still", () => {
+test("gantt: UI4 an open span runs to now while live and to the heartbeat while still", () => {
   const open = statusOf((raw) => {
     Object.assign(raw.run, { startedAt: 0, aliveAt: 100_000 })
     Object.assign(tasksOf(raw)["T1.2"], {
@@ -454,7 +457,7 @@ test("UI4 an open span runs to now while live and to the heartbeat while still",
   ])
 })
 
-test("UI4 a span ends before its `to`; an open span in an ended run stops at run.endedAt, not in the tail", () => {
+test("gantt: UI4 a span ends before its `to`; an open span in an ended run stops at run.endedAt, not in the tail", () => {
   // Cell 1's middle (1.5 s) is where waiting ends and building starts: the cell is building's.
   const edge = statusOf((raw) =>
     Object.assign(tasksOf(raw)["T1.2"], {
@@ -481,7 +484,7 @@ test("UI4 a span ends before its `to`; an open span in an ended run stops at run
   ])
 })
 
-test("UI4 a blocked task draws ░ from the run's start, then one █ in the warning tone; the legend names the blocks", async () => {
+test("gantt: UI4 a blocked task draws ░ from the run's start, then one █ in the warning tone; the legend names the blocks", async () => {
   const { view } = await viewFor(timed, { design: 5 })
   const shown = await render(
     () => <GanttView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={144} />,
@@ -498,7 +501,7 @@ test("UI4 a blocked task draws ░ from the run's start, then one █ in the war
   expect(shown.text).toContain("░ waiting ▓ building ▒ proving ▞ verifying █ ended, in its state's colour")
 })
 
-test("UI11 the Gantt right column: the duration in 7 cells, a space, the state text in 21; the lane narrows first, to 10", async () => {
+test("gantt: UI11 the Gantt right column: the duration in 7 cells, a space, the state text in 21; the lane narrows first, to 10", async () => {
   const { view } = await viewFor(timed, { design: 5 })
   const at = async (width: number) =>
     linesOf(
@@ -524,7 +527,7 @@ test("UI11 the Gantt right column: the duration in 7 cells, a space, the state t
   expect(((await at(40)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe("  6m 40s budget exh")
 })
 
-test("UI11 the Gantt's duration counts to now while the view is live", async () => {
+test("gantt: UI11 the Gantt's duration counts to now while the view is live", async () => {
   const { view } = await viewFor(building, { design: 5, now: (building.run.aliveAt ?? 0) + 10_000 })
   const lines = linesOf(
     (
@@ -538,7 +541,7 @@ test("UI11 the Gantt's duration counts to now while the view is live", async () 
   expect((lines.find((line) => line.includes("◐ T1.2")) ?? "").slice(11 + 79, 11 + 79 + 8)).toBe("  3m 22s")
 })
 
-test("the Gantt view reads the live range and ends an open span at run.endedAt; the HUD line counts live", async () => {
+test("gantt: the Gantt view reads the live range and ends an open span at run.endedAt; the HUD line counts live", async () => {
   const lane120 = (text: string, id: string) =>
     (linesOf(text).find((line) => line.includes(id)) ?? "").slice(11, 11 + 79)
   // Live, 10 s after a heartbeat at 100 s: the range runs to now (110 s), so the open span from 90 s takes 14 cells.
@@ -598,7 +601,7 @@ test("the Gantt view reads the live range and ends an open span at run.endedAt; 
   expect(panel).toContain("▸ ◐ T1.4 building · attempt 3 · 3m 22s")
 })
 
-test("the Gantt and the HUD read the spans and the run span, not the ENDED list or the Gantt's span", async () => {
+test("gantt: the Gantt and the HUD read the spans and the run span, not the ENDED list or the Gantt's span", async () => {
   const gantt = await Bun.file(new URL("../../src/task-ui/designs/5-gantt.tsx", import.meta.url)).text()
   const hud = await Bun.file(new URL("../../src/task-ui/designs/6-hud.tsx", import.meta.url)).text()
   expect(gantt).not.toMatch(/\bENDED\b/)
@@ -635,7 +638,7 @@ async function hud(status: Status, sessions: Sessions = none) {
   }
 }
 
-test("UI15 the HUD's selected-task line cuts the state text first, never the duration", async () => {
+test("gantt: UI15 the HUD's selected-task line cuts the state text first, never the duration", async () => {
   expect((await hud(hudStatus)).lines).toContain("▸ ⊘ T1.4 budget exhausted · at… · 6m 40s")
   // With room, the whole state text shows.
   expect(hudLine(row(hudStatus, "T1.4"), "6m 40s", false, 60)).toBe("▸ ⊘ T1.4 budget exhausted · attempt 3 · 6m 40s")
@@ -643,7 +646,7 @@ test("UI15 the HUD's selected-task line cuts the state text first, never the dur
   expect(hudLine(row(hudStatus, "T1.5"), "", false, 40)).toBe("▸ ⊖ T1.5 blocked")
 })
 
-test("UI15 the HUD's elapsed line adds the run usage; the tokens drop first; it is hidden before any tokens", async () => {
+test("gantt: UI15 the HUD's elapsed line adds the run usage; the tokens drop first; it is hidden before any tokens", async () => {
   expect((await hud(hudStatus, spent(1_400_000, 2.31))).lines).toContain("elapsed 24m 10s · 1.4M tokens · $2.31")
   // 41 cells do not fit the 40-cell panel: the tokens go, the cost stays.
   expect((await hud(hudStatus, spent(1_400_000, 1234.56))).lines).toContain("elapsed 24m 10s · $1,234.56")
@@ -662,14 +665,14 @@ test("UI15 the HUD's elapsed line adds the run usage; the tokens drop first; it 
   ).toEqual(Option.some({ tokens: 1400, cost: 0.75 }))
 })
 
-test("UI15 the HUD's elapsed time counts to now while the run is live", async () => {
+test("gantt: UI15 the HUD's elapsed time counts to now while the run is live", async () => {
   const live = statusOf((raw) => Object.assign(raw.run, { startedAt: raw.run.aliveAt - 1_450_000 }))
   const { view } = await viewFor(live, { design: 6, now: (live.run.aliveAt ?? 0) + 10_000 })
   const shown = await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)
   expect(shown.text).toContain("elapsed 24m 20s")
 })
 
-test("UI5 the HUD panel shows the outside wait line under the run warning line; two ids name the first and end with +N", async () => {
+test("gantt: UI5 the HUD panel shows the outside wait line under the run warning line; two ids name the first and end with +N", async () => {
   const waiting = (ids: ReadonlyArray<string>) =>
     statusOf((raw) => {
       Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" })
@@ -736,7 +739,7 @@ const dock = async (status: Status, width: number, sessions: Sessions = none, he
   return { ...shown, lines: linesOf(shown.text) }
 }
 
-test("UI6 the Ledger shows the run title on its own line, muted and cut; the full-screen header reads title · run: state", async () => {
+test("ledger: UI6 the Ledger shows the run title on its own line, muted and cut; the full-screen header reads title · run: state", async () => {
   const shown = await ledger(base)
   expect(shown.lines[0]).toBe("◆ In the Flow run: running")
   expect(shown.lines[1]).toBe("Release notes from conventional commi…")
@@ -754,7 +757,7 @@ const refused = statusOf((raw) => {
   Object.assign(raw, { tasks: {}, obligations: {}, scenarios: {} })
 })
 
-test("UI17 a refused run: the Ledger shows run: refused and every reason line in the error tone; the full-screen body says so", async () => {
+test("ledger: UI17 a refused run: the Ledger shows run: refused and every reason line in the error tone; the full-screen body says so", async () => {
   const shown = await ledger(refused)
   expect(shown.lines[0]).toBe("◆ In the Flow run: refused")
   for (const line of ["R1 a: one", "R3 b: two", "R4 c: three"]) {
@@ -772,7 +775,7 @@ test("UI17 a refused run: the Ledger shows run: refused and every reason line in
   ])
 })
 
-test("UI19 the run reason line: the first line and (+N more); error with stopped, muted on a done run", async () => {
+test("ledger: UI19 the run reason line: the first line and (+N more); error with stopped, muted on a done run", async () => {
   const stopped = statusOf((raw) =>
     Object.assign(raw.run, {
       state: "budget_exhausted",
@@ -801,7 +804,7 @@ test("UI19 the run reason line: the first line and (+N more); error with stopped
   }
 })
 
-test("UI21 every trusted count ends with · N stopped in the error tone, and shows nothing at 0", async () => {
+test("ledger: UI21 every trusted count ends with · N stopped in the error tone, and shows nothing at 0", async () => {
   expect(stoppedText(base)).toBe(" · 3 stopped")
   const clean = statusOf((raw) => {
     for (const id of ["T1", "T1.4", "T1.5"])
@@ -842,7 +845,7 @@ const after = statusOf((raw) =>
   Object.assign(raw.run, { state: "budget_exhausted", tags: ["ended", "stopped"], reason: "T1.4 budget exhausted" }),
 )
 
-test("UI18 a Ticker toast for a task that turns dead or blocked shows its reason; a blocker comes before what it blocks", () => {
+test("ledger: UI18 a Ticker toast for a task that turns dead or blocked shows its reason; a blocker comes before what it blocks", () => {
   expect(tickerToasts(before, after)).toEqual([
     { variant: "error", message: "run running → budget exhausted" },
     { variant: "error", message: "T1.4 T1.4.c7: the test asserts only that 'topic change' appears" },
@@ -869,7 +872,7 @@ test("UI18 a Ticker toast for a task that turns dead or blocked shows its reason
   expect(tickerToasts(before, moved)[0]).toEqual({ variant: "info", message: "T1.4 proving → verifying" })
 })
 
-test("UI19 the Ticker's end notification follows the ended tag; a done run's not-run line raises none", () => {
+test("ledger: UI19 the Ticker's end notification follows the ended tag; a done run's not-run line raises none", () => {
   expect(endNotice(before, after)).toEqual(Option.some("Run budget exhausted: T1.4 budget exhausted"))
   // No notification while the run lacks ended, or once it already had it.
   expect(endNotice(before, before)).toEqual(Option.none())
@@ -884,7 +887,7 @@ test("UI19 the Ticker's end notification follows the ended tag; a done run's not
 
 const warned = statusOf((raw) => Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" }))
 
-test("UI16 the run warning's one line in the collapsed views; a warning toast once each time it appears", async () => {
+test("ledger: UI16 the run warning's one line in the collapsed views; a warning toast once each time it appears", async () => {
   const side = await ledger(warned)
   expect(side.lines[3]).toBe("! spec no longer validates · 2 failur…")
   expect(rgb(fgOf(side.spans, "! spec"))).toEqual(rgb(theme.warning))
@@ -944,7 +947,7 @@ const outside = statusOf((raw) =>
   }),
 )
 
-test("the full-screen header's lines count against the room: with three of them the Peek shrinks sooner", async () => {
+test("ledger: the full-screen header's lines count against the room: with three of them the Peek shrinks sooner", async () => {
   const activity = Array.from({ length: 8 }, (_, i) => ({
     glyph: "›",
     tone: "idle" as const,
@@ -981,7 +984,7 @@ test("the full-screen header's lines count against the room: with three of them 
   expect(await shown(62)).toBeGreaterThan(1)
 })
 
-test("UI5 the collapsed outside wait line in the Ledger and the full-screen header, under the warning; a Dock segment", async () => {
+test("ledger: UI5 the collapsed outside wait line in the Ledger and the full-screen header, under the warning; a Dock segment", async () => {
   const both = statusOf((raw) => {
     Object.assign(raw, { tasks: outside.tasks })
     Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" })
@@ -1002,7 +1005,7 @@ test("UI5 the collapsed outside wait line in the Ledger and the full-screen head
   expect((await ledger(base)).text).not.toContain("/task trust")
 })
 
-test("UI15 the Dock strip: $2.31 after the stopped count; the selected task drops first, then the cost, before the chips", async () => {
+test("ledger: UI15 the Dock strip: $2.31 after the stopped count; the selected task drops first, then the cost, before the chips", async () => {
   const spent: Sessions = {
     ...none,
     all: () => () => [
@@ -1031,7 +1034,7 @@ test("UI15 the Dock strip: $2.31 after the stopped count; the selected task drop
   expect((await dock(base, 200)).text).not.toContain("$")
 })
 
-test("UI15 the Dock's expanded view: the Peek left and the region right from 110 cells, else stacked; at most half the height", async () => {
+test("ledger: UI15 the Dock's expanded view: the Peek left and the region right from 110 cells, else stacked; at most half the height", async () => {
   const side = await dock(base, 140, none, 50, true)
   const peek = side.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
   const region = side.lines.findIndex((line) => line.includes("STOPPED 3"))
@@ -1051,14 +1054,14 @@ test("UI15 the Dock's expanded view: the Peek left and the region right from 110
   expect(stacked.lines.findIndex((line) => line.includes("STOPPED 3"))).toBeGreaterThan(stackedPeek)
 })
 
-test("the Ticker reads the ended tag and the store keeps no ENDED or ACTIVE list", async () => {
+test("ledger: the Ticker reads the ended tag and the store keeps no ENDED or ACTIVE list", async () => {
   const ticker = await Bun.file(new URL("../../src/task-ui/designs/7-ticker.tsx", import.meta.url)).text()
   const store = await Bun.file(new URL("../../src/task-ui/store.ts", import.meta.url)).text()
   expect(ticker).not.toMatch(/\bENDED\b/)
   expect(store).not.toMatch(/export const (ENDED|ACTIVE)\b/)
 })
 
-test("UI25 the Ledger, the Dock, the Ticker, the full-screen views and the HUD show the older-status line for a status with no tags", async () => {
+test("ledger: UI25 the Ledger, the Dock, the Ticker, the full-screen views and the HUD show the older-status line for a status with no tags", async () => {
   const old = Option.getOrThrow(parse(JSON.stringify(legacy)))
   const line = "status from an older harness — type /task to refresh"
   // Each view and the width its line has: the Ticker's 30-cell list and the HUD's 40-cell panel wrap it.

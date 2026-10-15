@@ -272,7 +272,7 @@ test("RM26 the Board shows the blocked tasks of the projected status in STOPPED 
 
 // --- the store on the AD-13 status (T4.2) ---------------------------------------------------------------------------
 
-test("decodes the AD-13 fields as optional and keeps an unknown tag that nothing reads", () => {
+test("store: decodes the AD-13 fields as optional and keeps an unknown tag that nothing reads", () => {
   expect(status.run).toMatchObject({
     tags: ["active"],
     title: "Release notes from conventional commits",
@@ -309,7 +309,7 @@ test("decodes the AD-13 fields as optional and keeps an unknown tag that nothing
   })
 })
 
-test("classifies from the tags, not the state names: column, counts, focus, next running and severity", () => {
+test("store: classifies from the tags, not the state names: column, counts, focus, next running and severity", () => {
   // T1.1's state says building, its tags say ended: the tags win everywhere.
   const copy = structuredClone(projected)
   Object.assign(copy.tasks["T1.1"], { state: "building", tags: ["ended"] })
@@ -342,7 +342,7 @@ test("classifies from the tags, not the state names: column, counts, focus, next
   ])
 })
 
-test("the display table gives each state its glyph, tone and Gantt block", () => {
+test("store: the display table gives each state its glyph, tone and Gantt block", () => {
   expect(DISPLAY["blocked"]).toEqual({ glyph: "⊖", tone: "warn", block: "█" })
   expect([glyph("blocked"), tone("blocked")]).toEqual(["⊖", "warn"])
   // `stalled` names no state now, and stays for an older file.
@@ -351,7 +351,7 @@ test("the display table gives each state its glyph, tone and Gantt block", () =>
   expect(glyph("a-state-from-later")).toBe("•")
 })
 
-test("durations: 45s, 3m 12s, 1h 4m; live to now, still to the heartbeat, fixed from endedAt, blank unstarted", () => {
+test("store: durations: 45s, 3m 12s, 1h 4m; live to now, still to the heartbeat, fixed from endedAt, blank unstarted", () => {
   expect([elapsed(45_000), elapsed(192_000), elapsed(3_840_000)]).toEqual(["45s", "3m 12s", "1h 4m"])
   const run = { aliveAt: 100_000 }
   expect(durationOf({ startedAt: 10_000 }, run, "live", 55_000)).toBe("45s")
@@ -367,7 +367,7 @@ test("poll, LIVE_WINDOW, ACTIVE, ENDED and the view signals have left the store"
   for (const gone of ["poll", "LIVE_WINDOW", "ACTIVE", "ENDED", "createView"]) expect(Store).not.toHaveProperty(gone)
 })
 
-test("UI25 a status with no tags: still, the older-harness line, display glyphs and labels, and no classes", () => {
+test("store: UI25 a status with no tags: still, the older-harness line, display glyphs and labels, and no classes", () => {
   const legacy = Option.getOrThrow(parse(JSON.stringify(fixture)))
   expect(older(legacy)).toBe(true)
   expect(OLDER_LINE).toBe("status from an older harness — type /task to refresh")
@@ -378,7 +378,7 @@ test("UI25 a status with no tags: still, the older-harness line, display glyphs 
   expect(focus(rows(legacy))).toBe("T1")
 })
 
-test("the peek shows the builder, the failed proof first, and the verifier", async () => {
+test("store: the peek shows the builder, the failed proof first, and the verifier", async () => {
   const sessions: Sessions = {
     children: () => () => [
       { id: "b", role: "builder", again: false, created: 1, updated: 1 },
@@ -452,7 +452,7 @@ const inside = (text: string) =>
     .split("\n")
     .map((line) => line.replace(/^\s*║ ?/, "").replace(/ *║\s*$/, ""))
 
-test("T4.5 a task with a reason and without blocked: line 1 is state · attempt · duration, the reason under it", async () => {
+test("peek: T4.5 a task with a reason and without blocked: line 1 is state · attempt · duration, the reason under it", async () => {
   expect(builderHeading(exhausted, "T1.4", "ended", 0)).toEqual([
     { text: "budget exhausted · attempt 3 · 6m 40s", tone: "text" },
     { text: "T1.4.c7: the test asserts only that 'topic change' appears", tone: "bad" },
@@ -480,7 +480,7 @@ test("T4.5 a task with a reason and without blocked: line 1 is state · attempt 
   expect(muted.text).toContain("BUILDER  needs human · 45s")
 })
 
-test("T4.5 any other task: line 1 only; a running task's duration counts to now while the view is live", async () => {
+test("peek: T4.5 any other task: line 1 only; a running task's duration counts to now while the view is live", async () => {
   const building = changed((raw) =>
     Object.assign(tasksIn(raw)["T1.4"], {
       state: "building",
@@ -516,7 +516,7 @@ test("T4.5 any other task: line 1 only; a running task's duration counts to now 
   ])
 })
 
-test("T4.5 a blocked task: line 1 starts its reason in the warning tone", async () => {
+test("peek: T4.5 a blocked task: line 1 starts its reason in the warning tone", async () => {
   expect(builderHeading(status, "T1.5", "live", 0)).toEqual([{ text: "blocked by T1.4: budget exhausted", tone: "warning" }])
   const props = await view(none, status)
   const shown = await spansOf(() => <Peek {...props} unit="T1.5" width={60} lines={3} />)
@@ -534,7 +534,7 @@ test("T4.5 a blocked task: line 1 starts its reason in the warning tone", async 
   expect(ranLines[at + 1]).toBe("         attempt 2 · 45s")
 })
 
-test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; the trust command is never cut", async () => {
+test("peek: T4.5 a waiting task: the wait sentences, plan ids first, in their tones; the trust command is never cut", async () => {
   expect(waitSentences(waitingT15, waitingT15.tasks["T1.5"])).toEqual([
     { text: "waiting on T1.3, T1.4", tone: "muted" },
     { text: "waiting on T9 (outside) — run /task trust T9", tone: "warning" },
@@ -588,7 +588,7 @@ test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; t
   expect(rgb(fgOf(shown.spans, "waiting on T2.1"))).toEqual(rgb(theme.textMuted))
 })
 
-test("T4.5 a long reason wraps at word boundaries with a 9-cell hanging indent and no line limit; activity lines shrink first", async () => {
+test("peek: T4.5 a long reason wraps at word boundaries with a 9-cell hanging indent and no line limit; activity lines shrink first", async () => {
   const words = Array.from({ length: 40 }, (_, i) => `word${i + 1}`)
   const long = changed((raw) => Object.assign(tasksIn(raw)["T1.4"], { reason: words.join(" ") }))
   const activity = Array.from({ length: 5 }, (_, i) => ({ glyph: "›", tone: "idle" as const, text: `step ${i + 1}` }))
@@ -616,7 +616,7 @@ test("T4.5 a long reason wraps at word boundaries with a 9-cell hanging indent a
   expect(wrap("a abcdefghij b", 4)).toEqual(["a", "abcd", "efgh", "ij b"])
 })
 
-test("T4.5 a task with endedAt and no startedAt did not start: both fallbacks say so", async () => {
+test("peek: T4.5 a task with endedAt and no startedAt did not start: both fallbacks say so", async () => {
   const blockedProps = await view(none, status)
   const lines = inside(await frame(() => <Peek {...blockedProps} unit="T1.5" width={60} lines={3} />))
   expect(lines).toContain("  no builder session: the task did not start")
@@ -650,7 +650,7 @@ test("T4.5 a task with endedAt and no startedAt did not start: both fallbacks sa
   expect(stopped).toContain("  no verifier session: the task did not start")
 })
 
-test("T4.5 a harness session carries its tokens (input, output and reasoning, no cache) and its cost, for T4.12", () => {
+test("peek: T4.5 a harness session carries its tokens (input, output and reasoning, no cache) and its cost, for T4.12", () => {
   const time = { created: 1, updated: 2 }
   const tokens = { input: 1000, output: 200, reasoning: 50, cache: { read: 9999, write: 7777 } }
   expect(harnessOf({ id: "b", title: "T1.4 builder", time, tokens, cost: 0.12 })).toEqual([
@@ -750,7 +750,7 @@ async function marks(node: () => JSX.Element, width = 160, height = 40) {
   }
 }
 
-test("UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 120 ms in the accent tone while live, then In the Flow in bold", async () => {
+test("bar: UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 120 ms in the accent tone while live, then In the Flow in bold", async () => {
   const shown = await marks(() => <Brand theme={() => theme} moving={true} />)
   expect(shown.found).toHaveLength(1)
   expect(shown.found[0].frames).toEqual(FRAMES)
@@ -769,7 +769,7 @@ test("UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 
   expect(still.text).toContain("◆ In the Flow")
 })
 
-test("UI14 UI12 the diamond moves only while live and with animations on; every Brand site carries it", async () => {
+test("bar: UI14 UI12 the diamond moves only while live and with animations on; every Brand site carries it", async () => {
   const motion = () => true
   const props = async (input: Status, design: number) => ({ ...(await view(none, input, design)), motion })
   // Live, motion on: each site has the spinner.
@@ -803,7 +803,7 @@ test("UI14 UI12 the diamond moves only while live and with animations on; every 
   expect(peek.text).toContain("◆ In the Flow · T1.4 details · read-only")
 })
 
-test("UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
+test("bar: UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
   const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T1.4", children: builders, loaded: everyLoaded })
   const moving = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={true} motion={true} />, 120, 6)
   expect(moving.found).toHaveLength(1)
