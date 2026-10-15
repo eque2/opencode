@@ -1,5 +1,5 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
-import { Context, Effect, FileSystem, Layer, Option, Path, Semaphore } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Path, Schema, Semaphore } from "effect"
 import { assign, createActor, createMachine, enqueueActions, waitFor } from "@jambudipa/xstate-effect"
 import type { AnyActorLogic } from "@jambudipa/xstate-effect"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
@@ -9,6 +9,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceStore } from "@/project/instance-store"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
+import type { HarnessHooks, HookEvent, Owner } from "./hooks"
 
 // The harness root (spine AD-8, AD-11, AD-19): one process-wide actor. Its actor system is the only registry of the
 // live runs (`run:<runID>`, and their `task:` and `scenario:` supervisors); its context holds one lease per directory
@@ -44,13 +45,6 @@ interface Lease extends Live {
   readonly locks: Locks
 }
 
-interface Owner {
-  /** The system id of the supervisor that owns the session. */
-  readonly owner: string
-  /** Whether `prompt.ts` checks the session's turns for repetition (a builder session). */
-  readonly watch: boolean
-}
-
 interface RootContext {
   readonly leases: Readonly<Record<string, Lease>>
   readonly sessions: Readonly<Record<string, Owner>>
@@ -62,6 +56,9 @@ type RootEvent =
   | { readonly type: "run.spawn"; readonly runID: string; readonly logic: AnyActorLogic; readonly input: unknown }
   | { readonly type: "run.remove"; readonly runID: string }
   | ({ readonly type: "session.claim"; readonly session: string } & Owner)
+
+// The repetition limit in an owner's snapshot context; an owner without one is not watched.
+const decodeLimit = Schema.decodeUnknownOption(Schema.Struct({ context: Schema.Struct({ limit: Schema.Number }) }))
 
 // Whether a session owner belongs to the run: the run supervisor or one of its unit supervisors.
 const ofRun = (owner: string, runID: string) =>
@@ -176,6 +173,33 @@ export const make = Effect.gen(function* () {
   const ownerOf = (session: string) =>
     Effect.map(actor.getSnapshot, (snapshot) => Option.fromNullishOr(snapshot.context.sessions[session]))
 
+  // The live supervisor that owns a session: none when nobody claimed it, or when its owner has stopped.
+  const ownerActor = (session: string) =>
+    Effect.flatMap(
+      ownerOf(session),
+      Option.match({
+        onNone: () => Effect.succeed(Option.none()),
+        onSome: (entry) => actor.system.get(entry.owner),
+      }),
+    )
+
+  const hooks: HarnessHooks = {
+    ownerOf,
+    send: (event: HookEvent) =>
+      Effect.gen(function* () {
+        const owner = yield* ownerActor(event.session)
+        if (Option.isNone(owner)) return false
+        yield* owner.value.send(event)
+        return true
+      }),
+    limitOf: (session: string) =>
+      Effect.gen(function* () {
+        const owner = yield* ownerActor(session)
+        if (Option.isNone(owner)) return Option.none<number>()
+        return Option.map(decodeLimit(yield* owner.value.getSnapshot), (snapshot) => snapshot.context.limit)
+      }),
+  }
+
   return {
     /** The actor system: the registry of the live runs and their supervisors. */
     system: actor.system,
@@ -208,6 +232,8 @@ export const make = Effect.gen(function* () {
       }),
     /** The owner of a session, if a supervisor claimed it. */
     ownerOf,
+    /** The routing that `SessionPrompt` hands to the harness tools and the repetition stop (AD-11). */
+    hooks,
     /** Spawns a run's supervisor as `run:<runID>` in the harness system. */
     spawnRun: (runID: string, logic: AnyActorLogic, input?: unknown) =>
       actor.send({ type: "run.spawn", runID, logic, input }),

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Fiber, Logger, Option, Schema } from "effect"
 import { assign, setup } from "@jambudipa/xstate-effect"
+import type { Tool as AITool } from "ai"
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -31,6 +32,14 @@ const call = { toolCallId: "call_1", messages: [] }
 
 const node = testEffect(NodeServices.layer)
 
+const ToolResult = Schema.Struct({ title: Schema.String, output: Schema.String, metadata: Schema.Struct({ valid: Schema.Boolean }) })
+
+// Runs a harness tool's `execute` and reads its result.
+const exec = (tool: AITool, input: unknown) =>
+  Effect.promise(() => Promise.resolve(tool.execute!(input, call))).pipe(
+    Effect.map(Schema.decodeUnknownSync(ToolResult)),
+  )
+
 const tools = (agent: string, sessionID: SessionID, hooks?: TaskHooks.HarnessHooks) =>
   SessionPrompt.createTaskHarnessTools(agent, sessionID, hooks)
 
@@ -48,7 +57,7 @@ describe("the harness-only tools", () => {
     Effect.gen(function* () {
       const sessionID = SessionID.make("ses_wiring_ready")
       const tool = (yield* tools(TaskHooks.BUILDER, sessionID)).task_ready
-      const result = yield* Effect.promise(() => tool.execute!({ summary: "parser done" }, call))
+      const result = yield* exec(tool, { summary: "parser done" })
       expect(result.output).toBe("Ready recorded. End your turn now: the harness runs the proofs.")
       expect(TaskHooks.takeReady(sessionID)).toEqual({ summary: "parser done" })
     }),
@@ -62,13 +71,11 @@ describe("the harness-only tools", () => {
         { id: "T1.1.c1", verdict: "trusted" },
         { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
       ]
-      const result = yield* Effect.promise(() => tool.execute!({ verdicts }, call))
+      const result = yield* exec(tool, { verdicts })
       expect(result.output).toBe("Recorded 2 verdicts.")
       expect(TaskHooks.takeVerdicts(sessionID)).toEqual(verdicts)
 
-      const invalid = yield* Effect.promise(() =>
-        tool.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] }, call),
-      )
+      const invalid = yield* exec(tool, { verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] })
       expect(invalid.metadata.valid).toBe(false)
       expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
     }),
@@ -129,7 +136,7 @@ describe("the hook routing (AD-11)", () => {
       const sessionID = SessionID.make("ses_route_ready")
       const harness = yield* owned(sessionID, true)
       const tool = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
-      const result = yield* Effect.promise(() => tool.execute!({ summary: "parser done" }, call))
+      const result = yield* exec(tool, { summary: "parser done" })
       expect(result).toEqual({
         title: "Task ready",
         output: "Ready recorded. End your turn now: the harness runs the proofs.",
@@ -148,15 +155,13 @@ describe("the hook routing (AD-11)", () => {
       const sessionID = SessionID.make("ses_route_verdict")
       const harness = yield* owned(sessionID, false)
       const tool = (yield* tools(TaskHooks.VERIFIER, sessionID, harness.hooks)).verdict
-      const invalid = yield* Effect.promise(() =>
-        tool.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] }, call),
-      )
+      const invalid = yield* exec(tool, { verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] })
       expect(invalid.metadata.valid).toBe(false)
       const verdicts: Verdict[] = [
         { id: "T1.1.c1", verdict: "trusted" },
         { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
       ]
-      const result = yield* Effect.promise(() => tool.execute!({ verdicts }, call))
+      const result = yield* exec(tool, { verdicts })
       expect(result.output).toBe("Recorded 2 verdicts.")
       // Only the valid call arrived.
       expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.verdicts", session: sessionID, verdicts }])
@@ -170,14 +175,12 @@ describe("the hook routing (AD-11)", () => {
       const sessionID = SessionID.make("ses_route_nobody")
       const ready = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
       const verdict = (yield* tools(TaskHooks.VERIFIER, sessionID, harness.hooks)).verdict
-      expect(yield* Effect.promise(() => ready.execute!({ summary: "done" }, call))).toEqual({
+      expect(yield* exec(ready, { summary: "done" })).toEqual({
         title: "Task ready",
         output: "No task harness run owns this session. Nothing was recorded.",
         metadata: { valid: false },
       })
-      const answer = yield* Effect.promise(() =>
-        verdict.execute!({ verdicts: [{ id: "T1.1.c1", verdict: "trusted" }] }, call),
-      )
+      const answer = yield* exec(verdict, { verdicts: [{ id: "T1.1.c1", verdict: "trusted" }] })
       expect(answer).toEqual({
         title: "Verdict",
         output: "No task harness run owns this session. Nothing was recorded.",
@@ -196,7 +199,7 @@ describe("the hook routing (AD-11)", () => {
       // The index names an owner that is not in the system: `system.get` answers none.
       yield* harness.claimSession({ session: sessionID, owner: TaskHarness.systemId.task("task_a", "T1.1"), watch: true })
       const tool = (yield* tools(TaskHooks.BUILDER, sessionID, harness.hooks)).task_ready
-      const stopped = yield* Effect.promise(() => tool.execute!({}, call))
+      const stopped = yield* exec(tool, {})
       expect(stopped.output).toBe("No task harness run owns this session. Nothing was recorded.")
       expect(stopped.metadata.valid).toBe(false)
       expect(yield* harness.hooks.limitOf(sessionID)).toEqual(Option.none())
@@ -204,7 +207,7 @@ describe("the hook routing (AD-11)", () => {
       // The respawned owner claims the reused session before its turn, and the next call reaches it.
       yield* harness.spawnRun("task_b", owner)
       yield* harness.claimSession({ session: sessionID, owner: TaskHarness.systemId.run("task_b"), watch: true })
-      const again = yield* Effect.promise(() => tool.execute!({}, call))
+      const again = yield* exec(tool, {})
       expect(again.metadata.valid).toBe(true)
       expect(yield* received(harness, "task_b", 1)).toEqual([{ type: "hook.ready", session: sessionID }])
     }),

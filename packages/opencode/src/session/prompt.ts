@@ -1285,7 +1285,7 @@ const layer = Layer.effect(
             }
 
             // The task harness agents get their own tools; every other agent gets none.
-            Object.assign(tools, createTaskHarnessTools(agent.name, sessionID))
+            Object.assign(tools, yield* createTaskHarnessTools(agent.name, sessionID))
 
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -1706,56 +1706,74 @@ const VERDICT_SCHEMA: JSONSchema7 = {
 
 const harnessResult = (title: string, output: string, valid: boolean) => ({ output, title, metadata: { valid } })
 
+const NO_OWNER = "No task harness run owns this session. Nothing was recorded."
+
 /**
  * @internal Exported for testing. The task harness's own tools for one turn of `agent`: the builder gets
- * `task_ready`, the verifier gets `verdict`, and every other agent gets neither. Each records what it receives
- * in `TaskHooks`; the harness reads it after the turn.
+ * `task_ready`, the verifier gets `verdict`, and every other agent gets neither. With `hooks`, each tool sends what
+ * it receives to the supervisor that owns the session (AD-11), and its async `execute` runs that send with the
+ * context captured here (EFX-31); a session with no live owner records nothing and says so. Without `hooks`, the
+ * tools record in the `TaskHooks` maps that the polled runner reads, until the cut-over (T2.11).
  */
-export function createTaskHarnessTools(agent: string, sessionID: SessionID): Record<string, AITool> {
+export const createTaskHarnessTools = Effect.fn("SessionPrompt.createTaskHarnessTools")(function* (
+  agent: string,
+  sessionID: SessionID,
+  hooks?: TaskHooks.HarnessHooks,
+) {
+  const run = Effect.runPromiseWith(yield* Effect.context())
+  const tools: Record<string, AITool> = {}
   if (agent === TaskHooks.BUILDER)
-    return {
-      task_ready: tool({
-        description: TASK_READY_DESCRIPTION,
-        inputSchema: jsonSchema(TASK_READY_SCHEMA),
-        execute(args) {
-          const input = decodeTaskReady(args)
-          if (Exit.isFailure(input))
-            return harnessResult(
-              "Task ready",
-              "Invalid input: expected { summary?: string }. Nothing was recorded.",
-              false,
-            )
-          TaskHooks.recordReady(sessionID, input.value)
-          return harnessResult("Task ready", "Ready recorded. End your turn now: the harness runs the proofs.", true)
-        },
-        toModelOutput({ output }) {
-          return { type: "text", value: output.output }
-        },
-      }),
-    }
+    tools.task_ready = tool({
+      description: TASK_READY_DESCRIPTION,
+      inputSchema: jsonSchema(TASK_READY_SCHEMA),
+      execute(args) {
+        return run(
+          Effect.gen(function* () {
+            const input = decodeTaskReady(args)
+            if (Exit.isFailure(input))
+              return harnessResult(
+                "Task ready",
+                "Invalid input: expected { summary?: string }. Nothing was recorded.",
+                false,
+              )
+            if (hooks === undefined) TaskHooks.recordReady(sessionID, input.value)
+            else if (!(yield* TaskHooks.sendReady(hooks, sessionID, input.value)))
+              return harnessResult("Task ready", NO_OWNER, false)
+            return harnessResult("Task ready", "Ready recorded. End your turn now: the harness runs the proofs.", true)
+          }),
+        )
+      },
+      toModelOutput({ output }) {
+        return { type: "text", value: output.output }
+      },
+    })
   if (agent === TaskHooks.VERIFIER)
-    return {
-      verdict: tool({
-        description: VERDICT_DESCRIPTION,
-        inputSchema: jsonSchema(VERDICT_SCHEMA),
-        execute(args) {
-          const input = decodeTaskVerdicts(args)
-          if (Exit.isFailure(input))
-            return harnessResult(
-              "Verdict",
-              'Invalid input: expected { verdicts: { id: string, verdict: "trusted" | "rejected", reason?: string }[] }. Nothing was recorded.',
-              false,
-            )
-          TaskHooks.recordVerdicts(sessionID, input.value.verdicts)
-          return harnessResult("Verdict", `Recorded ${input.value.verdicts.length} verdicts.`, true)
-        },
-        toModelOutput({ output }) {
-          return { type: "text", value: output.output }
-        },
-      }),
-    }
-  return {}
-}
+    tools.verdict = tool({
+      description: VERDICT_DESCRIPTION,
+      inputSchema: jsonSchema(VERDICT_SCHEMA),
+      execute(args) {
+        return run(
+          Effect.gen(function* () {
+            const input = decodeTaskVerdicts(args)
+            if (Exit.isFailure(input))
+              return harnessResult(
+                "Verdict",
+                'Invalid input: expected { verdicts: { id: string, verdict: "trusted" | "rejected", reason?: string }[] }. Nothing was recorded.',
+                false,
+              )
+            if (hooks === undefined) TaskHooks.recordVerdicts(sessionID, input.value.verdicts)
+            else if (!(yield* TaskHooks.sendVerdicts(hooks, sessionID, input.value.verdicts)))
+              return harnessResult("Verdict", NO_OWNER, false)
+            return harnessResult("Verdict", `Recorded ${input.value.verdicts.length} verdicts.`, true)
+          }),
+        )
+      },
+      toModelOutput({ output }) {
+        return { type: "text", value: output.output }
+      },
+    })
+  return tools
+})
 
 // The completed tool calls of the replies to user message `userID`, oldest first: what the repetition check
 // reads. Array position is not chronological after a compaction, so order by creation time, then id.
