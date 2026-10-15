@@ -310,7 +310,7 @@ const layer = Layer.effect(
               // sees only the paths it can parse.
               external_directory: "deny",
               task_ready: "allow",
-              // A repeated call is stopped by TaskHooks.checkRepetition and recorded; doom_loop would end the
+              // A repeated call is stopped by TaskHooks.repetitionStop and recorded; doom_loop would end the
               // turn with an error instead.
               doom_loop: "allow",
             }),

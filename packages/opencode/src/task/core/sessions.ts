@@ -1,19 +1,18 @@
-import { Clock, Duration, Effect, Option, Predicate, Ref, Stream } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import type { EventV2 } from "@opencode-ai/core/event"
 import type { Database } from "@opencode-ai/core/database/database"
 import type { BackgroundJob } from "@/background/job"
 import type { InstanceStore } from "@/project/instance-store"
-import { MessageV2 } from "@/session/message-v2"
 import type { SessionID } from "@/session/schema"
 import type { Session } from "@/session/session"
 import type { SessionStatus } from "@/session/status"
 import type { BlendModel } from "@/task/blend/model"
-import type { TaskLimits } from "@/task/limits"
 import type { Ops } from "./ops"
 
 // The child sessions of the harness: their protocol messages (harness contract, section 4), their creation and
-// prompting in their own instance, and the builder watchdog. Runner, permission and agent state are per instance,
-// so a child is created, prompted and cancelled inside the same `InstanceStore.provide`.
+// prompting in their own instance, and the spend-cap check at the end of a turn. Permission and agent state are per
+// instance, so a child is created, prompted and cancelled inside the same `InstanceStore.provide`. The builder watch
+// is the task supervisor's (AD-11).
 
 /** The opencode services the harness uses, resolved once per `/task`. */
 export interface Env {
@@ -193,17 +192,10 @@ export const builderHistory = Effect.fn("TaskSessions.builderHistory")(function*
   }
 })
 
-// --- the builder watchdog ---------------------------------------------------------------------------------------------
+// --- the end of a turn ------------------------------------------------------------------------------------------------
 
 /** A provider retry with one of these messages is a spend cap: no retry can succeed, a human must act. */
 export const SPEND_CAP = /insufficient_quota|exceeded your current quota|spend.?cap|billing/i
-
-export type Outcome =
-  | { readonly kind: "ended" }
-  | { readonly kind: "stall"; readonly reason: string }
-  | { readonly kind: "spend-cap"; readonly reason: string }
-
-const POLL = Duration.millis(200)
 
 const errorMessage = (error: unknown) => {
   if (!Predicate.hasProperty(error, "data") || !Predicate.hasProperty(error.data, "message")) return Option.none()
@@ -231,84 +223,6 @@ export const spendCapError = Effect.fn("TaskSessions.spendCapError")(function* (
       ),
     ),
   )
-})
-
-/**
- * One builder turn under the watchdog, in the worktree's instance. Every 200 ms it reads the session: a provider
- * retry whose message is a spend cap cancels the turn (`spend-cap`); a busy session with no running tool whose
- * stream has not moved for `limits.streamIdle` is cut (`stall`). Stream activity is any part update or delta of the
- * session, and any change of its status.
- */
-export const builderTurn = Effect.fn("TaskSessions.builderTurn")(function* (
-  env: Env,
-  input: {
-    readonly directory: string
-    readonly session: SessionID
-    readonly agent: string
-    readonly model: Model
-    readonly text: string
-    readonly limits: TaskLimits.Limits
-  },
-) {
-  const idle = Duration.toMillis(input.limits.streamIdle)
-  const body = Effect.gen(function* () {
-    const started = yield* Clock.currentTimeMillis
-    const activity = yield* Ref.make(started)
-    const outcome = yield* Ref.make<Outcome>({ kind: "ended" })
-    const touch = Effect.flatMap(Clock.currentTimeMillis, (now) => Ref.set(activity, now))
-    const own = (event: { readonly data: { readonly sessionID: string } }) => event.data.sessionID === input.session
-    yield* Stream.merge(
-      env.events.subscribe(MessageV2.Event.PartDelta).pipe(Stream.filter(own)),
-      env.events.subscribe(MessageV2.Event.PartUpdated).pipe(Stream.filter(own)),
-    ).pipe(
-      Stream.runForEach(() => touch),
-      Effect.forkScoped,
-    )
-    const stop = (next: Outcome) =>
-      Effect.gen(function* () {
-        yield* Ref.set(outcome, next)
-        yield* env.ops.cancel(input.session)
-      })
-    const watch = Effect.gen(function* () {
-      const busy = yield* Ref.make(false)
-      while (true) {
-        yield* Effect.sleep(POLL)
-        const status = yield* env.status.get(input.session)
-        if (status.type === "retry" && SPEND_CAP.test(status.message)) {
-          return yield* stop({ kind: "spend-cap", reason: `spend cap: ${oneLine(status.message)}` })
-        }
-        const was = yield* Ref.getAndSet(busy, status.type === "busy")
-        if (status.type !== "busy" || !was) {
-          yield* touch
-          continue
-        }
-        const messages = yield* turnMessages(env, input.session, started)
-        const running = messages.some((message) =>
-          message.parts.some((part) => part.type === "tool" && part.state.status === "running"),
-        )
-        if (running) {
-          yield* touch
-          continue
-        }
-        const now = yield* Clock.currentTimeMillis
-        if (now - (yield* Ref.get(activity)) >= idle) {
-          return yield* stop({
-            kind: "stall",
-            reason: `stall: no stream activity for ${Math.round(idle / 1000)} s`,
-          })
-        }
-      }
-    })
-    yield* watch.pipe(Effect.forkScoped)
-    yield* env.ops.prompt({
-      sessionID: input.session,
-      agent: input.agent,
-      model: input.model,
-      parts: [{ type: "text", text: input.text }],
-    })
-    return { outcome: yield* Ref.get(outcome), started }
-  })
-  return yield* env.instances.provide({ directory: input.directory }, Effect.scoped(body))
 })
 
 export * as TaskSessions from "./sessions"

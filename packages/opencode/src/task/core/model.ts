@@ -1,9 +1,9 @@
 import type { BlendModel } from "@/task/blend/model"
 
 // The task harness's state and the facts that move it. The engine (`@/task/engine-xstate`) folds the facts through
-// the run machine of the plan; `State` is only the shape its `view` selector reads out of the snapshot. The runner
-// (`@/task/core/runner`) records each fact as a durable EventV2 event and never changes state any other way, so a
-// resume is the same fold over the stored events.
+// the run machine of the plan; `State` is only the shape its `view` selector reads out of the snapshot. The Recorder
+// (`@/task/core/recorder`) records each fact as a durable EventV2 event and sends it to the run actor; nothing changes
+// state any other way, so a resume is the same fold over the stored events.
 
 export type RunState = "running" | "refused" | "waiting" | "done" | "cancelled" | "needs_human" | "budget_exhausted" | "failed"
 export type TaskState =
@@ -79,7 +79,7 @@ export type Verdict = { readonly id: string; readonly verdict: "trusted" | "reje
 export type Result = { readonly id: string; readonly status: "passed" | "failed" | "needs-judge"; readonly reason?: string }
 
 /**
- * The facts. Each is one durable event. `at` is the time the runner recorded it. The engine decides every state
+ * The facts. Each is one durable event. `at` is the time the Recorder recorded it. The engine decides every state
  * change from these alone; a fact that does not apply in the current state is ignored (and leaves no history).
  */
 export type Fact =
@@ -100,9 +100,9 @@ export type Fact =
   | { readonly type: "task.ready"; readonly at: number; readonly task: string; readonly head: string }
   /** Machine proof results of the obligations the round proved; anything failed sends the task back to the builder. */
   | { readonly type: "task.proved"; readonly at: number; readonly task: string; readonly results: ReadonlyArray<Result>; readonly reason?: string }
-  /** Verdicts of a verifier or reviewer round; the runner records this only after a passing merge, if any. */
+  /** Verdicts of a verifier or reviewer round; the task supervisor records this only after a passing merge, if any. */
   | { readonly type: "task.verified"; readonly at: number; readonly task: string; readonly verdicts: ReadonlyArray<Verdict> }
-  /** The builder's stream stalled; the runner cut it and prompts the same attempt again. */
+  /** The builder's stream stalled; the task supervisor cut it and prompts the same attempt again. */
   | { readonly type: "task.stalled"; readonly at: number; readonly task: string; readonly reason: string }
   /** The builder's turn went idle without task_ready; the supervisor nudged it in the same attempt (AD-10). */
   | {

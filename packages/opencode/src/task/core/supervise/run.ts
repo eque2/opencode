@@ -144,7 +144,8 @@ export const untrustedOutside = (plan: Plan, snapshot: RunSnapshot, id: string) 
   return state !== undefined && state !== "trusted"
 }
 
-const readyScenarios = (plan: Plan, snapshot: RunSnapshot) =>
+/** The scenarios tagged `ready` in a snapshot: the next batch proof. */
+export const readyScenarios = (plan: Plan, snapshot: RunSnapshot) =>
   plan.scenarios.filter((scenario) => snapshot.hasTag(`${scenario.id}:ready`)).map((scenario) => scenario.id)
 
 // --- the run's workers ---------------------------------------------------------------------------------------------------

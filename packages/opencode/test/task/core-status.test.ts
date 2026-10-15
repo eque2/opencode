@@ -5,7 +5,7 @@ import path from "path"
 import { Blend } from "@/task/blend"
 import type { BlendModel } from "@/task/blend/model"
 import { TaskCommand } from "@/task/core/command"
-import { TaskRunner } from "@/task/core/runner"
+import { TaskWorkers } from "@/task/core/workers"
 import type { Fact, Plan } from "@/task/core/model"
 import { TaskStatus } from "@/task/core/status"
 import { TaskEngineXState } from "@/task/engine-xstate"
@@ -267,11 +267,11 @@ describe("the status projection", () => {
       const directory = yield* fs.makeTempDirectoryScoped()
       const file = path.join(directory, ".opencode", "task", "proofs", "T1.4.log")
       expect(TaskStatus.proofLogFile(yield* Path.Path, directory, "T1.4")).toBe(file)
-      expect(yield* TaskRunner.proofLog(directory, "T1.4")).toBe(file)
+      expect(yield* TaskWorkers.proofLog(directory, "T1.4")).toBe(file)
       expect(yield* fs.readFileString(file)).toBe("")
       // The next pass starts from an empty file, never from the previous pass's output.
       yield* fs.writeFileString(file, "$ bun test\nexit 1\n")
-      yield* TaskRunner.proofLog(directory, "T1.4")
+      yield* TaskWorkers.proofLog(directory, "T1.4")
       expect(yield* fs.readFileString(file)).toBe("")
     }),
   )

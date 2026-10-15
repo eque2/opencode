@@ -305,9 +305,6 @@ const FINAL: ReadonlyArray<Entry> = [
   },
 ]
 
-const RUNNER = "The polled runner's state and loop, replaced by the supervisors."
-const SESSIONS = "The polled builder watch, replaced by the event-driven watch of the task supervisor."
-const HOOKS = "The hook maps, replaced by the session index and the supervisors' context."
 const VIEW = "The task-ui's view state and polls, replaced by the taskView actor (AD-16)."
 const CLASSIFY = "A task-ui classification by state names, replaced by a read of the status tags (AD-16)."
 const interim = (file: string, until: string, reason: string, identifiers: ReadonlyArray<string>) =>
@@ -315,26 +312,6 @@ const interim = (file: string, until: string, reason: string, identifiers: Reado
 
 // The interim entries: state that phase 2 and phase 4 move into the actors. Each names the task that removes it.
 const INTERIM: ReadonlyArray<Entry> = [
-  ...interim(opencode("core/runner.ts"), "T2.12", RUNNER, [
-    "Workers",
-    "active",
-    "build",
-    "checkWallClocks",
-    "spawn",
-    "loop",
-    "clearing",
-    "state",
-    "spec",
-    "children",
-    "failures",
-    "stopping",
-    "workers",
-  ]),
-  ...interim(opencode("core/runner.ts"), "T2.12", "The merge retry; it moves to the merge worker as mergeRetry.", [
-    "schedule",
-  ]),
-  ...interim(opencode("core/sessions.ts"), "T2.12", SESSIONS, ["activity", "outcome", "busy", "watch"]),
-  ...interim(opencode("core/hooks.ts"), "T2.12", HOOKS, ["ready", "verdicts", "repeated", "limits"]),
   ...interim(ui("store.ts"), "T4.3", VIEW, ["value", "fiber", "design", "chosen", "expanded", "watching"]),
   ...interim(ui("store.ts"), "T4.2", CLASSIFY, ["ACTIVE", "ENDED"]),
   ...interim(ui("store.ts"), "T4.8", "A state-to-tone and state-to-glyph lookup, folded into DISPLAY.", [

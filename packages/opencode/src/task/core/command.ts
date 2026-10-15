@@ -166,6 +166,15 @@ export const sliceOf = (plan: Plan, stored: ReadonlyArray<Fact>, path: string): 
       ),
   })
 
+/**
+ * The base branch a resumed slice started on: a resume must use the same branch, because the leaves merged so far are
+ * there. None for a new slice, or a slice stored before `run.started` recorded its base.
+ */
+export const unfinishedBase = (slice: Slice): Option.Option<string> =>
+  slice.kind === "resume"
+    ? Option.fromNullishOr(slice.facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0])
+    : Option.none()
+
 /** Everything the job of a run needs, resolved by `/task`. */
 export interface Start {
   readonly harness: TaskHarness.Interface
@@ -330,10 +339,7 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
     const id = TaskEvents.runID(directory, specPath)
     const slice = yield* sliceOf(runPlan, yield* TaskEvents.read(env.db, id), runPath)
     // A resumed slice must keep its base branch: the leaves merged so far are there.
-    const startedOn =
-      slice.kind === "resume"
-        ? Option.fromNullishOr(slice.facts.flatMap((fact) => (fact.type === "run.started" && fact.base ? [fact.base] : []))[0])
-        : Option.none<string>()
+    const startedOn = unfinishedBase(slice)
     if (Option.isSome(startedOn) && startedOn.value !== base) {
       return yield* refuse(
         specPath,

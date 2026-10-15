@@ -1,4 +1,4 @@
-import { Effect, MutableHashMap, Option, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { ProofProcess } from "@/task/proof/process"
 import type { Verdict } from "./model"
 
@@ -6,9 +6,6 @@ import type { Verdict } from "./model"
 // harness-only tools by agent name, routes what those tools receive to the supervisor that owns the session, and asks
 // here whether the builder is repeating itself before it sends the next model request (spine AD-11). The functions
 // over `HarnessHooks` hold no state: the owner keeps what it receives in its context.
-//
-// ponytail: until the cut-over (T2.11) the polled runner still reads process-wide maps keyed by session id; T2.12
-// removes them with the runner.
 
 export const BUILDER = "task-builder"
 export const VERIFIER = "task-verifier"
@@ -58,65 +55,8 @@ export const sendReady = (hooks: HarnessHooks, session: string, input: { readonl
 export const sendVerdicts = (hooks: HarnessHooks, session: string, input: ReadonlyArray<Verdict>) =>
   hooks.send({ type: "hook.verdicts", session, verdicts: input })
 
-const ready = MutableHashMap.empty<string, { readonly summary?: string }>()
-const verdicts = MutableHashMap.empty<string, ReadonlyArray<Verdict>>()
-const repeated = MutableHashMap.empty<string, string>()
-const limits = MutableHashMap.empty<string, number>()
-
 // The same encoding the doom-loop check in `SessionProcessor` compares inputs with.
 const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
-
-const take = <V>(map: MutableHashMap.MutableHashMap<string, V>, key: string) => {
-  const value = Option.getOrUndefined(MutableHashMap.get(map, key))
-  MutableHashMap.remove(map, key)
-  return value
-}
-
-/** Watch a builder session for repeated calls; `limit` identical calls in a row end the turn. */
-export function watch(sessionID: string, limit: number) {
-  MutableHashMap.set(limits, sessionID, limit)
-  MutableHashMap.remove(repeated, sessionID)
-}
-
-/** Whether the harness watches this session for repeated calls. */
-export function watching(sessionID: string) {
-  return MutableHashMap.has(limits, sessionID)
-}
-
-export function unwatch(sessionID: string) {
-  MutableHashMap.remove(limits, sessionID)
-}
-
-export function recordReady(sessionID: string, input: { readonly summary?: string }) {
-  MutableHashMap.set(ready, sessionID, input)
-}
-
-/** The builder's `task_ready` of the turn that just ended, cleared on read. */
-export function takeReady(sessionID: string) {
-  return take(ready, sessionID)
-}
-
-export function recordVerdicts(sessionID: string, input: ReadonlyArray<Verdict>) {
-  const before = Option.getOrElse(MutableHashMap.get(verdicts, sessionID), () => [])
-  MutableHashMap.set(verdicts, sessionID, [...before, ...input])
-}
-
-/** The verdicts of the round that just ended, cleared on read. */
-export function takeVerdicts(sessionID: string) {
-  return take(verdicts, sessionID)
-}
-
-/**
- * Called before each model request of a watched session with the tool calls made since its last user message,
- * oldest first. Returns the reason when the last `limit` calls are one tool with one input, and remembers it.
- */
-export function checkRepetition(sessionID: string, calls: ReadonlyArray<Call>): string | undefined {
-  const limit = Option.getOrUndefined(MutableHashMap.get(limits, sessionID))
-  if (limit === undefined) return undefined
-  const reason = Option.getOrUndefined(repetition(limit, calls))
-  if (reason !== undefined) MutableHashMap.set(repeated, sessionID, reason)
-  return reason
-}
 
 /** The pure repetition check: the reason when the last `limit` calls are one tool with one input. */
 export function repetition(limit: number, calls: ReadonlyArray<Call>): Option.Option<string> {
@@ -146,10 +86,5 @@ export const repetitionStop = Effect.fn("TaskHooks.repetitionStop")(function* (
   if (Option.isSome(reason)) yield* hooks.send({ type: "hook.repeated", session, reason: reason.value })
   return reason
 })
-
-/** The repetition that ended the builder's turn, cleared on read. */
-export function takeRepeated(sessionID: string) {
-  return take(repeated, sessionID)
-}
 
 export * as TaskHooks from "./hooks"

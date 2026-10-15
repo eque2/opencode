@@ -4,7 +4,7 @@ import { Effect, Option, Schema } from "effect"
 import type { BlendModel } from "@/task/blend/model"
 import type { Fact, Plan, Result, Verdict } from "@/task/core/model"
 import { TaskEvents } from "@/task/core/events"
-import { TaskRunner } from "@/task/core/runner"
+import { TaskCommand } from "@/task/core/command"
 import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
 import { exhaustLeaf, facts, loadPlan, observed, trustLeaf } from "./lib/machine"
@@ -998,18 +998,20 @@ describe("the fact list (AD-10)", () => {
 })
 
 describe("the base of an unfinished run", () => {
+  // The base of the slice a /task resumes (`TaskCommand.sliceOf`), for the whole-spec path.
+  const baseOf = (facts: ReadonlyArray<Fact>) =>
+    TaskCommand.unfinishedBase(Effect.runSync(TaskCommand.sliceOf(plan, facts, plan.specPath)))
+
   test("B1 ported: is the branch its run.started recorded, until the run ends", () => {
     const begun: Fact[] = [{ type: "run.started", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, begun)).toEqual(Option.some("dev"))
+    expect(baseOf(begun)).toEqual(Option.some("dev"))
     const resumed: Fact[] = [...begun, { type: "run.resumed", at: at(), base: "dev" }]
-    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, resumed)).toEqual(Option.some("dev"))
+    expect(baseOf(resumed)).toEqual(Option.some("dev"))
     const cancelled: Fact[] = [...begun, { type: "run.cancelled", at: at(), reason: "stop" }]
-    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, cancelled)).toEqual(Option.none())
+    expect(baseOf(cancelled)).toEqual(Option.none())
   })
 
   test("B2 ported: is unknown for a run stored before the base was recorded", () => {
-    expect(TaskRunner.unfinishedBase(engine.XStateEngine, plan, [{ type: "run.started", at: at() }])).toEqual(
-      Option.none(),
-    )
+    expect(baseOf([{ type: "run.started", at: at() }])).toEqual(Option.none())
   })
 })

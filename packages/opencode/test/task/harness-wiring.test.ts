@@ -40,7 +40,14 @@ const exec = (tool: AITool, input: unknown) =>
     Effect.map(Schema.decodeUnknownSync(ToolResult)),
   )
 
-const tools = (agent: string, sessionID: SessionID, hooks?: TaskHooks.HarnessHooks) =>
+// A routing where no session has an owner.
+const unowned: TaskHooks.HarnessHooks = {
+  ownerOf: () => Effect.succeed(Option.none()),
+  send: () => Effect.succeed(false),
+  limitOf: () => Effect.succeed(Option.none()),
+}
+
+const tools = (agent: string, sessionID: SessionID, hooks: TaskHooks.HarnessHooks = unowned) =>
   SessionPrompt.createTaskHarnessTools(agent, sessionID, hooks)
 
 describe("the harness-only tools", () => {
@@ -50,34 +57,6 @@ describe("the harness-only tools", () => {
       expect(Object.keys(yield* tools(TaskHooks.BUILDER, sessionID))).toEqual(["task_ready"])
       expect(Object.keys(yield* tools(TaskHooks.VERIFIER, sessionID))).toEqual(["verdict"])
       expect(yield* tools("build", sessionID)).toEqual({})
-    }),
-  )
-
-  node.live("task_ready records the request for the session", () =>
-    Effect.gen(function* () {
-      const sessionID = SessionID.make("ses_wiring_ready")
-      const tool = (yield* tools(TaskHooks.BUILDER, sessionID)).task_ready
-      const result = yield* exec(tool, { summary: "parser done" })
-      expect(result.output).toBe("Ready recorded. End your turn now: the harness runs the proofs.")
-      expect(TaskHooks.takeReady(sessionID)).toEqual({ summary: "parser done" })
-    }),
-  )
-
-  node.live("verdict records every verdict, and refuses an invalid input without recording", () =>
-    Effect.gen(function* () {
-      const sessionID = SessionID.make("ses_wiring_verdict")
-      const tool = (yield* tools(TaskHooks.VERIFIER, sessionID)).verdict
-      const verdicts: Verdict[] = [
-        { id: "T1.1.c1", verdict: "trusted" },
-        { id: "T1.1.c2", verdict: "rejected", reason: "weak" },
-      ]
-      const result = yield* exec(tool, { verdicts })
-      expect(result.output).toBe("Recorded 2 verdicts.")
-      expect(TaskHooks.takeVerdicts(sessionID)).toEqual(verdicts)
-
-      const invalid = yield* exec(tool, { verdicts: [{ id: "T1.1.c1", verdict: "maybe" }] })
-      expect(invalid.metadata.valid).toBe(false)
-      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
     }),
   )
 })
@@ -148,8 +127,6 @@ describe("the hook routing (AD-11)", () => {
       expect(yield* received(harness, "task_a", 1)).toEqual([
         { type: "hook.ready", session: sessionID, summary: "parser done" },
       ])
-      // The routed tool leaves the polled runner's map alone.
-      expect(TaskHooks.takeReady(sessionID)).toBeUndefined()
     }),
   )
 
@@ -168,7 +145,6 @@ describe("the hook routing (AD-11)", () => {
       expect(result.output).toBe("Recorded 2 verdicts.")
       // Only the valid call arrived.
       expect(yield* received(harness, "task_a", 1)).toEqual([{ type: "hook.verdicts", session: sessionID, verdicts }])
-      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
     }),
   )
 
@@ -190,8 +166,6 @@ describe("the hook routing (AD-11)", () => {
         metadata: { valid: false },
       })
       expect(yield* eventsOf(harness, "task_a")).toEqual([])
-      expect(TaskHooks.takeReady(sessionID)).toBeUndefined()
-      expect(TaskHooks.takeVerdicts(sessionID)).toBeUndefined()
     }),
   )
 
@@ -318,22 +292,6 @@ describe("the harness agents' shell", () => {
   })
 })
 
-describe("the repetition watch", () => {
-  test("watches a session from watch to unwatch, and stops it after the limit of identical calls", () => {
-    const sessionID = "ses_wiring_watch"
-    const call = { tool: "bash", input: { command: "ls" } }
-    expect(TaskHooks.watching(sessionID)).toBe(false)
-    TaskHooks.watch(sessionID, 3)
-    expect(TaskHooks.watching(sessionID)).toBe(true)
-    expect(TaskHooks.checkRepetition(sessionID, [call, call])).toBeUndefined()
-    expect(TaskHooks.checkRepetition(sessionID, [call, call, call])).toBe("repetition: 3 identical bash calls in a row")
-    expect(TaskHooks.takeRepeated(sessionID)).toBe("repetition: 3 identical bash calls in a row")
-    TaskHooks.unwatch(sessionID)
-    expect(TaskHooks.watching(sessionID)).toBe(false)
-    expect(TaskHooks.checkRepetition(sessionID, [call, call, call])).toBeUndefined()
-  })
-})
-
 describe("the task command and agents", () => {
   it.instance("are always present, with the harness permissions", () =>
     Effect.gen(function* () {
@@ -362,7 +320,7 @@ describe("the task command and agents", () => {
       // A plain `bun test` would load the checkout's .env files.
       for (const command of ["bun test", "rm -rf src", "echo x > src/a.ts", "git commit -am x", "git checkout -- .", "sh -c 'x'"])
         expect(action(verifier, "bash", command)).toBe("deny")
-      // The harness stops a repetition itself (TaskHooks.checkRepetition); doom_loop must not end the turn first.
+      // The harness stops a repetition itself (TaskHooks.repetitionStop); doom_loop must not end the turn first.
       for (const permission of ["read", "verdict", "doom_loop"]) expect(action(verifier, permission)).toBe("allow")
       // A builder or verifier that would ask would hang a headless run.
       expect(builder.permission.some((rule) => rule.action === "ask")).toBe(false)
