@@ -94,7 +94,7 @@ describe("the taskView machine (AD-16)", () => {
       }),
     ))
 
-  test("select.nextRunning and select.previousRunning step through the tasks in work, wrapping round", () =>
+  test("select.nextRunning and select.previousRunning step forward and back through three tasks in work, wrapping round", () =>
     run(
       Effect.gen(function* () {
         const working = statusText(
@@ -103,19 +103,65 @@ describe("the taskView machine (AD-16)", () => {
             "T1.1": { state: "building", tags: ["active"], attempts: 1, waitingOn: [] },
             "T1.2": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.1"] },
             "T1.3": { state: "proving", tags: ["active"], attempts: 1, waitingOn: [] },
+            "T1.4": { state: "verifying", tags: ["active"], attempts: 1, waitingOn: [] },
           },
         )
         const v = yield* view([file(working)])
         yield* settle
+        const chosen = Effect.map(v.context, (context) => context.chosen)
+        yield* v.send({ type: "select", id: "T1.1" })
+        for (const id of ["T1.3", "T1.4", "T1.1"]) {
+          yield* v.send({ type: "select.nextRunning" })
+          expect(yield* chosen).toEqual(Option.some(id))
+        }
+        for (const id of ["T1.4", "T1.3", "T1.1"]) {
+          yield* v.send({ type: "select.previousRunning" })
+          expect(yield* chosen).toEqual(Option.some(id))
+        }
+        // From a task out of work: the next task in work after it, or the one before it.
+        yield* v.send({ type: "select", id: "T1.2" })
+        yield* v.send({ type: "select.nextRunning" })
+        expect(yield* chosen).toEqual(Option.some("T1.3"))
         yield* v.send({ type: "select", id: "T1.2" })
         yield* v.send({ type: "select.previousRunning" })
-        expect((yield* v.context).chosen).toEqual(Option.some("T1.1"))
-        yield* v.send({ type: "select.previousRunning" })
-        expect((yield* v.context).chosen).toEqual(Option.some("T1.3"))
-        yield* v.send({ type: "select.nextRunning" })
-        expect((yield* v.context).chosen).toEqual(Option.some("T1.1"))
-        yield* v.send({ type: "select.nextRunning" })
-        expect((yield* v.context).chosen).toEqual(Option.some("T1.3"))
+        expect(yield* chosen).toEqual(Option.some("T1.1"))
+      }),
+    ))
+
+  test("expansion and watch: each toggle flips, each set holds its value, and watch off clears the target", () =>
+    run(
+      Effect.gen(function* () {
+        const v = yield* view([file(statusText())])
+        yield* settle
+        const region = (name: string) => Effect.map(v.snapshot, (snapshot) => stateOf(snapshot.value, name))
+        const steps: ReadonlyArray<[TaskView.Event, string]> = [
+          [{ type: "expand.toggle" }, "expanded"],
+          [{ type: "expand.toggle" }, "collapsed"],
+          [{ type: "expand.set", open: true }, "expanded"],
+          [{ type: "expand.set", open: true }, "expanded"],
+          [{ type: "expand.set", open: false }, "collapsed"],
+          [{ type: "expand.set", open: false }, "collapsed"],
+        ]
+        for (const [event, state] of steps) {
+          yield* v.send(event)
+          expect({ event, state: yield* region("expansion") }).toEqual({ event, state })
+        }
+        const watches: ReadonlyArray<[TaskView.Event, string]> = [
+          [{ type: "watch.toggle" }, "on"],
+          [{ type: "watch.toggle" }, "off"],
+          [{ type: "watch.set", on: true }, "on"],
+          [{ type: "watch.set", on: true }, "on"],
+          [{ type: "watch.set", on: false }, "off"],
+          [{ type: "watch.set", on: false }, "off"],
+        ]
+        for (const [event, state] of watches) {
+          yield* v.send(event)
+          expect({ event, state: yield* region("watch") }).toEqual({ event, state })
+        }
+        yield* v.send({ type: "watch.toggle" })
+        yield* v.send({ type: "watch.target", session: "ses_builder", keep: false })
+        yield* v.send({ type: "watch.toggle" })
+        expect((yield* v.context).target).toBe("")
       }),
     ))
 
@@ -147,15 +193,19 @@ describe("the taskView machine (AD-16)", () => {
       }),
     ))
 
-  test("an unchanged status text read later moves the clock: a heartbeat that stops makes the view still", () =>
+  test("an unchanged status text read later takes the new clock, mtime and logs: a stopped heartbeat makes the view still", () =>
     run(
       Effect.gen(function* () {
         const text = statusText({ tags: ["active"], aliveAt: NOW })
-        const v = yield* view([file(text, NOW), file(text, NOW + 15_001)])
+        const later = [{ name: "T1.1", mtime: NOW + 15_000 }]
+        const v = yield* view([
+          file(text, NOW),
+          { exists: true, text, mtime: NOW + 14_000, logs: later, now: NOW + 15_001 },
+        ])
         yield* settle
         expect(stateOf((yield* v.snapshot).value, "liveness")).toBe("live")
         yield* v.advance(1_000)
-        expect((yield* v.context).now).toBe(NOW + 15_001)
+        expect(yield* v.context).toMatchObject({ now: NOW + 15_001, mtime: NOW + 14_000, logs: later })
         expect(stateOf((yield* v.snapshot).value, "liveness")).toBe("still")
       }),
     ))
@@ -253,6 +303,16 @@ describe("the taskView machine (AD-16)", () => {
       }),
     ))
 
+  test("an input design that is not a design starts the view on design 1", () =>
+    run(
+      Effect.gen(function* () {
+        for (const design of [0, 8, 9]) {
+          const v = yield* view([file(statusText())], design)
+          expect((yield* v.context).design).toBe(1)
+        }
+      }),
+    ))
+
   test("watch off resets the target; a kept choice leaves it; design.cycle wraps 7 to 1; design.set 8 is ignored", () =>
     run(
       Effect.gen(function* () {
@@ -270,18 +330,30 @@ describe("the taskView machine (AD-16)", () => {
       }),
     ))
 
-  test("a chosen task the new status lacks falls back to the focus task; nextRunning with nothing running keeps it", () =>
+  test("a chosen task the status lacks falls back to the focus task, not the first row; nextRunning with nothing running keeps it", () =>
     run(
       Effect.gen(function* () {
-        const idle = statusText({}, { "T1.1": { state: "trusted", tags: ["ended"], attempts: 1, waitingOn: [] } })
-        const v = yield* view([file(statusText()), file(idle)])
+        // T1.1 ended, T1.2 in work, T1.3 waiting: the focus task is T1.2, the first row T1.1.
+        const tasks = {
+          "T1.1": { state: "trusted", tags: ["ended"], attempts: 1, waitingOn: [] },
+          "T1.2": { state: "building", tags: ["active"], attempts: 1, waitingOn: [] },
+          "T1.3": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.2"] },
+        }
+        const { "T1.3": _gone, ...without } = tasks
+        const v = yield* view([file(statusText({}, tasks)), file(statusText({}, without))])
         yield* settle
-        yield* v.send({ type: "select", id: "T1.2" })
+        yield* v.send({ type: "select", id: "T9" })
+        expect(TaskView.selected(yield* v.context)).toEqual(Option.some("T1.2"))
+        yield* v.send({ type: "select", id: "T1.3" })
+        expect(TaskView.selected(yield* v.context)).toEqual(Option.some("T1.3"))
         yield* v.advance(1_000)
-        expect(TaskView.selected(yield* v.context)).toEqual(Option.some("T1.1"))
-        yield* v.send({ type: "select", id: "T1.1" })
-        yield* v.send({ type: "select.nextRunning" })
-        expect((yield* v.context).chosen).toEqual(Option.some("T1.1"))
+        expect(TaskView.selected(yield* v.context)).toEqual(Option.some("T1.2"))
+        const idle = statusText({}, { "T1.1": { state: "trusted", tags: ["ended"], attempts: 1, waitingOn: [] } })
+        const w = yield* view([file(idle)])
+        yield* settle
+        yield* w.send({ type: "select", id: "T1.1" })
+        yield* w.send({ type: "select.nextRunning" })
+        expect((yield* w.context).chosen).toEqual(Option.some("T1.1"))
       }),
     ))
 
