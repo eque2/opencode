@@ -77,7 +77,7 @@ const cases: ReadonlyArray<{
   {
     name: "a record key that fails its key pattern (inline propertyNames)",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "preserves:\n  q1:\n    text: a\n    proof: review",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npreserves:\n  q1:\n    text: a\n    proof: review",
     expected: ["preserves: 'q1' does not match '^p[1-9][0-9]*$'"],
   },
   {
@@ -119,7 +119,7 @@ const cases: ReadonlyArray<{
   {
     name: "an empty string (minLength 1)",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: 'hint: ""',
+    yaml: 'ensures:\n  c1:\n    text: a\n    category: empty\nhint: ""',
     expected: ["hint: '' should be non-empty"],
   },
   {
@@ -127,6 +127,12 @@ const cases: ReadonlyArray<{
     schema: BlendSchema.TaskFrontMatter,
     yaml: "touches: []",
     expected: ["touches: [] should be non-empty"],
+  },
+  {
+    name: "VF3 a VERIFY.md with no ensures is reported on (root)",
+    schema: BlendSchema.VerifyFrontMatter,
+    yaml: "gates: [BUILD-1]",
+    expected: ["(root): 'ensures' is a required property"],
   },
   {
     name: "an empty mapping (minProperties 1)",
@@ -143,31 +149,31 @@ const cases: ReadonlyArray<{
   {
     name: "a number under its minimum of 1",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "policy:\n  budgets:\n    taskAttempts: 0",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npolicy:\n  budgets:\n    taskAttempts: 0",
     expected: ["policy/budgets/taskAttempts: 0 is less than the minimum of 1"],
   },
   {
     name: "a number under its minimum of 0",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "policy:\n  budgets:\n    retries: -1",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npolicy:\n  budgets:\n    retries: -1",
     expected: ["policy/budgets/retries: -1 is less than the minimum of 0"],
   },
   {
     name: "a fraction where an integer goes",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "policy:\n  budgets:\n    taskAttempts: 1.5",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npolicy:\n  budgets:\n    taskAttempts: 1.5",
     expected: ["policy/budgets/taskAttempts: 1.5 is not of type 'integer'"],
   },
   {
     name: "a string where an integer goes",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "policy:\n  budgets:\n    taskAttempts: x",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npolicy:\n  budgets:\n    taskAttempts: x",
     expected: ["policy/budgets/taskAttempts: 'x' is not of type 'integer'"],
   },
   {
     name: "a boolean where an integer goes",
     schema: BlendSchema.VerifyFrontMatter,
-    yaml: "policy:\n  budgets:\n    taskAttempts: true",
+    yaml: "ensures:\n  c1:\n    text: a\n    category: empty\npolicy:\n  budgets:\n    taskAttempts: true",
     expected: ["policy/budgets/taskAttempts: True is not of type 'integer'"],
   },
   {
