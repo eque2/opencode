@@ -752,7 +752,11 @@ test("UI22 at 120 × 24, 13 scenarios and 5 stopped tasks: the region keeps 8 ro
   }
   // At 80 rows everything fits: the Peek keeps its activity lines.
   const tall = await shown(80)
-  const tallLines = linesOf(tall.app.captureCharFrame()).filter((line) => line.includes("activity line")).length
+  const tallFrame = tall.app.captureCharFrame()
+  const tallLines = linesOf(tallFrame).filter((line) => line.includes("activity line")).length
+  // The failed task's STOPPED line carries its reason.
+  expect(stoppedLines(status).map((line) => [line.state, line.reason])).toContainEqual(["failed", "merge conflict"])
+  expect(tallFrame).toContain("merge conflict")
   tall.app.renderer.destroy()
   tall.dispose()
   const short = await shown(24)

@@ -1381,6 +1381,23 @@ test("the proof tail is read again on each 500 ms tick of the view", async () =>
   made.dispose()
 })
 
+test("esc twice in the watch view of a run that stands still stops nothing (UI3)", async () => {
+  const building = live({ "T1.4": "building" })
+  const plugin = await wired({ status: building, harness: harnessOfT14, now: (building.run.aliveAt ?? 0) + 60_000 })
+  try {
+    expect(plugin.view.liveness()).toBe("still")
+    plugin.view.setWatching(true)
+    await plugin.app.renderOnce()
+    plugin.app.mockInput.pressEscape()
+    plugin.app.mockInput.pressEscape()
+    await Bun.sleep(100)
+    expect(plugin.aborted).toEqual([])
+    expect(plugin.toasts).toEqual([])
+  } finally {
+    plugin.app.renderer.destroy()
+  }
+})
+
 test("an esc armed while the run is live stops nothing once the run has ended", async () => {
   const over = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { "T1.4": "budget_exhausted" })
   const plugin = await wired({ status: live({ "T1.4": "building" }), harness: harnessOfT14, later: [over] })
