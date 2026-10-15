@@ -19,6 +19,13 @@ export const SCREENS: Record<number, "right" | "bottom"> = { 3: "right", 4: "bot
 
 const PEEK_RIGHT = 56
 
+/** From this width the Board's right pane, the Peek then the region, sits beside the board (UI22). */
+const BESIDE_BOARD = 149
+
+/** From this width, under the Board, the Peek (half the width, at most 72 cells) and the region sit side by side. */
+const SIDE_BY_SIDE = 110
+const PEEK_HALF = 72
+
 /** The fewest rows the shared region keeps (UI22). */
 export const REGION_MIN = 8
 
@@ -34,8 +41,21 @@ const peekRows = (lines: number) => 5 + 3 * lines
 
 export function Screen(props: ViewProps & { width: number; height: number; onScroll?: (box: ScrollBoxRenderable) => void }) {
   const name = () => DESIGNS.find((design) => design.id === props.view.design())?.name ?? ""
-  const right = () => SCREENS[props.view.design()] === "right" && Boolean(props.view.selected())
-  const body = () => Math.max(20, props.width - 2 - (right() ? PEEK_RIGHT + 1 : 0))
+  const inner = () => props.width - 2
+  // Where the Peek and the region go: the Board's right pane, split under the Board, or stacked under the design.
+  const layout = () =>
+    SCREENS[props.view.design()] !== "right" || !props.view.selected()
+      ? "stack"
+      : props.width >= BESIDE_BOARD
+        ? "right"
+        : props.width >= SIDE_BY_SIDE
+          ? "split"
+          : "stack"
+  const body = () => Math.max(20, inner() - (layout() === "right" ? PEEK_RIGHT + 1 : 0))
+  const peekWidth = () =>
+    layout() === "right" ? PEEK_RIGHT : layout() === "split" ? Math.min(PEEK_HALF, Math.floor(inner() / 2)) : inner()
+  const regionWidth = () =>
+    layout() === "right" ? PEEK_RIGHT : layout() === "split" ? inner() - peekWidth() - 1 : inner()
   // The rows left for the design, the Peek and the shared region: less the header, the reason, the gap and the keys.
   const room = () => {
     const status = props.view.status()
@@ -43,16 +63,39 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
   }
   const region = () => {
     const status = props.view.status()
-    return status ? Math.max(REGION_MIN, Math.min(regionRows(status, props.width - 2), Math.floor(room() / 2))) : REGION_MIN
+    return status ? Math.max(REGION_MIN, Math.min(regionRows(status, regionWidth()), Math.floor(room() / 2))) : REGION_MIN
   }
   // When the design, the Peek and the region are taller than the terminal, the Peek's activity lines shrink first,
   // to one line for each section (EXPERIENCE "Shared region" → Height). The design is cut, never drawn over the Peek.
   const lines = () => {
-    const full = right() ? 8 : 4
+    const full = layout() === "right" ? 8 : 4
     const design = DESIGN_ROWS[props.view.design()]?.(props.view, body()) ?? 0
-    const tall = right() ? Math.max(design, peekRows(full)) : design + 1 + peekRows(full)
-    return 1 + tall + region() > room() ? 1 : full
+    const peek = props.view.selected() ? peekRows(full) : 0
+    const tall =
+      layout() === "right"
+        ? Math.max(design, peek + region())
+        : layout() === "split"
+          ? design + 1 + Math.max(peek, region())
+          : design + 1 + peek + 1 + region()
+    return 1 + tall > room() ? 1 : full
   }
+  const peek = () => (
+    <Show when={props.view.selected()} keyed>
+      {(unit) => (
+        <Peek
+          theme={props.theme}
+          view={props.view}
+          sessions={props.sessions}
+          unit={unit}
+          width={peekWidth()}
+          lines={lines()}
+        />
+      )}
+    </Show>
+  )
+  const shared = () => (
+    <SharedRegion theme={props.theme} view={props.view} width={regionWidth()} height={region()} onScroll={props.onScroll} />
+  )
   return (
     <box flexDirection="column" width={props.width} height={props.height} paddingLeft={1} paddingRight={1}>
       <Show when={props.view.status()} fallback={<text fg={props.theme().textMuted}>No task run in this directory.</text>}>
@@ -78,7 +121,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                 {cut(status().run.reason ?? "", props.width - 2)}
               </text>
             </Show>
-            <box flexDirection={SCREENS[props.view.design()] === "right" ? "row" : "column"} flexGrow={1} flexShrink={1} gap={1} marginTop={1}>
+            <box flexDirection={layout() === "right" ? "row" : "column"} flexGrow={1} flexShrink={1} gap={1} marginTop={1}>
               <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Switch
                   fallback={
@@ -96,20 +139,30 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                   </Match>
                 </Switch>
               </box>
-              <Show when={props.view.selected()} keyed>
-                {(unit) => (
-                  <Peek
-                    theme={props.theme}
-                    view={props.view}
-                    sessions={props.sessions}
-                    unit={unit}
-                    width={right() ? PEEK_RIGHT : props.width - 2}
-                    lines={lines()}
-                  />
-                )}
-              </Show>
+              <Switch>
+                <Match when={layout() === "right"}>
+                  <box flexDirection="column" width={PEEK_RIGHT} flexShrink={0}>
+                    {peek()}
+                    {shared()}
+                  </box>
+                </Match>
+                <Match when={layout() === "split"}>
+                  <box flexDirection="row" gap={1} flexShrink={0}>
+                    {peek()}
+                    {shared()}
+                  </box>
+                </Match>
+                {/* Stacked: the Board's Peek then the region; the Matrix and the Gantt keep the Peek at the bottom. */}
+                <Match when={SCREENS[props.view.design()] === "right"}>
+                  {peek()}
+                  {shared()}
+                </Match>
+                <Match when={true}>
+                  {shared()}
+                  {peek()}
+                </Match>
+              </Switch>
             </box>
-            <SharedRegion theme={props.theme} view={props.view} width={props.width - 2} height={region()} onScroll={props.onScroll} />
             <text fg={props.theme().textMuted} wrapMode="none" flexShrink={0}>
               {`j/k select task · v next design · pgup/pgdn scroll · ${props.leader} w ${props.view.watching() ? "stop watching" : "watch"} · esc collapse`}
             </text>

@@ -785,7 +785,9 @@ test("UI22 at 120 × 24, 13 scenarios and 5 stopped tasks: the region keeps 8 ro
   for (let page = 0; page < 10; page++) pageBy(short.box(), -1)
   await short.app.renderOnce()
   const back = short.app.captureCharFrame()
-  await short.app.mockMouse.pressDown(3, rowOf(back, "⊖ T1, T1.5"))
+  // The click goes to the line's own cells: under 149 cells the Board's region sits beside the Peek.
+  const line = rowOf(back, "⊖ T1, T1.5")
+  await short.app.mockMouse.pressDown(linesOf(back)[line].indexOf("⊖ T1, T1.5") + 2, line)
   await settle()
   expect(short.view.selected()).toBe("T1")
   short.app.renderer.destroy()
