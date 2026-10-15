@@ -64,6 +64,11 @@
   waits while shell runs" at 10 s, `acp/lifecycle.test.ts` "stdin EOF exits cleanly" at 7 s). None touches the task
   harness, the full run at 21:30 passed them all, and each passes when run alone (00:34). The gate runs again from a
   script that waits for load under 8 and no other `bun test`.
+- Update 03:20: attempt 1 of that script (02:52, load 4 at the start, 13 later) gave 4000 pass, 1 fail: the same
+  "exits nonzero promptly when the model is unknown" (15 376 ms). The run-process file alone at load 10-14 fails nine
+  concurrent CLI tests at their 30 s bound and that one at 15 s, with and without the D4 preload change, and on `dev`
+  in the main checkout at load 14 the same way. So the bound needs a quiet machine; the script now waits for a 1-minute
+  load under 5 and a 5-minute load under 7.
 - Status: open — the checkpoint gate must run on a quiet machine.
 
 ## D3 — BUILD-3 failed on dev: the web UI module did not resolve without the web UI
