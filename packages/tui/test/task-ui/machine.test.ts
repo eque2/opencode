@@ -1,7 +1,10 @@
 // The taskView machine (spine AD-16) on a SimulatedClock, with the feed's read replaced by a scripted one: what the
 // view holds, each cadence, the stop key, the liveness rows, and the adapter to Solid.
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, type Scope, Stream } from "effect"
+import { Effect, Option, type Scope } from "effect"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { createActor, fromEffect, SimulatedClock } from "@jambudipa/xstate-effect"
 import { createRoot } from "solid-js"
 import { fromActor } from "../../src/task-ui/actor"
@@ -14,8 +17,8 @@ const statusText = (run: { tags?: ReadonlyArray<string>; aliveAt?: number; state
   JSON.stringify({
     run: { state: run.state ?? "running", spec: "s.spec", path: "s.spec", ...run },
     tasks: tasks ?? {
-      "T1.1": { state: "building", attempts: 1, waitingOn: [] },
-      "T1.2": { state: "waiting", attempts: 0, waitingOn: ["T1.1"] },
+      "T1.1": { state: "building", tags: ["active"], attempts: 1, waitingOn: [] },
+      "T1.2": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.1"] },
     },
     obligations: {},
     scenarios: {},
@@ -88,6 +91,44 @@ describe("the taskView machine (AD-16)", () => {
         expect(yield* v.context).toMatchObject({ target: "ses_builder", owns: true, updated: 42, root: "ses_root" })
         yield* v.send({ type: "route.changed", session: "ses_other" })
         expect((yield* v.context).root).toBe("ses_other")
+      }),
+    ))
+
+  test("select.nextRunning and select.previousRunning step through the tasks in work, wrapping round", () =>
+    run(
+      Effect.gen(function* () {
+        const working = statusText(
+          {},
+          {
+            "T1.1": { state: "building", tags: ["active"], attempts: 1, waitingOn: [] },
+            "T1.2": { state: "waiting", tags: ["waiting"], attempts: 0, waitingOn: ["T1.1"] },
+            "T1.3": { state: "proving", tags: ["active"], attempts: 1, waitingOn: [] },
+          },
+        )
+        const v = yield* view([file(working)])
+        yield* settle
+        yield* v.send({ type: "select", id: "T1.2" })
+        yield* v.send({ type: "select.previousRunning" })
+        expect((yield* v.context).chosen).toEqual(Option.some("T1.1"))
+        yield* v.send({ type: "select.previousRunning" })
+        expect((yield* v.context).chosen).toEqual(Option.some("T1.3"))
+        yield* v.send({ type: "select.nextRunning" })
+        expect((yield* v.context).chosen).toEqual(Option.some("T1.1"))
+        yield* v.send({ type: "select.nextRunning" })
+        expect((yield* v.context).chosen).toEqual(Option.some("T1.3"))
+      }),
+    ))
+
+  test("keeps the read's mtime, proof logs and clock in the context", () =>
+    run(
+      Effect.gen(function* () {
+        const logs = [
+          { name: "T1.1", mtime: NOW - 400 },
+          { name: "scenarios", mtime: NOW - 900 },
+        ]
+        const v = yield* view([{ exists: true, text: statusText(), mtime: NOW - 1_000, logs, now: NOW }])
+        yield* settle
+        expect(yield* v.context).toMatchObject({ mtime: NOW - 1_000, logs, now: NOW })
       }),
     ))
 
@@ -191,7 +232,7 @@ describe("the taskView machine (AD-16)", () => {
   test("a chosen task the new status lacks falls back to the focus task; nextRunning with nothing running keeps it", () =>
     run(
       Effect.gen(function* () {
-        const idle = statusText({}, { "T1.1": { state: "trusted", attempts: 1, waitingOn: [] } })
+        const idle = statusText({}, { "T1.1": { state: "trusted", tags: ["ended"], attempts: 1, waitingOn: [] } })
         const v = yield* view([file(statusText()), file(idle)])
         yield* settle
         yield* v.send({ type: "select", id: "T1.2" })
@@ -237,8 +278,34 @@ describe("fromActor", () => {
         yield* Effect.promise(() => Bun.sleep(10))
         expect(seen.snapshot().context.design).toBe(4)
         seen.dispose()
-        // The adapter reads the actor's own stream: it holds no state of its own.
-        expect(Stream.isStream(v.actor.changes)).toBe(true)
+        // Once its owner is gone, the adapter follows nothing more.
+        yield* v.send({ type: "design.set", id: 6 })
+        yield* Effect.promise(() => Bun.sleep(10))
+        expect(seen.snapshot().context.design).toBe(4)
       }),
     ))
+})
+
+describe("the feed's read", () => {
+  test("reads the status text, its mtime and the proof logs, and gives no text for a missing file", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "task-view-"))
+    try {
+      expect(await Effect.runPromise(TaskView.read(directory))).toMatchObject({
+        exists: false,
+        text: "",
+        mtime: 0,
+        logs: [],
+      })
+      mkdirSync(path.join(directory, ".opencode/task/proofs"), { recursive: true })
+      writeFileSync(path.join(directory, ".opencode/task/status.json"), statusText())
+      writeFileSync(path.join(directory, ".opencode/task/proofs/T1.1.log"), "$ bun test\n")
+      const got = await Effect.runPromise(TaskView.read(directory))
+      expect(got).toMatchObject({ exists: true, text: statusText() })
+      expect(got.mtime).toBeGreaterThan(0)
+      expect(got.logs.map((log) => log.name)).toEqual(["T1.1"])
+      expect(got.now).toBeGreaterThan(0)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
