@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Effect, Exit, Fiber, FileSystem, Layer, Option, Path } from "effect"
+import { Effect, Exit, Fiber, FileSystem, Layer, Logger, Option, Path } from "effect"
 import path from "path"
 import { assign, setup } from "@jambudipa/xstate-effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -52,11 +52,13 @@ const seeded = Effect.gen(function* () {
 // What the background job registry saw, and how it answers a start.
 interface Jobs {
   readonly starts: Array<BackgroundJob.StartInput>
-  mode: "start" | "fail" | "elsewhere"
+  mode: "start" | "fail" | "elsewhere" | "run"
   status: BackgroundJob.Status
+  /** The jobs that ran, in the "run" mode. */
+  readonly fibers: Array<Fiber.Fiber<string, unknown>>
 }
 
-const jobsOf = (): Jobs => ({ starts: [], mode: "start", status: "running" })
+const jobsOf = (): Jobs => ({ starts: [], mode: "start", status: "running", fibers: [] })
 
 // The job registry: it records each start and runs nothing.
 const backgroundOf = (jobs: Jobs): BackgroundJob.Interface => ({
@@ -72,6 +74,8 @@ const backgroundOf = (jobs: Jobs): BackgroundJob.Interface => ({
       ? Effect.die(new Error("the background job did not start"))
       : Effect.sync(() => {
           jobs.starts.push(input)
+          // The "run" mode runs the job on its own fiber, as the registry would.
+          if (jobs.mode === "run") jobs.fibers.push(Effect.runFork(input.run))
           // A job of that id already running answers with its own info, not this start's.
           return {
             id: input.id ?? "",
@@ -185,6 +189,95 @@ describe("one run per directory (AD-19, SV8)", () => {
   )
 
   it.instance(
+    "answers the usage line to an empty /task, and claims and starts nothing",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        expect(yield* runTask(harness, "  ", jobs)).toEqual([
+          "Usage: /task <path to a .spec or .task folder> | /task trust <id>",
+        ])
+        expect(yield* harness.live(directory)).toEqual(Option.none())
+        expect(jobs.starts).toEqual([])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "with a run live and a dirty checkout, answers the busy line: the live check comes before the git check",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* seeded
+        yield* fs.writeFileString(path.join(directory, "app.ts"), "export const app = 2\n")
+        const harness = yield* TaskHarness.make
+        yield* harness.claim({ directory, runID: "task_live", spec: SPEC, path: SPEC })
+        expect(yield* runTask(harness)).toEqual([BUSY])
+        expect(yield* fs.exists(statusFile(directory))).toBe(false)
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "refuses to resume a slice that started on another branch, before it claims or starts",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const events = yield* EventV2Bridge.Service
+        const id = TaskEvents.runID(directory, SPEC)
+        yield* TaskEvents.publish(events, id, { type: "run.started", at: 1, base: "release", path: SPEC })
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        expect(yield* runTask(harness, SPEC, jobs)).toEqual([
+          `Task harness: refused ${SPEC}: the unfinished run of ${SPEC} started on the branch release; switch back to it to resume the run`,
+        ])
+        expect(yield* harness.live(directory)).toEqual(Option.none())
+        expect(jobs.starts).toEqual([])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "resumes the open slice of the same path: the job records run.resumed with the normalised path",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        const branch = yield* git(directory, "rev-parse", "--abbrev-ref", "HEAD")
+        const events = yield* EventV2Bridge.Service
+        const db = yield* Database.Service
+        const id = TaskEvents.runID(directory, SPEC)
+        // The stored slice also names T1.9, a task the spec no longer has: its fold must not throw.
+        yield* TaskEvents.publish(events, id, { type: "run.started", at: 1, base: branch, path: SPEC })
+        yield* TaskEvents.publish(events, id, {
+          type: "task.started",
+          at: 2,
+          task: "T1.9",
+          worktree: "/wt",
+          branch: "b",
+          base: "c",
+          session: "ses_gone",
+        })
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        jobs.mode = "run"
+        const replies = yield* runTask(harness, `./${SPEC}/`, jobs)
+        expect(replies[0]).toStartWith("Task harness: running")
+        yield* eventually(
+          Effect.map(TaskEvents.read(db.db, id), (list) => list.some((fact) => fact.type === "run.resumed")),
+          "run.resumed",
+        )
+        const stored = yield* TaskEvents.read(db.db, id)
+        expect(stored.filter((fact) => fact.type === "run.started")).toHaveLength(1)
+        expect(stored.find((fact) => fact.type === "run.resumed")).toMatchObject({ path: SPEC, base: branch })
+        jobs.status = "cancelled"
+        for (const fiber of jobs.fibers) yield* Fiber.interrupt(fiber)
+        expect(yield* harness.live(directory)).toEqual(Option.none())
+      }),
+    { git: true },
+  )
+
+  it.instance(
     "with a run live, a loader refusal and a task-folder refusal answer in the session only",
     () =>
       Effect.gen(function* () {
@@ -275,6 +368,7 @@ describe("one run per directory (AD-19, SV8)", () => {
         const jobs = jobsOf()
         expect(yield* runTask(stale, SPEC, jobs)).toEqual([BUSY])
         expect(jobs.starts).toEqual([])
+        expect(yield* (yield* FileSystem.FileSystem).exists(statusFile(directory))).toBe(false)
         expect(yield* harness.live(directory)).toEqual(Option.some({ runID: "task_first", spec: SPEC, path: SPEC }))
       }),
     { git: true },
@@ -392,17 +486,47 @@ describe("the slice a /task starts from (SV3, RM8, SV26)", () => {
       const plan = yield* loadPlan("release-notes.spec")
       // Two tasks with one id: the run machine of this plan cannot be built, so the fold dies.
       const broken: Plan = { ...plan, tasks: [...plan.tasks, ...plan.tasks.slice(0, 1)] }
-      const slice = yield* TaskCommand.sliceOf(broken, [facts().runStarted(WHOLE)], WHOLE)
-      expect(slice.kind).toBe("new")
-      expect(slice.kind === "new" && Option.isSome(slice.died)).toBe(true)
+      const messages: Array<unknown> = []
+      const slice = yield* TaskCommand.sliceOf(broken, [facts().runStarted(WHOLE)], WHOLE).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make<unknown, void>((options) => {
+              messages.push(options.message)
+            }),
+          ]),
+        ),
+      )
+      if (slice.kind !== "new" || Option.isNone(slice.died)) throw new Error(`the slice did not die: ${slice.kind}`)
+      // The defect is logged, and the start reply says that a new run started instead of the stored one.
+      expect(JSON.stringify(messages)).toContain("task harness: the stored run could not be folded")
+      expect(JSON.stringify(messages)).toContain(slice.died.value.slice(0, 40))
+      expect(TaskCommand.startedLine(SPEC, slice)).toBe(
+        `Task harness: running ${SPEC} in the background. Its status is in .opencode/task/status.json. The stored run could not be resumed (${slice.died.value.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
+      )
+      expect(TaskCommand.startedLine(SPEC, { kind: "new", died: Option.none() })).toBe(
+        `Task harness: running ${SPEC} in the background. Its status is in .opencode/task/status.json.`,
+      )
     }),
   )
 })
 
 describe("the job of a run (AD-8, SV4, SV21, SV27)", () => {
   // The job of a whole-spec run in the seeded repository: its harness, its fiber, and the job registry's answer.
-  const started = Effect.fnUntraced(function* (directory: string) {
-    const harness = yield* TaskHarness.make
+  // `order` gets one line per lease release and per run removal the job makes, with the lease's state at that moment.
+  const started = Effect.fnUntraced(function* (directory: string, order: Array<string> = []) {
+    const real = yield* TaskHarness.make
+    const held = Effect.map(real.live(directory), (live) => (Option.isSome(live) ? "held" : "free"))
+    const harness: TaskHarness.Interface = {
+      ...real,
+      release: (where, runID) =>
+        Effect.flatMap(held, (state) => Effect.sync(() => order.push(`release:${state}`))).pipe(
+          Effect.andThen(real.release(where, runID)),
+        ),
+      removeRun: (runID) =>
+        Effect.flatMap(held, (state) => Effect.sync(() => order.push(`removeRun:${state}`))).pipe(
+          Effect.andThen(real.removeRun(runID)),
+        ),
+    }
     const plan = yield* loadPlan("release-notes.spec")
     const id = TaskEvents.runID(directory, SPEC)
     const claimed = yield* harness.claim({ directory, runID: id, spec: SPEC, path: SPEC })
@@ -437,7 +561,7 @@ describe("the job of a run (AD-8, SV4, SV21, SV27)", () => {
       Effect.map(stored, (types) => types.includes("run.started")),
       "run.started",
     )
-    return { harness, id, jobs, fiber, stored }
+    return { harness: real, id, jobs, fiber, stored }
   })
 
   it.instance(
@@ -472,6 +596,39 @@ describe("the job of a run (AD-8, SV4, SV21, SV27)", () => {
         const plan = yield* loadPlan("release-notes.spec")
         const slice = yield* TaskCommand.sliceOf(plan, yield* TaskEvents.read(db.db, job.id), SPEC)
         expect(slice.kind).toBe("resume")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "frees the lease last: after the cancel finalizer of a cancelled job and after the supervisor's own release",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        yield* git(directory, "branch", "-m", "dev")
+        const order: Array<string> = []
+        const job = yield* started(directory, order)
+        job.jobs.status = "cancelled"
+        yield* Fiber.interrupt(job.fiber)
+        // run.cancelled made the run done: the supervisor waited for the writer and freed the lease (UI24), then the
+        // cancel finalizer removed the run, then the run scope's first finalizer released, last, as a no-op.
+        expect(order).toEqual(["release:held", "removeRun:free", "release:free"])
+        expect(yield* job.stored).toContain("run.cancelled")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "frees the lease last after a scope close: the cancel finalizer runs while the lease is still held",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        yield* git(directory, "branch", "-m", "dev")
+        const order: Array<string> = []
+        const job = yield* started(directory, order)
+        yield* Fiber.interrupt(job.fiber)
+        expect(order).toEqual(["removeRun:held", "release:held"])
+        expect(yield* job.harness.live(directory)).toEqual(Option.none())
       }),
     { git: true },
   )
