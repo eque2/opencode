@@ -2484,7 +2484,7 @@ it.instance(
 
       expect(result.info.role).toBe("user")
       const text = result.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
-      expect(text).toStartWith("Task harness: refused nowhere: R1")
+      expect(text).toStartWith("Refused nowhere: 1 failure. No work started.\nR1 nowhere")
       expect(yield* llm.calls).toBe(0)
     }),
   { git: true },

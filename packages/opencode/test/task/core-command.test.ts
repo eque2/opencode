@@ -12,6 +12,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { SessionID } from "@/session/schema"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
+import { Blend } from "@/task/blend"
 import { TaskCommand } from "@/task/core/command"
 import { TaskEvents } from "@/task/core/events"
 import { TaskHarness } from "@/task/core/harness"
@@ -145,10 +146,15 @@ describe("/task on a root checkout that cannot take a run", () => {
 
         const replies = yield* runTask(yield* TaskHarness.make)
 
+        // A plain line with no rule: no count and no hint (VF19).
         expect(replies).toEqual([
-          `Task harness: refused ${SPEC}: the checkout has uncommitted changes or untracked files: app.ts`,
+          `Refused ${SPEC}. No work started.\nthe checkout has uncommitted changes or untracked files: app.ts`,
         ])
-        expect(yield* refusalOf(directory)).toMatchObject({ state: "refused", spec: SPEC })
+        expect(yield* refusalOf(directory)).toMatchObject({
+          state: "refused",
+          spec: SPEC,
+          reason: "the checkout has uncommitted changes or untracked files: app.ts",
+        })
       }),
     { git: true },
   )
@@ -162,8 +168,191 @@ describe("/task on a root checkout that cannot take a run", () => {
 
         const replies = yield* runTask(yield* TaskHarness.make)
 
-        expect(replies).toEqual([`Task harness: refused ${SPEC}: the checkout is not on a branch (detached HEAD)`])
-        expect(yield* refusalOf(directory)).toMatchObject({ state: "refused", spec: SPEC })
+        expect(replies).toEqual([`Refused ${SPEC}. No work started.\nthe checkout is not on a branch (detached HEAD)`])
+        expect(yield* refusalOf(directory)).toMatchObject({
+          state: "refused",
+          spec: SPEC,
+          reason: "the checkout is not on a branch (detached HEAD)",
+        })
+      }),
+    { git: true },
+  )
+})
+
+// A file of the seeded spec, rewritten.
+const edit = (directory: string, file: string, change: (text: string) => string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const target = path.join(directory, SPEC, file)
+    yield* fs.writeFileString(target, change(yield* fs.readFileString(target)))
+  })
+
+const T11 = "T1-release-notes.task/T1.1-commit-parser.task/TASK.md"
+const T12 = "T1-release-notes.task/T1.2-version-bump.task/TASK.md"
+const T13 = "T1-release-notes.task/T1.3-markdown-render.task/TASK.md"
+
+// The loader's own failure lines for a spec folder of the instance, in its order.
+const loaderLines = (directory: string, spec: string = SPEC) =>
+  Effect.map(Blend.load(path.join(directory, spec)), (result) =>
+    result.failures.map((failure) => `${failure.rule} ${failure.path}: ${failure.message}`),
+  )
+
+const ruleOf = (line: string) => line.split(" ")[0]
+
+// An R3 front-matter fault and nothing else: a second `refs` key.
+const duplicateKey = (text: string) => text.replace("---\n", "---\nrefs: []\n")
+
+const HINT = `Fix each line, then type /task ${SPEC} again.`
+
+// The release-notes SPEC.md alone in a new spec folder: its `outside` lists T8 and T9, and it has no task folder.
+const taskless = (directory: string, spec: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.makeDirectory(path.join(directory, spec), { recursive: true })
+    yield* fs.copyFile(path.join(directory, SPEC, "SPEC.md"), path.join(directory, spec, "SPEC.md"))
+  })
+
+describe('the refusal message (D10, EXPERIENCE "Refusal")', () => {
+  it.instance(
+    "lists every loader failure in loader order under a counted header, then the hint; run.reason holds the lines (VF1)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* seeded
+        yield* fs.writeFileString(path.join(directory, SPEC, "notes.txt"), "a stray file\n")
+        yield* edit(directory, T12, (text) => text.replace("# Compute the next version", "Compute the next version"))
+        yield* edit(directory, T13, duplicateKey)
+        // The loader orders its failures by rule, then by file.
+        const lines = yield* loaderLines(directory)
+        expect(lines.map(ruleOf)).toEqual(["R1", "R3", "R4"])
+
+        const replies = yield* runTask(yield* TaskHarness.make)
+
+        expect(replies).toEqual([[`Refused ${SPEC}: 3 failures. No work started.`, ...lines, HINT].join("\n")])
+        expect(yield* refusalOf(directory)).toMatchObject({ state: "refused", spec: SPEC, reason: lines.join("\n") })
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "reads 1 failure for one loader failure, with its line and the hint (VF19)",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        yield* edit(directory, T13, duplicateKey)
+        const lines = yield* loaderLines(directory)
+        expect(lines.map(ruleOf)).toEqual(["R3"])
+
+        expect(yield* runTask(yield* TaskHarness.make)).toEqual([
+          [`Refused ${SPEC}: 1 failure. No work started.`, lines[0], HINT].join("\n"),
+        ])
+        expect((yield* refusalOf(directory)).reason).toBe(lines[0])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "keeps the argument as the spec of a path outside any spec folder",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        yield* runTask(yield* TaskHarness.make, "nowhere")
+        expect(yield* refusalOf(directory)).toMatchObject({
+          state: "refused",
+          spec: "nowhere",
+          path: "nowhere",
+          reason: "R1 nowhere: not inside a `<slug>.spec` folder",
+        })
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "lists only the R3 line of a spec that also has an R7 cycle: R5-R13 wait for R1-R4 (VF23)",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* seeded
+        yield* edit(directory, T11, (text) => text.replace("---\n", "---\nafter: [T1.2]\n"))
+        yield* edit(directory, T12, (text) => text.replace("---\n", "---\nafter: [T1.1]\n"))
+        // The cycle on its own is an R7 failure.
+        expect((yield* loaderLines(directory)).map(ruleOf)).toContain("R7")
+        yield* edit(directory, T13, duplicateKey)
+        const lines = yield* loaderLines(directory)
+        expect(lines.map(ruleOf)).toEqual(["R3"])
+
+        expect(yield* runTask(yield* TaskHarness.make)).toEqual([
+          [`Refused ${SPEC}: 1 failure. No work started.`, lines[0], HINT].join("\n"),
+        ])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "refuses a spec with no task with one plain line, and starts nothing (VF22)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* seeded
+        const harness = yield* TaskHarness.make
+        const jobs = jobsOf()
+        // Only SPEC.md.
+        const bare = "task-formats/blend/bare.spec"
+        yield* taskless(directory, bare)
+        expect(yield* loaderLines(directory, bare)).toEqual([])
+        expect(yield* runTask(harness, bare, jobs)).toEqual([`Refused ${bare}. No work started.\nthe spec holds no task`])
+        expect(yield* refusalOf(directory)).toMatchObject({
+          state: "refused",
+          spec: bare,
+          reason: "the spec holds no task",
+        })
+        // Only outside preconditions and a scenario that needs one of them.
+        const outside = "task-formats/blend/outside-only.spec"
+        yield* taskless(directory, outside)
+        yield* fs.makeDirectory(path.join(directory, outside, "acceptance"))
+        yield* fs.writeFileString(
+          path.join(directory, outside, "acceptance", "S1.md"),
+          [
+            "---",
+            "needs: [T8]",
+            'category: "Core Business Outcomes"',
+            "---",
+            "",
+            "```gherkin",
+            "Scenario: S1 The package is on the registry",
+            "  Given the release pipeline ran",
+            "  When a user installs the package",
+            "  Then the install succeeds",
+            "```",
+            "",
+          ].join("\n"),
+        )
+        expect(yield* loaderLines(directory, outside)).toEqual([])
+        expect(yield* runTask(harness, outside, jobs)).toEqual([
+          `Refused ${outside}. No work started.\nthe spec holds no task`,
+        ])
+        expect(jobs.starts).toEqual([])
+        expect(yield* harness.live(directory)).toEqual(Option.none())
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "with a run live, a faulty spec gets its refusal in the session and the live run's status file stays (VF2)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* seeded
+        const harness = yield* TaskHarness.make
+        yield* harness.claim({ directory, runID: "task_live", spec: SPEC, path: SPEC })
+        // The live run's status file, as its writer left it.
+        yield* fs.makeDirectory(path.dirname(statusFile(directory)), { recursive: true })
+        yield* fs.writeFileString(statusFile(directory), '{"run":{"state":"running"}}')
+        yield* edit(directory, T13, duplicateKey)
+
+        const replies = yield* runTask(harness)
+
+        expect(replies[0]).toStartWith(`Refused ${SPEC}: 1 failure. No work started.\nR3 `)
+        expect(yield* fs.readFileString(statusFile(directory))).toBe('{"run":{"state":"running"}}')
       }),
     { git: true },
   )
@@ -230,7 +419,7 @@ describe("one run per directory (AD-19, SV8)", () => {
         const harness = yield* TaskHarness.make
         const jobs = jobsOf()
         expect(yield* runTask(harness, SPEC, jobs)).toEqual([
-          `Task harness: refused ${SPEC}: the unfinished run of ${SPEC} started on the branch release; switch back to it to resume the run`,
+          `Refused ${SPEC}. No work started.\nthe unfinished run of ${SPEC} started on the branch release; switch back to it to resume the run`,
         ])
         expect(yield* harness.live(directory)).toEqual(Option.none())
         expect(jobs.starts).toEqual([])
@@ -286,11 +475,11 @@ describe("one run per directory (AD-19, SV8)", () => {
         const harness = yield* TaskHarness.make
         yield* harness.claim({ directory, runID: "task_live", spec: SPEC, path: SPEC })
         expect(yield* runTask(harness, "nowhere")).toEqual([
-          "Task harness: refused nowhere: R1 nowhere: not inside a `<slug>.spec` folder",
+          "Refused nowhere: 1 failure. No work started.\nR1 nowhere: not inside a `<slug>.spec` folder\nFix each line, then type /task nowhere again.",
         ])
         // The acceptance folder loads, and is not a task folder.
         expect(yield* runTask(harness, `${SPEC}/acceptance`)).toEqual([
-          `Task harness: refused ${SPEC}/acceptance: R2 acceptance: not a \`<task id>-<slug>.task\` folder`,
+          `Refused ${SPEC}/acceptance: 1 failure. No work started.\nR2 acceptance: not a \`<task id>-<slug>.task\` folder\nFix each line, then type /task ${SPEC}/acceptance again.`,
         ])
         expect(yield* fs.exists(statusFile(directory))).toBe(false)
       }),
