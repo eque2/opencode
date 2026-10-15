@@ -113,12 +113,21 @@ export const fit = (pieces: ReadonlyArray<Piece>, width: number): ReadonlyArray<
   ).out
 }
 
-/** `text` in lines of at most `width` cells, broken at word boundaries with no line limit; a longer word is split. */
+// A trust command is one word to the wrap: the line "never cuts the command" (EXPERIENCE "Outside wait line").
+const COMMAND = /\/task trust (\S+)/g
+const JOIN = "\u0000"
+
+/**
+ * `text` in lines of at most `width` cells, broken at word boundaries with no line limit; a trust command (`/task trust
+ * T9`) stays on one line; a longer word is split.
+ */
 export const wrap = (text: string, width: number): ReadonlyArray<string> => {
   const room = Math.max(1, width)
   return text
+    .replace(COMMAND, `/task${JOIN}trust${JOIN}$1`)
     .split(/\s+/)
     .filter(Boolean)
+    .map((word) => word.replaceAll(JOIN, " "))
     .flatMap((word) =>
       Array.from({ length: Math.ceil(word.length / room) }, (_, i) => word.slice(i * room, (i + 1) * room)),
     )
