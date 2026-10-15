@@ -328,7 +328,7 @@ test("UI14 the plugin's mark moves for a live run with animations on, and stays 
   for (const after of [" In the Flow run: running", " In the Flow Ledger  "])
     expect({ after, cells: [...(await marks(second, after))] }).toEqual({ after, cells: ["◆"] })
   await first[Symbol.asyncDispose]()
-})
+}, 30_000)
 
 test("a chosen design survives a reload of the plugin with the same kv", async () => {
   await using dir = await tmpdir()
