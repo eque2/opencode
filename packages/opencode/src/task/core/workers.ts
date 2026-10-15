@@ -320,6 +320,38 @@ export const verifierPrompt = Effect.fn("TaskWorkers.verifierPrompt")(function* 
   })
 })
 
+/**
+ * One prompt of a scenario's judge round in the root checkout, for the scenario supervisor that owns it: the `ask`
+ * (a new session, the scenario's judge message; attempt 2 is titled "again") when `session` is none, else the
+ * `askMissing` in the same session. The verdict reaches the owner as `hook.verdicts`.
+ */
+export const scenarioJudge = Effect.fn("TaskWorkers.scenarioJudge")(function* (
+  run: Run,
+  input: {
+    readonly scenario: BlendModel.Scenario
+    readonly session: Option.Option<SessionID>
+    readonly attempt: number
+    readonly owner: string
+  },
+) {
+  const judge = [{ id: input.scenario.id, text: input.scenario.title }]
+  return yield* verifierPrompt(run, {
+    directory: run.directory,
+    session: input.session,
+    title: `${input.scenario.id} verifier${input.attempt > 1 ? " (again)" : ""}`,
+    text: Option.isSome(input.session)
+      ? TaskSessions.judgeMissingMessage(judge)
+      : TaskSessions.judgeMessage({
+          role: "verifier",
+          kind: "scenario",
+          unit: input.scenario.id,
+          judge,
+          about: [`You judge scenario ${input.scenario.id}: ${input.scenario.title}.`, ...input.scenario.steps],
+        }),
+    owner: input.owner,
+  })
+})
+
 /** Restores a judge's directory to its HEAD; the root checkout only under the checkout lock. */
 export const restore = (run: Run, directory: string) => {
   const reset = TaskWorkspace.restore(directory, run.limits)
