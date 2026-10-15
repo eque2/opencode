@@ -96,6 +96,21 @@ const Listened = Schema.Struct({
   }),
 })
 
+// The log messages of `effect` and of every actor it creates (an actor logs with the context it was made in).
+const logged = <A, E, R>(messages: Array<unknown>, effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.provide(
+      Logger.layer([
+        Logger.make<unknown, void>((options) => {
+          messages.push(options.message)
+        }),
+      ]),
+    ),
+  )
+
+const said = (messages: ReadonlyArray<unknown>, text: string) =>
+  messages.filter((message) => JSON.stringify(message).includes(text)).length
+
 type Actors = NonNullable<Parameters<typeof RunSupervisor.machine.provide>[0]["actors"]>
 
 // The batch proof stand-in: every scenario of a batch passes.
@@ -561,6 +576,7 @@ describe("the timer regions", () => {
       const plan = yield* loadPlan("release-notes.spec")
       const setup = yield* runSetup(plan, [facts().runStarted()])
       const clock = new SimulatedClock()
+      const messages: Array<unknown> = []
       let touches = 0
       const failing = fromEffect<{ run: TaskWorkers.Run }, void, TaskWorkers.WorkerError, never>(({ input }) =>
         Effect.gen(function* () {
@@ -568,18 +584,26 @@ describe("the timer regions", () => {
           return yield* Effect.fail(new TaskWorkers.WorkerError({ message: `no touch for ${input.run.id}` }))
         }),
       )
-      const actor = yield* supervise(setup, { clock, actors: { touch: failing } })
-      yield* running(actor)
-      for (const count of [1, 2, 3]) {
-        yield* clock.increment(5_000)
-        yield* eventually(
-          Effect.sync(() => touches === count),
-          `touch ${count}`,
-        )
-        yield* settle
-      }
+      yield* logged(
+        messages,
+        Effect.gen(function* () {
+          const actor = yield* supervise(setup, { clock, actors: { touch: failing } })
+          yield* running(actor)
+          for (const count of [1, 2, 3]) {
+            yield* clock.increment(5_000)
+            yield* eventually(
+              Effect.sync(() => touches === count),
+              `touch ${count}`,
+            )
+            yield* settle
+          }
+          expect((yield* actor.getSnapshot).matches({ running: { heartbeat: "beating" } })).toBe(true)
+        }),
+      )
+      // Each failure is logged; none records a fact or ends anything.
+      expect(said(messages, "task harness: a heartbeat touch failed")).toBe(3)
+      expect(said(messages, `no touch for ${setup.id}`)).toBe(3)
       expect(yield* storedTypes(setup.id)).toEqual(["run.started"])
-      expect((yield* actor.getSnapshot).matches({ running: { heartbeat: "beating" } })).toBe(true)
     }),
   )
 
@@ -636,6 +660,7 @@ describe("the timer regions", () => {
       const plan = yield* loadPlan("release-notes.spec")
       const setup = yield* runSetup(plan, [facts().runStarted()])
       const clock = new SimulatedClock()
+      const messages: Array<unknown> = []
       let checks = 0
       const failing = fromEffect<
         { readonly run: TaskWorkers.Run },
@@ -650,41 +675,52 @@ describe("the timer regions", () => {
           return yield* Effect.fail(new TaskWorkers.WorkerError({ message: `no spec at ${input.run.specDir}` }))
         }),
       )
-      const actor = yield* supervise(setup, { clock, actors: { stale: failing } })
-      yield* running(actor)
-      for (const count of [1, 2, 3, 4]) {
-        yield* settle
-        yield* clock.increment(1_000)
-        yield* eventually(
-          Effect.sync(() => checks === count),
-          `check ${count}`,
-        )
-      }
-      yield* settle
+      yield* logged(
+        messages,
+        Effect.gen(function* () {
+          const actor = yield* supervise(setup, { clock, actors: { stale: failing } })
+          yield* running(actor)
+          for (const count of [1, 2, 3, 4]) {
+            yield* settle
+            yield* clock.increment(1_000)
+            yield* eventually(
+              Effect.sync(() => checks === count),
+              `check ${count}`,
+            )
+          }
+          yield* settle
+          expect((yield* actor.getSnapshot).status).toBe("active")
+        }),
+      )
+      expect(said(messages, "task harness: a stale check failed")).toBe(4)
+      expect(said(messages, `no spec at ${setup.run.specDir}`)).toBe(4)
       expect(yield* storedTypes(setup.id)).toEqual(["run.started"])
-      expect((yield* actor.getSnapshot).status).toBe("active")
     }),
   )
 
-  it.live("ends a run that outlasts its wall clock, counted from this job's run.started", () =>
+  it.live("ends a run that outlasts its wall clock, counted from this job's run.started or run.resumed", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
       const limits: TaskLimits.Limits = { ...TaskLimits.scripted, runWallClock: Option.some(Duration.minutes(30)) }
-      const setup = yield* runSetup(plan, [], { limits })
-      const clock = new SimulatedClock()
-      const actor = yield* supervise(setup, { clock, actors: { stale: quietStale } })
-      yield* running(actor)
-      yield* settle
-      yield* clock.increment(Duration.toMillis(Duration.minutes(30)) - 1_000)
-      yield* settle
-      expect(yield* storedTypes(setup.id)).toEqual(["run.started"])
-      yield* clock.increment(1_000)
-      yield* stored(setup.id, 2)
-      expect((yield* storedFacts(setup.id))[1]).toMatchObject({
-        type: "run.ended",
-        state: "failed",
-        reason: "wall clock: the run took over 30 min",
-      })
+      for (const resumed of [false, true]) {
+        // A resumed slice ran before this job: its earlier time does not count.
+        const setup = yield* runSetup(plan, resumed ? [facts().runStarted()] : [], { limits })
+        const clock = new SimulatedClock()
+        const actor = yield* supervise(setup, { clock, resumed, actors: { stale: quietStale } })
+        yield* running(actor)
+        yield* settle
+        const first = resumed ? "run.resumed" : "run.started"
+        yield* clock.increment(Duration.toMillis(Duration.minutes(30)) - 1_000)
+        yield* settle
+        expect(yield* storedTypes(setup.id)).toEqual([first])
+        yield* clock.increment(1_000)
+        yield* stored(setup.id, 2)
+        expect((yield* storedFacts(setup.id))[1]).toMatchObject({
+          type: "run.ended",
+          state: "failed",
+          reason: "wall clock: the run took over 30 min",
+        })
+      }
     }),
   )
 })
@@ -824,7 +860,12 @@ describe("the job's cancel (SV4, SV25)", () => {
       )
       const release = yield* Deferred.make<void>()
       yield* Effect.forkChild(setup.run.locks.checkout.withPermit(Deferred.await(release)))
-      yield* harness.spawnRun(setup.id, logicOf({ actors: { stale: held } }), inputOf(setup, {}))
+      let released = 0
+      yield* harness.spawnRun(
+        setup.id,
+        logicOf({ actors: { stale: held } }),
+        inputOf(setup, { release: Effect.sync(() => released++) }),
+      )
       const ref = Option.getOrThrow(yield* harness.system.get(TaskHarness.systemId.run(setup.id)))
       // The stale cadence fires after 1 s and its check waits on the checkout lock.
       yield* eventually(
@@ -835,6 +876,8 @@ describe("the job's cancel (SV4, SV25)", () => {
       yield* RunSupervisor.cancel(harness, setup.run)
       const took = (yield* Clock.currentTimeMillis) - before
       expect(yield* storedTypes(setup.id)).toEqual(["run.started", "run.cancelled"])
+      // The supervisor closed by itself before the cancel stopped it: its last step freed the lease.
+      expect(released).toBe(1)
       expect(took).toBeLessThan(Duration.toMillis(setup.run.limits.cancelDeadline) + 2_000)
       expect(yield* harness.running(setup.id)).toBe(false)
       yield* eventually(
