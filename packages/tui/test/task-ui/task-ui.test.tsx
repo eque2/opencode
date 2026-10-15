@@ -923,12 +923,14 @@ test("bar: UI14 the watch view's band gets the host's motion setting from its co
   const building = live({ "T1.4": "building" })
   const still = await banded(true, building, (building.run.aliveAt ?? 0) + 60_000)
   expect(still.text).toContain("watch only")
+  expect(still.text).toMatch(/◆ In the Flow (watching|waiting for) T1\.4/)
   expect(still.found).toHaveLength(0)
   const over = await banded(
     true,
     restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, { T1: "waiting", "T1.5": "waiting", "T1.4": "building" }),
   )
   expect(over.text).toContain("watch only")
+  expect(over.text).toMatch(/◆ In the Flow (watching|waiting for) T1\.4/)
   expect(over.found).toHaveLength(0)
 })
 
@@ -938,8 +940,10 @@ test("bar: UI14 the watch band's mark moves while the run is live and the host a
   expect(moving.found).toHaveLength(1)
   const resting = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={false} motion={true} />, 120, 6)
   expect(resting.found).toHaveLength(0)
+  expect(resting.text).toContain("◆ In the Flow watching T1.4")
   const off = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={true} motion={false} />, 120, 6)
   expect(off.found).toHaveLength(0)
+  expect(off.text).toContain("◆ In the Flow watching T1.4")
 })
 
 // --- the watch view -------------------------------------------------------------------------------------------------
