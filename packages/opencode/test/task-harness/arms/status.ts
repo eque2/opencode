@@ -19,11 +19,32 @@ export type TaskState =
 export type ObligationState = "pending" | "passed" | "failed" | "trusted" | "rejected" | "stale"
 export type ScenarioState = "waiting" | "pending" | "trusted" | "rejected" | "failed" | "blocked" | "cancelled"
 
-export type TaskStatus = { state: TaskState; attempts: number; waitingOn: string[]; worktree?: string; reason?: string }
+// The AD-13 fields are optional: the checks read the state, reason and history; an arm may write more.
+export type Span = { state: string; from: number; to?: number }
+export type TaskStatus = {
+  state: TaskState
+  attempts: number
+  waitingOn: string[]
+  worktree?: string
+  reason?: string
+  tags?: string[]
+  spans?: Span[]
+}
 export type HistoryEntry = { at: number; unit: string; from?: string; to: string; reason?: string }
 
 export interface Status {
-  run: { state: RunState; reason?: string; spec: string; path: string }
+  run: {
+    state: RunState
+    reason?: string
+    spec: string
+    path: string
+    tags?: string[]
+    title?: string
+    specId?: string
+    task?: { id: string; title: string }
+    warning?: string
+    aliveAt?: number
+  }
   tasks: Record<string, TaskStatus>
   obligations: Record<string, { state: ObligationState; reason?: string }>
   scenarios: Record<string, { state: ScenarioState; waitingOn: string[]; reason?: string }>
