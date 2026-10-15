@@ -12,7 +12,9 @@
 //   old), else still. It reads no ownership: each key that acts on the run checks that itself.
 import { Clock, Effect, Option } from "effect"
 import { assign, emit, fromEffect, setup, type SnapshotFrom } from "@jambudipa/xstate-effect"
-import { DESIGNS, focus, nextRunning, parse, rows, statusFile, type ProofLog, type Status } from "./store"
+import { DESIGNS, focus, nextRunning, parse, rows, statusFile, type Liveness, type ProofLog, type Status } from "./store"
+
+export type { Liveness } from "./store"
 
 /** One read of the feed: the status text (empty when the file is gone), its mtime, the proof logs, and the time. */
 export interface Read {
@@ -112,13 +114,11 @@ export type Emitted = { readonly type: "stop.warn" } | { readonly type: "stop.ru
 /** A heartbeat at most this old (`now - run.aliveAt`) is a live run (AD-13). */
 export const LIVE_MS = 15_000
 
-export type Liveness = "absent" | "ended" | "live" | "still"
-
 // The liveness rows, in the order AD-16 gives them; the first that holds wins.
 const LIVENESS: ReadonlyArray<Liveness> = ["absent", "ended", "live", "still"]
 
 /** The liveness the context gives: no status, the run's `ended` tag, a fresh heartbeat, or else still. */
-export const livenessOf = (context: Context): Liveness =>
+export const livenessOf = (context: Pick<Context, "status" | "now">): Liveness =>
   Option.match(context.status, {
     onNone: () => "absent",
     onSome: (status) => {

@@ -299,6 +299,11 @@ const FINAL: ReadonlyArray<Entry> = [
     reason: "The proof-log flush: it copies process output to the log file inside one proof process's scope.",
   },
   {
+    file: ui("store.ts"),
+    identifier: "DISPLAY",
+    reason: "The state-to-glyph, tone and Gantt block lookup: presentation only; every classification reads the tags.",
+  },
+  {
     file: ui("actor.ts"),
     identifier: "fromActor",
     reason: "Solid renders only from signals: the one adapter copies the view actor's snapshot and decides nothing.",
@@ -318,15 +323,13 @@ const interim = (file: string, until: string, reason: string, identifiers: Reado
 // The interim entries: state that phase 2 and phase 4 move into the actors. Each names the task that removes it.
 const INTERIM: ReadonlyArray<Entry> = [
   ...interim(ui("store.ts"), "T4.3", VIEW, ["value", "fiber", "design", "chosen", "expanded", "watching"]),
-  ...interim(ui("store.ts"), "T4.2", CLASSIFY, ["ACTIVE", "ENDED"]),
-  ...interim(ui("store.ts"), "T4.8", "A state-to-tone and state-to-glyph lookup, folded into DISPLAY.", [
-    "TONES",
-    "GLYPHS",
-  ]),
+  // The store reads the tags since T4.2; the lists stay for their last importers (watch.tsx, the Gantt, the Ticker).
+  ...interim(ui("store.ts"), "T4.3", CLASSIFY, ["ACTIVE"]),
+  ...interim(ui("store.ts"), "T4.8", CLASSIFY, ["ENDED"]),
   ...interim(ui("index.tsx"), "T4.3", VIEW, ["root", "sample"]),
   ...interim(ui("peek.tsx"), "T4.3", VIEW, ["children", "all", "activity"]),
   ...interim(ui("watch.tsx"), "T4.3", VIEW, ["armed", "stopper", "target", "tail"]),
-  ...interim(ui("watch.tsx"), "T4.2", CLASSIFY, ["ACTIVE"]),
+  ...interim(ui("watch.tsx"), "T4.3", CLASSIFY, ["ACTIVE"]),
   ...interim(ui("designs/3-board.tsx"), "T4.6", CLASSIFY, ["COLUMNS"]),
   ...interim(ui("designs/5-gantt.tsx"), "T4.7", CLASSIFY, ["ENDED", "BLOCK"]),
   ...interim(ui("designs/7-ticker.tsx"), "T4.8", CLASSIFY, ["ENDED"]),
