@@ -228,7 +228,7 @@ describe("BlendDocument.decode messages", () => {
 // `ensures` is required in both). The Effect side is measured: each key of a valid sample whose removal the decoder
 // refuses as a missing property.
 const schemaDir = path.resolve(import.meta.dir, "../../../../task-formats/blend/schema")
-const jsonRequired = (file: string): ReadonlyArray<string> => {
+const jsonRequired = (file: string): Array<string> => {
   const parsed: { readonly required?: ReadonlyArray<string> } = JSON.parse(
     readFileSync(path.join(schemaDir, file), "utf8"),
   )
