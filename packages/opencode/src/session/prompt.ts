@@ -57,6 +57,7 @@ import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
 import { TaskCommand } from "@/task/core/command"
+import { TaskHarness } from "@/task/core/harness"
 import { TaskHooks } from "@/task/core/hooks"
 import type { TaskOps } from "@/task/core/ops"
 
@@ -163,6 +164,8 @@ const layer = Layer.effect(
     const sys = yield* SystemPrompt.Service
     const llm = yield* LLM.Service
     const events = yield* EventV2Bridge.Service
+    // The task harness root: `/task` runs on it, and its hooks route the harness tools and the repetition stop.
+    const harness = yield* TaskHarness.Service
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
@@ -1211,11 +1214,19 @@ const layer = Layer.effect(
           }
 
           // A task harness builder that repeats one call ends its turn here, without a model request. Only the
-          // sessions the harness watches are checked, so other sessions skip the scan of their calls.
-          if (TaskHooks.watching(sessionID)) {
-            const repetition = TaskHooks.checkRepetition(sessionID, completedCallsSince(msgs, lastUser.id))
-            if (repetition !== undefined) {
-              yield* Effect.logInfo("task harness repetition stop", { "session.id": sessionID, reason: repetition })
+          // sessions an owner watches are checked, so other sessions skip the scan of their calls (AD-11).
+          const owner = yield* harness.hooks.ownerOf(sessionID)
+          if (Option.isSome(owner) && owner.value.watch) {
+            const repetition = yield* TaskHooks.repetitionStop(
+              harness.hooks,
+              sessionID,
+              completedCallsSince(msgs, lastUser.id),
+            )
+            if (Option.isSome(repetition)) {
+              yield* Effect.logInfo("task harness repetition stop", {
+                "session.id": sessionID,
+                reason: repetition.value,
+              })
               break
             }
           }
@@ -1285,7 +1296,7 @@ const layer = Layer.effect(
             }
 
             // The task harness agents get their own tools; every other agent gets none.
-            Object.assign(tools, yield* createTaskHarnessTools(agent.name, sessionID))
+            Object.assign(tools, yield* createTaskHarnessTools(agent.name, sessionID, harness.hooks))
 
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -1425,7 +1436,7 @@ const layer = Layer.effect(
         return yield* Effect.die(error)
       }
       // The task harness runs `/task` in code: no template, no model turn in this session.
-      if (input.command === Command.Default.TASK) return yield* TaskCommand.run(input, taskOps)
+      if (input.command === Command.Default.TASK) return yield* TaskCommand.run(input, taskOps, harness)
       const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
@@ -1828,6 +1839,7 @@ export const node = LayerNode.make({
     EventV2Bridge.node,
     RuntimeFlags.node,
     Database.node,
+    TaskHarness.node,
   ],
 })
 
