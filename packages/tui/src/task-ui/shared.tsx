@@ -217,7 +217,7 @@ export const scenarioEntries = (status: Status): ReadonlyArray<ScenarioEntry> =>
 export const scenariosHeading = (status: Status) => {
   const all = Object.values(status.scenarios)
   if (all.length === 0) return "SCENARIOS none in this run"
-  return `SCENARIOS ${all.length} · ${all.filter((scenario) => scenario.state === "trusted").length}/${all.length} trusted`
+  return `SCENARIOS ${all.length} · ${all.filter((scenario) => tagged(scenario, "ended") && !tagged(scenario, "stopped")).length}/${all.length} trusted`
 }
 
 /** The fewest cells a title keeps. */
