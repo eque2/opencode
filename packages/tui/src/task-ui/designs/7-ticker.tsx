@@ -40,8 +40,9 @@ export const tickerToasts = (before: Status, after: Status) => {
   const run = list.filter((change) => change.unit === "run")
   const tasks = list.filter((change) => change.unit !== "run").toSorted((a, b) => rank(a.unit) - rank(b.unit))
   return [...run, ...tasks].slice(0, 3).map((change) => {
-    const task = change.unit === "run" ? undefined : after.tasks[change.unit]
-    const was = change.unit === "run" ? undefined : before.tasks[change.unit]
+    // The run's own change names no task: no task is keyed "run".
+    const task = after.tasks[change.unit]
+    const was = before.tasks[change.unit]
     const gained = task && task.reason && ["dead", "blocked"].some((tag) => tagged(task, tag) && !(was && tagged(was, tag)))
     return {
       variant: variantOf(change.to),

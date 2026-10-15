@@ -10,6 +10,7 @@ interface Followed<S> {
 
 /** The actor's snapshot as a Solid accessor, for as long as the calling owner lives. */
 export function fromActor<S>(actor: Followed<S>): Accessor<S> {
+  // eslint-disable-next-line effect/no-effect-runsync-unguarded -- (a) a Solid signal needs its first value synchronously; getSnapshot is a synchronous read of the actor
   return follow(actor, createSignal(Effect.runSync(actor.getSnapshot)))
 }
 

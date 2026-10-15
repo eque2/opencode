@@ -89,14 +89,14 @@ export function liveSessions(api: TuiPluginApi, view: View): Sessions {
     (key, info): Promise<ReadonlyArray<Harness>> => {
       const root = key.slice(key.indexOf("\n") + 1)
       // No root yet (the developer has not opened a session): no call, an empty list.
-      return root
-        ? Effect.runPromise(
-            Effect.tryPromise(() => api.client.session.children({ sessionID: root })).pipe(
+      return Effect.runPromise(
+        root
+          ? Effect.tryPromise(() => api.client.session.children({ sessionID: root })).pipe(
               Effect.map((result): ReadonlyArray<Harness> => (result.data ?? []).flatMap(harnessOf)),
               Effect.orElseSucceed(() => info.value ?? []),
-            ),
-          )
-        : Promise.resolve([])
+            )
+          : Effect.succeed([]),
+      )
     },
     { initialValue: [] },
   )
