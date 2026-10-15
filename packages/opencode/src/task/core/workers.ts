@@ -147,11 +147,7 @@ const obligationsOf = (spec: BlendModel.Spec, task: string) =>
  * The obligations a later attempt reopens, with the reason of each: failed proofs, rejected verdicts, or, when the
  * attempt ended otherwise (a repetition), every obligation not yet trusted with the task's reason.
  */
-export const reopened = (
-  spec: BlendModel.Spec,
-  state: State,
-  task: TaskModel,
-): ReadonlyArray<TaskSessions.Reopen> => {
+export const reopened = (spec: BlendModel.Spec, state: State, task: TaskModel): ReadonlyArray<TaskSessions.Reopen> => {
   const own = obligationsOf(spec, task.id).flatMap((obligation) =>
     Option.toArray(Option.fromNullishOr(state.obligations[obligation.id])),
   )
@@ -309,13 +305,11 @@ export const verifierPrompt = Effect.fn("TaskWorkers.verifierPrompt")(function* 
 ) {
   const session = Option.isSome(input.session)
     ? input.session.value
-    : (
-        yield* TaskSessions.create(run.env, input.directory, {
-          parentID: run.root,
-          title: input.title,
-          agent: TaskHooks.VERIFIER,
-        })
-      ).id
+    : (yield* TaskSessions.create(run.env, input.directory, {
+        parentID: run.root,
+        title: input.title,
+        agent: TaskHooks.VERIFIER,
+      })).id
   return yield* turn(run, {
     directory: input.directory,
     session,
@@ -350,7 +344,10 @@ const proveOnBase = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task
     Effect.gen(function* () {
       const head = yield* TaskWorkspace.baseHead(run.directory, run.limits, run.base)
       const proof = yield* TaskProof.proveTask({
-        spec: { gates: spec.gates, obligations: [...spec.obligations.filter((item) => item.task !== task.id), ...targets] },
+        spec: {
+          gates: spec.gates,
+          obligations: [...spec.obligations.filter((item) => item.task !== task.id), ...targets],
+        },
         task: { id: task.id, touches: [], gates: [] },
         cwd: run.directory,
         base: head,
@@ -429,10 +426,7 @@ export const merge = (run: Run, head: string) =>
 export type ScenarioResult = { readonly id: string } & ReturnType<typeof scenarioOutcome>
 
 /** The scenarios whose needs became trusted together: one `bun test` run on the base branch for the batch. */
-export const scenarioProof = Effect.fn("TaskWorkers.scenarioProof")(function* (
-  run: Run,
-  batch: ReadonlyArray<string>,
-) {
+export const scenarioProof = Effect.fn("TaskWorkers.scenarioProof")(function* (run: Run, batch: ReadonlyArray<string>) {
   return yield* run.locks.checkout.withPermit(
     Effect.gen(function* () {
       const head = yield* TaskWorkspace.baseHead(run.directory, run.limits, run.base)
@@ -499,35 +493,35 @@ const statusEvent = (status: SessionStatus.Info): TurnEvent =>
     ? { type: "turn.status", status: "retry", message: status.message }
     : { type: "turn.status", status: status.type }
 
+// Narrows an event of the bus to one definition by its type tag, as the bus's typed streams do.
+const of =
+  <D extends EventV2.Definition>(definition: D) =>
+  (event: EventV2.Payload): event is EventV2.Payload<D> =>
+    event.type === definition.type
+
 /**
  * The events of one session as typed events for its supervisor (AD-11): every part update or delta is
  * `turn.activity`, a tool part that starts or stops running is `turn.tool { running }`, and each
- * `SessionStatus.Event.Status` (not the deprecated `Event.Idle`) is `turn.status`. A `fromCallback` actor, because
- * `fromStream` would deliver snapshots, not events. Its cleanup interrupts the streams.
+ * `SessionStatus.Event.Status` (not the deprecated `Event.Idle`) is `turn.status`. One subscription to the bus keeps
+ * the publish order across the three kinds. A `fromCallback` actor, because `fromStream` would deliver snapshots, not
+ * events. Its cleanup interrupts the relay.
  */
 export const sessionEvents = fromCallback<
   EventObject,
   { readonly events: EventV2.Interface; readonly session: string }
 >(({ input, sendBack }) => {
-  const own = (event: { readonly data: { readonly sessionID: string } }) => event.data.sessionID === input.session
   const activity: ReadonlyArray<TurnEvent> = [{ type: "turn.activity" }]
-  const relay = Stream.mergeAll(
-    [
-      input.events.subscribe(MessageV2.Event.PartDelta).pipe(
-        Stream.filter(own),
-        Stream.map(() => activity),
-      ),
-      input.events.subscribe(MessageV2.Event.PartUpdated).pipe(
-        Stream.filter(own),
-        Stream.map((event) => [...activity, ...toolEvents(event.data.part)]),
-      ),
-      input.events.subscribe(SessionStatus.Event.Status).pipe(
-        Stream.filter(own),
-        Stream.map((event) => [statusEvent(event.data.status)]),
-      ),
-    ],
-    { concurrency: "unbounded" },
-  ).pipe(Stream.runForEach((list) => Effect.sync(() => list.forEach((event) => sendBack(event)))))
+  const turnEvents = (event: EventV2.Payload): ReadonlyArray<TurnEvent> => {
+    if (of(MessageV2.Event.PartDelta)(event)) return event.data.sessionID === input.session ? activity : []
+    if (of(MessageV2.Event.PartUpdated)(event))
+      return event.data.sessionID === input.session ? [...activity, ...toolEvents(event.data.part)] : []
+    if (of(SessionStatus.Event.Status)(event))
+      return event.data.sessionID === input.session ? [statusEvent(event.data.status)] : []
+    return []
+  }
+  const relay = input.events
+    .all()
+    .pipe(Stream.runForEach((event) => Effect.sync(() => turnEvents(event).forEach((item) => sendBack(item)))))
   const fiber = Effect.runFork(relay)
   return () => {
     Effect.runFork(Fiber.interrupt(fiber))
