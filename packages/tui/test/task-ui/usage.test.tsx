@@ -10,7 +10,7 @@ import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import context from "../../src/feature-plugins/sidebar/context"
 import type { Sessions } from "../../src/task-ui/peek"
 import { parse } from "../../src/task-ui/store"
-import { footerText, isTaskRoot, runOf } from "../../src/task-ui/usage"
+import { footerText, isTaskRoot, promptFooter, runOf } from "../../src/task-ui/usage"
 import { Screen } from "../../src/task-ui/designs/screen"
 import { TickerDialog } from "../../src/task-ui/designs/7-ticker"
 import projected from "./fixture-projected.json"
@@ -206,11 +206,42 @@ test("UI15 the Ticker dialog's heading names the run's cost", async () => {
   none.renderer.destroy()
 })
 
-test("UI15 the prompt footer reads its text from footerText over the synced sessions, in place of today's figure", async () => {
-  // The prompt needs the app's providers to render; its footer reads the root's own figure and the run's usage.
+test("UI15 the prompt footer: today's figure in any session, the run after it in a /task root, fit to the prompt box", () => {
+  const today = Option.some({ context: "12.3K (5%)", cost: Option.some("$0.02") })
+  const footer = (sessionID: string | undefined, width: number, own = today, sessions = run) =>
+    promptFooter({ sessionID, own, sessions, width, shortcut: "ctrl+p" })
+  // No session: no footer.
+  expect(footer(undefined, 200)).toEqual(Option.none())
+  // A session that is not a /task root keeps today's figure, its cost included; with no cost, the context alone.
+  const plain = [session("ses_plain", "Fix a bug")]
+  expect(footer("ses_plain", 200, today, plain)).toEqual(Option.some("12.3K (5%) · $0.02"))
+  expect(footer("ses_plain", 200, Option.some({ context: "12.3K (5%)", cost: Option.none() }), plain)).toEqual(
+    Option.some("12.3K (5%)"),
+  )
+  expect(footer("ses_plain", 200, Option.none(), plain)).toEqual(Option.none())
+  // A /task root: today's figure, then the run.
+  expect(footer(ROOT, 200)).toEqual(Option.some("12.3K (5%) · $0.02 · run 1.4M tokens · $2.31"))
+  expect(footer(ROOT, 200, Option.none())).toEqual(Option.some("run 1.4M tokens · $2.31"))
+  // The room is the width less 4 cells of padding, the "ctrl+p commands" hint (15) and a 2-cell gap: 44 cells of text
+  // need 65; above 120 cells the sidebar takes 42 more.
+  expect(footer(ROOT, 65)).toEqual(Option.some("12.3K (5%) · $0.02 · run 1.4M tokens · $2.31"))
+  expect(footer(ROOT, 64)).toEqual(Option.some("run 1.4M tokens · $2.31"))
+  expect(footer(ROOT, 37)).toEqual(Option.some("run 1.4M · $2.31"))
+  expect(footer(ROOT, 36)).toEqual(Option.some("run $2.31"))
+  const wide = Option.some({ context: "a".repeat(30), cost: Option.some("$0") })
+  expect(footer(ROOT, 120, wide)).toEqual(Option.some(`${"a".repeat(30)} · $0 · run 1.4M tokens · $2.31`))
+  expect(footer(ROOT, 121, wide)).toEqual(Option.some("run 1.4M tokens · $2.31"))
+})
+
+test("UI15 the prompt draws promptFooter's text over the synced sessions, in place of today's figure", async () => {
+  // The prompt needs the app's providers to render; its footer is promptFooter over the session and the box width.
   const prompt = await Bun.file(new URL("../../src/component/prompt/index.tsx", import.meta.url)).text()
-  expect(prompt).toContain("return footerText(own, runOf(sync.data.session, props.sessionID), room)")
-  expect(prompt).toContain("<Match when={Option.getOrUndefined(footer())}>")
+  expect(prompt).toMatch(
+    /promptFooter\(\{\s*sessionID: props\.sessionID,\s*own: usage\(\),\s*sessions: sync\.data\.session,\s*width: dimensions\(\)\.width,\s*shortcut: paletteShortcut\(\),\s*\}\)/,
+  )
+  expect(prompt).toMatch(
+    /<Match when=\{Option\.getOrUndefined\(footer\(\)\)\}>\s*\{\(text\) => \(\s*<text fg=\{theme\.textMuted\} wrapMode="none">\s*\{text\(\)\}\s*<\/text>/,
+  )
   expect(prompt).not.toContain("<Match when={Option.getOrUndefined(usage())}>")
   // The adapter gives plugins the same synced children.
   const adapters = await Bun.file(new URL("../../src/plugin/adapters.tsx", import.meta.url)).text()
