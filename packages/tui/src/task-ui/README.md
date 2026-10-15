@@ -8,13 +8,36 @@ ordinary subagent task.
 ## Where it reads the run
 
 The `/task` harness writes `<directory>/.opencode/task/status.json` as the run moves
-(`packages/opencode/src/task/core/status.ts`). The plugin reads that file, its age, and the proof logs in
-`.opencode/task/proofs/` once a second. A file that is absent, half written or of another shape keeps the last good
-status on screen; with no status file, the plugin shows nothing.
+(`packages/opencode/src/task/core/status.ts`). The plugin's `taskView` machine (`machine.ts`) reads that file, its
+age, and the proof logs in `.opencode/task/proofs/` once a second. A file that is half written or of another shape
+keeps the last good status on screen; with no status file, the plugin shows nothing.
 
-The run is **live** while it has not ended, the session on screen owns the run's harness sessions (titled like
-`T1.4 builder`), and the status file, a harness session or a proof log changed in the last five minutes. Tab, `esc`
-twice and the watch view act only on a live run, in its own session.
+The run's liveness comes from the file alone:
+
+- **ended** when the run carries the `ended` tag;
+- **live** when the harness's heartbeat `run.aliveAt` is at most 15 s old;
+- **still** otherwise: the job stopped writing (it was killed, or the machine slept).
+
+Tab, `esc` twice and the watch view act only on a live run, in the session that owns the run's harness sessions
+(titled like `T1.4 builder`).
+
+## What it shows
+
+- **States by their tags.** Every grouping reads a unit's tags from the status file (`waiting`, `active`, `ended`,
+  `stopped`, `blocked`, `dead`): the Board columns, the STOPPED groups and the counts. The display table `DISPLAY`
+  (`store.ts`) gives a state name only its glyph, its tone and its Gantt block.
+- **Reasons.** Each expanded view has a shared region (`shared.tsx`): the run warning when the spec stopped
+  validating, the outside wait lines (`waiting on T9 (outside) — run /task trust T9`), the STOPPED list with each
+  stopped task's reason, and the SCENARIOS list. The Peek's heading says why a task stopped or what it waits on.
+- **Scenarios.** The SCENARIOS list names each scenario with its state and reason; its heading counts the trusted
+  ones. A scenario parked on an outside task shows as waiting.
+- **Durations.** `45s`, `3m 12s`, `1h 4m`. A task in work counts while the run is live, stops at the last heartbeat
+  while it is still, and is fixed once the task ended. The HUD's elapsed time and the Gantt use the run's span.
+- **Run usage.** The summed tokens (input, output and reasoning; no cache) and cost of the root session's child
+  sessions (`usage.ts`), in the prompt footer, the sidebar Context panel, the HUD, the full-screen header, the Dock
+  and the Ticker dialog. It stays hidden until a harness session reports tokens.
+- **The mark.** The `◆` of `◆ In the Flow` is a spinner (`· ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩`, 120 ms a frame) at every site while
+  the run is live and the `animations_enabled` setting is on; otherwise it is a static `◆`.
 
 ## Designs
 
@@ -37,8 +60,9 @@ on the panel expands or collapses it.
 
 ## Keys
 
-The shortcut bar at the bottom right of the input box names the design and shows the keys that apply now. `ctrl+x` is
-the default leader key; the bar shows the configured one.
+The shortcut bar at the bottom right of the input box names the design and shows the run warning, an outside wait,
+and the keys that apply now; designs 3, 4, 5 and 7 add the trusted and stopped counts. It no longer shows `/task-design`, which
+stays in the command list. `ctrl+x` is the default leader key; the bar shows the configured one.
 
 | Key | What it does |
 |---|---|
@@ -85,9 +109,14 @@ The frame and the band come from a generic core capability: the session route's 
 
 | File | What it holds |
 |---|---|
-| `index.tsx` | The plugin entry: the status poll, the live check, the commands and keys |
-| `store.ts` | The status schema, the task tree, the selection, the expanded state and the design number |
-| `ui.tsx` | The shortcut bar, the Tab layer and the parts the designs share |
+| `index.tsx` | The plugin entry: the `taskView` actor, the commands and keys, and each design's registration |
+| `machine.ts` | The `taskView` machine: the design, the selection, the expansion, the watch, the stop key, the liveness, and every periodic read as a delayed transition |
+| `actor.ts` | `fromActor`, the one bridge from the actor's snapshot to a Solid signal |
+| `view.ts` | The view the designs read: accessors over the actor's snapshot and the events that change it |
+| `store.ts` | The status schema, the task tree, the tag classes, the display table and the durations |
+| `shared.tsx` | The shared region: the run warning, the outside waits, STOPPED and SCENARIOS |
+| `usage.ts` | The run usage of a `/task` root session |
+| `ui.tsx` | The shortcut bar, the mark, the Tab layer and the parts the designs share |
 | `peek.tsx` | The task details: builder, proofs and verifier |
 | `watch.tsx` | The watch view, its band, the PROOF panel and `esc` twice |
 | `designs/` | One file per design; `screen.tsx` is the full-screen route of Board, Matrix and Gantt |
