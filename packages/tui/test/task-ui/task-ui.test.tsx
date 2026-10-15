@@ -493,6 +493,16 @@ test("T4.5 any other task: line 1 only; a running task's duration counts to now 
   const at = lines.findIndex((line) => line.startsWith("BUILDER  building · attempt 3 · 3m 12s"))
   expect(at).toBeGreaterThan(0)
   expect(lines[at + 1]).toBe("  no builder session yet")
+  // Ten seconds after the heartbeat the view is still live and counts to its now; a minute after, the view is still
+  // and the count stops at the heartbeat.
+  for (const [after, shown] of [
+    [10_000, "BUILDER  building · attempt 3 · 3m 22s"],
+    [60_000, "BUILDER  building · attempt 3 · 3m 12s"],
+  ] as const) {
+    const { view: clocked } = await viewFor(building, { now: (building.run.aliveAt ?? 0) + after })
+    const clockedLines = inside(await frame(() => <Peek theme={() => theme} view={clocked} sessions={none} unit="T1.4" width={60} lines={3} />))
+    expect(clockedLines).toContain(shown)
+  }
   // A task with no start and no attempt: the state alone.
   expect(builderHeading(status, "T1.1", "ended", 0)[0]?.text).toBe("trusted · attempt 1 · 0s")
   expect(builderHeading(changed((raw) => Object.assign(tasksIn(raw)["T1.1"], { attempts: 0, startedAt: undefined })), "T1.1", "ended", 0)).toEqual([
@@ -506,6 +516,16 @@ test("T4.5 a blocked task: line 1 starts its reason in the warning tone", async 
   const shown = await spansOf(() => <Peek {...props} unit="T1.5" width={60} lines={3} />)
   expect(inside(shown.text)).toContain("BUILDER  blocked by T1.4: budget exhausted")
   expect(rgb(fgOf(shown.spans, "blocked by T1.4"))).toEqual(rgb(theme.warning))
+  // A blocked task that ran before: its attempt and duration follow the reason, in the text tone.
+  const ran = changed((raw) => Object.assign(tasksIn(raw)["T1.5"], { attempts: 2, startedAt: 0, endedAt: 45_000 }))
+  expect(builderHeading(ran, "T1.5", "ended", 0)).toEqual([
+    { text: "blocked by T1.4: budget exhausted", tone: "warning" },
+    { text: "attempt 2 · 45s", tone: "text" },
+  ])
+  const ranProps = await view(none, ran)
+  const ranLines = inside(await frame(() => <Peek {...ranProps} unit="T1.5" width={60} lines={3} />))
+  const at = ranLines.indexOf("BUILDER  blocked by T1.4: budget exhausted")
+  expect(ranLines[at + 1]).toBe("         attempt 2 · 45s")
 })
 
 test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; the trust command is never cut", async () => {
@@ -529,11 +549,13 @@ test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; t
   // The outside sentence wraps at a word boundary, 9 cells in; "/task trust T9" stays whole on one line.
   expect(lines[at + 1]).toBe("         waiting on T9 (outside) — run")
   expect(lines[at + 2]).toBe("         /task trust T9")
-  expect(lines[at + 3]).toBe("         waiting on T2.1 (not in this run)")
+  // The external sentence (33 cells) wraps in the 31 cells the heading text has.
+  expect(lines[at + 3]).toBe("         waiting on T2.1 (not in this")
+  expect(lines[at + 4]).toBe("         run)")
   expect(rgb(fgOf(shown.spans, "waiting on T1.3"))).toEqual(rgb(theme.textMuted))
   expect(rgb(fgOf(shown.spans, "waiting on T9"))).toEqual(rgb(theme.warning))
   expect(rgb(fgOf(shown.spans, "/task trust T9"))).toEqual(rgb(theme.warning))
-  expect(rgb(fgOf(shown.spans, "(not in this run)"))).toEqual(rgb(theme.textMuted))
+  expect(rgb(fgOf(shown.spans, "waiting on T2.1"))).toEqual(rgb(theme.textMuted))
 })
 
 test("T4.5 a long reason wraps at word boundaries with a 9-cell hanging indent and no line limit; activity lines shrink first", async () => {
