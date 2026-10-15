@@ -449,6 +449,33 @@ test("UI4 an open span runs to now while live and to the heartbeat while still",
   ])
 })
 
+test("UI4 a span ends before its `to`; an open span in an ended run stops at run.endedAt, not in the tail", () => {
+  // Cell 1's middle (1.5 s) is where waiting ends and building starts: the cell is building's.
+  const edge = statusOf((raw) =>
+    Object.assign(tasksOf(raw)["T1.2"], {
+      spans: [
+        { state: "waiting", from: 0, to: 1_500 },
+        { state: "building", from: 1_500, to: 3_000 },
+      ],
+    }),
+  )
+  expect(lane(edge.tasks["T1.2"], 100, { start: 0, end: 100_000 }, 100_000)).toEqual([
+    { state: "waiting", length: 1 },
+    { state: "building", length: 2 },
+    { state: undefined, length: 97 },
+  ])
+  // The run ended at 100 s with T1.2's span still open: it fills to 100 s, and the 3 s tail stays blank.
+  const left = statusOf((raw) => {
+    Object.assign(raw.run, { state: "cancelled", tags: ["ended", "stopped"], startedAt: 0, endedAt: 100_000 })
+    Object.assign(tasksOf(raw)["T1.2"], { spans: [{ state: "building", from: 90_000 }] })
+  })
+  expect(lane(left.tasks["T1.2"], 103, ganttRange(left, "ended", 0), runSpan(left, "ended", 0).end)).toEqual([
+    { state: undefined, length: 90 },
+    { state: "building", length: 10 },
+    { state: undefined, length: 3 },
+  ])
+})
+
 test("UI4 a blocked task draws ░ from the run's start, then one █ in the warning tone; the legend names the blocks", async () => {
   const { view } = await viewFor(timed, { design: 5 })
   const shown = await render(
@@ -484,13 +511,26 @@ test("UI11 the Gantt right column: the duration in 7 cells, a space, the state t
   expect(t14.slice(11 + 79)).toBe("  6m 40s budget exhausted · a…")
   // T1.5 never started: its duration cell is blank and the state text keeps its place.
   expect((wide.find((line) => line.includes("⊖ T1.5")) ?? "").slice(11 + 79)).toBe("         blocked")
-  // At 51 cells the lane is 10; narrower, it stays 10 and the right column keeps its text.
+  // At 51 cells the lane is 10 and the right column keeps its text.
   expect(((await at(51)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe(
     "  6m 40s budget exhausted · a…",
   )
-  expect(((await at(40)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe(
-    "  6m 40s budget exhausted · a…",
+  // At 40 cells the lane stays 10 and the view cuts the state text at its edge; the duration still shows whole.
+  expect(((await at(40)).find((line) => line.includes("⊘ T1.4")) ?? "").slice(11 + 10)).toBe("  6m 40s budget exh")
+})
+
+test("UI11 the Gantt's duration counts to now while the view is live", async () => {
+  const { view } = await viewFor(building, { design: 5, now: (building.run.aliveAt ?? 0) + 10_000 })
+  const lines = linesOf(
+    (
+      await render(
+        () => <GanttView theme={() => theme} view={view} sessions={none} leader="ctrl+x" width={120} />,
+        120,
+        30,
+      )
+    ).text,
   )
+  expect((lines.find((line) => line.includes("◐ T1.2")) ?? "").slice(11 + 79, 11 + 79 + 8)).toBe("  3m 22s")
 })
 
 test("the Gantt and the HUD read the spans and the run span, not the ENDED list or the Gantt's span", async () => {
@@ -555,6 +595,13 @@ test("UI15 the HUD's elapsed line adds the run usage; the tokens drop first; it 
       { tokens: 400, cost: 0.25 },
     ]),
   ).toEqual(Option.some({ tokens: 1400, cost: 0.75 }))
+})
+
+test("UI15 the HUD's elapsed time counts to now while the run is live", async () => {
+  const live = statusOf((raw) => Object.assign(raw.run, { startedAt: raw.run.aliveAt - 1_450_000 }))
+  const { view } = await viewFor(live, { design: 6, now: (live.run.aliveAt ?? 0) + 10_000 })
+  const shown = await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)
+  expect(shown.text).toContain("elapsed 24m 20s")
 })
 
 test("UI5 the HUD panel shows the outside wait line under the run warning line; two ids name the first and end with +N", async () => {
