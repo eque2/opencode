@@ -940,7 +940,8 @@ describe("the run machine on the release-notes and live-check plans", () => {
 })
 
 describe("the fact list (AD-10)", () => {
-  const decode = Schema.decodeUnknownSync(TaskEvents.FactSchema)
+  // The decoded value, compared as plain data with the input.
+  const decode = (input: unknown): unknown => Schema.decodeUnknownSync(TaskEvents.FactSchema)(input)
 
   it.live("folds task.nudged as a targetless building entry with its reason", () =>
     Effect.gen(function* () {

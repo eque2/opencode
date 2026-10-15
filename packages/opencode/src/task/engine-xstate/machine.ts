@@ -233,6 +233,7 @@ const reasonOf = (context: RunContext, event: RunEvent, unit: string, to: string
     case "obligation.stale":
       return `stale: ${event.id}`
     case "task.stalled":
+    case "task.nudged":
     case "task.repeated":
     case "task.needs_human":
     case "task.failed":
@@ -800,6 +801,8 @@ const workRegion = (
         "task.ready": [{ guard: mine, ...to("building", "proving", { type: "ready", params: { unit: id } }) }],
         // The supervisor cut the stream and prompts the same attempt again.
         "task.stalled": [{ guard: mine, actions: [again(id, "task", "building")] }],
+        // An idle turn without task_ready: the supervisor nudged the builder in the same attempt (AD-10).
+        "task.nudged": [{ guard: mine, actions: [again(id, "task", "building")] }],
         "task.repeated": [
           { guard: fact(underBudget), actions: [retry, again(id, "task", "building")] },
           { guard: mine, ...to("building", "budget_exhausted") },

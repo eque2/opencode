@@ -84,8 +84,8 @@ export type Result = { readonly id: string; readonly status: "passed" | "failed"
  */
 export type Fact =
   /** `base`: the branch the leaves branch from and merge into; absent in runs stored before it was recorded. */
-  | { readonly type: "run.started"; readonly at: number; readonly base?: string }
-  | { readonly type: "run.resumed"; readonly at: number; readonly base?: string }
+  | { readonly type: "run.started"; readonly at: number; readonly base?: string; readonly path?: string }
+  | { readonly type: "run.resumed"; readonly at: number; readonly base?: string; readonly path?: string }
   /** An `outside` precondition the state store records as trusted. */
   | { readonly type: "outside.trusted"; readonly at: number; readonly id: string }
   | {
@@ -104,6 +104,14 @@ export type Fact =
   | { readonly type: "task.verified"; readonly at: number; readonly task: string; readonly verdicts: ReadonlyArray<Verdict> }
   /** The builder's stream stalled; the runner cut it and prompts the same attempt again. */
   | { readonly type: "task.stalled"; readonly at: number; readonly task: string; readonly reason: string }
+  /** The builder's turn went idle without task_ready; the supervisor nudged it in the same attempt (AD-10). */
+  | {
+      readonly type: "task.nudged"
+      readonly at: number
+      readonly task: string
+      readonly nudge: 1 | 2
+      readonly reason: string
+    }
   /** The builder repeated one call; the turn was ended and the task goes back to the builder. */
   | { readonly type: "task.repeated"; readonly at: number; readonly task: string; readonly reason: string }
   | { readonly type: "task.needs_human"; readonly at: number; readonly task: string; readonly reason: string }

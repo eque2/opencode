@@ -30,14 +30,27 @@ const TaskFact = <T extends string>(type: T) => ({ type: Schema.Literal(type), a
 
 /** The JSON form of a `Fact` (`./model`). The decoder is the validation boundary of the stored facts. */
 export const FactSchema = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("run.started"), at: At, base: Schema.optionalKey(Text) }),
-  Schema.Struct({ type: Schema.Literal("run.resumed"), at: At, base: Schema.optionalKey(Text) }),
+  Schema.Struct({
+    type: Schema.Literal("run.started"),
+    at: At,
+    base: Schema.optionalKey(Text),
+    // The /task argument of the slice (AD-6); a slice stored before it was recorded is a whole-spec slice.
+    path: Schema.optionalKey(Text),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("run.resumed"),
+    at: At,
+    base: Schema.optionalKey(Text),
+    // The /task argument of the slice (AD-6); a slice stored before it was recorded is a whole-spec slice.
+    path: Schema.optionalKey(Text),
+  }),
   Schema.Struct({ type: Schema.Literal("outside.trusted"), at: At, id: Text }),
   Schema.Struct({ ...TaskFact("task.started"), worktree: Text, branch: Text, base: Text, session: Text }),
   Schema.Struct({ ...TaskFact("task.ready"), head: Text }),
   Schema.Struct({ ...TaskFact("task.proved"), results: Schema.Array(Result_), reason: Reason }),
   Schema.Struct({ ...TaskFact("task.verified"), verdicts: Schema.Array(Verdict) }),
   Schema.Struct({ ...TaskFact("task.stalled"), reason: Text }),
+  Schema.Struct({ ...TaskFact("task.nudged"), nudge: Schema.Literals([1, 2]), reason: Text }),
   Schema.Struct({ ...TaskFact("task.repeated"), reason: Text }),
   Schema.Struct({ ...TaskFact("task.needs_human"), reason: Text }),
   Schema.Struct({ ...TaskFact("task.failed"), reason: Text }),
