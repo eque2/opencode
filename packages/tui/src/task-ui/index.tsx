@@ -12,7 +12,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { TaskView } from "./machine"
 import { liveSessions } from "./peek"
 import { DESIGNS, NAME } from "./store"
-import { ShortcutBar, leaderOf, registerTab, type Ctx } from "./ui"
+import { ShortcutBar, leaderOf, registerTab, registerWarning, type Ctx } from "./ui"
 import { viewOf, type ViewActor } from "./view"
 import { registerWatch, type Listen } from "./watch"
 import { registerLedger } from "./designs/1-ledger"
@@ -98,6 +98,8 @@ function start(api: Parameters<TuiPlugin>[0], actor: ViewActor, listen: Listen) 
   registerScreen({ ...base, active: () => true })
   registerHud(ctx(6))
   registerTicker(ctx(7))
+  // The run warning's toast, in every design.
+  registerWarning({ view, toast: (toast) => api.ui.toast(toast) })
   // The watch view works with every design.
   const toggleWatch = registerWatch({ ...base, active: () => true }, listen)
   // One shortcut bar for every design, at the bottom right of the input box.
