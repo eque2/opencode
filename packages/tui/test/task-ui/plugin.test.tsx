@@ -25,7 +25,8 @@ import TaskUi from "../../src/task-ui/index"
 import { DESIGNS, MARK, statusFile } from "../../src/task-ui/store"
 import { createTuiPluginApi } from "../fixture/tui-plugin"
 import { tmpdir } from "../fixture/fixture"
-import fixture from "./fixture-status.json"
+// The shared projected status (AD-13, with tags): T1.4 budget exhausted, T1.5 and T1 blocked by it.
+import fixture from "./fixture-projected.json"
 
 const meta = {
   id: "internal:task-ui",
@@ -237,7 +238,7 @@ test("the plugin follows a new status file through its one-second poll", async (
   expect(await plugin.shows("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted")).toBe(true)
 
   const next = structuredClone(fixture)
-  next.tasks["T1.4"].state = "trusted"
+  Object.assign(next.tasks["T1.4"], { state: "trusted", tags: ["ended"] })
   await writeStatus(dir.path, next)
   expect(await plugin.shows("4/6 trusted")).toBe(true)
   expect(plugin.toasts.map((toast) => toast.message)).toContain("T1.4 budget exhausted → trusted")

@@ -1,6 +1,19 @@
 /** @jsxImportSource @opentui/solid */
-// The task-ui designs, store and watch view against a real status file: the release-notes run that stopped at
-// T1.4.c8 (paths replaced). plugin.test.tsx loads the plugin entry itself.
+// The task-ui designs, store and watch view against the shared projected status of the observed release-notes run
+// (T1.4 budget exhausted, T1.5 and T1 blocked by it). plugin.test.tsx loads the plugin entry itself.
+//
+// T4.2 moved these tests from fixture-status.json (a file from before the AD-13 tags) to fixture-projected.json (SD-10):
+// - ported (the same assertion on the projected status): the tree rows and T1.4's obligations, the selection and the
+//   design cycle, the peek lines of tool calls, the proof-log path, every watch-view choice (`live` now restates the
+//   projected status with tags), the stopper, the plugin's ctrl+x w, esc twice and Tab tests.
+// - re-baselined: "parses…" (the run is running), the counts {6,3,0,1} → {6,3,0,3} (T1 and T1.5 are blocked, so
+//   stopped), "reports the run and task changes…" (from the projected status to its ended copy), "every design shows
+//   the stopped run" (the ended copy: ⊖ T1.5, STOPPED 3, c7 failed), RM26 (blocked is ⊖ from the display table, not
+//   the fallback •), the peek (c7 is the failed proof), the shortcut bar, "a run is active…" and "after the run
+//   ends…" (an ended copy, where the old fixture had ended).
+// - kept on the older file: SV17's decode of a pre-contract file, UI25, and the Gantt lane from the history (T4.7
+//   moves it to the spans).
+// - retired: none.
 import { expect, test } from "bun:test"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
@@ -17,7 +30,31 @@ import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
 import projected from "./fixture-projected.json"
 import { Peek, lines, type Sessions } from "../../src/task-ui/peek"
-import { counts, createView, focus, obligationsOf, parse, rows, type Status } from "../../src/task-ui/store"
+import {
+  ACTIVE,
+  DISPLAY,
+  ENDED,
+  LIVE_WINDOW,
+  OLDER_LINE,
+  bySeverity,
+  columnOf,
+  counts,
+  createView,
+  durationOf,
+  elapsed,
+  focus,
+  glyph,
+  label,
+  obligationsOf,
+  older,
+  parse,
+  poll,
+  rows,
+  stoppedGroup,
+  tone,
+  type Status,
+} from "../../src/task-ui/store"
+import { TaskView } from "../../src/task-ui/machine"
 import { LedgerView } from "../../src/task-ui/designs/1-ledger"
 import { DockView } from "../../src/task-ui/designs/2-dock"
 import { BoardView } from "../../src/task-ui/designs/3-board"
@@ -40,7 +77,39 @@ import {
 } from "../../src/task-ui/watch"
 import type { Child, Harness } from "../../src/task-ui/peek"
 
-const status = Option.getOrThrow(parse(JSON.stringify(fixture)))
+// The base status is the shared projected fixture (T1.1–T1.3 trusted, T1.4 budget exhausted, T1.5 and T1 blocked by
+// it, the run still running), which carries the AD-13 tags; fixture-status.json stays only as a status file written
+// before the contract (SV17, UI25).
+const status = Option.getOrThrow(parse(JSON.stringify(projected)))
+
+// The tags the harness gives each task state (the AD-13 class table).
+const TAGS: Record<string, ReadonlyArray<string>> = {
+  waiting: ["waiting"],
+  building: ["active"],
+  proving: ["active"],
+  verifying: ["active"],
+  trusted: ["ended"],
+  budget_exhausted: ["ended", "stopped", "dead"],
+  blocked: ["ended", "stopped", "blocked"],
+}
+
+// The projected status with the run and the given tasks restated, each task with its state's tags.
+const restate = (
+  run: { state: string; tags: ReadonlyArray<string> },
+  states: Record<string, string>,
+  waits: Record<string, ReadonlyArray<string>> = {},
+) => {
+  const copy = structuredClone(projected)
+  copy.run.state = run.state
+  copy.run.tags = [...run.tags]
+  const tasks: Record<string, { state: string; tags: string[]; waitingOn: string[] }> = copy.tasks
+  for (const [id, state] of Object.entries(states)) Object.assign(tasks[id], { state, tags: [...(TAGS[state] ?? [])] })
+  for (const [id, ids] of Object.entries(waits)) tasks[id].waitingOn = [...ids]
+  return Option.getOrThrow(parse(JSON.stringify(copy)))
+}
+
+// The run ended as the observed run did, budget exhausted.
+const ended = restate({ state: "budget_exhausted", tags: ["ended", "stopped"] }, {})
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 const none: Sessions = { children: () => () => [], activity: () => () => [], all: () => () => [] }
 
@@ -65,7 +134,7 @@ async function frame(node: () => JSX.Element, width = 120, height = 40) {
 }
 
 test("parses the harness status file and refuses anything else", () => {
-  expect(status.run.state).toBe("budget_exhausted")
+  expect(status.run.state).toBe("running")
   expect(Option.isNone(parse("{"))).toBe(true)
   expect(Option.isNone(parse(JSON.stringify({ run: {} })))).toBe(true)
   expect(Option.isNone(parse(""))).toBe(true)
@@ -84,7 +153,8 @@ test("orders the tasks as a tree and finds each task's own obligations", () => {
   expect(obligationsOf(status, "T1.4").map((item) => item.local)).toEqual(
     ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "f1", "f2", "p1"],
   )
-  expect(counts(status)).toEqual({ total: 6, trusted: 3, active: 0, stopped: 1 })
+  // The tags class the tasks: T1.4 dead, T1 and T1.5 blocked, all three stopped; the most severe is focused.
+  expect(counts(status)).toEqual({ total: 6, trusted: 3, active: 0, stopped: 3 })
   expect(focus(rows(status))).toBe("T1.4")
 })
 
@@ -103,19 +173,20 @@ test("moves the selection round the tree and cycles the designs", () => {
   })
 })
 
+// The Gantt draws its lane from the history until T4.7 moves it to the spans: the older file has that history.
 test("draws a lane from the history and ends it in the final state", () => {
-  const range = span(status, Date.now())
-  const runs = lane(status, "T1.4", 100, range)
+  const older = Option.getOrThrow(parse(JSON.stringify(fixture)))
+  const range = span(older, Date.now())
+  const runs = lane(older, "T1.4", 100, range)
   expect(runs[0].state).toBe("waiting")
   expect(runs.some((run) => run.state === "building")).toBe(true)
   expect(runs.at(-1)?.state).toBe("budget_exhausted")
 })
 
 test("reports the run and task changes between two snapshots", () => {
-  const before = structuredClone(fixture)
-  before.run.state = "running"
+  const before = structuredClone(projected)
   before.tasks["T1.4"].state = "proving"
-  expect(changes(Option.getOrThrow(parse(JSON.stringify(before))), status)).toEqual([
+  expect(changes(Option.getOrThrow(parse(JSON.stringify(before))), ended)).toEqual([
     { unit: "run", from: "running", to: "budget_exhausted" },
     { unit: "T1.4", from: "proving", to: "budget_exhausted" },
   ])
@@ -142,18 +213,18 @@ test("turns harness tool calls into peek lines", () => {
 })
 
 test("every design shows the stopped run", async () => {
-  const props = view()
+  const props = view(none, ended)
   const ledger = await frame(() => <LedgerView {...props} width={38} />)
   expect(ledger).toContain("◆ In the Flow run: budget exhausted")
   expect(ledger).toContain("├ ⊘ T1.4")
-  expect(ledger).toContain("└ ○ T1.5")
+  expect(ledger).toContain("└ ⊖ T1.5")
   expect(await frame(() => <DockView {...props} width={160} />, 160)).toContain("▰▰▰▱▱▱ 3/6 trusted")
   const board = await frame(() => <BoardView {...props} width={110} />)
-  expect(board).toContain("STOPPED 1")
+  expect(board).toContain("STOPPED 3")
   expect(board).toContain("TRUSTED 3")
   const matrix = await frame(() => <MatrixView {...props} width={110} />)
   expect(matrix).toContain("SCENARIOS")
-  expect(matrix).toContain("✗ T1.4.c8 failed")
+  expect(matrix).toContain("✗ T1.4.c7 failed")
   expect(await frame(() => <GanttView {...props} width={110} />)).toContain("budget exhausted · attempt 3")
   expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attempt 3")
   expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ In the Flow · T1.4 details · read-only")
@@ -176,13 +247,103 @@ test("RM26 the Board shows the blocked tasks of the projected status in STOPPED 
   const board = await frame(() => <BoardView {...view(none, input)} width={110} />, 110, 40)
   expect(board).toContain("WAITING 0")
   expect(board).toContain("STOPPED 3")
-  // Both blocked cards: the fallback glyph, the state's own label, and the reason across the card's lines.
-  expect(board).toContain("• T1.5")
-  expect(board).toMatch(/• T1 /)
+  // Both blocked cards: the display table's ⊖ (no longer the fallback •), the label, and the reason across the lines.
+  expect(board).toContain("⊖ T1.5")
+  expect(board).toMatch(/⊖ T1 /)
   expect(board.match(/│ blocked {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ blocked by {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ T1\.4: budget {2,}│/g)).toHaveLength(2)
   expect(board.match(/│ exhausted {2,}│/g)).toHaveLength(2)
+})
+
+// --- the store on the AD-13 status (T4.2) ---------------------------------------------------------------------------
+
+test("decodes the AD-13 fields as optional and keeps an unknown tag that nothing reads", () => {
+  expect(status.run).toMatchObject({
+    tags: ["active"],
+    title: "Release notes from conventional commits",
+    specId: "release-notes.spec",
+    startedAt: 1,
+    aliveAt: 1791000000000,
+  })
+  expect(status.tasks["T1.4"]).toMatchObject({ tags: ["ended", "stopped", "dead"], startedAt: 14, endedAt: 20 })
+  expect(status.tasks["T1.4"].spans?.length).toBeGreaterThan(0)
+  expect(status.scenarios["S2"].title).toBe("A conventional message is read into its parts")
+  expect(status.outside?.["T9"]).toEqual({ state: "untrusted", tags: ["waiting"] })
+  expect(status.external).toEqual({})
+  // A tag the task-ui does not know changes no classification.
+  const strange = restate({ state: "running", tags: ["active", "comet"] }, {})
+  expect(counts(strange)).toEqual(counts(status))
+  expect(older(status)).toBe(false)
+})
+
+test("classifies from the tags, not the state names: column, counts, focus, next running and severity", () => {
+  // T1.1's state says building, its tags say ended: the tags win everywhere.
+  const copy = structuredClone(projected)
+  Object.assign(copy.tasks["T1.1"], { state: "building", tags: ["ended"] })
+  Object.assign(copy.tasks["T1.2"], { state: "proving", tags: ["active"] })
+  const mixed = Option.getOrThrow(parse(JSON.stringify(copy)))
+  expect(columnOf(mixed.tasks["T1.1"])).toEqual(Option.some("TRUSTED"))
+  expect(columnOf(mixed.tasks["T1.2"])).toEqual(Option.some("PROVING"))
+  expect(columnOf(live({ "T1.3": "building" }).tasks["T1.3"])).toEqual(Option.some("BUILDING"))
+  expect(columnOf(live({}).tasks["T1.5"])).toEqual(Option.some("WAITING"))
+  expect(columnOf(mixed.tasks["T1.4"])).toEqual(Option.some("STOPPED"))
+  expect(counts(mixed)).toEqual({ total: 6, trusted: 2, active: 1, stopped: 3 })
+  expect(focus(rows(mixed))).toBe("T1.2")
+  expect(nextRunning(rows(mixed), "T1.1", 1)).toEqual(Option.some("T1.2"))
+  // STOPPED groups: dead, then blocked, then the rest; the severity order of AD-16.
+  expect(
+    [status.tasks["T1.4"], status.tasks["T1.5"], { state: "cancelled", tags: ["ended", "stopped"] }].map((task) =>
+      stoppedGroup({ attempts: 0, waitingOn: [], ...task }),
+    ),
+  ).toEqual([0, 1, 2])
+  const units = ["ended", "waiting", "active", "stopped", "blocked", "dead"].map((tag) => ({ tag, tags: [tag] }))
+  expect(units.toSorted(bySeverity).map((unit) => unit.tag)).toEqual([
+    "dead",
+    "blocked",
+    "stopped",
+    "active",
+    "waiting",
+    "ended",
+  ])
+})
+
+test("the display table gives each state its glyph, tone and Gantt block", () => {
+  expect(DISPLAY["blocked"]).toEqual({ glyph: "⊖", tone: "warn", block: "█" })
+  expect([glyph("blocked"), tone("blocked")]).toEqual(["⊖", "warn"])
+  // `stalled` names no state now, and stays for an older file.
+  expect(DISPLAY["stalled"]).toEqual({ glyph: "‼", tone: "warn", block: "█" })
+  expect(DISPLAY["building"]).toEqual({ glyph: "◐", tone: "active", block: "▓", column: "BUILDING" })
+  expect(glyph("a-state-from-later")).toBe("•")
+})
+
+test("durations: 45s, 3m 12s, 1h 4m; live to now, still to the heartbeat, fixed from endedAt, blank unstarted", () => {
+  expect([elapsed(45_000), elapsed(192_000), elapsed(3_840_000)]).toEqual(["45s", "3m 12s", "1h 4m"])
+  const run = { aliveAt: 100_000 }
+  expect(durationOf({ startedAt: 10_000 }, run, "live", 55_000)).toBe("45s")
+  expect(durationOf({ startedAt: 10_000 }, run, "still", 55_000)).toBe("1m 30s")
+  expect(durationOf({ startedAt: 10_000, endedAt: 202_000 }, run, "live", 999_000)).toBe("3m 12s")
+  expect(durationOf({}, run, "live", 55_000)).toBe("")
+  // Still with no heartbeat (a file from before it): nothing to stop at.
+  expect(durationOf({ startedAt: 10_000 }, {}, "still", 55_000)).toBe("")
+})
+
+test("the old exports stay until T4.3, T4.7 and T4.8 retire their importers", () => {
+  expect(typeof poll).toBe("function")
+  expect(LIVE_WINDOW).toBe(300_000)
+  expect(ACTIVE).toContain("building")
+  expect(ENDED).toContain("done")
+})
+
+test("UI25 a status with no tags: still, the older-harness line, display glyphs and labels, and no classes", () => {
+  const legacy = Option.getOrThrow(parse(JSON.stringify(fixture)))
+  expect(older(legacy)).toBe(true)
+  expect(OLDER_LINE).toBe("status from an older harness — type /task to refresh")
+  expect(TaskView.livenessOf({ status: Option.some(legacy), now: Date.now() })).toBe("still")
+  expect([glyph(legacy.tasks["T1.4"].state), label(legacy.tasks["T1.4"].state)]).toEqual(["⊘", "budget exhausted"])
+  expect(Object.values(legacy.tasks).map(columnOf)).toEqual(Object.values(legacy.tasks).map(() => Option.none()))
+  expect(counts(legacy)).toEqual({ total: 6, trusted: 0, active: 0, stopped: 0 })
+  expect(focus(rows(legacy))).toBe("T1")
 })
 
 test("the peek shows the builder, the failed proof first, and the verifier", async () => {
@@ -201,7 +362,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
   const peek = await frame(() => <Peek {...props} unit="T1.4" width={70} lines={3} />)
   expect(peek).toContain("◆ In the Flow · T1.4 details · read-only")
   expect(peek).toContain("BUILDER  attempt 3 · budget exhausted")
-  expect(peek).toContain("✗ c8 failed")
+  expect(peek).toContain("✗ c7 failed")
   expect(peek).toContain("VERIFIER second try")
   expect(peek).toContain("✓ T1.4.c1 trusted")
   // At sidebar width the short title must still fit, and still say read-only.
@@ -211,7 +372,7 @@ test("the peek shows the builder, the failed proof first, and the verifier", asy
 })
 
 test("the shortcut bar names the design, its keys, and drops keys before it overflows", async () => {
-  const ledger = view()
+  const ledger = view(none, ended)
   const wide = await frame(() => <ShortcutBar {...ledger} width={200} />, 200, 3)
   // The run has ended, so Tab switches agents again and the bar offers `ctrl+x j/k` to select a task.
   expect(wide).toContain(
@@ -221,7 +382,7 @@ test("the shortcut bar names the design, its keys, and drops keys before it over
   const narrow = await frame(() => <ShortcutBar {...ledger} width={100} />, 100, 3)
   expect(narrow).toContain("◆ In the Flow Ledger  ctrl+x o expand  /task-design switch")
   expect(narrow).not.toContain("select task")
-  const ticker = view(none, status, 7)
+  const ticker = view(none, ended, 7)
   const line = await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)
   expect(line).toContain("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted  ctrl+x o expand")
   ticker.view.toggleExpanded()
@@ -230,14 +391,10 @@ test("the shortcut bar names the design, its keys, and drops keys before it over
 
 // --- the watch view -------------------------------------------------------------------------------------------------
 
-// The fixture run, live again: the given tasks in the given states.
-const live = (states: Record<string, string>) => {
-  const copy = structuredClone(fixture)
-  copy.run.state = "running"
-  const tasks: Record<string, { state: string }> = copy.tasks
-  for (const [id, state] of Object.entries(states)) tasks[id].state = state
-  return Option.getOrThrow(parse(JSON.stringify(copy)))
-}
+// The run live again, before T1.4's death reached its dependants: T1 and T1.5 waiting (T1.5 on T1.4), and the given
+// tasks in the given states.
+const live = (states: Record<string, string>) =>
+  restate({ state: "running", tags: ["active"] }, { T1: "waiting", "T1.5": "waiting", ...states }, { "T1.5": ["T1.4"] })
 
 const child = (id: string, role: string, created: number, again = false): Child => ({
   id,
@@ -258,7 +415,7 @@ test("Tab in the watch view moves to the next task in work, and does nothing wit
   expect(nextRunning(two, "T1.3", 1)).toEqual(Option.some("T1.4"))
   const one = rows(live({ "T1.4": "building" }))
   expect(Option.isNone(nextRunning(one, "T1.4", 1))).toBe(true)
-  expect(Option.isNone(nextRunning(rows(status), "T1.4", 1))).toBe(true)
+  expect(Option.isNone(nextRunning(rows(ended), "T1.4", 1))).toBe(true)
   createRoot((dispose) => {
     const state = createView({ status: () => live({ "T1.2": "verifying", "T1.4": "building" }), now: () => 0, design: 1 })
     expect(state.selected()).toBe("T1.2")
@@ -271,12 +428,12 @@ test("Tab in the watch view moves to the next task in work, and does nothing wit
 })
 
 test("a run is active until it ends, and waits on its waiting tasks' dependencies", () => {
-  expect(runActive(status)).toBe(false)
+  expect(runActive(ended)).toBe(false)
   expect(runActive(live({ "T1.4": "building" }))).toBe(true)
-  expect(waitsOn(status)).toEqual(["T1.4"])
+  expect(waitsOn(live({}))).toEqual(["T1.4"])
   // Without a live signal of its own, the view is live while the status says the run has not ended.
   createRoot((dispose) => {
-    expect(createView({ status: () => status, now: () => 0, design: 1 }).live()).toBe(false)
+    expect(createView({ status: () => ended, now: () => 0, design: 1 }).live()).toBe(false)
     expect(createView({ status: () => live({}), now: () => 0, design: 1 }).live()).toBe(true)
     expect(createView({ status: () => live({}), now: () => 0, design: 1, live: () => false }).live()).toBe(false)
     dispose()
@@ -333,8 +490,8 @@ test("with nothing in work the band names what the run waits on and the transcri
   expect(watch.keep).toBe(true)
   expect(watch.proofs).toBe("")
   // After the run has ended, nothing waits: the band says how the run ended.
-  const ended = chooseWatch({ status, task: "T1.4", children: builders, loaded: everyLoaded })
-  expect(bandText(ended)).toBe("◆ In the Flow Nothing is running · run: budget exhausted · watch only")
+  const after = chooseWatch({ status: ended, task: "T1.4", children: builders, loaded: everyLoaded })
+  expect(bandText(after)).toBe("◆ In the Flow Nothing is running · run: budget exhausted · watch only")
 })
 
 test("with no task in work, proofs written in the last seconds show: a parent's, or the scenarios'", () => {
@@ -400,9 +557,9 @@ test("while a run is active the bar offers Tab; in the watch view it shows only 
   const watching = await frame(() => <ShortcutBar {...running} width={200} />, 200, 3)
   expect(lineWith(watching, "◆")).toBe("◆ In the Flow Ledger  tab next running  ctrl+x w stop watching  esc stop run")
   // After the run ends, Tab and esc no longer act on the run: `ctrl+x j/k` selects, and the toggle stays.
-  const ended = view()
-  ended.view.setWatching(true)
-  const after = await frame(() => <ShortcutBar {...ended} width={200} />, 200, 3)
+  const stopped = view(none, ended)
+  stopped.view.setWatching(true)
+  const after = await frame(() => <ShortcutBar {...stopped} width={200} />, 200, 3)
   expect(lineWith(after, "◆")).toBe("◆ In the Flow Ledger  ctrl+x j/k select task  ctrl+x w stop watching")
 })
 
@@ -574,7 +731,7 @@ test("Tab selects the next task while the run is live, the next one in work in t
 })
 
 test("after the run ends, Tab is not taken: it reaches the agent key", async () => {
-  const plugin = await wired({ status })
+  const plugin = await wired({ status: ended })
   try {
     plugin.app.mockInput.pressTab()
     expect(await until(() => plugin.agent.moves === 1)).toBe(true)
