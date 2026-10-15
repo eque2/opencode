@@ -19,6 +19,7 @@ import { testRender, useRenderer } from "@opentui/solid"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Option, Result } from "effect"
+import { TextAttributes } from "@opentui/core"
 import { createRoot, createSignal, type JSX } from "solid-js"
 import { createOpencodeClient, type Part } from "@opencode-ai/sdk/v2"
 import type { TuiPluginApi, TuiRouteCurrent } from "@opencode-ai/plugin/tui"
@@ -59,8 +60,9 @@ import { MatrixView } from "../../src/task-ui/designs/4-matrix"
 import { GanttView, lane } from "../../src/task-ui/designs/5-gantt"
 import { HudView } from "../../src/task-ui/designs/6-hud"
 import { TickerDialog, changes } from "../../src/task-ui/designs/7-ticker"
-import { ShortcutBar, registerTab, type Ctx } from "../../src/task-ui/ui"
-import { nextRunning, proofLogFile, runActive, waitsOn } from "../../src/task-ui/store"
+import { Screen } from "../../src/task-ui/designs/screen"
+import { Brand, ShortcutBar, barKeys, registerTab, type Ctx } from "../../src/task-ui/ui"
+import { DESIGNS, nextRunning, proofLogFile, runActive, waitsOn } from "../../src/task-ui/store"
 import {
   ProofPanel,
   RECENT_PROOF,
@@ -664,19 +666,148 @@ test("the shortcut bar names the design, its keys, and drops keys before it over
   const ledger = await view(none, ended)
   const wide = await frame(() => <ShortcutBar {...ledger} width={200} />, 200, 3)
   // The run has ended, so Tab switches agents again and the bar offers `ctrl+x j/k` to select a task.
-  expect(wide).toContain(
-    "◆ In the Flow Ledger  ctrl+x o expand  /task-design switch  ctrl+x j/k select task  ctrl+x w watch",
-  )
+  // T4.9 re-baselined: the /task-design switch part is gone (UI13), and the Ticker's trusted count has its stopped
+  // count.
+  expect(wide).toContain("◆ In the Flow Ledger  ctrl+x o expand  ctrl+x j/k select task  ctrl+x w watch")
   expect(wide).not.toContain("trusted")
-  const narrow = await frame(() => <ShortcutBar {...ledger} width={100} />, 100, 3)
-  expect(narrow).toContain("◆ In the Flow Ledger  ctrl+x o expand  /task-design switch")
+  const narrow = await frame(() => <ShortcutBar {...ledger} width={90} />, 90, 3)
+  expect(narrow).toContain("◆ In the Flow Ledger  ctrl+x o expand")
   expect(narrow).not.toContain("select task")
   const ticker = await view(none, ended, 7)
   const line = await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)
-  expect(line).toContain("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted  ctrl+x o expand")
+  expect(line).toContain("◆ In the Flow Ticker  3/6 trusted  · 3 stopped  ⊘ T1.4 budget exhausted  ctrl+x o expand")
   ticker.view.toggleExpanded()
   await settle()
   expect(await frame(() => <ShortcutBar {...ticker} width={200} />, 200, 3)).toContain("ctrl+x o collapse")
+})
+
+// --- the shortcut bar and the In the Flow mark (T4.9: UI12, UI13, UI14, UI16) ----------------------------------------
+
+// The projected status with a run warning and T1.5 waiting on the untrusted outside T9.
+const alerted = (() => {
+  const raw = structuredClone(projected)
+  Object.assign(raw.run, { warning: "R3 a: b\nR4 c: d" })
+  Object.assign(raw.tasks["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T9"], waitingOnOutside: ["T9"], reason: null })
+  return Option.getOrThrow(parse(JSON.stringify(raw)))
+})()
+
+const barOf = async (input: Status, design: number, width = 240) => {
+  const props = await view(none, input, design)
+  return lineWith(await frame(() => <ShortcutBar {...props} width={width} />, width, 3), "In the Flow") ?? ""
+}
+
+test("UI13 no design's bar shows a /task-design switch part; /task-design stays a command", async () => {
+  for (const design of [1, 2, 3, 4, 5, 6, 7]) expect({ design, bar: (await barOf(status, design)).includes("/task-design") }).toEqual({ design, bar: false })
+  expect(barKeys((await view(none, status)).view, "ctrl+x").map((part) => part.key)).not.toContain("/task-design")
+})
+
+test("UI16 the bar's parts per design: the run warning and the outside wait first, the counts and the selected task where the design says", async () => {
+  // While live, Tab selects; the Ledger, the Dock and the HUD show the warning, the outside wait, then the keys.
+  for (const design of [1, 2, 6])
+    expect(await barOf(alerted, design)).toEndWith(
+      "In the Flow " + DESIGNS[design - 1].name + "  ! spec  /task trust T9 outside wait  ctrl+x o expand  tab select task  ctrl+x w watch",
+    )
+  for (const design of [3, 4, 5])
+    expect(await barOf(alerted, design)).toEndWith(
+      "In the Flow " + DESIGNS[design - 1].name + "  ! spec  /task trust T9 outside wait  ctrl+x o expand  tab select task  ctrl+x w watch  3/6 trusted  · 2 stopped",
+    )
+  expect(await barOf(alerted, 7)).toEndWith(
+    "In the Flow Ticker  ! spec  /task trust T9 outside wait  3/6 trusted  · 2 stopped  ⊘ T1.4 budget exhausted  ctrl+x o expand  tab select task  ctrl+x w watch",
+  )
+  // Not live: the select key reads ctrl+x j/k.
+  expect(await barOf(ended, 1)).toContain("ctrl+x j/k select task")
+  // A narrow bar drops parts from the end and keeps the warning and the outside wait.
+  expect(await barOf(alerted, 3, 110)).toEndWith("In the Flow Board  ! spec  /task trust T9 outside wait")
+  // The tones: the warning parts in the warning tone, the stopped count in the error tone.
+  const props = await view(none, alerted, 3)
+  const app = await testRender(() => <ShortcutBar {...props} width={240} />, { width: 240, height: 3 })
+  await app.renderOnce()
+  const spans = app.captureSpans().lines.flatMap((line) => line.spans)
+  const fg = (text: string) => spans.find((span) => span.text.includes(text))?.fg
+  expect([fg("! spec")?.r, fg("! spec")?.g]).toEqual([theme.warning.r, theme.warning.g])
+  expect([fg("/task trust T9")?.r, fg("/task trust T9")?.g]).toEqual([theme.warning.r, theme.warning.g])
+  expect([fg("· 2 stopped")?.r, fg("· 2 stopped")?.g]).toEqual([theme.error.r, theme.error.g])
+  app.renderer.destroy()
+})
+
+const FRAMES = ["·", "⬩", "⬪", "⬥", "◆", "⬥", "⬪", "⬩"]
+
+// The spinner elements under a renderable.
+const spinners = (node: { getChildren: () => unknown[] }): Array<{ frames: string[]; interval: number; color: unknown }> => [
+  ...("frames" in node && "interval" in node ? [node as unknown as { frames: string[]; interval: number; color: unknown }] : []),
+  ...node.getChildren().flatMap((child) => spinners(child as { getChildren: () => unknown[] })),
+]
+
+async function marks(node: () => JSX.Element, width = 160, height = 40) {
+  const app = await testRender(node, { width, height })
+  try {
+    await app.renderOnce()
+    return { found: spinners(app.renderer.root), spans: app.captureSpans(), text: app.captureCharFrame() }
+  } finally {
+    app.renderer.destroy()
+  }
+}
+
+test("UI14 the mark's diamond is a spinner of · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 120 ms in the accent tone while live, then In the Flow in bold", async () => {
+  const shown = await marks(() => <Brand theme={() => theme} moving={true} />)
+  expect(shown.found).toHaveLength(1)
+  expect(shown.found[0].frames).toEqual(FRAMES)
+  expect(shown.found[0].interval).toBe(120)
+  expect(FRAMES.every((cell) => Bun.stringWidth(cell) === 1)).toBe(true)
+  const name = shown.spans.lines.flatMap((line) => line.spans).find((span) => span.text.includes("In the Flow"))
+  expect(name?.text.startsWith(" In the Flow")).toBe(true)
+  expect(((name?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(true)
+  expect([name?.fg.r, name?.fg.g, name?.fg.b]).toEqual([theme.accent.r, theme.accent.g, theme.accent.b])
+  // Static: a ◆ that is not bold, in the accent tone; the name keeps its weight.
+  const still = await marks(() => <Brand theme={() => theme} moving={false} />)
+  expect(still.found).toHaveLength(0)
+  const diamond = still.spans.lines.flatMap((line) => line.spans).find((span) => span.text.startsWith("◆"))
+  expect(((diamond?.attributes ?? 0) & TextAttributes.BOLD) !== 0).toBe(false)
+  expect(still.text).toContain("◆ In the Flow")
+})
+
+test("UI14 UI12 the diamond moves only while live and with animations on; every Brand site carries it", async () => {
+  const motion = () => true
+  const props = async (input: Status, design: number) => ({ ...(await view(none, input, design)), motion })
+  // Live, motion on: each site has the spinner.
+  const ledgerProps = await props(status, 1)
+  const dockProps = await props(status, 2)
+  const hudProps = await props(status, 6)
+  const screenProps = await props(status, 3)
+  const tickerProps = await props(status, 7)
+  const sites = [
+    await marks(() => <LedgerView {...ledgerProps} width={38} />),
+    await marks(() => <DockView {...dockProps} width={160} />),
+    await marks(() => <HudView {...hudProps} />),
+    await marks(() => <Screen {...screenProps} width={160} height={40} />),
+    await marks(() => <TickerDialog {...tickerProps} />),
+    await marks(() => <ShortcutBar {...ledgerProps} width={200} />),
+  ]
+  expect(sites.map((site) => site.found.length >= 1)).toEqual([true, true, true, true, true, true])
+  // Ended, still, or animations off: no spinner, a static ◆.
+  const endedProps = await props(ended, 1)
+  expect((await marks(() => <LedgerView {...endedProps} width={38} />)).found).toHaveLength(0)
+  const stillProps = { ...(await view(none, status, 1)), motion, view: (await viewFor(status, { design: 1, now: (status.run.aliveAt ?? 0) + 60_000 })).view }
+  expect((await marks(() => <LedgerView {...stillProps} width={38} />)).found).toHaveLength(0)
+  const offProps = { ...(await view(none, status, 1)), motion: () => false }
+  const off = await marks(() => <LedgerView {...offProps} width={38} />)
+  expect(off.found).toHaveLength(0)
+  expect(off.text).toContain("◆ In the Flow run: running")
+  // The Peek's border title stays static text.
+  const peekProps = await props(status, 1)
+  const peek = await marks(() => <Peek {...peekProps} unit="T1.4" width={60} lines={3} />)
+  expect(peek.found).toHaveLength(0)
+  expect(peek.text).toContain("◆ In the Flow · T1.4 details · read-only")
+})
+
+test("UI14 the watch band's mark moves while the run is live and the host allows it", async () => {
+  const watch = chooseWatch({ status: live({ "T1.4": "building" }), task: "T1.4", children: builders, loaded: everyLoaded })
+  const moving = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={true} motion={true} />, 120, 6)
+  expect(moving.found).toHaveLength(1)
+  const resting = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={false} motion={true} />, 120, 6)
+  expect(resting.found).toHaveLength(0)
+  const off = await marks(() => <WatchBand theme={() => theme} watch={watch} width={120} live={true} motion={false} />, 120, 6)
+  expect(off.found).toHaveLength(0)
 })
 
 // --- the watch view -------------------------------------------------------------------------------------------------

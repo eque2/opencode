@@ -274,7 +274,8 @@ test("the plugin follows a new status file through its one-second poll", async (
 
   // Ticker puts the run's progress and the selected task in the shortcut bar.
   plugin.openPicker().select(7)
-  expect(await plugin.shows("◆ In the Flow Ticker  3/6 trusted  ⊘ T1.4 budget exhausted")).toBe(true)
+  // T4.9 re-baselined: the trusted count has its stopped count.
+  expect(await plugin.shows("◆ In the Flow Ticker  3/6 trusted  · 3 stopped  ⊘ T1.4 budget exhausted")).toBe(true)
 
   const next = structuredClone(fixture)
   Object.assign(next.tasks["T1.4"], { state: "trusted", tags: ["ended"] })
