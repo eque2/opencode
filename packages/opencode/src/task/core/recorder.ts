@@ -66,7 +66,7 @@ export const make = Effect.fn("TaskRecorder.make")(function* (input: {
           if (snapshot.status !== "active") return yield* Effect.void
           const stamped = stamp(fact, Math.max(yield* Clock.currentTimeMillis, floor))
           yield* TaskEvents.publish(input.events, input.runID, stamped)
-          yield* actor.send(stamped)
+          return yield* actor.send(stamped)
         }),
       ),
     )
