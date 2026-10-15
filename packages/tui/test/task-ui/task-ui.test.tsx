@@ -557,10 +557,18 @@ test("T4.5 a waiting task: the wait sentences, plan ids first, in their tones; t
   ])
   // T9 trusted: no trust sentence for it.
   const trusted = changed((raw) => {
-    Object.assign(tasksIn(raw)["T1.5"], { state: "waiting", tags: ["waiting"], waitingOn: ["T9"], waitingOnOutside: ["T9"] })
+    Object.assign(tasksIn(raw)["T1.5"], {
+      state: "waiting",
+      tags: ["waiting"],
+      waitingOn: ["T9"],
+      waitingOnOutside: ["T9"],
+      reason: null,
+    })
     Object.assign(raw, { outside: { ...raw.outside, T9: { state: "trusted", tags: ["ended"] } } })
   })
   expect(waitSentences(trusted, trusted.tasks["T1.5"])).toEqual([])
+  // With no sentence left, the heading falls back to the state line rather than an empty one.
+  expect(builderHeading(trusted, "T1.5", "live", 0)).toEqual([{ text: "waiting", tone: "text" }])
   const props = await view(none, waitingT15)
   const shown = await spansOf(() => <Peek {...props} unit="T1.5" width={44} lines={3} />)
   const lines = inside(shown.text)
