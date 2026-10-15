@@ -49,7 +49,7 @@
 | T3.11   | task       | completed                               |
 | T4.1    | task       | completed                               |
 | T4.2    | task       | completed                               |
-| T4.3    | task       | not_started                             |
+| T4.3    | task       | completed                               |
 | T4.4    | task       | not_started                             |
 | T4.5    | task       | not_started                             |
 | T4.6    | task       | not_started                             |
