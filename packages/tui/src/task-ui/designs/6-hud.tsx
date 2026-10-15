@@ -18,7 +18,17 @@ import {
   tokensText,
   type Row,
 } from "../store"
-import { Brand, runText, stateText, trustedText, type Ctx, type ViewProps } from "../ui"
+import {
+  Brand,
+  OlderLine,
+  TrustedCount,
+  runText,
+  stateText,
+  stoppedText,
+  trustedText,
+  type Ctx,
+  type ViewProps,
+} from "../ui"
 
 const WIDTH = 44
 const PEEK = 64
@@ -76,9 +86,17 @@ export function HudView(props: ViewProps) {
                 {runText(status())}
               </text>
             </box>
-            <text fg={props.theme().success} wrapMode="none">
-              {`${bar(counts(status()).trusted, counts(status()).total, inner - 13)} ${trustedText(status())}`}
-            </text>
+            {/* The bar shrinks by the width of the stopped count, so the line keeps the panel's width. */}
+            <TrustedCount
+              theme={props.theme}
+              status={status()}
+              bar={bar(
+                counts(status()).trusted,
+                counts(status()).total,
+                inner - 1 - trustedText(status()).length - stoppedText(status()).length,
+              )}
+            />
+            <OlderLine theme={props.theme} status={status()} width={inner} />
             <Show when={selected()}>
               {(row) => (
                 <text fg={stateColor(props.theme(), row().task.state)} wrapMode="none">
