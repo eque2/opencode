@@ -6,7 +6,7 @@ import { TextAttributes } from "@opentui/core"
 import { Option, Result } from "effect"
 import type { JSX } from "solid-js"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
-import { TaskHeader, headerOf, splitHeader } from "../../src/routes/session/task-header"
+import { MessageBody, TaskHeader, headerOf, shows, splitHeader } from "../../src/routes/session/task-header"
 
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 
@@ -102,11 +102,43 @@ test("header: the transcript splits the header part from the other text parts; a
   expect(Option.map(older.header, (header) => header.task?.title)).toEqual(Option.some("Compute the next version"))
 })
 
-test("header: the session route's user message splits its parts and draws the header with TaskHeader", async () => {
-  // The route needs the app's providers to render; its user message reads the split and the component.
+test("header: a message that holds only the header shows, and draws the header; one with neither shows nothing", async () => {
+  const headerOnly = splitHeader([
+    {
+      type: "text" as const,
+      text: "Implementing spec **Release notes from conventional commits**",
+      metadata: meta(whole),
+    },
+  ])
+  expect(shows(headerOnly)).toBe(true)
+  expect(shows(splitHeader([]))).toBe(false)
+  expect(shows(splitHeader([{ type: "text" as const, text: "context", synthetic: true }]))).toBe(false)
+  const shown = await render(() => <MessageBody theme={theme} split={headerOnly} />)
+  expect(lines(shown.text)).toEqual(["Implementing spec Release notes from conventional commits"])
+  // The header, then the message's other texts.
+  const both = splitHeader([
+    { type: "text" as const, text: "x", metadata: meta(whole) },
+    { type: "text" as const, text: "The stored run could not be resumed (x), so a new run started." },
+  ])
+  expect(lines((await render(() => <MessageBody theme={theme} split={both} />)).text)).toEqual([
+    "Implementing spec Release notes from conventional commits",
+    "The stored run could not be resumed (x), so a new run started.",
+  ])
+  // Header-like text with no metadata is plain text: nothing is parsed from it.
+  const plain = splitHeader([{ type: "text" as const, text: "Implementing spec **Something**" }])
+  expect(plain.header).toEqual(Option.none())
+  expect(lines((await render(() => <MessageBody theme={theme} split={plain} />)).text)).toEqual([
+    "Implementing spec **Something**",
+  ])
+})
+
+test("header: the session route's user message shows by the split and draws its body with MessageBody", async () => {
+  // The route needs the app's providers to render; its user message reads the split, the guard and the body.
   const route = await Bun.file(new URL("../../src/routes/session/index.tsx", import.meta.url)).text()
   const user = route.slice(route.indexOf("function UserMessage("), route.indexOf("function AssistantMessage("))
-  expect(user).toContain("splitHeader(props.parts)")
-  expect(user).toContain("<TaskHeader theme={theme} header={value()} />")
+  expect(user).toContain("const split = createMemo(() => splitHeader(props.parts))")
+  expect(user).toContain("<Show when={shows(split())}>")
+  expect(user).toContain("<MessageBody theme={theme} split={split()} />")
+  expect(user).not.toMatch(/<Show when=\{text\(\)\}>/)
   expect(user).not.toMatch(/x\.type === "text" && !x\.synthetic && x\.text/)
 })
