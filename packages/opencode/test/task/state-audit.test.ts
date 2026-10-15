@@ -279,6 +279,7 @@ const FINAL: ReadonlyArray<Entry> = [
   { file: opencode("core/status.ts"), identifier: "TaskStateSchema", reason: SCHEMA },
   { file: opencode("core/status.ts"), identifier: "ObligationStateSchema", reason: SCHEMA },
   { file: opencode("core/status.ts"), identifier: "ScenarioStateSchema", reason: SCHEMA },
+  { file: opencode("core/status.ts"), identifier: "OutsideStateSchema", reason: SCHEMA },
   {
     file: opencode("engine-xstate/machine.ts"),
     identifier: "CLASS",

@@ -129,6 +129,8 @@ export interface Plan {
   /** The spec folder, relative to the session directory, and the `/task` path. */
   readonly specPath: string
   readonly path: string
+  /** The task of a subtree run (`/task <spec>/<task folder>`); absent for a whole-spec run. */
+  readonly root?: string
   /** The tasks under the path (a parent and its leaves). */
   readonly tasks: ReadonlyArray<BlendModel.Task>
   /** The scenarios whose `needs` are all under the path or `outside`. */

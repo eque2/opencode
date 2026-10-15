@@ -108,14 +108,12 @@ const now = Clock.currentTimeMillis
 /** The run's state as `State`: the snapshot read through the engine's `view`. */
 const stateOf = (run: Run) => Effect.map(Ref.get(run.state), TaskEngineXState.view)
 
-const view = Effect.fnUntraced(function* (run: Run) {
-  return { plan: run.plan, snapshot: yield* Ref.get(run.state) } satisfies TaskStatus.Input
+const writeStatus = Effect.fnUntraced(function* (run: Run) {
+  yield* TaskStatus.write(run.directory, TaskStatus.project(run.plan, yield* Ref.get(run.state)))
 })
 
-const writeStatus = Effect.fnUntraced(function* (run: Run) {
-  const input = yield* view(run)
-  yield* TaskStatus.write(run.directory, TaskStatus.project(input))
-})
+/** Whether the run machine holds a unit trusted: a plan task, an `outside` or an external region. */
+const trustedIn = (snapshot: RunSnapshot) => (id: string) => TaskEngineXState.unitState(snapshot, id) === "trusted"
 
 /**
  * The only way the state changes: the fact is stored, folded, and the status file rewritten. Uninterruptible, so
@@ -429,7 +427,7 @@ const build = Effect.fnUntraced(function* (run: Run, task: BlendModel.Task) {
         reopen: reopened(spec, state, model),
         task,
         spec,
-        trusted: TaskStatus.trusted(yield* view(run)),
+        trusted: trustedIn(yield* Ref.get(run.state)),
       })
     : TaskSessions.continueMessage
   let nudges = 0

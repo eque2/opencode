@@ -76,7 +76,7 @@ describe("the status contract (AD-13)", () => {
       // A scenario: the loader's title with no leading id; a parked one shows waiting.
       expect(status.scenarios["S13"]).toMatchObject({ state: "blocked", tags: ["ended", "stopped", "blocked"] })
       expect(status.scenarios["S2"]).toMatchObject({ state: "pending", tags: ["active"], waitingOn: [] })
-      expect(status.scenarios["S2"]?.title).toBe(plan.scenarios.find((item) => item.id === "S2")?.title)
+      expect(status.scenarios["S2"]?.title).toBe(plan.scenarios.find((item) => item.id === "S2")?.title ?? "no title")
       expect(status.scenarios["S2"]?.title.startsWith("S2")).toBe(false)
       // The outside preconditions, and no external region in a whole-spec run.
       expect(status.outside).toEqual({
@@ -98,6 +98,7 @@ describe("the status contract (AD-13)", () => {
         ...trustLeaf(plan, f, "T1.2"),
         ...trustLeaf(plan, f, "T1.3"),
         ...trustLeaf(plan, f, "T1.4"),
+        f.outside("T9"),
         f.started("T1.5"),
       ]
       const status = project(plan, tasks)
@@ -145,7 +146,7 @@ describe("the status contract (AD-13)", () => {
       const plan = yield* loadPlan("release-notes.spec", "T1.5")
       const status = project(plan, [facts().runStarted()])
       const root = plan.spec.tasks.find((task) => task.id === "T1.5")
-      expect(status.run.task).toEqual({ id: "T1.5", title: root?.title })
+      expect(status.run.task).toEqual({ id: "T1.5", title: root?.title ?? "no title" })
       expect(status.external).toEqual({
         "T1.3": { state: "untrusted", tags: ["waiting"] },
         "T1.4": { state: "untrusted", tags: ["waiting"] },

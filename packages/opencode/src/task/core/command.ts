@@ -103,6 +103,7 @@ export const plan = (input: {
     spec,
     specPath: input.specPath,
     path: input.path,
+    ...Option.match(input.root, { onNone: () => ({}), onSome: (root) => ({ root }) }),
     tasks,
     scenarios: spec.scenarios.filter((scenario) => scenario.needs.every((id) => ids.includes(id) || id in spec.outside)),
     external: tasks

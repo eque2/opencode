@@ -156,14 +156,16 @@ describe("the status projection", () => {
     }),
   )
 
-  it.live("a status file written before the change still decodes", () =>
+  // Re-baselined (AD-13): the contract adds required fields (tags, spec id, title, spans, outside, external), so a
+  // status file written before it no longer decodes with the harness's schema. Readers decode it with the TUI's open
+  // schema, whose new fields are optional (packages/tui test "SV17 decodes the shared projected status ...").
+  it.live("a status file written before the contract does not decode with the contract's schema", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const old = yield* fs.readFileString(
         path.resolve(import.meta.dir, "../../../tui/test/task-ui/fixture-status.json"),
       )
-      const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(old)
-      expect(Object.keys(decoded.tasks).length).toBeGreaterThan(0)
+      expect(Option.isNone(Schema.decodeUnknownOption(Schema.fromJsonString(TaskStatus.Status))(old))).toBe(true)
     }),
   )
 
