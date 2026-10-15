@@ -25,7 +25,8 @@ Tab, `esc` twice and the watch view act only on a live run, in the session that 
 
 - **States by their tags.** Every grouping reads a unit's tags from the status file (`waiting`, `active`, `ended`,
   `stopped`, `blocked`, `dead`): the Board columns, the STOPPED groups and the counts. The display table `DISPLAY`
-  (`store.ts`) gives a state name only its glyph, its tone and its Gantt block.
+  (`store.ts`) gives a state name its glyph, its tone and its Gantt block, and an active phase its Board column
+  (BUILDING, PROVING or VERIFYING); the tags choose whether a task is active, and every other column.
 - **Reasons.** Each expanded view has a shared region (`shared.tsx`): the run warning when the spec stopped
   validating, the outside wait lines (`waiting on T9 (outside) — run /task trust T9`), the STOPPED list with each
   stopped task's reason, and the SCENARIOS list. The Peek's heading says why a task stopped or what it waits on.
