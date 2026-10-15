@@ -16,7 +16,7 @@ import { TaskLimits } from "@/task/limits"
 import { TaskEvents } from "./events"
 import type { TaskHarness } from "./harness"
 import type { Fact, Plan } from "./model"
-import type { Ops } from "./ops"
+import type { Ops, PromptInput } from "./ops"
 import { TaskRecorder } from "./recorder"
 import type { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
@@ -265,6 +265,12 @@ export const diedLine = (slice: Slice) =>
     (error) => `The stored run could not be resumed (${error.replace(/\s*\n\s*/g, " | ")}), so a new run started.`,
   )
 
+/** The parts of a run's first message: the header, then the note of a stored run that could not resume. */
+export const headerParts = (plan: Plan, slice: Slice): PromptInput["parts"] => [
+  { type: "text", ...header(plan) },
+  ...Option.toArray(Option.map(diedLine(slice), (text) => ({ type: "text" as const, text }))),
+]
+
 /** Everything the job of a run needs, resolved by `/task`. */
 export interface Start {
   readonly harness: TaskHarness.Interface
@@ -504,15 +510,11 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
       yield* harness.release(directory, id)
       return yield* reply(`Task harness: the run of ${specPath} is already going on.`)
     }
-    // The run header, then the note of a stored run that could not resume, as its own part.
     return yield* ops.prompt({
       sessionID: input.sessionID,
       agent: input.agent ?? "",
       model,
-      parts: [
-        { type: "text", ...header(runPlan) },
-        ...Option.toArray(Option.map(diedLine(slice), (text) => ({ type: "text" as const, text }))),
-      ],
+      parts: headerParts(runPlan, slice),
       noReply: true,
     })
   }, Effect.provide(platform))
