@@ -6,7 +6,6 @@ import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { InstanceStore } from "@/project/instance-store"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import type { HarnessHooks, HookEvent, Owner } from "./hooks"
@@ -263,12 +262,14 @@ const layer = Layer.effect(Service, make).pipe(Layer.provide(Layer.mergeAll(Node
 
 /**
  * A global node (AD-8): the services the run's actors use are its dependencies, because the port's `createActor`
- * requires them; it never depends on `SessionPrompt`, which depends on it.
+ * requires them; it never depends on `SessionPrompt`, which depends on it. The workers reach the instance store
+ * through the run's env, not the context, so `InstanceStore` is no dependency: it would bind the instance bootstrap
+ * into every graph that holds `SessionPrompt`.
  */
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Session.node, SessionStatus.node, InstanceStore.node, EventV2Bridge.node, BackgroundJob.node, Database.node],
+  deps: [Session.node, SessionStatus.node, EventV2Bridge.node, BackgroundJob.node, Database.node],
 })
 
 export * as TaskHarness from "./harness"
