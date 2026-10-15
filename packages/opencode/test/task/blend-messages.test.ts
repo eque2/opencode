@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import path from "path"
 import { Effect, Result, Schema } from "effect"
 import { BlendDocument } from "@/task/blend/document"
 import { BlendSchema } from "@/task/blend/schema"
@@ -220,4 +222,70 @@ describe("BlendDocument.decode messages", () => {
       expect(problems(item.schema, item.yaml)).toEqual(item.expected)
     })
   }
+})
+
+// The JSON schemas in task-formats/blend/schema and the Effect schemas must require the same top-level keys (T3.1:
+// `ensures` is required in both). The Effect side is measured: each key of a valid sample whose removal the decoder
+// refuses as a missing property.
+const schemaDir = path.resolve(import.meta.dir, "../../../../task-formats/blend/schema")
+const jsonRequired = (file: string): ReadonlyArray<string> => {
+  const parsed: { readonly required?: ReadonlyArray<string> } = JSON.parse(
+    readFileSync(path.join(schemaDir, file), "utf8"),
+  )
+  return [...(parsed.required ?? [])].toSorted()
+}
+const effectRequired = (schema: Schema.ConstraintDecoder<unknown>, sample: Record<string, unknown>) => {
+  expect(problems(schema, JSON.stringify(sample))).toEqual([])
+  return Object.keys(sample)
+    .filter((key) => {
+      const rest = Object.fromEntries(Object.entries(sample).filter(([other]) => other !== key))
+      return problems(schema, JSON.stringify(rest)).includes(`(root): '${key}' is a required property`)
+    })
+    .toSorted()
+}
+
+describe("the JSON schemas and the Effect schemas require the same top-level keys", () => {
+  test("VERIFY.md: both require ensures, and only ensures", () => {
+    const sample = {
+      gates: ["BUILD-1"],
+      hint: "test/a.test.ts",
+      ensures: { c1: { text: "a", category: "happy-path" } },
+      preserves: { p1: { text: "b", proof: { unchanged: "src/b.ts" } } },
+      forbids: { f1: { text: "c", proof: { unchanged: "src/c.ts" } } },
+      rejects: { c1: ["d"] },
+      policy: { budgets: { taskAttempts: 1 } },
+    }
+    expect(jsonRequired("verify.schema.json")).toEqual(["ensures"])
+    expect(effectRequired(BlendSchema.VerifyFrontMatter, sample)).toEqual(["ensures"])
+  })
+
+  test("SPEC.md, TASK.md and scenario files: the two required lists are equal", () => {
+    const spec = {
+      format: "task-spec/1",
+      policy: {
+        redFirst: true,
+        proofBinding: "title-tag",
+        structural: "touches-plus-tests",
+        review: "parent-diff",
+        trust: "independent-verifier",
+        acceptance: "after-all-needs-trusted",
+        evidence: ["exit-code"],
+        budgets: { taskAttempts: 3, retries: 2 },
+        judges: { test: ["runner"], gate: ["runner"], unchanged: ["engine"], review: ["reviewer"] },
+      },
+      gates: {},
+      refs: {},
+      outside: { T9: "a precondition" },
+    }
+    const task = {
+      after: ["T1.1"],
+      touches: [{ path: "src/a.ts", change: "new", what: "a" }],
+      refs: ["EX-D1"],
+      notHere: [{ what: "b", owner: "T1.2" }],
+    }
+    const scenario = { needs: ["T1.1"], category: "a", environment: { kind: "local" } }
+    expect(effectRequired(BlendSchema.SpecFrontMatter, spec)).toEqual(jsonRequired("spec.schema.json"))
+    expect(effectRequired(BlendSchema.TaskFrontMatter, task)).toEqual(jsonRequired("task.schema.json"))
+    expect(effectRequired(BlendSchema.ScenarioFrontMatter, scenario)).toEqual(jsonRequired("scenario.schema.json"))
+  })
 })
