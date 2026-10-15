@@ -272,6 +272,7 @@ export const machine = setup({
     mark: fromEffect(({ input }: { input: Parameters<typeof markStale>[0] }) => markStale(input)),
     batch: fromEffect(({ input }: { input: Parameters<typeof proveBatch>[0] }) => proveBatch(input)),
     finish: fromEffect(({ input }: { input: Parameters<typeof finish>[0] }) => finish(input)),
+    summary: fromEffect(({ input }: { input: { run: TaskWorkers.Run } }) => TaskWorkers.summary(input.run)),
     record: fromEffect(({ input }: { input: Parameters<typeof recordFact>[0] }) => recordFact(input)),
     task: TaskSupervisor.machine,
     scenario: ScenarioSupervisor.machine,
@@ -293,6 +294,7 @@ export const machine = setup({
           !ended(snapshot) && readyScenarios(context.run.plan, snapshot).some((id) => !context.proved.includes(id)),
       }),
     batchFailureLeft: ({ context }) => context.batchFailures + 1 < FAILURE_LIMIT,
+    outcome: ({ context }) => context.defect === "",
   },
   actions: {
     // A failed touch or stale check is logged; it counts toward no failure rule and records no fact.
@@ -502,6 +504,16 @@ export const machine = setup({
                   release: context.release,
                   defect: context.defect,
                 }),
+                // The run machine is done: the closing summary, after the lease is free (UI24); a run actor that
+                // stopped with an error has no outcome to sum up.
+                onDone: [{ guard: "outcome", target: "summarizing" }, { target: "closed" }],
+                onError: [{ guard: "outcome", target: "summarizing" }, { target: "closed" }],
+              },
+            },
+            summarizing: {
+              invoke: {
+                src: "summary",
+                input: ({ context }) => ({ run: context.run }),
                 onDone: "closed",
                 onError: "closed",
               },

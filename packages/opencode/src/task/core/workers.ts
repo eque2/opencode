@@ -16,6 +16,7 @@ import type { Plan, Result as Proved, State, TaskModel, Verdict } from "./model"
 import type { Recorder, Unstamped } from "./recorder"
 import { TaskSessions } from "./sessions"
 import { TaskStatus } from "./status"
+import { TaskSummary } from "./summary"
 import { TaskWorkspace } from "./workspace"
 
 // The stateless workers of a run (spine AD-8, AD-11, D7): each one runs one Effect and returns, and none keeps
@@ -537,6 +538,31 @@ export const record = (run: Run, fact: Unstamped) => run.recorder.record(fact)
 
 /** Asks the status writer to rewrite the last snapshot with a fresh heartbeat; fire and forget. */
 export const touch = (run: Run) => run.recorder.touch
+
+/**
+ * The closing summary (D18, AD-18): built from the run actor's final snapshot and the summed usage of the run's
+ * sessions (the root's child sessions), then said in the root session with no model call. A failure is logged; a
+ * summary the supervisor stops before it is written (a cancel past its deadline) is logged as dropped.
+ */
+export const summary = (run: Run) =>
+  Effect.gen(function* () {
+    const snapshot = yield* run.recorder.actor.getSnapshot
+    // The run's sessions: the root's child sessions (AD-18).
+    const spent = yield* run.env.sessions.children(run.root)
+    const text = TaskSummary.markdown({
+      plan: run.plan,
+      status: TaskStatus.project(run.plan, snapshot),
+      stop: TaskEngineXState.stopOf(snapshot),
+      warned: TaskEngineXState.warned(snapshot),
+      usage: TaskSummary.usage(spent),
+    })
+    yield* run.env.ops.say({ sessionID: run.root, text })
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logError("task harness: the closing summary could not be written", { runID: run.id, cause }),
+    ),
+    Effect.onInterrupt(() => Effect.logWarning("task harness: the closing summary was dropped", { runID: run.id })),
+  )
 
 // --- the session events of a turn -----------------------------------------------------------------------------------
 
