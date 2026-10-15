@@ -236,7 +236,11 @@ export const entryPieces = (entry: ScenarioEntry, width: number): ReadonlyArray<
     : labelLength
   const labelPieces = fit(entry.label, labelRoom)
   const titleRoom = Math.max(0, room - textOf(labelPieces).length)
-  return [lead, ...labelPieces, { text: " · ", tone: "muted" }, { text: cut(entry.title, titleRoom), tone: "text" }]
+  // A long blocked reason can still overflow the column: the entry is cut with `…`.
+  return fit(
+    [lead, ...labelPieces, { text: " · ", tone: "muted" }, { text: cut(entry.title, titleRoom), tone: "text" }],
+    width,
+  )
 }
 
 /** The reason under an entry: indented 4 cells, at most 2 lines, cut with `…`. */
@@ -296,7 +300,7 @@ export const regionRows = (status: Status, width: number) => {
   const cells = columns.length === 2 ? Math.floor((width - 3) / 2) : width
   return (
     (warning ? warning.lines.length + 2 : 0) +
-    outsideWaits(status).length +
+    outsideWaits(status).reduce((sum, id) => sum + wrap(outsideLine(id), width).length, 0) +
     (stopped.length > 0 ? stopped.length + 1 : 0) +
     1 +
     Math.max(0, ...columns.map((column) => height(column, cells)))
@@ -353,10 +357,10 @@ export function SharedRegion(props: {
               </box>
             )}
           </Show>
-          <For each={outsideWaits(current())}>
-            {(id) => (
-              <text fg={props.theme().warning} wrapMode="word">
-                {outsideLine(id)}
+          <For each={outsideWaits(current()).flatMap((id) => wrap(outsideLine(id), props.width))}>
+            {(line) => (
+              <text fg={props.theme().warning} wrapMode="none">
+                {line}
               </text>
             )}
           </For>
