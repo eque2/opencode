@@ -271,10 +271,28 @@ test("decodes the AD-13 fields as optional and keeps an unknown tag that nothing
   expect(status.scenarios["S2"].title).toBe("A conventional message is read into its parts")
   expect(status.outside?.["T9"]).toEqual({ state: "untrusted", tags: ["waiting"] })
   expect(status.external).toEqual({})
-  // A tag the task-ui does not know changes no classification.
-  const strange = restate({ state: "running", tags: ["active", "comet"] }, {})
-  expect(counts(strange)).toEqual(counts(status))
+  // A tag the task-ui does not know changes no classification, on the run or on a task.
+  const copy = structuredClone(projected)
+  copy.run.tags = ["active", "comet"]
+  Object.assign(copy.tasks["T1.2"], { state: "building", tags: ["active", "comet"] })
+  const strange = Option.getOrThrow(parse(JSON.stringify(copy)))
+  expect(strange.tasks["T1.2"].tags).toEqual(["active", "comet"])
+  expect(columnOf(strange.tasks["T1.2"])).toEqual(Option.some("BUILDING"))
+  expect(counts(strange)).toEqual({ total: 6, trusted: 2, active: 1, stopped: 3 })
+  expect(runActive(strange)).toBe(true)
   expect(older(status)).toBe(false)
+  // The run fields the fixture leaves out decode when present: a subtree's task, the warning, the end time.
+  const full = structuredClone(projected)
+  Object.assign(full.run, {
+    task: { id: "T1.2", title: "Compute the next version" },
+    warning: "R3 T1-release-notes.task/T1.1-commit-parser.task/VERIFY.md: obligation T1.1.c9 is not in the loaded plan",
+    endedAt: 99,
+  })
+  expect(Option.getOrThrow(parse(JSON.stringify(full))).run).toMatchObject({
+    task: { id: "T1.2", title: "Compute the next version" },
+    warning: "R3 T1-release-notes.task/T1.1-commit-parser.task/VERIFY.md: obligation T1.1.c9 is not in the loaded plan",
+    endedAt: 99,
+  })
 })
 
 test("classifies from the tags, not the state names: column, counts, focus, next running and severity", () => {
@@ -291,6 +309,8 @@ test("classifies from the tags, not the state names: column, counts, focus, next
   expect(counts(mixed)).toEqual({ total: 6, trusted: 2, active: 1, stopped: 3 })
   expect(focus(rows(mixed))).toBe("T1.2")
   expect(nextRunning(rows(mixed), "T1.1", 1)).toEqual(Option.some("T1.2"))
+  // T1.2 is the only task the tags put in work (T1.1's state still says building): there is no other to step to.
+  expect(nextRunning(rows(mixed), "T1.2", 1)).toEqual(Option.none())
   // STOPPED groups: dead, then blocked, then the rest; the severity order of AD-16.
   expect(
     [status.tasks["T1.4"], status.tasks["T1.5"], { state: "cancelled", tags: ["ended", "stopped"] }].map((task) =>
