@@ -321,6 +321,16 @@ export const durationOf = (
   return run.aliveAt === undefined ? "" : elapsed(run.aliveAt - task.startedAt)
 }
 
+/**
+ * The run span (D21): from `run.startedAt` to `run.endedAt`; to now while live; to the heartbeat while still. The HUD
+ * elapsed time and the Gantt axis read it.
+ */
+export const runSpan = (status: Status, liveness: Liveness, now: number) => {
+  const start = status.run.startedAt ?? now
+  const end = status.run.endedAt ?? (liveness === "live" ? now : (status.run.aliveAt ?? now))
+  return { start, end: Math.max(end, start + 1) }
+}
+
 // --- the designs ---------------------------------------------------------------------------------------------------
 
 /** The designs, and where each one shows: the picker and the switch notice say it, so a design is never hard to find. */

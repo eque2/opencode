@@ -1,35 +1,42 @@
-// Design 5, Gantt: the run as time. One lane per task, coloured by its state over time from the status history, so
-// a retry loop or a long wait shows as a shape, not a number.
+// Design 5, Gantt: the run as time. One lane per task, drawn from the task's spans (AD-5) across the run span, so a
+// retry loop or a long wait shows as a shape, not a number. The display table gives each state its block and tone.
 import { For, createMemo } from "solid-js"
-import { ENDED, cut, elapsed, glyph, stateColor, type Status } from "../store"
+import { DISPLAY, cut, durationOf, elapsed, glyph, runSpan, stateColor, type Liveness, type Status, type TaskStatus } from "../store"
 import { stateText, treePrefix, type ViewProps } from "../ui"
 import type { View } from "../view"
 
 const LABEL = 11
-const RIGHT = 30
+// The right column: a space, the duration (7 cells), a space, the state text (21 cells).
+const DURATION = 7
+const STATE = 21
+const RIGHT = 1 + DURATION + 1 + STATE
+// The lane narrows first, down to this.
+const LANE_MIN = 10
 
-// The three working stages get their own block, so a build-prove-build retry loop is visible; every other state is
-// a full block in its colour.
-const BLOCK: Record<string, string> = { waiting: "░", cancelled: "░", building: "▓", proving: "▒", verifying: "▞" }
-
-/** The run's span: its first history entry to just past its last when it has ended, or to `now`. */
-export const span = (status: Status, now: number) => {
-  const times = status.history.map((entry) => entry.at)
-  const start = times.length > 0 ? Math.min(...times) : now
-  if (!ENDED.includes(status.run.state) || times.length === 0) return { start, end: Math.max(now, start + 1) }
-  // A tail of 3% so the state each task ended in shows, not only the transition into it.
-  const last = Math.max(...times)
-  return { start, end: last + Math.max(1000, (last - start) * 0.03) }
+/** The Gantt's range: the run span, with a tail of 3% (1 s at least) after `run.endedAt`, so the last state shows. */
+export const ganttRange = (status: Status, liveness: Liveness, now: number) => {
+  const run = runSpan(status, liveness, now)
+  if (status.run.endedAt === undefined) return run
+  return { start: run.start, end: run.end + Math.max(1000, (run.end - run.start) * 0.03) }
 }
 
-/** A task's lane as runs of one state: the state at the middle of each of `width` cells. */
-export const lane = (status: Status, id: string, width: number, range: { start: number; end: number }) => {
-  const entries = status.history.filter((entry) => entry.unit === id).toSorted((a, b) => a.at - b.at)
-  const states = Array.from({ length: width }, (_, cell) => {
-    const at = range.start + ((cell + 0.5) * (range.end - range.start)) / width
-    return entries.findLast((entry) => entry.at <= at)?.to ?? "waiting"
+type Run = { readonly state: string | undefined; readonly length: number }
+
+/**
+ * A task's lane, as runs of one state (UI4): each of `width` cells shows the span that holds the cell's middle time; a
+ * span with no `to` runs to `open`; a zero-length span takes the one cell that holds its time; a cell before the first
+ * span or after the last is blank (`undefined`): the Gantt infers no state.
+ */
+export const lane = (task: TaskStatus, width: number, range: { start: number; end: number }, open: number): ReadonlyArray<Run> => {
+  const spans = task.spans ?? []
+  const size = (range.end - range.start) / width
+  const states = Array.from({ length: width }, (_, cell): string | undefined => {
+    const at = range.start + (cell + 0.5) * size
+    return spans.find((span) => span.from <= at && at < (span.to ?? open))?.state
   })
-  return states.reduce<{ state: string; length: number }[]>((runs, state) => {
+  for (const span of spans)
+    if (span.to === span.from) states[Math.min(width - 1, Math.max(0, Math.floor((span.from - range.start) / size)))] = span.state
+  return states.reduce<Run[]>((runs, state) => {
     const last = runs.at(-1)
     if (last && last.state === state) return [...runs.slice(0, -1), { state, length: last.length + 1 }]
     return [...runs, { state, length: 1 }]
@@ -48,11 +55,16 @@ const axis = (width: number, range: { start: number; end: number }) =>
 export const ganttRows = (view: View) => 1 + view.rows().length + 2
 
 export function GanttView(props: ViewProps & { width: number }) {
-  const width = () => Math.max(10, props.width - LABEL - RIGHT)
+  const width = () => Math.max(LANE_MIN, props.width - LABEL - RIGHT)
   const range = createMemo(() => {
     const status = props.view.status()
-    return status ? span(status, props.view.now()) : { start: 0, end: 1 }
+    return status ? ganttRange(status, props.view.liveness(), props.view.now()) : { start: 0, end: 1 }
   })
+  // Where an open span ends: the run span's end, before the tail.
+  const open = () => {
+    const status = props.view.status()
+    return status ? runSpan(status, props.view.liveness(), props.view.now()).end : 0
+  }
   return (
     <box flexDirection="column" width={props.width}>
       <text fg={props.theme().textMuted} wrapMode="none">
@@ -62,7 +74,11 @@ export function GanttView(props: ViewProps & { width: number }) {
         {(row) => {
           const runs = () => {
             const status = props.view.status()
-            return status ? lane(status, row.id, width(), range()) : []
+            return status ? lane(row.task, width(), range(), open()) : []
+          }
+          const duration = () => {
+            const status = props.view.status()
+            return status ? durationOf(row.task, status.run, props.view.liveness(), props.view.now()) : ""
           }
           return (
             <text
@@ -75,18 +91,20 @@ export function GanttView(props: ViewProps & { width: number }) {
               </span>
               <For each={runs()}>
                 {(run) => (
-                  <span style={{ fg: stateColor(props.theme(), run.state) }}>{(BLOCK[run.state] ?? "█").repeat(run.length)}</span>
+                  <span style={{ fg: run.state ? stateColor(props.theme(), run.state) : props.theme().textMuted }}>
+                    {(run.state ? (DISPLAY[run.state]?.block ?? "█") : " ").repeat(run.length)}
+                  </span>
                 )}
               </For>
               <span style={{ fg: props.theme().textMuted }}>
-                {` ${cut(stateText(row), RIGHT - 1)}`}
+                {` ${duration().padStart(DURATION)} ${cut(stateText(row), STATE)}`}
               </span>
             </text>
           )
         }}
       </For>
       <text fg={props.theme().textMuted} wrapMode="none" marginTop={1}>
-        ░ waiting ▓ building ▒ proving ▞ verifying █ trusted, or stopped in its colour
+        ░ waiting ▓ building ▒ proving ▞ verifying █ ended, in its state's colour
       </text>
     </box>
   )
