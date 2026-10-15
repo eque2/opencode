@@ -501,7 +501,8 @@ export const run: (input: CommandInput, ops: Ops, harness: TaskHarness.Interface
           limits,
           locks: claimed.locks,
         }).pipe(
-          Effect.map((state) => `the task run of ${specPath} ended ${state}`),
+          // The closing summary reports the end in the root session (D18); the job's output carries nothing.
+          Effect.as(""),
           Effect.provide(platform),
         ),
       })
