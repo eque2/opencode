@@ -1,12 +1,24 @@
 // The full-screen frame of designs 3 (Board), 4 (Matrix) and 5 (Gantt): one plugin route, which is how these designs
 // expand. It always shows the selected task's details beside or under the design.
 import type { ScrollBoxRenderable } from "@opentui/core"
-import { Match, Show, Switch, createEffect, onCleanup } from "solid-js"
+import { Option } from "effect"
+import { For, Match, Show, Switch, createEffect, onCleanup } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Peek } from "../peek"
-import { SharedRegion, pageBy, regionRows } from "../shared"
-import { DESIGNS, bar, counts, cut, tone } from "../store"
-import { Brand, runText, trustedText, type Ctx, type ViewProps } from "../ui"
+import { SharedRegion, outsideCollapsed, pageBy, regionRows, wrap } from "../shared"
+import { DESIGNS, OLDER_LINE, bar, counts, cut, older } from "../store"
+import {
+  Brand,
+  OlderLine,
+  ReasonLine,
+  TrustedCount,
+  WarningLines,
+  reasonLine,
+  runText,
+  runTitle,
+  type Ctx,
+  type ViewProps,
+} from "../ui"
 import type { View } from "../view"
 import { BoardView, boardRows } from "./3-board"
 import { MatrixView, matrixRows } from "./4-matrix"
@@ -57,10 +69,18 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
   const regionWidth = () =>
     layout() === "right" ? PEEK_RIGHT : layout() === "split" ? inner() - peekWidth() - 1 : inner()
   // The rows left for the design, the Peek and the shared region: less the header, the reason, the gap and the keys.
-  const room = () => {
+  // The header's lines under its first: the older-status line, the run warning, the outside wait and the reason.
+  const headerLines = () => {
     const status = props.view.status()
-    return props.height - 3 - (status?.run.reason && tone(status.run.state) !== "good" ? 1 : 0)
+    if (!status) return 0
+    return (
+      (older(status) ? wrap(OLDER_LINE, inner()).length : 0) +
+      (status.run.warning ? 1 : 0) +
+      wrap(outsideCollapsed(status) ?? "", inner()).length +
+      (Option.isSome(reasonLine(status)) ? 1 : 0)
+    )
   }
+  const room = () => props.height - 3 - headerLines()
   const region = () => {
     const status = props.view.status()
     return status ? Math.max(REGION_MIN, Math.min(regionRows(status, regionWidth()), Math.floor(room() / 2))) : REGION_MIN
@@ -109,18 +129,18 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                 <b>{name()}</b>
               </text>
               <text fg={props.theme().textMuted} wrapMode="none">
-                {`${status().run.spec.split("/").at(-1)} · ${runText(status())}`}
+                {`${runTitle(status())} · ${runText(status())}`}
               </text>
               <box flexGrow={1} />
-              <text fg={props.theme().success} wrapMode="none">
-                {`${bar(counts(status()).trusted, counts(status()).total, 10)} ${trustedText(status())}`}
-              </text>
+              <TrustedCount
+                theme={props.theme}
+                status={status()}
+                bar={bar(counts(status()).trusted, counts(status()).total, 10)}
+              />
             </box>
-            <Show when={status().run.reason && tone(status().run.state) !== "good"}>
-              <text fg={props.theme().error} wrapMode="none" flexShrink={0}>
-                {cut(status().run.reason ?? "", props.width - 2)}
-              </text>
-            </Show>
+            <OlderLine theme={props.theme} status={status()} width={inner()} />
+            <WarningLines theme={props.theme} status={status()} width={inner()} />
+            <ReasonLine theme={props.theme} status={status()} width={inner()} />
             <box flexDirection={layout() === "right" ? "row" : "column"} flexGrow={1} flexShrink={1} gap={1} marginTop={1}>
               <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Switch
@@ -128,6 +148,19 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
                     <text fg={props.theme().textMuted}>{`Design ${props.view.design()} has no full-screen view.`}</text>
                   }
                 >
+                  {/* A refused run has no tasks to draw: the body says so, with every reason line (UI17). */}
+                  <Match when={status().run.state === "refused"}>
+                    <text fg={props.theme().text} wrapMode="none">
+                      No work started: the spec was refused.
+                    </text>
+                    <For each={(status().run.reason ?? "").split("\n").filter(Boolean)}>
+                      {(line) => (
+                        <text fg={props.theme().error} wrapMode="none">
+                          {cut(line, body())}
+                        </text>
+                      )}
+                    </For>
+                  </Match>
                   <Match when={props.view.design() === 3}>
                     <BoardView {...props} width={body()} />
                   </Match>
