@@ -1,4 +1,5 @@
-// The conformance suite of the /task harness: H1–H16 scripted, L1 live (harness contract, section 8).
+// The conformance suite of the /task harness: H1–H16 scripted, L1 live (harness contract, section 8). Since phase 2
+// the harness runs on actors: the run supervisor and its task and scenario supervisors (spine AD-8, AD-11).
 //
 //   TASK_HARNESS_ARM=<baseline|o2> bun test test/task-harness/conformance.test.ts --timeout 2400000
 //
@@ -475,6 +476,8 @@ check("H8", "crash and resume", 1_200_000 + SETUP_MS, async () => {
     (r) => r.at > restartAt && !r.scenario && (r.unit === "T1.1" || r.unit === "T1.2") && (r.role === "builder" || r.role === "verifier"),
   )
   if (after.length > 0) problems.push(`${after.length} builder or verifier request(s) for T1.1 or T1.2 arrived after the restart`)
+  // The restart resumed the same slice by the same path (AD-6), not a new run of another path.
+  if (s.run.path !== SPEC) problems.push(`the resumed run's path is "${s.run.path}", not "${SPEC}"`)
   problems.push(...happyEnd(c, s))
   verify(problems, c)
 })
@@ -667,14 +670,13 @@ check("H12", "stream stall", 180_000 + SETUP_MS, async () => {
     },
     { from: startAt },
   )
+  // The task supervisor's stall timer cut the silent turn and recorded task.stalled (AD-11).
   await until(
     c,
-    "a new T1.1 builder request or a stall entry in history",
+    "a stall entry of T1.1 in history",
     10_000,
     (s) => {
-      const again = builders(c, "T1.1").some((r) => r.at > hung.at)
-      const named = s ? history(s, "T1.1").some((h) => /stall|idle/i.test(h.reason ?? "")) : false
-      if (again || named) return true
+      if (s && history(s, "T1.1").some((h) => /stall/i.test(h.reason ?? ""))) return true
       ended(s)
       return undefined
     },
@@ -691,7 +693,9 @@ check("H12", "stream stall", 180_000 + SETUP_MS, async () => {
     { from: startAt },
   )
   apparatus(c)
+  // The stall spent no attempt: the same attempt was prompted again and ended trusted.
   if (s.tasks["T1.1"]?.attempts !== 1) throw new Error(`T1.1 has attempts ${s.tasks["T1.1"]?.attempts}, expected 1`)
+  if (!builders(c, "T1.1").some((r) => r.at > hung.at)) throw new Error("no T1.1 builder request followed the stall")
 })
 
 check("H13", "hung proof", 180_000 + SETUP_MS, async () => {
