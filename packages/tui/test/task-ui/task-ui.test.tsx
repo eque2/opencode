@@ -232,9 +232,10 @@ test("every design shows the stopped run", async () => {
   // T4.6 moved the Matrix's SCENARIOS block to the shared region; its legend names the blocked glyph.
   expect(matrix).toContain("⊖ blocked")
   expect(matrix).toContain("✗ T1.4.c7 failed")
-  // T4.7 re-baselined the Gantt's right column: the duration, then the state text in 21 cells.
+  // T4.7 re-baselined the Gantt's right column (the duration, then the state text in 21 cells) and the HUD's
+  // selected-task line (the state text is cut first, the duration never).
   expect(await frame(() => <GanttView {...props} width={110} />)).toContain("0s budget exhausted · a…")
-  expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attempt 3")
+  expect(await frame(() => <HudView {...props} />)).toContain("▸ ⊘ T1.4 budget exhausted · attemp… · 0s")
   expect(await frame(() => <TickerDialog {...props} />)).toContain("◆ In the Flow · T1.4 details · read-only")
 })
 

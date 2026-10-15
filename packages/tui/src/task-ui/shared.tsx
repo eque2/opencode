@@ -38,6 +38,12 @@ export const outsideWaits = (status: Status): ReadonlyArray<string> => {
 
 export const outsideLine = (id: string) => `waiting on ${id} (outside) — run /task trust ${id}`
 
+/** The collapsed outside wait line: the first id's line, and " +N" for the others; none without an outside wait. */
+export const outsideCollapsed = (status: Status) => {
+  const [first, ...rest] = outsideWaits(status)
+  return first === undefined ? undefined : `${outsideLine(first)}${rest.length > 0 ? ` +${rest.length}` : ""}`
+}
+
 /**
  * A waiting unit's wait sentences (EXPERIENCE "Board card"): the plan ids muted, each untrusted outside id with its
  * trust command in the warning tone, then each id not in this run muted.

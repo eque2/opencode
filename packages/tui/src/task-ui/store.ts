@@ -3,6 +3,7 @@
 import { Array as Arr, Option, Schema } from "effect"
 import type { RGBA } from "@opentui/core"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
+import { Locale } from "../util/locale"
 
 // The harness writes `<directory>/.opencode/task/status.json` (packages/opencode/src/task/core/status.ts). States are
 // kept as plain strings so a state the harness adds later still renders, with a neutral tone.
@@ -330,6 +331,23 @@ export const runSpan = (status: Status, liveness: Liveness, now: number) => {
   const end = status.run.endedAt ?? (liveness === "live" ? now : (status.run.aliveAt ?? now))
   return { start, end: Math.max(end, start + 1) }
 }
+
+// --- the run usage (D24) -------------------------------------------------------------------------------------------
+
+/** The summed tokens and cost of the run's harness sessions; none before any of them reports tokens. */
+export const runUsage = (sessions: ReadonlyArray<{ readonly tokens: number; readonly cost: number }>) => {
+  const tokens = sessions.reduce((sum, session) => sum + session.tokens, 0)
+  const cost = sessions.reduce((sum, session) => sum + session.cost, 0)
+  return tokens > 0 ? Option.some({ tokens, cost }) : Option.none()
+}
+
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
+
+/** `1.4M tokens`. */
+export const tokensText = (tokens: number) => `${Locale.number(tokens)} tokens`
+
+/** `$2.31`; `$0.00` on purpose for a free model that spent tokens. */
+export const costText = (cost: number) => money.format(cost)
 
 // --- the designs ---------------------------------------------------------------------------------------------------
 
