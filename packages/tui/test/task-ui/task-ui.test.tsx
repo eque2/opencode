@@ -29,7 +29,7 @@ import { json } from "../fixture/tui-sdk"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import fixture from "./fixture-status.json"
 import projected from "./fixture-projected.json"
-import { Peek, builderHeading, liveSessions, lines, type Sessions } from "../../src/task-ui/peek"
+import { Peek, builderHeading, harnessOf, liveSessions, lines, type Sessions } from "../../src/task-ui/peek"
 import { waitSentences, wrap } from "../../src/task-ui/shared"
 import type { CapturedFrame, RGBA } from "@opentui/core"
 import {
@@ -601,6 +601,19 @@ test("T4.5 a task with endedAt and no startedAt did not start: both fallbacks sa
   expect(later).toContain("  no verifier session yet")
 })
 
+test("T4.5 a harness session carries its tokens (input, output and reasoning, no cache) and its cost, for T4.12", () => {
+  const time = { created: 1, updated: 2 }
+  const tokens = { input: 1000, output: 200, reasoning: 50, cache: { read: 9999, write: 7777 } }
+  expect(harnessOf({ id: "b", title: "T1.4 builder", time, tokens, cost: 0.12 })).toEqual([
+    { id: "b", unit: "T1.4", role: "builder", again: false, created: 1, updated: 2, tokens: 1250, cost: 0.12 },
+  ])
+  // A session that has not reported yet counts nothing; a session that is not the harness's is none.
+  expect(harnessOf({ id: "v", title: "S3 verifier (again)", time })).toEqual([
+    { id: "v", unit: "S3", role: "verifier", again: true, created: 1, updated: 2, tokens: 0, cost: 0 },
+  ])
+  expect(harnessOf({ id: "x", title: "Fix the parser", time, tokens, cost: 1 })).toEqual([])
+})
+
 test("the shortcut bar names the design, its keys, and drops keys before it overflows", async () => {
   const ledger = await view(none, ended)
   const wide = await frame(() => <ShortcutBar {...ledger} width={200} />, 200, 3)
@@ -892,7 +905,7 @@ async function until(done: () => boolean) {
   return done()
 }
 
-const harnessOfT14 = [{ ...child("b2", "builder", 3), unit: "T1.4" }]
+const harnessOfT14 = [{ ...child("b2", "builder", 3), unit: "T1.4", tokens: 0, cost: 0 }]
 
 test("ctrl+x w from an expanded Board collapses it and puts the builder in the session route's watch", async () => {
   const plugin = await wired({ status: live({ "T1.4": "building" }), design: 3, harness: harnessOfT14 })
