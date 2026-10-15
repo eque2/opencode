@@ -9,7 +9,7 @@ import { Option, Result } from "effect"
 import { createRoot, type JSX } from "solid-js"
 import { DEFAULT_THEMES, resolveTheme } from "../../src/theme"
 import type { Sessions } from "../../src/task-ui/peek"
-import { outsideCollapsed, stoppedLines } from "../../src/task-ui/shared"
+import { outsideCollapsed, stoppedLines, wrap } from "../../src/task-ui/shared"
 import { reasonLine, registerWarning, runTitle, stoppedText, warningToast } from "../../src/task-ui/ui"
 import { LedgerView } from "../../src/task-ui/designs/1-ledger"
 import { DockView } from "../../src/task-ui/designs/2-dock"
@@ -795,6 +795,13 @@ test("UI18 a Ticker toast for a task that turns dead or blocked shows its reason
     "T1 blocked by T1.4: budget exhausted",
     "T1.5 blocked by T1.4: budget exhausted",
   ])
+  // A task that was dead already and changes state reads from → to: it did not gain the tag.
+  const redead = statusOf((raw) => {
+    Object.assign(raw.run, after.run)
+    Object.assign(tasksOf(raw)["T1.4"], { state: "failed", tags: ["ended", "stopped", "dead"], reason: "exit 1" })
+  })
+
+  expect(tickerToasts(after, redead)).toEqual([{ variant: "error", message: "T1.4 budget exhausted → failed" }])
   // A plain change still reads from → to.
   const moved = statusOf((raw) =>
     Object.assign(tasksOf(raw)["T1.4"], { state: "verifying", tags: ["active"], reason: null }),
@@ -819,7 +826,7 @@ const warned = statusOf((raw) => Object.assign(raw.run, { warning: "R3 a: b\nR4 
 
 test("UI16 the run warning's one line in the collapsed views; a warning toast once each time it appears", async () => {
   const side = await ledger(warned)
-  expect(side.lines[3]).toBe("! spec no longer validates · 2 failure…")
+  expect(side.lines[3]).toBe("! spec no longer validates · 2 failur…")
   expect(rgb(fgOf(side.spans, "! spec"))).toEqual(rgb(theme.warning))
   expect((await ledger(warned, 60)).lines[3]).toBe("! spec no longer validates · 2 failures")
   const header = await fullScreen(warned)
@@ -829,6 +836,10 @@ test("UI16 the run warning's one line in the collapsed views; a warning toast on
     Option.some("The spec no longer validates (2 failures). The run keeps the plan it loaded."),
   )
   expect(warningToast(warned, warned)).toEqual(Option.none())
+  const single = statusOf((raw) => Object.assign(raw.run, { warning: "R3 a: b" }))
+  expect(warningToast(base, single)).toEqual(
+    Option.some("The spec no longer validates (1 failure). The run keeps the plan it loaded."),
+  )
   expect(warningToast(warned, base)).toEqual(Option.none())
   expect(warningToast(undefined, warned)).toEqual(
     Option.some("The spec no longer validates (2 failures). The run keeps the plan it loaded."),
@@ -840,7 +851,12 @@ test("UI16 the run warning's one line in the collapsed views; a warning toast on
     registerWarning({ view, toast: (toast) => void toasts.push(toast) })
     return stop
   })
-  for (let step = 0; step < 4; step++) await advance(1_000)
+  // Each read reaches the view before the next: a loaded machine runs the feed's fiber late.
+  for (const next of [warned, warned, base, warned]) {
+    await advance(1_000)
+    for (let tries = 0; tries < 100 && view.status()?.run.warning !== next.run.warning; tries++) await settle()
+  }
+  await settle()
   expect(toasts).toEqual([
     {
       variant: "warning",
@@ -868,6 +884,43 @@ const outside = statusOf((raw) =>
   }),
 )
 
+test("the full-screen header's lines count against the room: with three of them the Peek shrinks sooner", async () => {
+  const activity = Array.from({ length: 8 }, (_, i) => ({
+    glyph: "›",
+    tone: "idle" as const,
+    text: `activity line ${i + 1}`,
+  }))
+  const sessions: Sessions = {
+    children: () => () => [{ id: "b", role: "builder", again: false, created: 1, updated: 1 }],
+    activity: () => () => activity,
+    all: () => () => [],
+  }
+  // A warning, an outside wait and a reason: three lines under the header.
+  const busy = statusOf((raw) => {
+    Object.assign(raw, { tasks: outside.tasks })
+    Object.assign(raw.run, {
+      warning: "R3 a: b\nR4 c: d",
+      state: "budget_exhausted",
+      tags: ["ended", "stopped"],
+      reason: "T1.4 budget exhausted",
+    })
+  })
+  const shown = async (height: number) => {
+    const { view } = await viewFor(busy, { design: 4 })
+    view.select("T1.4")
+    await settle()
+    const frame = await render(
+      () => <Screen theme={() => theme} view={view} sessions={sessions} leader="ctrl+x" width={120} height={height} />,
+      120,
+      height,
+    )
+    return linesOf(frame.text).filter((line) => line.includes("activity line")).length
+  }
+  // The full Peek needs 62 rows with the three header lines counted; without them 59 would do.
+  expect(await shown(61)).toBe(1)
+  expect(await shown(62)).toBeGreaterThan(1)
+})
+
 test("UI5 the collapsed outside wait line in the Ledger and the full-screen header, under the warning; a Dock segment", async () => {
   const both = statusOf((raw) => {
     Object.assign(raw, { tasks: outside.tasks })
@@ -875,7 +928,7 @@ test("UI5 the collapsed outside wait line in the Ledger and the full-screen head
   })
   const side = await ledger(both)
   expect(side.lines.slice(3, 6)).toEqual([
-    "! spec no longer validates · 2 failure…",
+    "! spec no longer validates · 2 failur…",
     "waiting on T8 (outside) — run",
     "/task trust T8 +1",
   ])
@@ -907,6 +960,13 @@ test("UI15 the Dock strip: $2.31 after the stopped count; the selected task drop
   const narrow = (await dock(base, 100, spent)).lines.find((line) => line.includes("run: running")) ?? ""
   expect(narrow).not.toContain("$")
   expect(narrow).toContain("⊖ T1")
+  // At the full strip's width everything shows; one cell less drops the selected task and keeps the cost.
+  const full = wide.trimEnd().length + 1
+  const exact = (await dock(base, full, spent)).lines.find((line) => line.includes("run: running")) ?? ""
+  expect(exact).toContain("▸ T1.4 budget exhausted · attempt 3")
+  const less = (await dock(base, full - 1, spent)).lines.find((line) => line.includes("run: running")) ?? ""
+  expect(less).not.toContain("▸ T1.4")
+  expect(less).toContain("$2.31")
   // No usage before tokens: no segment.
   expect((await dock(base, 200)).text).not.toContain("$")
 })
@@ -922,6 +982,10 @@ test("UI15 the Dock's expanded view: the Peek left and the region right from 110
   // Above the strip, the expanded part takes at most 25 of the 50 rows.
   const strip = side.lines.findIndex((line) => line.includes("run: running"))
   expect(strip - peek).toBeLessThanOrEqual(25)
+  // At 30 rows the half is 15: the Peek's activity lines shrink so the Peek fits in it.
+  const short = await dock(base, 140, none, 30, true)
+  const shortPeek = short.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
+  expect(short.lines.findIndex((line) => line.includes("run: running")) - shortPeek).toBeLessThanOrEqual(15)
   const stacked = await dock(base, 100, none, 50, true)
   const stackedPeek = stacked.lines.findIndex((line) => line.includes("╔═ ◆ In the Flow · T1.4 details"))
   expect(stacked.lines.findIndex((line) => line.includes("STOPPED 3"))).toBeGreaterThan(stackedPeek)
@@ -937,20 +1001,30 @@ test("the Ticker reads the ended tag and the store keeps no ENDED or ACTIVE list
 test("UI25 the Ledger, the Dock, the Ticker, the full-screen views and the HUD show the older-status line for a status with no tags", async () => {
   const old = Option.getOrThrow(parse(JSON.stringify(legacy)))
   const line = "status from an older harness — type /task to refresh"
-  const views = [
-    (await ledger(old, 60)).text,
-    (await dock(old, 200, none, 40, true)).text,
-    (await fullScreen(old)).text,
-  ]
+  // Each view and the width its line has: the Ticker's 30-cell list and the HUD's 40-cell panel wrap it.
   const { view } = await viewFor(old, { design: 7 })
-  views.push(
-    (await render(() => <TickerDialog theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 120, 40))
-      .text,
-  )
-  views.push(
-    (await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)).text,
-  )
-  expect(views.map((text) => text.includes(line))).toEqual([true, true, true, true, true])
+  const views: ReadonlyArray<[string, number]> = [
+    [(await ledger(old, 60)).text, 60],
+    [(await dock(old, 200, none, 40, true)).text, 200],
+    [(await fullScreen(old)).text, 118],
+    [
+      (await render(() => <TickerDialog theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 120, 40))
+        .text,
+      30,
+    ],
+    [
+      (await render(() => <HudView theme={() => theme} view={view} sessions={none} leader="ctrl+x" />, 80, 30)).text,
+      40,
+    ],
+  ]
+  expect(views.map(([text, width]) => wrap(line, width).every((part) => text.includes(part)))).toEqual([
+    true,
+    true,
+    true,
+    true,
+    true,
+  ])
+  expect(wrap(line, 30)).toHaveLength(2)
   const shown = await ledger(old, 60)
   expect(rgb(fgOf(shown.spans, "status from an older harness"))).toEqual(rgb(theme.textMuted))
 })

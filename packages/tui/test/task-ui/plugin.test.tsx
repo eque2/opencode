@@ -283,6 +283,21 @@ test("the plugin follows a new status file through its one-second poll", async (
   expect(plugin.toasts.map((toast) => toast.message)).toContain("T1.4 budget exhausted → trusted")
 })
 
+test("UI16 the plugin toasts the run warning once when the status gains it, in any design", async () => {
+  await using dir = await tmpdir()
+  await writeStatus(dir.path, fixture)
+  await using plugin = await load(dir.path)
+  expect(await plugin.shows("◆ In the Flow Ledger")).toBe(true)
+  const warned = structuredClone(fixture)
+  Object.assign(warned.run, { warning: "R3 a: b\nR4 c: d" })
+  await writeStatus(dir.path, warned)
+  expect(await plugin.shows("! spec no longer validates · 2 failur")).toBe(true)
+  const message = "The spec no longer validates (2 failures). The run keeps the plan it loaded."
+  expect(plugin.toasts.filter((toast) => toast.message === message)).toEqual([
+    { variant: "warning", title: "◆ In the Flow", message },
+  ])
+})
+
 test("a chosen design survives a reload of the plugin with the same kv", async () => {
   await using dir = await tmpdir()
   await writeStatus(dir.path, fixture)
