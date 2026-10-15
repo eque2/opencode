@@ -34,7 +34,14 @@ describe("the blend README's Validation section", () => {
   test("replaces Validating and says what runs before any work starts", () => {
     expect(readme).not.toContain("\n## Validating\n")
     expect(validation).not.toBe("")
-    for (const text of ["Blend.load", "TaskCommand.run", "before the git check", "No work started"]) {
+    for (const text of [
+      "Blend.load",
+      "TaskCommand.run",
+      "before the git check",
+      "the plan",
+      "the job",
+      "No work started",
+    ]) {
       expect(validation).toContain(text)
     }
   })
@@ -63,6 +70,8 @@ describe("the blend README's Validation section", () => {
       "Refused <path>: N failures. No work started.",
       "Fix each line, then type /task <path> again.",
       "Refused <path>. No work started.",
+      "one line for each failure",
+      "`R<n> <path>: <message>`",
       "`run.reason`",
     ]) {
       expect(validation).toContain(text)
@@ -84,10 +93,28 @@ describe("the blend README's Validation section", () => {
     }
   })
 
-  test("names the six fault folders and the two live-check folders with their expected response", () => {
-    for (const name of [...FAULTS, ...LIVE]) expect(validation).toContain(`\`${name}\``)
-    expect(validation).toContain("budget_exhausted")
-    expect(validation).toContain("done")
+  test("names the six fault folders and the two live-check folders, each row with its expected response", () => {
+    // Each folder's table row, and what the real /task command answers for it.
+    const RESPONSE: Record<string, ReadonlyArray<string>> = {
+      "example-format-faults.spec": ["Refused, 3 failures", "R1", "`notes.txt`", "R3", "R4"],
+      "example-cycle.spec": ["Refused, 1 failure", "R7", "T1.1 → T1.2 → T1.1"],
+      "example-self-after.spec": ["Refused, 1 failure", "R7", "T1.1 → T1.1"],
+      "example-unknown-after.spec": ["Refused, 1 failure", "R6", "unknown task T7"],
+      "example-no-ensures.spec": ["Refused, 1 failure", "R3", "'ensures' is a required property"],
+      "example-outside-run.spec": ["no failure", "whole spec", "T1.2 subtree", "R12"],
+      "example-scenarios.spec": ["T1.1", "S1 trusted", "run `done`"],
+      "example-cascade.spec": [
+        "T1.1 `budget_exhausted`",
+        "T1.2 and T1 `blocked`",
+        "T1.3 trusted",
+        "run `budget_exhausted`",
+      ],
+    }
+    expect(Object.keys(RESPONSE).toSorted()).toEqual([...FAULTS, ...LIVE].toSorted())
+    for (const [name, words] of Object.entries(RESPONSE)) {
+      const row = validation.split("\n").find((line) => line.startsWith(`| \`${name}\` |`)) ?? ""
+      for (const word of words) expect({ name, row }).toEqual({ name, row: expect.stringContaining(word) })
+    }
   })
 
   test("documents ensures as required, and the Layout tree lists the example folders", () => {
