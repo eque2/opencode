@@ -3,6 +3,7 @@
 import { For, createMemo } from "solid-js"
 import { ENDED, cut, elapsed, glyph, stateColor, type Status } from "../store"
 import { stateText, treePrefix, type ViewProps } from "../ui"
+import type { View } from "../view"
 
 const LABEL = 11
 const RIGHT = 30
@@ -42,6 +43,9 @@ const axis = (width: number, range: { start: number; end: number }) =>
     const text = elapsed(at * (range.end - range.start))
     return column < line.length ? line : line.padEnd(column) + text + " "
   }, "").padEnd(width - 6).slice(0, width - 6) + elapsed(range.end - range.start).padStart(6)
+
+/** The rows the Gantt takes: the axis, the task rows, a gap and the legend. */
+export const ganttRows = (view: View) => 1 + view.rows().length + 2
 
 export function GanttView(props: ViewProps & { width: number }) {
   const width = () => Math.max(10, props.width - LABEL - RIGHT)

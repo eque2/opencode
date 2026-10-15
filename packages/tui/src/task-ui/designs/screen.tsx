@@ -7,9 +7,10 @@ import { Peek } from "../peek"
 import { SharedRegion, pageBy, regionRows } from "../shared"
 import { DESIGNS, bar, counts, cut, tone } from "../store"
 import { Brand, runText, trustedText, type Ctx, type ViewProps } from "../ui"
-import { BoardView } from "./3-board"
-import { MatrixView } from "./4-matrix"
-import { GanttView } from "./5-gantt"
+import type { View } from "../view"
+import { BoardView, boardRows } from "./3-board"
+import { MatrixView, matrixRows } from "./4-matrix"
+import { GanttView, ganttRows } from "./5-gantt"
 
 export const ROUTE = "task-ui"
 
@@ -21,8 +22,15 @@ const PEEK_RIGHT = 56
 /** The fewest rows the shared region keeps (UI22). */
 export const REGION_MIN = 8
 
-/** Below this many content rows, the Peek's activity lines shrink to one each, before the shared region shrinks. */
-const TALL = 32
+/** The rows each full-screen design takes at a width. */
+const DESIGN_ROWS: Record<number, (view: View, width: number) => number> = {
+  3: boardRows,
+  4: matrixRows,
+  5: ganttRows,
+}
+
+/** The Peek's rows with `lines` activity lines: its border, three headings, and up to `lines` lines under each. */
+const peekRows = (lines: number) => 5 + 3 * lines
 
 export function Screen(props: ViewProps & { width: number; height: number; onScroll?: (box: ScrollBoxRenderable) => void }) {
   const name = () => DESIGNS.find((design) => design.id === props.view.design())?.name ?? ""
@@ -33,10 +41,17 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
     const status = props.view.status()
     return props.height - 3 - (status?.run.reason && tone(status.run.state) !== "good" ? 1 : 0)
   }
-  const lines = () => (room() < TALL ? 1 : right() ? 8 : 4)
   const region = () => {
     const status = props.view.status()
     return status ? Math.max(REGION_MIN, Math.min(regionRows(status, props.width - 2), Math.floor(room() / 2))) : REGION_MIN
+  }
+  // When the design, the Peek and the region are taller than the terminal, the Peek's activity lines shrink first,
+  // to one line for each section (EXPERIENCE "Shared region" → Height). The design is cut, never drawn over the Peek.
+  const lines = () => {
+    const full = right() ? 8 : 4
+    const design = DESIGN_ROWS[props.view.design()]?.(props.view, body()) ?? 0
+    const tall = right() ? Math.max(design, peekRows(full)) : design + 1 + peekRows(full)
+    return 1 + tall + region() > room() ? 1 : full
   }
   return (
     <box flexDirection="column" width={props.width} height={props.height} paddingLeft={1} paddingRight={1}>
@@ -64,7 +79,7 @@ export function Screen(props: ViewProps & { width: number; height: number; onScr
               </text>
             </Show>
             <box flexDirection={SCREENS[props.view.design()] === "right" ? "row" : "column"} flexGrow={1} flexShrink={1} gap={1} marginTop={1}>
-              <box flexDirection="column" flexGrow={1} flexShrink={1}>
+              <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Switch
                   fallback={
                     <text fg={props.theme().textMuted}>{`Design ${props.view.design()} has no full-screen view.`}</text>

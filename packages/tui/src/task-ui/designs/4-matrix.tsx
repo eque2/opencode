@@ -3,6 +3,7 @@
 import { For, Show, createMemo } from "solid-js"
 import { byId, bySeverity, cut, glyph, label, obligationsOf, stateColor } from "../store"
 import { treePrefix, type ViewProps } from "../ui"
+import type { View } from "../view"
 
 const LABEL = 12
 const CELL = 4
@@ -12,6 +13,28 @@ const KINDS = ["c", "e", "p", "f"]
 const kindOf = (local: string) => {
   const at = KINDS.indexOf(local.replace(/\d+$/, ""))
   return at < 0 ? KINDS.length : at
+}
+
+/**
+ * The rows the Matrix takes at `width`: the header, the task rows, the scenarios, the legend and the selected task's
+ * open obligations. The full-screen view sizes the Peek from it (EXPERIENCE "Shared region" → Height).
+ */
+export const matrixRows = (view: View, width: number) => {
+  const status = view.status()
+  if (!status) return 0
+  // The scenario chips wrap with a 2-cell gap.
+  const chips = Object.entries(status.scenarios).reduce(
+    (acc, [id, scenario]) => {
+      const size = `${glyph(scenario.state)} ${id}`.length
+      return acc.used > 0 && acc.used + 2 + size <= width
+        ? { rows: acc.rows, used: acc.used + 2 + size }
+        : { rows: acc.rows + 1, used: size }
+    },
+    { rows: 0, used: 0 },
+  ).rows
+  const id = view.selected()
+  const open = id ? obligationsOf(status, id).filter((item) => item.state !== "trusted").length : 0
+  return 1 + view.rows().length + 2 + chips + 2 + (open > 0 ? open + 2 : 0)
 }
 
 export function MatrixView(props: ViewProps & { width: number }) {

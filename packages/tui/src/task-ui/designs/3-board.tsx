@@ -2,7 +2,9 @@
 // the peek opens on the right.
 import { For, Show } from "solid-js"
 import { cut, glyph, label, obligationsOf, stateColor, type Row } from "../store"
+import { wrap } from "../shared"
 import { attemptText, type ViewProps } from "../ui"
+import type { View } from "../view"
 
 const COLUMNS = [
   { name: "WAITING", states: ["waiting"] },
@@ -16,6 +18,33 @@ const COLUMNS = [
 
 const columnOf = (state: string) =>
   COLUMNS.find((column) => column.states.includes(state)) ?? COLUMNS[COLUMNS.length - 1]
+
+// A card's rows: its border, the id and state lines, then each line it shows.
+const cardRows = (row: Row, proofs: number, width: number) =>
+  4 +
+  (attemptText(row) ? 1 : 0) +
+  (proofs > 0 ? 1 : 0) +
+  (row.task.waitingOn.length > 0 ? 1 : 0) +
+  (row.task.reason ? wrap(cut(row.task.reason, (width - 4) * 3), width - 4).length : 0)
+
+/** The rows the Board takes at `width`: the headings, then its tallest column of cards. */
+export const boardRows = (view: View, width: number) => {
+  const status = view.status()
+  if (!status) return 0
+  const cards = Math.max(14, Math.floor(width / COLUMNS.length) - 1)
+  return (
+    1 +
+    Math.max(
+      0,
+      ...COLUMNS.map((column) =>
+        view
+          .rows()
+          .filter((row) => columnOf(row.task.state) === column)
+          .reduce((sum, row) => sum + cardRows(row, obligationsOf(status, row.id).length, cards), 0),
+      ),
+    )
+  )
+}
 
 export function BoardView(props: ViewProps & { width: number }) {
   const width = () => Math.max(14, Math.floor(props.width / COLUMNS.length) - 1)
