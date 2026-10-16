@@ -604,6 +604,18 @@ describe("the unit supervisors (SV2)", () => {
           Effect.map(failures, (list) => list.length === 2),
           "T1.1 and T1.2 record task.failed",
         )
+        // The run actor folds both failures (a record only queues the fact in its mailbox). The relay sends snapshots
+        // in fold order, so this one comes last.
+        yield* eventually(
+          Effect.map(
+            setup.recorder.actor.getSnapshot,
+            (snapshot) =>
+              TaskEngineXState.unitState(snapshot, "T1.1") === "failed" &&
+              TaskEngineXState.unitState(snapshot, "T1.2") === "failed",
+          ),
+          "the run actor folds both failures",
+        )
+        const last = yield* setup.recorder.actor.getSnapshot
         // The snapshot the relay sends once T1.1's failure has folded and T1.2's has not: T1.2 is still ready.
         const between = TaskEngineXState.apply(plan, first, {
           type: "task.failed",
@@ -616,12 +628,17 @@ describe("the unit supervisors (SV2)", () => {
         // No new supervisor for T1.2: its failure is in flight.
         expect(yield* alive(actor, task("T1.2"))).toBe(false)
         // Then both failures have folded: nothing is supervised, and nothing more is spawned or recorded.
-        yield* push(yield* setup.recorder.actor.getSnapshot)
+        yield* push(last)
         yield* settle
         expect(spawned.toSorted()).toEqual(["T1.1", "T1.2"])
         expect(yield* failures).toEqual(["T1.1", "T1.2"])
         expect(yield* alive(actor, task("T1.2"))).toBe(false)
-        expect((yield* actor.getSnapshot).status).toBe("active")
+        // T1.3 to T1.5 come after the failed tasks, so the run ends and the supervisor closes.
+        expect(TaskEngineXState.ended(last)).toBe(true)
+        yield* eventually(
+          Effect.map(actor.getSnapshot, (snapshot) => snapshot.status === "done"),
+          "the run supervisor closed",
+        )
       }),
   )
 })
