@@ -65,8 +65,8 @@
 | RM1     | scenario   | completed   |
 | RM2     | scenario   | completed   |
 | RM3     | scenario   | completed   |
-| RM4     | scenario   | executing   |
-| RM5     | scenario   | not_started |
+| RM4     | scenario   | completed   |
+| RM5     | scenario   | executing   |
 | RM6     | scenario   | not_started |
 | RM7     | scenario   | completed   |
 | RM8a    | scenario   | completed   |
@@ -94,8 +94,8 @@
 | RM28    | scenario   | not_started |
 | RM29    | scenario   | not_started |
 | SV1     | scenario   | completed   |
-| SV2     | scenario   | executing   |
-| SV3     | scenario   | not_started |
+| SV2     | scenario   | completed   |
+| SV3     | scenario   | executing   |
 | SV4     | scenario   | not_started |
 | SV5     | scenario   | not_started |
 | SV6     | scenario   | not_started |
@@ -149,7 +149,7 @@
 | VF2     | scenario   | completed   |
 | VF3     | scenario   | completed   |
 | VF4     | scenario   | completed   |
-| VF5     | scenario   | not_started |
+| VF5     | scenario   | completed   |
 | VF6     | scenario   | not_started |
 | VF7     | scenario   | not_started |
 | VF8     | scenario   | not_started |
