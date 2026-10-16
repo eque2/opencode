@@ -105,3 +105,17 @@
   --idle-ms of about 14 400 000, on a quiet machine, then `verify RM22`. machine.ts changed after the last logged
   stale walk (0ee865afbb), so that log is not evidence for the current tree.
 - Status: open
+
+## D6 — RM23: the preload's afterAll hook passes its 30 s bound under load when the file runs alone
+- Check: scenario RM23, `bun test --timeout=30000 ./test/task/verify-spec-RM23.spec.ts` in packages/opencode.
+- Actual failure: "(fail) (unnamed) ... a beforeEach/afterEach hook timed out for this test" (36-42 s). Every one of
+  the 9 [RM23] tests passes. The global `afterAll` of test/preload.ts imports src/effect/app-runtime and disposes
+  it; RM23 imports only the port, so that import is cold, and at load 120-200 on 20 cores it passes 30 s.
+- Impact: RM23 has no evidence yet (state not_started after `fail`, retryCount 1). It does not touch RM20, RM21 or
+  RM24 (their files load app modules, so the hook is warm; RM24 passed through the adapter at load 130).
+- Attempts: trial 1 at load 90: 9 pass, 0 fail. Trials 2-5 at load 125-198: 9 pass, 1 fail each (hook). The
+  retry limit for one issue was reached. Not tried: a larger --timeout (owner ruling 6 fixes 30 000 ms) or an extra
+  import only to warm the hook (a workaround in the test for a load problem).
+- Remaining validation: one adapter run of verify-spec-RM23.spec.ts at load under about 90 (runs under
+  journal/adapter/runs/RM23), then `verify RM23`.
+- Status: open
