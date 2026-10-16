@@ -89,6 +89,8 @@ interface Context {
   readonly seen: number
   /** The live unit supervisors. */
   readonly units: Readonly<Record<string, Kind>>
+  /** The units whose supervisor errored, until a snapshot shows them no longer supervised (their fact has folded). */
+  readonly failed: ReadonlyArray<string>
   /** The scenarios of the batch proof in flight, and those proved whose result has not folded yet. */
   readonly batch: ReadonlyArray<string>
   readonly proved: ReadonlyArray<string>
@@ -313,7 +315,10 @@ export const machine = setup({
       const log = snapshot.context.log
       const view = TaskEngineXState.view(snapshot)
       const plan = context.run.plan
-      const wanted = ended(snapshot) ? {} : supervised(plan, snapshot)
+      const tagged = ended(snapshot) ? {} : supervised(plan, snapshot)
+      // A unit whose supervisor errored gets no new one while its failure fact is in flight (SV26).
+      const failed = context.failed.filter((unit) => unit in tagged)
+      const wanted = Object.fromEntries(Object.entries(tagged).filter(([unit]) => !failed.includes(unit)))
       const newest = (unit: string) => log.findLastIndex((item) => item.unit === unit)
       const sessionOf = (unit: string) => view.tasks[unit]?.session
       for (const [unit, kind] of Object.entries(context.units))
@@ -390,6 +395,7 @@ export const machine = setup({
       )
       enqueue.assign({
         units: wanted,
+        failed,
         seen: log.length,
         latest: Option.some(snapshot),
         defect: snapshot.status === "error" ? String(Option.getOrUndefined(snapshot.error)) : context.defect,
@@ -417,7 +423,8 @@ export const machine = setup({
       })
       enqueue.assign({ trusting: [...context.trusting, event.id], records: context.records + 1 })
     }),
-    // A unit supervisor that errored counts as three worker failures: its unit ends with the defect (SV26).
+    // A unit supervisor that errored counts as three worker failures: its unit ends with the defect (SV26). The unit
+    // stays in `failed` until its fact folds, so the next snapshot does not spawn a supervisor for it again.
     unitFailed: enqueueActions(({ context, event, enqueue }) => {
       const match = Option.fromNullishOr(/^xstate\.error\.actor\.(task|scenario):[^:]+:(.+)$/.exec(event.type))
       if (Option.isNone(match)) return
@@ -431,6 +438,7 @@ export const machine = setup({
       enqueue.assign({
         records: context.records + 1,
         units: Object.fromEntries(Object.entries(context.units).filter(([id]) => id !== unit)),
+        failed: [...context.failed, unit],
       })
     }),
   },
@@ -453,6 +461,7 @@ export const machine = setup({
     trusting: [],
     seen: 0,
     units: {},
+    failed: [],
     batch: [],
     proved: [],
     batchFailures: 0,
