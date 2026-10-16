@@ -131,3 +131,39 @@
 - Remaining validation: `verify SV6` ... `verify SV10` with their evidence files, by the orchestrator or with the
   owner's permission, while each test file is unchanged (the evidence holds its source hash).
 - Status: open
+
+## D8 — SV26: a unit supervisor that errors is spawned again, and its unit records task.failed twice
+- Check: `bun test --timeout=30000 ./test/task/verify-spec-SV26.spec.ts` in packages/opencode (test 1, "[SV26] a
+  task supervisor that errors counts as three worker failures …"); adapter run
+  journal/adapter/runs/SV26/20261016T172051Z-41cb5c (bun exit 1, 2 pass, 2 fail).
+- Actual failure: with each task supervisor a logic that dies at once, the real `/task` job spawns T1.1 once and T1.2
+  twice, and stores `task.failed` T1.1 once and `task.failed` T1.2 twice (both "harness error: the supervisor
+  broke"). Expected `{spawned: [T1.1, T1.2], failed: [T1.1, T1.2]}`; received an extra T1.2 in each. Reproduced 3 of 3.
+- Cause (read from src/task/core/supervise/run.ts): `unitFailed` (line ~421) removes the unit from `context.units`
+  and spawns a `record` worker for `task.failed`. The next `run.changed` (here T1.1's failure, folded before T1.2's
+  `task.failed`) still shows T1.2 as supervised, so `dispatch` (line ~321) sees it wanted and not in `units` and
+  spawns a new supervisor. With a healthy logic, that supervisor would begin work on a unit whose failure is in flight.
+- Impact: SV26 step 1 ("counts as three worker failures") fails: one supervisor error does not end the unit's
+  supervision, and the store holds a duplicate fact. The fold ignores the duplicate (the unit is final). SV26 steps
+  2 (run actor) and 3 (dying fold) pass; step 2 (run supervisor) fails on D9.
+- Attempts: none on the code (a verify dispatch changes no source file). The test asserts the scenario's words.
+- Remaining validation: a fix in the run supervisor (for example, keep a failed unit marked until its fact folds),
+  then a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26`.
+- Status: open
+
+## D9 — SV26: a run supervisor that errors puts the harness root in error, so the lease is never released
+- Check: as D8, test 2, "[SV26] a run supervisor that errors ends the job's wait …".
+- Actual failure: the job's wait ends and the defect is logged, but `harness.live(directory)` still returns the lease
+  after the job's fiber has ended (expected `Option.none()`). A probe claim of an unrelated directory (run once during
+  the investigation, then removed from the test) answered `{"kind":"busy"}`.
+- Cause (read from src/task/core/harness.ts, lines 68-126): the harness root machine has no transition for
+  `xstate.error.actor.run:<runID>`. Under XState 5 rules an unhandled child error event puts the parent in status
+  `error`, so the root ignores every later event: the job's `run.release` is lost, and later claims, releases, spawns
+  and session claims do nothing until the process restarts.
+- Impact: SV26 step 2 fails for a run supervisor error. Every later `/task` in that directory gets the busy reply,
+  and a `/task` in any other directory cannot claim its lease. The run actor case does not hit this (the run
+  supervisor itself closes and frees the lease).
+- Attempts: none on the code (a verify dispatch changes no source file).
+- Remaining validation: a handler on the harness root for a run supervisor's error event (and a unit test that the
+  root stays active), then a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26`.
+- Status: open
