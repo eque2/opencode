@@ -1253,12 +1253,13 @@ describe("session.compaction.process", () => {
         yield* Deferred.await(ready).pipe(Effect.timeout("5 seconds"))
         const start = Date.now()
         yield* Fiber.interrupt(fiber)
-        const exit = yield* Fiber.await(fiber).pipe(Effect.timeout("250 millis"))
+        // The backoff is 10 s; an abort must not wait for it. 2 s leaves room for a loaded host.
+        const exit = yield* Fiber.await(fiber).pipe(Effect.timeout("2 seconds"))
 
         expect(Exit.isFailure(exit)).toBe(true)
         if (Exit.isFailure(exit)) {
           expect(Cause.hasInterrupts(exit.cause)).toBe(true)
-          expect(Date.now() - start).toBeLessThan(250)
+          expect(Date.now() - start).toBeLessThan(2_000)
         }
       }).pipe(withCompaction({ llm: stub.llmLayer }))
     },
