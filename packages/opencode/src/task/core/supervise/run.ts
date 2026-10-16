@@ -376,6 +376,18 @@ export const machine = setup({
         })
       }
       const ready = readyScenarios(plan, snapshot)
+      const trusting = context.trusting.filter((id) => untrustedOutside(plan, snapshot, id))
+      // The trusts forwarded before a snapshot arrived: each recorded once, against this snapshot (SV20).
+      const waiting = context.pending.filter(
+        (id, index) =>
+          context.pending.indexOf(id) === index && !trusting.includes(id) && untrustedOutside(plan, snapshot, id),
+      )
+      waiting.forEach((id, index) =>
+        enqueue.spawnChild("record", {
+          id: `record:${context.records + index}`,
+          input: { run: context.run, fact: { type: "outside.trusted", id } },
+        }),
+      )
       enqueue.assign({
         units: wanted,
         seen: log.length,
@@ -383,14 +395,21 @@ export const machine = setup({
         defect: snapshot.status === "error" ? String(Option.getOrUndefined(snapshot.error)) : context.defect,
         // A scenario proved earlier leaves the list once its result has folded (it is no longer ready).
         proved: context.proved.filter((id) => ready.includes(id) || context.batch.includes(id)),
-        trusting: context.trusting.filter((id) => untrustedOutside(plan, snapshot, id)),
+        trusting: [...trusting, ...waiting],
+        pending: [],
+        records: context.records + waiting.length,
       })
     }),
     // A forwarded trust: recorded once, and only for an untrusted region of kind `outside` (SV20).
     trust: enqueueActions(({ context, event, enqueue }) => {
       if (event.type !== "run.trust") return
       const snapshot = Option.getOrUndefined(context.latest)
-      if (snapshot === undefined || context.trusting.includes(event.id)) return
+      // Before the run's first snapshot the trust waits; the next `run.changed` records it.
+      if (snapshot === undefined) {
+        enqueue.assign({ pending: [...context.pending, event.id] })
+        return
+      }
+      if (context.trusting.includes(event.id)) return
       if (!untrustedOutside(context.run.plan, snapshot, event.id)) return
       enqueue.spawnChild("record", {
         id: `record:${context.records}`,
@@ -472,7 +491,11 @@ export const machine = setup({
         }),
         onDone: {
           target: "running",
-          actions: assign({ trusting: ({ event }) => Option.getOrElse(event.output, () => []), pending: [] }),
+          // A trust forwarded while the worker ran stays pending; the first `run.changed` records it.
+          actions: assign(({ context, event }) => {
+            const recorded = Option.getOrElse(event.output, (): ReadonlyArray<string> => [])
+            return { trusting: recorded, pending: context.pending.filter((id) => !recorded.includes(id)) }
+          }),
         },
         onError: "running",
       },
