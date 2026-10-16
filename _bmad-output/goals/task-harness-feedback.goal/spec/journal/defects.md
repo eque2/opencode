@@ -147,9 +147,18 @@
   supervision, and the store holds a duplicate fact. The fold ignores the duplicate (the unit is final). SV26 steps
   2 (run actor) and 3 (dying fold) pass; step 2 (run supervisor) fails on D9.
 - Attempts: none on the code (a verify dispatch changes no source file). The test asserts the scenario's words.
-- Remaining validation: a fix in the run supervisor (for example, keep a failed unit marked until its fact folds),
-  then a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26`.
-- Status: open
+- Update (2026-10-16, builder): fixed in 077320f8e4 "Keep a failed unit unsupervised until its failure folds". The
+  run supervisor's context gains `failed`: `unitFailed` adds the unit, `dispatch` neither spawns nor counts a unit in
+  it, and drops the id once a snapshot shows the unit no longer supervised (its fact has folded). Test first:
+  529ba00762 added "SV26 spawns no new supervisor for a unit whose failure is in flight …" to
+  test/task/supervise-run.test.ts (RED: a second T1.2 supervisor lived in the system); 8df49ec43f pushes its
+  snapshots in fold order (the first version pushed a snapshot older than the hand-built one, which the relay never
+  does). Results in packages/opencode: supervise-run.test.ts 30 pass; harness, state-audit, harness-wiring and
+  core-command 81 pass; verify-spec-SV26, SV6, SV8, SV20, SV25 and SV27 14 pass, 0 fail (SV26 alone: 4 pass);
+  typecheck clean in the changed files (the only errors are in another agent's uncommitted verify-spec-UI2.spec.ts);
+  oxlint, eslint and prettier clean.
+- Remaining validation: a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26` by a verifier.
+- Status: fixed
 
 ## D9 — SV26: a run supervisor that errors puts the harness root in error, so the lease is never released
 - Check: as D8, test 2, "[SV26] a run supervisor that errors ends the job's wait …".
@@ -164,6 +173,12 @@
   and a `/task` in any other directory cannot claim its lease. The run actor case does not hit this (the run
   supervisor itself closes and frees the lease).
 - Attempts: none on the code (a verify dispatch changes no source file).
-- Remaining validation: a handler on the harness root for a run supervisor's error event (and a unit test that the
-  root stays active), then a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26`.
-- Status: open
+- Update (2026-10-16, builder): fixed in c8ffccfee1 "Keep the harness root active when a run supervisor errors". The
+  root takes `xstate.error.actor.*` and raises `run.remove` for a `run:<runID>` child, so the errored run's session
+  entries go and its child entry is stopped; the root stays active. The run supervisors are the root's only
+  children, so no other child error reaches it. Test first: 529ba00762 added "SV26 stays active when a run
+  supervisor errors …" to test/task/harness.test.ts (RED: the wait for the session drop timed out; the root was in
+  error). It now passes: the release frees the lease, and later claims (both directories), a spawn, a session claim
+  and a new spawn under the errored run id work. Results as in D8 (harness.test.ts is in the 81 pass).
+- Remaining validation: a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26` by a verifier.
+- Status: fixed
