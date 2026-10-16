@@ -1,0 +1,38 @@
+{
+  "runId": "20261016T112929Z-0977c2",
+  "adapter": "bun-junit-scenario-adapter.mjs",
+  "mode": "dry-run",
+  "cwd": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures",
+  "file": "./pass.test.ts",
+  "testFile": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/pass.test.ts",
+  "junit": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112929Z-0977c2/junit.xml",
+  "log": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112929Z-0977c2/run.log",
+  "bun": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/shims/drop-case.sh",
+  "command": [
+    "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/shims/drop-case.sh",
+    "test",
+    "--timeout=30000",
+    "--reporter=junit",
+    "--reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112929Z-0977c2/junit.xml",
+    "./pass.test.ts"
+  ],
+  "hashBefore": "5b8e72debb3f810450bff8811763179b02747af21e394d3a97b1d89b3101471e",
+  "bunExit": 0,
+  "signal": null,
+  "durationMs": 283,
+  "hashAfter": "5b8e72debb3f810450bff8811763179b02747af21e394d3a97b1d89b3101471e",
+  "summary": {
+    "ran": 2,
+    "files": 1,
+    "pass": 2,
+    "fail": 0,
+    "skip": 0,
+    "todo": 0
+  },
+  "decision": "refused:R2",
+  "adapterExit": 3,
+  "refusal": {
+    "rule": "R2",
+    "reason": "testsuites tests=2 but the report holds 1"
+  }
+}

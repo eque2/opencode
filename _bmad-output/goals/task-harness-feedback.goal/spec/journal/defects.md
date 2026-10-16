@@ -91,3 +91,17 @@
 - Resolution: the test preload deletes `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` and `VERTEX_LOCATION`, as it
   already deletes the other provider settings; the provider suite passes.
 - Status: fixed — for the owner's final review (a change outside the task harness).
+
+## D5 — RM22: the stale-walk step cannot run inside a verify dispatch's time bounds
+- Check: scenario RM22, Gherkin step "the stale walk of the loaded example-cascade plan finds no stuck state";
+  packages/opencode/test/task/verify-spec-RM22.spec.ts, test "[RM22] the stale walk ..." (TASK_GRAPH_STALE=1).
+- Actual failure: not a test failure. The walk needs about 3 200 s (D1: 36 353 keys, 361 474 edges); the verify
+  dispatch bounds each command to 180 s (bash) and 10 min, foreground only. Without TASK_GRAPH_STALE=1 the test is
+  skipped, so the verifier made no adapter run and no `verify` (a skipped Gherkin step is not a pass).
+- Impact: RM22 stays unverified (state not_started after `fail`, retryCount 1). The reduction check and the
+  guard-read check of RM22 pass in trial runs (6 pass, 1 skip). It does not touch RM19-RM21.
+- Attempts: none on the walk itself; D1 already records that no sound reduction exists for it.
+- Remaining validation: one adapter run of verify-spec-RM22.spec.ts with TASK_GRAPH_STALE=1 and --overall-ms and
+  --idle-ms of about 14 400 000, on a quiet machine, then `verify RM22`. machine.ts changed after the last logged
+  stale walk (0ee865afbb), so that log is not evidence for the current tree.
+- Status: open

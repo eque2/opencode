@@ -1,0 +1,18 @@
+[bun-junit-adapter] runId=20261016T112928Z-d8e83a cwd=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures
+[bun-junit-adapter] $ bun test --timeout=30000 --reporter=junit --reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-d8e83a/junit.xml ./afterall.test.ts
+
+afterall.test.ts:
+1 | import { afterAll, expect, test } from "bun:test"
+2 | test("[FX5] passes", () => { expect(1).toBe(1) })
+3 | afterAll(() => { throw new Error("afterAll hook fails after every test passed") })
+                                                                                  ^
+error: afterAll hook fails after every test passed
+      at <anonymous> (/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/afterall.test.ts:3:79)
+(fail) (unnamed) [0.17ms]
+
+ 1 pass
+ 1 fail
+ 1 expect() calls
+Ran 2 tests across 1 file. [10.00ms]
+[bun-junit-adapter] mapped: tests=2 pass=1 fail=1 skip=0 file=fail bunExit=1
+[bun-junit-adapter] runId=20261016T112928Z-d8e83a decision=dry-run:mapped exit=1 manifest=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-d8e83a/run.json
