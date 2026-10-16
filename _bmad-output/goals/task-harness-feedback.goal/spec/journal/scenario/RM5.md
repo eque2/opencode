@@ -36,3 +36,17 @@
 - Real run 20261016T123206Z-511216 at HEAD ca3b28b82d (sha256 prefix 63f53c58a039147b, load average ~22):
   bun exit 0, 41 pass, 93.9 s, handed-off, adapter exit 0.
 - `verify RM5`: structural pass; state completed, trust untrusted -> verified.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch RM2-RM6)
+- Action: verify-scenario-trust (Layer 3). State at start: RM5 completed, trustLevel verified.
+- Plan: read the RM5 Gherkin, tasks.md T1.8, the spine AD-5 text on run notes, and the test file; judge afresh the
+  writer's reading of "the log grows exactly when the state or another context field changes"; run the file myself;
+  then call `verdict RM5` exactly once. No source or test edits.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own bare run (load average 40): verify-spec-RM5.spec.ts -> 41 pass, 0 fail, 10828 expect(), 64 s.
+- Judged afresh: the "exactly when" exception (run.started, run.resumed, spec.checked note-only growth) follows the
+  spine's explicit rules (AD-5 targetless rows; fact table `run.resumed` history entry), and the machine's
+  begin/resume/check actions write only that note. The test asserts the strongest true form and bounds the exception.
+  The wording gap stays listed for the owner in journal/scenario-findings.md; it does not block the verdict.
+- `verdict RM5 trusted` -> {"verdict":"trusted","trustLevel":"trusted"}.

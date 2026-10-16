@@ -32,3 +32,16 @@
   3. Several listed tests (3, 6, 7, 10, 11, 15, 16, 17, 19, 24) also read the history as `snapshot.context.log`
      (directly or by `entriesOf`), and 6 and 17 read a phase tag with `hasTag`. The test proves that
      `view(snapshot).history` is the same array as `context.log`; it forbids every other internal read.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch RM2-RM6)
+- Action: verify-scenario-trust (Layer 3). State at start: RM4 completed, trustLevel verified.
+- Plan: read the RM4 Gherkin, owner ruling 2, tasks.md T1.7, the test file, the header list of
+  engine-xstate.test.ts and the old file from git; judge the "default 4" naming and the test-1 note afresh; run the
+  file myself; then call `verdict RM4` exactly once. No source or test edits.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own bare runs: verify-spec-RM4.spec.ts -> 4 pass, 0 fail, 594 expect(), 10 s; engine-xstate.test.ts -> 46 pass.
+- Git check: the old file at b517ebb3f3^ (and 3e57ac078c^, before the goal touched it) holds the same 29 titles.
+- Judged afresh: "default 4" is the spec's recorded prepare-goal decision (derived from D3) and the name tasks.md T1.7
+  requires; test 1 reads only the engine's name, so it has no facts to fold. Both are accepted readings, not gaps.
+- `verdict RM4 trusted` -> {"verdict":"trusted","trustLevel":"trusted"}.

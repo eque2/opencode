@@ -28,3 +28,16 @@
 - Notes for the semantic verifier: "the slice is folded" is shown through what only the fold can give the new job:
   the status file's history entry (at 2, T1.1 building) and T1.1's stored worktree, and the reuse of the stored
   builder session; the test cannot read the job's run actor directly.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer, batch SV1-SV5)
+- Action: Layer 3 semantic trust for SV3. State at start: completed, trust verified.
+- Plan: read the test file, task T2.11 and the command's resume code; judge each Gherkin step; run the test myself;
+  call `verdict SV3` exactly once. I change no source or test file. I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own run at HEAD f57285510d (file committed, sha256 prefix 179d4e0c9f364c29): exit 0, 2 pass, 0 fail, 23 expect(), 15 s.
+- I read command.ts `sliceOf` and `job`: the resume rule is the latest slice not ended and the same normalised path.
+- Each Gherkin step has a real assertion on the real command, store, status file and harness system. The fold is
+  shown through what only the fold gives: the stored history entry, attempts 1, the stored worktree and session.
+- "After the slice ended" is shown with a job cancel; the done and stored-stop ends belong to RM8a and RM8c.
+- Verdict: `verdict SV3 trusted` -> state completed, trustLevel trusted.

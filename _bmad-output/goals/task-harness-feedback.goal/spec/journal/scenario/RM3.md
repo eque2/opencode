@@ -23,3 +23,13 @@
 - Note for the semantic verifier: `cancel` is still a name in src/task/core/supervise/run.ts (RunSupervisor.cancel,
   the job's cancel finalizer) and core/sessions.ts; these are supervision code, not the engine's fold code, so the
   `cancel` check is scoped to the engine module.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch RM2-RM6)
+- Action: verify-scenario-trust (Layer 3). State at start: RM3 completed, trustLevel verified.
+- Plan: read the RM3 Gherkin, tasks.md T1.6, the test file and engine-xstate/index.ts; map each step to an
+  assertion; run the test file myself; then call `verdict RM3` exactly once. No source or test edits.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own bare run: `bun test --timeout=30000 ./test/task/verify-spec-RM3.spec.ts` -> 4 pass, 0 fail, 99 expect(), 5.5 s.
+- `grep -w cancel` on the engine module finds only a comment (machine.ts:476); `cancel` elsewhere in src is job code.
+- `verdict RM3 trusted` -> {"verdict":"trusted","trustLevel":"trusted"}. No gap.

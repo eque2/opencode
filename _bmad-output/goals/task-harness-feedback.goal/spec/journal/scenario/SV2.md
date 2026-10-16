@@ -30,3 +30,14 @@
 - Notes for the semantic verifier: the stops are shown in two runs, each isolated from the run's end (S2 stops while
   T1.3 builds; T1.3 stops while S2 waits for its judge). The builder's stream idle time is 120 s in this test so that
   a quiet turn does not stall during the test; the stall rule is SV10's.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer, batch SV1-SV5)
+- Action: Layer 3 semantic trust for SV2. State at start: completed, trust verified.
+- Plan: read the test file, tasks T2.7-T2.10, the supervisors; judge each Gherkin step; run the test file myself;
+  call `verdict SV2` exactly once. I change no source or test file. I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own run at HEAD f57285510d (file committed, sha256 prefix 8ea8b61091ab24df): exit 0, 5 pass, 0 fail, 63 expect(), 16 s.
+- Each Gherkin step has a real assertion on the real supervisors, Recorder and event store. The Recorder wrapper only
+  lists facts; the store equals that list. The run-machine walk has a control. `eventually` dies after 20 s.
+- Verdict: `verdict SV2 trusted` -> state completed, trustLevel trusted.

@@ -30,3 +30,18 @@
 - Real run 20261016T123030Z-9f0892 through the adapter at HEAD ca3b28b82d (file untracked, sha256 prefix
   7cefced1b7c5fd0c): bun exit 0, 1 pass, 0 fail, 19 expect() calls, 4.8 s. Decision: handed-off.
 - `verify SV4`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer, batch SV1-SV5)
+- Action: Layer 3 semantic trust for SV4. State at start: completed, trust verified.
+- Plan: read the test file, tasks T2.10/T2.11, the cancel finalizer; judge each Gherkin step, including the writer's
+  note that the test does not exercise a cancel that reaches its deadline; run the test myself; call `verdict SV4`
+  exactly once. I change no source or test file. I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own run at HEAD f57285510d (file committed, sha256 prefix 7cefced1b7c5fd0c): exit 0, 1 pass, 0 fail, 19 expect(), 6 s.
+- I checked command.ts: it calls `harness.claim` directly and passes the wrapper into the job, so the lock hold and
+  the release and removeRun notes are real. The wrapper changes nothing else.
+- Each Gherkin step has a real assertion. The stale check in the Given can never finish by itself.
+- Observation (not a Gherkin gap): the branch where the cancel finalizer reaches cancelDeadline and force-stops the
+  supervisor is not exercised here or in supervise-run.test.ts. The Gherkin accepts "final or stopped".
+- Verdict: `verdict SV4 trusted` -> state completed, trustLevel trusted.

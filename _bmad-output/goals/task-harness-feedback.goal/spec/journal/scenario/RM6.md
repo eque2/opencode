@@ -20,3 +20,14 @@
 - Real run 20261016T123631Z-f586e1 at HEAD 1c0823d35a (sha256 prefix ff81d8441aeb3579): bun exit 0, 3 pass,
   handed-off, adapter exit 0. `verify RM6`: structural pass; state completed, trust untrusted -> verified.
 - No code defect found.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch RM2-RM6)
+- Action: verify-scenario-trust (Layer 3). State at start: RM6 completed, trustLevel verified.
+- Plan: read the RM6 Gherkin, tasks.md T1.6, the test file and `applyTo` in index.ts; map each step to an assertion;
+  run the file myself; then call `verdict RM6` exactly once. No source or test edits.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own bare run: verify-spec-RM6.spec.ts -> 3 pass, 0 fail, 211 expect(), 4.5 s.
+- Each Gherkin step has a real assertion on the real loader and engine (map in the transcript); controls prove the
+  ended-run guard is the engine's, not the port's.
+- `verdict RM6 trusted` -> {"verdict":"trusted","trustLevel":"trusted"}. No gap.

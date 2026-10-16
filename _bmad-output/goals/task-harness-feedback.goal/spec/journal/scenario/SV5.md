@@ -31,3 +31,18 @@
 - Notes for the semantic verifier: "a touch that fails" is covered two ways: the real write of a touch fails
   (status.json made a directory; TaskStatus.write logs it) and a touch worker that fails (a stand-in, since the real
   touch, a queue offer, cannot fail; the run supervisor logs it). Neither records a fact; the heartbeat goes on.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer, batch SV1-SV5)
+- Action: Layer 3 semantic trust for SV5. State at start: completed, trust verified.
+- Plan: read the test file, task T2.4 and T2.10, the Recorder and the touch path; judge each Gherkin step, including
+  whether the failing touch stand-in hides the behaviour under test; run the test myself; call `verdict SV5` exactly
+  once. I change no source or test file. I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own run at HEAD f57285510d (file committed, sha256 prefix 873bdfd4cb189dc1): exit 0, 4 pass, 0 fail, 40 expect(), 4 s.
+- I read recorder.ts and status.ts: the real touch is `Queue.offer(...).asVoid` and cannot fail; a failed write is
+  logged by `TaskStatus.write` as "the status write failed".
+- The failing touch stand-in hides nothing: it replaces only the worker, so the supervisor's own onError path runs;
+  the real failure (a failed write of a touch) is covered end to end by the other test.
+- Each Gherkin step has a real assertion. Settle sleeps come only before "nothing more" checks.
+- Verdict: `verdict SV5 trusted` -> state completed, trustLevel trusted.

@@ -29,3 +29,18 @@
 - Notes for the semantic verifier: AD-17 keeps two polls in proof/process.ts (`appender`, `awaitGroupGone`); the
   test pins exactly those. "Failure limit" is read as the runner's MAX_FAILURES with its failure map; the three
   supervisors' FAILURE_LIMIT constants remain as xstate guard parameters over a context count, and the test pins that.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer, batch SV1-SV5)
+- Action: Layer 3 semantic trust for SV1. State at start: completed, trust verified.
+- Plan: read the test file, spec.md, tasks T2.12/T2.13, the source under packages/opencode/src/task/; judge each
+  Gherkin step against its assertions; run the test file myself; call `verdict SV1` exactly once.
+- I change no source or test file. I commit nothing. I read no evidence or key file.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- My own run: `bun test --timeout=30000 --reporter=junit ./test/task/verify-spec-SV1.spec.ts` at HEAD f57285510d,
+  file committed, sha256 prefix f9ae7f1d4d6896cb: exit 0, 8 pass, 0 fail, 43 expect(), 8 s.
+- Each Gherkin step has a real assertion. The AST scan has a negative control. I cross-checked the source by grep
+  and read harness.ts and supervise/run.ts: no Ref, map, set, FiberMap, endless loop or module `let` exists.
+- "Failure limit" read as the runner's MAX_FAILURES: accepted. T2.12 names MAX_FAILURES; SV6 needs a 3-failure rule,
+  and the three FAILURE_LIMIT uses are xstate guards over a context count.
+- Verdict: `verdict SV1 trusted` -> state completed, trustLevel trusted.
