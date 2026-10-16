@@ -55,6 +55,8 @@ type RootEvent =
   | { readonly type: "run.spawn"; readonly runID: string; readonly logic: AnyActorLogic; readonly input: unknown }
   | { readonly type: "run.remove"; readonly runID: string }
   | ({ readonly type: "session.claim"; readonly session: string } & Owner)
+  // A child's error, which the actor system relays to the root: a run supervisor that stopped with an error.
+  | { readonly type: `xstate.error.actor.${string}`; readonly error: unknown; readonly actorId: string }
 
 // The repetition limit in an owner's snapshot context; an owner without one is not watched.
 const decodeLimit = Schema.decodeUnknownOption(Schema.Struct({ context: Schema.Struct({ limit: Schema.Number }) }))
@@ -120,6 +122,15 @@ const root = createMachine({
           ...context.sessions,
           [event.session]: { owner: event.owner, watch: event.watch },
         }),
+      }),
+    },
+    // A run supervisor that errors has left the system. A child error that no transition takes would put the root in
+    // status error, and the root would ignore every later event: the job's release, claims, spawns (SV26). The root
+    // takes it, and removes the run as `run.remove` does. The run supervisors are the root's only children.
+    "xstate.error.actor.*": {
+      actions: enqueueActions(({ event, enqueue }) => {
+        const runID = /^run:(.+)$/.exec(event.actorId)?.[1]
+        if (runID !== undefined) enqueue.raise({ type: "run.remove", runID })
       }),
     },
   },
