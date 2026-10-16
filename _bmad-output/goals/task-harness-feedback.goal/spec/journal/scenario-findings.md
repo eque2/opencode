@@ -14,3 +14,8 @@ Spec wording gaps and observations that the scenario verifiers raised. None bloc
   set and no done decision of its own). Reword RM18 to name the run supervisor.
 - RM19's scenario test (verify-spec-RM19.spec.ts) keeps a 60 s bound for a 27–34 s walk; at a load of 120 one run took
   74 s. The unit test's bound is 180 s since 2e3884adf5; the scenario test may need the same before the final gate.
+- SV9 (verifier's note, before the trust verdict): the alphabet keys an external region's trust on "the start-up step"
+  as an empty log, but a real run records the trust straight after its own run.started (log length 1). The SV9
+  Gherkin's exception list does not name it. The test accepts an external trust only in the start-up step (the job's
+  first fact and the external trusts straight after it) and only when the empty-log alphabet holds it; its negative
+  control refuses a later external trust. Name the start-up trust in SV9, or key the alphabet on the start-up step.

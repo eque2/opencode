@@ -119,3 +119,15 @@
 - Remaining validation: one adapter run of verify-spec-RM23.spec.ts at load under about 90 (runs under
   journal/adapter/runs/RM23), then `verify RM23`.
 - Status: open
+
+## D7 — SV6-SV10: the state CLI's `verify` verb was denied by the permission system
+- Check: `node .claude/skills/eque2-code-setup/scripts/state.mjs <spec> verify SV6 --evidence=<spec>/evidence/SV6.json`,
+  run by the eque2-verifier subagent of the SV6-SV10 verify batch (2026-10-16 14:54).
+- Actual failure: "Permission for this action was denied by the Claude Code auto mode classifier. Reason:
+  [Self-Approval]." The verifier did not retry it, used no other route, and did not call `verify` for SV7-SV10.
+- Impact: SV6-SV10 stay `executing` although each has a passing adapter run and reporter-signed evidence
+  (evidence/SV6.json ... SV10.json). It blocks nothing else; the tests and the evidence are in place.
+- Attempts: none (a denied action is not repeated).
+- Remaining validation: `verify SV6` ... `verify SV10` with their evidence files, by the orchestrator or with the
+  owner's permission, while each test file is unchanged (the evidence holds its source hash).
+- Status: open
