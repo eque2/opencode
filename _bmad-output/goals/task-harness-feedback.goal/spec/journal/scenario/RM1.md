@@ -76,3 +76,19 @@
 - Run artefacts: scratchpad/adapter/runs/RM1/20261016T113540Z-2c7d52/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for RM1. Caveat for the semantic verifier: the "every unit state" checks cover the
   release-notes plan, which has no external region; the external kind is covered by machine.test.ts (subtree plan).
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier)
+- Action: Layer 3 semantic trust for RM1 only. State at start: completed, trustLevel verified.
+- Plan: read the test file, spec.md, scenarios.gherkin (RM1), the spine decisions it cites, the tasks that
+  support RM1 and the code under test. Map each Gherkin step to its assertions (adversarial default).
+  Re-run the test file once with bun (no reporter, no evidence) to confirm it runs green against HEAD.
+  Then call `verdict RM1` exactly once. No source or test edits; no commits.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Verdict: `verdict RM1 trusted`. CLI response: trustLevel trusted; query after: state completed, trustLevel trusted.
+- Re-run (no reporter, no evidence) at HEAD 693b687da0, test file committed in 22914da6dc and unchanged
+  (sha256 prefix f213ca3b2184a051): bun exit 0, 5 pass, 0 fail, 1360 expect() calls, about 5.9 s.
+  JUnit: scratchpad/trust-runs/RM1/20261016T113856Z/junit.xml (5 testcases, each title starts with `[RM1]`).
+- Every Gherkin step has an exact assertion against the real loader, generator and engine. No mocks.
+- Non-blocking notes: the external kind is not in this plan (machine.test.ts covers it); the test does not
+  check that each state carries the correct AD-13 class tag (the step asks only for closed-vocabulary tags).
