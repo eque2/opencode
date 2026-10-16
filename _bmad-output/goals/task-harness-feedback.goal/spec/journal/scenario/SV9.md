@@ -42,3 +42,21 @@
   ("the start-up step"), but a real run records it straight after its own run.started (log length 1). The test
   accepts an external trust only in that start-up step and only when the empty-log alphabet holds it; the negative
   control shows a later external trust is refused. The Gherkin's exception list does not name it.
+
+## 2026-10-16 INTENT (re-run in OpenCode, after the denied `verify SV6`)
+- State at start: SV9 executing, untrusted. No `update start`.
+- Plan: judge the committed test (6841bc0e5d) against the Gherkin step; change it only if it fails or misses a step;
+  one trial, one fresh adapter run, then `verify SV9 --evidence=...`.
+
+## 2026-10-16 OUTCOME (re-run in OpenCode)
+- Judged the committed test (sha256 prefix 7f67ba750b0a6bd1, unchanged): three real `/task` runs (the real command,
+  harness root, Recorder, supervisors, workers, proofs and merges); only the session side is scripted, and it acts
+  through the real hook routing. The stored facts are replayed through the real pure fold and checked against the
+  real `TaskAlphabet.alphabet`. A negative control shows the check finds out-of-state facts. No change made.
+- Trial: 4 pass, 0 fail (30 s, load 52).
+- Adapter run 20261016T165605Z-4dd605 at HEAD 27365884c4: bun exit 0, 4 pass, 0 fail, 24 expect() calls, 31 s.
+  Decision: handed-off; the reporter wrote evidence/SV9.json.
+- `verify SV9 --evidence=...`: exit 0; trust untrusted -> verified. Query: state completed, trustLevel verified.
+- Open note for the semantic verifier (unchanged from the first run): an external region's trust passes as
+  "start-up" (the alphabet keys it on an empty log); the Gherkin's exception list does not name it. Not covered:
+  states with no supervisor fact in these runs (for example a parent in building, which a parent never enters).

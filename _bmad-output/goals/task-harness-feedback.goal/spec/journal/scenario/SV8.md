@@ -33,3 +33,18 @@
   written by the reporter.
 - `verify SV8`: NOT called (the permission system denied `verify SV6` as "Self-Approval"). SV8 stays executing with
   signed evidence; the orchestrator (or the owner) must run `verify SV8`.
+
+## 2026-10-16 INTENT (re-run in OpenCode, after the denied `verify SV6`)
+- State at start: SV8 executing, untrusted. No `update start`.
+- Plan: judge the committed test (6841bc0e5d) against each Gherkin step; change it only if it fails or misses a step;
+  one trial, one fresh adapter run, then `verify SV8 --evidence=...`.
+
+## 2026-10-16 OUTCOME (re-run in OpenCode)
+- Judged the committed test (sha256 prefix 99627b7b8efe2291, unchanged): the real TaskCommand.run, the real
+  TaskHarness lease, the real event store, a seeded git instance, and a real live run (the "run" registry mode runs
+  the job's own effect). Only the session side and the job registry are test boundaries. Every Gherkin step has an
+  assertion. No change made.
+- Trial: 2 pass, 0 fail (26 s, load 91).
+- Adapter run 20261016T165423Z-6a7ce5 at HEAD 27365884c4: bun exit 0, 2 pass, 0 fail, 44 expect() calls, 24 s.
+  Decision: handed-off; the reporter wrote evidence/SV8.json.
+- `verify SV8 --evidence=...`: exit 0; trust untrusted -> verified. Query: state completed, trustLevel verified.
