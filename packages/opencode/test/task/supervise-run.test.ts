@@ -290,6 +290,45 @@ describe("the run supervisor's start", () => {
     }),
   )
 
+  it.live("SV20 a trust forwarded while the directory's trusts are read is recorded once, not dropped", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const setup = yield* runSetup(plan, [])
+      const open = yield* Deferred.make<void>()
+      // The directory's trusts stay unread until `open`: the supervisor waits in `trusting`.
+      const actor = yield* supervise(setup, { trusts: Effect.as(Deferred.await(open), []) })
+      yield* eventually(
+        Effect.map(actor.getSnapshot, (snapshot) => snapshot.matches("trusting")),
+        "the supervisor reads the trusts",
+      )
+      yield* actor.send({ type: "run.trust", id: "T9" })
+      yield* Deferred.succeed(open, undefined)
+      yield* stored(setup.id, 2)
+      yield* settle
+      expect((yield* storedFacts(setup.id)).filter((fact) => fact.type === "outside.trusted")).toMatchObject([
+        { type: "outside.trusted", id: "T9" },
+      ])
+    }),
+  )
+
+  it.live("SV20 a trust forwarded before the run's first snapshot reaches the supervisor is recorded once", () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("release-notes.spec")
+      const setup = yield* runSetup(plan, [])
+      // A watch that sends nothing: the test hands the supervisor its first snapshot itself.
+      const actor = yield* supervise(setup, { actors: { watch: fromCallback(() => () => {}) } })
+      yield* running(actor)
+      yield* actor.send({ type: "run.trust", id: "T9" })
+      const snapshot = yield* setup.recorder.actor.getSnapshot
+      yield* actor.send({ type: "run.changed", snapshot, now: 0 })
+      yield* stored(setup.id, 2)
+      yield* settle
+      expect((yield* storedFacts(setup.id)).filter((fact) => fact.type === "outside.trusted")).toMatchObject([
+        { type: "outside.trusted", id: "T9" },
+      ])
+    }),
+  )
+
   it.live("is registered as run:<runID> in the harness before it reads the directory's trusts", () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
