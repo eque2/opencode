@@ -40,7 +40,7 @@ import { ScenarioSupervisor } from "@/task/core/supervise/scenario"
 import { TaskSupervisor } from "@/task/core/supervise/task"
 import { TaskStatus } from "@/task/core/status"
 import { TaskWorkers } from "@/task/core/workers"
-import { TaskEngineXState } from "@/task/engine-xstate"
+import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import { TaskMachine } from "@/task/engine-xstate/machine"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
@@ -565,6 +565,64 @@ describe("the unit supervisors (SV2)", () => {
       expect(failed).toMatchObject({ reason: "harness error: the supervisor broke" })
       expect((yield* actor.getSnapshot).status).toBe("active")
     }),
+  )
+
+  it.live(
+    "SV26 spawns no new supervisor for a unit whose failure is in flight: each unit records task.failed once",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("release-notes.spec")
+        const setup = yield* runSetup(plan, [facts().runStarted()])
+        // Each spawn is noted with its task. A unit's first supervisor errors at once; a later one would live on, so a
+        // second spawn shows in the system.
+        const spawned: Array<string> = []
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) a unit supervisor that errors at once takes the task supervisor's place
+        const broken = fromEffect(({ input }: { input: { readonly task: { readonly id: string } } }) =>
+          Effect.suspend(() => {
+            spawned.push(input.task.id)
+            return spawned.filter((id) => id === input.task.id).length === 1
+              ? Effect.die(new Error("the supervisor broke"))
+              : Effect.never
+          }),
+        ) as unknown as typeof TaskSupervisor.machine
+        // The relay is the test: each push is one snapshot the supervisor sees.
+        const actor = yield* supervise(setup, { actors: { task: broken, watch: fromCallback(() => undefined) } })
+        const push = (snapshot: RunSnapshot) =>
+          Effect.gen(function* () {
+            yield* actor.send({ type: "run.changed", snapshot, now: yield* Clock.currentTimeMillis })
+          })
+        const task = (unit: string) => `task:${setup.id}:${unit}`
+        const failures = Effect.map(storedFacts(setup.id), (list) =>
+          list.flatMap((fact) => (fact.type === "task.failed" ? [fact.task] : [])).toSorted(),
+        )
+        yield* running(actor)
+        yield* stored(setup.id, 1)
+        // T1.1 and T1.2 are ready: each gets a supervisor, which errors, so each records task.failed.
+        const first = yield* setup.recorder.actor.getSnapshot
+        yield* push(first)
+        yield* eventually(
+          Effect.map(failures, (list) => list.length === 2),
+          "T1.1 and T1.2 record task.failed",
+        )
+        // The snapshot the relay sends once T1.1's failure has folded and T1.2's has not: T1.2 is still ready.
+        const between = TaskEngineXState.apply(plan, first, {
+          type: "task.failed",
+          at: 1,
+          task: "T1.1",
+          reason: "harness error: the supervisor broke",
+        })
+        expect(between.hasTag("T1.2:ready")).toBe(true)
+        yield* push(between)
+        // No new supervisor for T1.2: its failure is in flight.
+        expect(yield* alive(actor, task("T1.2"))).toBe(false)
+        // Then both failures have folded: nothing is supervised, and nothing more is spawned or recorded.
+        yield* push(yield* setup.recorder.actor.getSnapshot)
+        yield* settle
+        expect(spawned.toSorted()).toEqual(["T1.1", "T1.2"])
+        expect(yield* failures).toEqual(["T1.1", "T1.2"])
+        expect(yield* alive(actor, task("T1.2"))).toBe(false)
+        expect((yield* actor.getSnapshot).status).toBe("active")
+      }),
   )
 })
 

@@ -1,10 +1,10 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { Effect, Exit, Fiber, FileSystem, Option, Schema } from "effect"
-import { assign, setup } from "@jambudipa/xstate-effect"
+import { assign, fromEffect, setup } from "@jambudipa/xstate-effect"
 import path from "path"
 import { TaskHarness } from "@/task/core/harness"
-import { testEffect } from "../lib/effect"
+import { pollWithTimeout, testEffect } from "../lib/effect"
 
 // The harness root (spine AD-8, AD-11, AD-19): one process-wide actor whose system is the only registry of live
 // runs. It holds one lease per directory (the run claim and the checkout and git locks) and the session index that
@@ -230,5 +230,45 @@ describe("TaskHarness registry", () => {
       expect(yield* trustsOf(harness, "task_one")).toEqual(["T9"])
       expect(yield* trustsOf(harness, "task_two")).toEqual(["T7"])
     }),
+  )
+
+  it.live(
+    "SV26 stays active when a run supervisor errors: the run's release frees its lease, and later events work",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* TaskHarness.make
+        const fs = yield* FileSystem.FileSystem
+        const one = yield* fs.makeTempDirectoryScoped()
+        const two = yield* fs.makeTempDirectoryScoped()
+        expect((yield* harness.claim(claim(one, "task_broken"))).kind).toBe("claimed")
+        yield* harness.claimSession({ session: "ses_b", owner: "task:task_broken:T1.1", watch: true })
+        yield* harness.claimSession({ session: "ses_x", owner: "task:task_other:T1.1", watch: true })
+        // A run supervisor that errors at once: it leaves the system, and its error event reaches the root.
+        yield* harness.spawnRun(
+          "task_broken",
+          fromEffect(() => Effect.die(new Error("the run supervisor broke"))),
+        )
+        // The root drops the errored run's session entries, as for run.remove; another run's entry stays.
+        yield* pollWithTimeout(
+          Effect.map(harness.ownerOf("ses_b"), (owner) => (Option.isNone(owner) ? true : undefined)),
+          "the root drops the session entries of the errored run",
+          "10 seconds",
+        )
+        expect(yield* harness.running("task_broken")).toBe(false)
+        expect(Option.isSome(yield* harness.ownerOf("ses_x"))).toBe(true)
+        // The root is still active: the job's release frees the lease.
+        yield* harness.release(one, "task_broken")
+        expect(yield* harness.live(one)).toEqual(Option.none())
+        // Later claims, spawns and session claims work, in that directory and in another one.
+        expect((yield* harness.claim(claim(two, "task_two"))).kind).toBe("claimed")
+        expect((yield* harness.claim(claim(one, "task_again"))).kind).toBe("claimed")
+        yield* harness.spawnRun("task_again", listener)
+        expect(yield* harness.running("task_again")).toBe(true)
+        yield* harness.claimSession({ session: "ses_c", owner: "task:task_again:T1.1", watch: false })
+        expect(yield* harness.ownerOf("ses_c")).toEqual(Option.some({ owner: "task:task_again:T1.1", watch: false }))
+        // The errored run's id can run again.
+        yield* harness.spawnRun("task_broken", listener)
+        expect(yield* harness.running("task_broken")).toBe(true)
+      }),
   )
 })
