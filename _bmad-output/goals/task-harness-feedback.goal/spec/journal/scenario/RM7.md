@@ -25,3 +25,16 @@
 - `verify RM7 --evidence=<spec>/evidence/RM7.json`: structural pass (testFileExists, testPatternFound, testExecuted,
   testPassed; testInCommit false, as expected). State completed, trust untrusted -> verified.
 - No gap found in the code for RM7.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context Layer 3 reviewer, batch RM7, RM8a, RM8b, RM8c, RM9)
+- Action: judge RM7 afresh and call `verdict RM7` once. State at start: completed, trust verified.
+- Plan: read the committed test file (b9553cc37d) and the code it drives; map each Gherkin step to its assertions;
+  run the file with bare `bun test` from packages/opencode; judge adversarially. No source or test edit; commit
+  nothing; never read evidence or key files.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read the test file (committed b9553cc37d, no later change), test/task/lib/machine.ts (`loadPlan` uses the real
+  `Blend.load` and `TaskCommand.plan`; `observed` matches the Gherkin header definition) and the engine API exports.
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-RM7.spec.ts` -> 5 pass, 0 fail, 52 expect() calls.
+- Every Gherkin step has a specific assertion; the before/after contrast proves the one fold step. No gap.
+- `verdict RM7 trusted`: trustLevel trusted.

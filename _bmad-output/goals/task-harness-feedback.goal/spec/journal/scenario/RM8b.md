@@ -30,3 +30,16 @@
 - No gap found in the code for RM8b. Reading for the semantic verifier: "records only run.resumed" is read as "the
   resume marks itself with run.resumed and with no run.started"; the resumed run then goes on and can record its own
   work facts, which the test stops by a cancel.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context Layer 3 reviewer, batch RM7, RM8a, RM8b, RM8c, RM9)
+- Action: judge RM8b afresh and call `verdict RM8b` once. State at start: completed, trust verified.
+- Plan: read the committed test file and the code it drives; map each Gherkin step, including "records only
+  run.resumed"; run the file with bare `bun test`. No edit; commit nothing; no evidence or key reads.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read the test file (committed b9553cc37d, no later change), test/task/lib/command.ts, src/task/core/command.ts
+  (`normalizedPath`, `pathOf`, `sliceOf`) and src/task/core/supervise/run.ts (`startRun`).
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-RM8b.spec.ts` -> 4 pass, 0 fail, 54 expect() calls.
+- "Records only run.resumed": `startRun` marks a resume with run.resumed alone (outside.trusted only for external
+  regions, none in a whole-spec run). The test's reading matches the code. No gap.
+- `verdict RM8b trusted`: trustLevel trusted.

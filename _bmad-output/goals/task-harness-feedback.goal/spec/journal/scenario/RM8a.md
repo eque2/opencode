@@ -31,3 +31,16 @@
 - `verify RM8a --evidence=<spec>/evidence/RM8a.json`: structural pass; testInCommit false, as expected. State
   completed, trust untrusted -> verified.
 - No gap found in the code for RM8a.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context Layer 3 reviewer, batch RM7, RM8a, RM8b, RM8c, RM9)
+- Action: judge RM8a afresh and call `verdict RM8a` once. State at start: completed, trust verified.
+- Plan: read the committed test file and the helpers and code it drives; check that the stored slice is in the old
+  form; map each Gherkin step; run the file with bare `bun test`. No edit; commit nothing; no evidence or key reads.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read the test file (committed b9553cc37d, no later change), test/task/lib/command.ts (real `TaskCommand.run`; the
+  scripted parts are the session boundary and a job registry that runs the real job effect), and base 2c0214ab71
+  events.ts (16 old fact types; run.started and run.resumed with an optional base and no path).
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-RM8a.spec.ts` -> 4 pass, 0 fail, 141 expect() calls.
+- Every Gherkin step has a specific assertion, with contrasts (no run.ended -> resume; run.ended failed -> failed).
+- `verdict RM8a trusted`: trustLevel trusted. No gap.

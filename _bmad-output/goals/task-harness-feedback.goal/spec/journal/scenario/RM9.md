@@ -31,3 +31,16 @@
 - `verify RM9 --evidence=<spec>/evidence/RM9.json`: structural pass; testInCommit false, as expected. State
   completed, trust untrusted -> verified.
 - No gap found in the code for RM9.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context Layer 3 reviewer, batch RM7, RM8a, RM8b, RM8c, RM9)
+- Action: judge RM9 afresh and call `verdict RM9` once. State at start: completed, trust verified.
+- Plan: read the committed test file and the code it drives; map each Gherkin step, including "the same fold step"
+  and "dependency order"; run the file with bare `bun test`. No edit; commit nothing; no evidence or key reads.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read the test file (committed b9553cc37d, no later change) and src/task/engine-xstate/machine.ts (`DEAD` includes
+  `blocked`; `blockRows` emit rows in dependency order; `dependenciesOf` = afterEffective, then children).
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-RM9.spec.ts` -> 4 pass, 0 fail, 50 expect() calls.
+- Every Gherkin step has a discriminating assertion: one apply, before/after contrast, history order, and T5 after
+  [T4, T2] naming T4 (dependency order, not id or region order). No gap.
+- `verdict RM9 trusted`: trustLevel trusted.

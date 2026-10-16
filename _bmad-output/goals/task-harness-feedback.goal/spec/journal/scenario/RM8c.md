@@ -39,3 +39,23 @@
   omits the scenario facts that the old runner stored. Under D3 the header facts alone do not fold to done, and the
   test asserts that. The test proves RM8c on the stored slice with those scenario facts (the reading that
   journal/task/T1.7-verify.md accepted). If the owner reads RM8c literally, RM8c conflicts with D3.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context Layer 3 reviewer, batch RM7, RM8a, RM8b, RM8c, RM9)
+- Action: judge RM8c afresh and call `verdict RM8c` once. State at start: completed, trust verified.
+- Special question from the dispatch: the Gherkin header's "observed facts" alone leave some scenarios ready, so the
+  test adds the scenario proofs that the old runner stored. Judge whether that still proves RM8c as written.
+- Plan: read the test, check the old runner's `schedule` at base 2c0214ab71, look for the real observed store if it
+  is reachable read-only, run the file with bare `bun test`. No edit; commit nothing; no evidence or key reads.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read the test file (committed b9553cc37d, no later change), test/task/lib/machine.ts (`observed`), the release-notes
+  dependencies (T1.3 after T1.1; T1.4 after T1.2, T1.3; S2, S7 need T1.1; S3 needs T1.2; S4, S12 need T1.3), base
+  2c0214ab71 core/runner.ts `schedule`, and src/task/core/command.ts `sliceOf`.
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-RM8c.spec.ts` -> 3 pass, 0 fail, 45 expect() calls.
+- Judgment on the reading: the literal header facts cannot fold to done under D3 and RM10; the test asserts that.
+  The old runner proved every scenario whose needs were trusted, and T1.4 started only after T1.2 and T1.3 were
+  trusted, so the five scenarios were provable before T1.4 began. The stored slice with their facts is the real
+  observed slice. Every Then step has a specific assertion with a one-fact-less contrast.
+- `verdict RM8c trusted`: trustLevel trusted.
+- Open spec-wording gap (owner): the header definition of "the observed facts" omits the scenario facts. Reword the
+  header or RM8c. Not a test or code defect.
