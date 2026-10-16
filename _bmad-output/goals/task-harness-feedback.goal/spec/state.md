@@ -62,7 +62,7 @@
 | T4.13   | task       | completed   |
 | T4.14   | task       | completed   |
 | DOC1    | scenario   | not_started |
-| RM1     | scenario   | not_started |
+| RM1     | scenario   | completed   |
 | RM2     | scenario   | not_started |
 | RM3     | scenario   | not_started |
 | RM4     | scenario   | not_started |
