@@ -40,3 +40,22 @@
   verifier").
 - Run artefacts: scratchpad/adapter/runs/VF6/20261016T124118Z-7e07c6/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for VF6.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer)
+- Action: Layer 3 semantic trust for VF6. State at start: completed, trust verified (structural pass).
+- Read: guardrails.md, semantic-verify-scenario/SKILL.md, spec.md, scenarios.gherkin (VF6), tasks.md T3.4, coverage A3.a.
+- Plan: read verify-spec-VF6.spec.ts and the code it drives (core/command.ts trust walk, the test helpers); map each
+  Gherkin step to an assertion; run the file with plain `bun test` once; call `verdict VF6` exactly once.
+- Do not change any source or test file; do not read evidence or key files; commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-VF6.spec.ts` in packages/opencode at HEAD 6d3f86d553
+  (file committed in af2bdf043e, unchanged): 5 pass, 0 fail, 42 expect() calls, 162 s (machine load).
+- Step map: Given -> loads clean, T1.3 after [T1.1], subtree external [T1.1], no stored facts. When -> real
+  `TaskCommand.run` on the T1.3 folder. Then refused before work -> no job, no lease, no fact, worktrees unchanged.
+  R12 line -> exact text, regex of the Gherkin template, folder relative to the spec, status reason. Fold through own
+  plans -> four slice cases; stale-after-trusted and the same `outside.trusted T1.1` under two plans discriminate a
+  fold through the slice's own plan from a fact scan or a fixed plan.
+- Note: each case stores one slice; the newest-first walk over several slices is VF20/VF24 scope. Not a gap for VF6.
+- Defect link: VF6 does not depend on the `trusting`-state trust drop in supervise/run.ts (no trust reaches a live run).
+- Verdict: `verdict VF6 trusted` -> state completed, trustLevel trusted.

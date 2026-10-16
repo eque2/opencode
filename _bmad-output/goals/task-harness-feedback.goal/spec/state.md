@@ -103,8 +103,8 @@
 | SV8     | scenario   | not_started |
 | SV9     | scenario   | not_started |
 | SV10    | scenario   | not_started |
-| SV11    | scenario   | executing   |
-| SV12    | scenario   | not_started |
+| SV11    | scenario   | completed   |
+| SV12    | scenario   | executing   |
 | SV13    | scenario   | not_started |
 | SV14    | scenario   | not_started |
 | SV15    | scenario   | not_started |

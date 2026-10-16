@@ -52,3 +52,26 @@
   completed, trust untrusted -> verified ("awaiting semantic verifier").
 - Run artefacts: scratchpad/adapter/runs/VF7/20261016T124621Z-6d56b2/.
 - No gap found in the code for VF7's steps. One observation recorded above (the start-up trust race, SV20 area).
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer)
+- Action: Layer 3 semantic trust for VF7. State at start: completed, trust verified (structural pass).
+- Read: VF7 Gherkin, tasks.md T3.4 (VF7 cases), the earlier VF7 journal (it reports a start-up trust drop in
+  core/supervise/run.ts, the `trusting` state; the orchestrator fixes it separately).
+- Plan: read verify-spec-VF7.spec.ts and the code it drives (command `trust` branch, harness `trust`, run supervisor
+  `trusting`/`running`); map each Gherkin step to an assertion; judge whether any assertion depends on the defect or
+  hides it with a wait; run the file once with plain `bun test`; call `verdict VF7` exactly once.
+- Do not change any source or test file; do not read evidence or key files; commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Own runs: `bun test --timeout=30000 ./test/task/verify-spec-VF7.spec.ts` in packages/opencode: 4 pass, 0 fail,
+  33 expect() calls, exit 0, at 6d3f86d553 (120 s) and again at 2e6ff969e3 (121 s), which holds the trust-drop fix
+  109948a797. The test file and test/task/lib are unchanged since af2bdf043e.
+- Step map: Given -> stored whole-spec slice, fold T1.1 trusted. When -> real command, real job ("run" mode).
+  Then -> header, one job, lease path T1.3; new slice [run.started T1.3, outside.trusted T1.1]; fold untrusted then
+  trusted. And never moves -> live command run (no second T1.1 fact), a real supervisor with T1.1 untrusted (stays
+  untrusted, no fact, T1.3 not ready), and no trusted slice (R12 refusal stays). T9 before and T8 after prove that the
+  T1.1 trust was handled, not dropped.
+- Defect link: the tests wait for the supervisor in `running` with a snapshot before they send a trust. They do not
+  depend on the start-up trust drop and do not test its fix. Code read: the fix's pending path keeps the
+  `untrustedOutside` filter, so an external id stays excluded in the start-up window too.
+- Verdict: `verdict VF7 trusted` -> state completed, trustLevel trusted.

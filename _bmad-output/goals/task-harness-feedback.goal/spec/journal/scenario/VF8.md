@@ -33,3 +33,19 @@
   completed, trust untrusted -> verified ("awaiting semantic verifier").
 - Run artefacts: scratchpad/adapter/runs/VF8/20261016T124834Z-046345/.
 - No gap found in the code for VF8.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context reviewer)
+- Action: Layer 3 semantic trust for VF8. State at start: completed, trust verified (structural pass).
+- Plan: read verify-spec-VF8.spec.ts, `plan`, `leftOut` and `header` in core/command.ts, and the acceptance files of
+  release-notes.spec; map each Gherkin step to an assertion; run the file once at HEAD; call `verdict VF8` once.
+- Do not change any source or test file; do not read evidence or key files; commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Own run at 2e6ff969e3: `bun test --timeout=30000 ./test/task/verify-spec-VF8.spec.ts` -> 4 pass, 0 fail,
+  30 expect() calls, exit 0, 87 s. Test file unchanged since af2bdf043e.
+- Step map: Given -> seeded release-notes spec; left-out ids from `needs`, pinned by hand (checked against the
+  acceptance files: T1.1 keeps S2, S7; T1.2 keeps S3). When -> real command on the T1.1 and T1.2 folders; one job
+  start. Then -> the first message is exactly [subtree header, `Left out: <ids> — ...`]; no kept id named. And ->
+  metadata `taskHarness.header.leftOut` equals the same ids in the same order. Controls: whole spec and T1 leave none.
+- Defect link: none (no trust, no live supervisor).
+- Verdict: `verdict VF8 trusted` -> state completed, trustLevel trusted.
