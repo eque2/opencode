@@ -95,8 +95,8 @@
 | RM29    | scenario   | not_started |
 | SV1     | scenario   | completed   |
 | SV2     | scenario   | completed   |
-| SV3     | scenario   | executing   |
-| SV4     | scenario   | not_started |
+| SV3     | scenario   | completed   |
+| SV4     | scenario   | executing   |
 | SV5     | scenario   | not_started |
 | SV6     | scenario   | not_started |
 | SV7     | scenario   | not_started |
