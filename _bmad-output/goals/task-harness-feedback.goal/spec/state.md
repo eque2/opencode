@@ -100,12 +100,12 @@
 | SV5     | scenario   | completed   |
 | SV6     | scenario   | executing   |
 | SV7     | scenario   | executing   |
-| SV8     | scenario   | not_started |
+| SV8     | scenario   | executing   |
 | SV9     | scenario   | not_started |
 | SV10    | scenario   | not_started |
 | SV11    | scenario   | completed   |
-| SV12    | scenario   | executing   |
-| SV13    | scenario   | not_started |
+| SV12    | scenario   | completed   |
+| SV13    | scenario   | executing   |
 | SV14    | scenario   | not_started |
 | SV15    | scenario   | not_started |
 | SV16    | scenario   | not_started |
