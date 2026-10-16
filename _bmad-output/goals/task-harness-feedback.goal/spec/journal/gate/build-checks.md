@@ -46,3 +46,8 @@ Each check: `update <id> start`, the command from the repository root at the goa
     code recorded.
   - From 23:52 BST, `autochecks.sh` (scratchpad) runs each further BUILD-4 attempt only when the 1-minute load is
     below 15, records `complete --exit-code=0` only for a run that exits 0, and then does the same for BUILD-6.
+  - Attempt 8 (2026-10-16 00:07–01:02 BST, at 6841aa040a, `check-BUILD-4-attempt8.log`): the load rose to 40–84; four
+    timing failures (supervise-task "resets the failure count on a success" ran out of polls, "never: proof 5"; the
+    summary's cancel-deadline case; two session prompt cancel cases). 157cf0dc74 lets the task tests' polls wait up to
+    20 s. The session ended at 01:02 with the run unfinished; nothing recorded.
+  - The owner paused the run overnight. At 11:26 BST `autochecks.sh` restarted at 157cf0dc74 (attempts 9 on).
