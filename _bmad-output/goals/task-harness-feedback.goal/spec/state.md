@@ -86,8 +86,8 @@
 | RM20    | scenario   | completed   |
 | RM21    | scenario   | completed   |
 | RM22    | scenario   | not_started |
-| RM23    | scenario   | executing   |
-| RM24    | scenario   | not_started |
+| RM23    | scenario   | not_started |
+| RM24    | scenario   | completed   |
 | RM25    | scenario   | not_started |
 | RM26    | scenario   | not_started |
 | RM27    | scenario   | not_started |
@@ -98,12 +98,12 @@
 | SV3     | scenario   | completed   |
 | SV4     | scenario   | completed   |
 | SV5     | scenario   | completed   |
-| SV6     | scenario   | not_started |
-| SV7     | scenario   | not_started |
+| SV6     | scenario   | executing   |
+| SV7     | scenario   | executing   |
 | SV8     | scenario   | not_started |
 | SV9     | scenario   | not_started |
 | SV10    | scenario   | not_started |
-| SV11    | scenario   | not_started |
+| SV11    | scenario   | executing   |
 | SV12    | scenario   | not_started |
 | SV13    | scenario   | not_started |
 | SV14    | scenario   | not_started |
