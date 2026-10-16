@@ -172,5 +172,5 @@
 | BUILD-1 | buildCheck | completed   |
 | BUILD-2 | buildCheck | completed   |
 | BUILD-3 | buildCheck | completed   |
-| BUILD-4 | buildCheck | building    |
-| BUILD-6 | buildCheck | not_started |
+| BUILD-4 | buildCheck | completed   |
+| BUILD-6 | buildCheck | completed   |

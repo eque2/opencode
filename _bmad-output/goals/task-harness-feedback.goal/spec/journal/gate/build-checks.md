@@ -51,3 +51,12 @@ Each check: `update <id> start`, the command from the repository root at the goa
     summary's cancel-deadline case; two session prompt cancel cases). 157cf0dc74 lets the task tests' polls wait up to
     20 s. The session ended at 01:02 with the run unfinished; nothing recorded.
   - The owner paused the run overnight. At 11:26 BST `autochecks.sh` restarted at 157cf0dc74 (attempts 9 on).
+  - Attempt 9 (11:25–11:40 BST, `check-BUILD-4-attempt9.log`): the upstream compaction test "stops quickly when aborted
+    during retry backoff" needed the interrupt within 250 ms and took 370 ms at a load of 11. 4736e62d2a gives it a 2 s
+    bound (the backoff is 10 s). Attempt 9 was ended early; nothing recorded.
+  - **Attempt 10 passed** (11:41–12:00 BST, at 4736e62d2a, load 9–13, `check-BUILD-4-attempt10.log`): opencode "4215
+    pass / 41 skip / 0 fail / Ran 4257 tests across 294 files", tui "368 pass / 1 skip / 0 fail / Ran 369 tests across
+    54 files", EXIT=0; `complete --exit-code=0`: completed.
+- BUILD-6 `cd packages/opencode && bun run script/task-conformance.ts --arm o2 --runs 1` (12:01–12:21 BST, at 4736e62d2a,
+  `check-BUILD-6.log`, `check-BUILD-6-guard.json`): baseline 0/17, o2 16/17 (H1–H16 each passed 1 of 1; L1 is the live
+  check, not run), `dirty` empty, EXIT=0; completed.
