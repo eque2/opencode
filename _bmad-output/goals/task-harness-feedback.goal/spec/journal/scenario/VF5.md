@@ -44,3 +44,18 @@
   State completed, trust untrusted -> verified ("awaiting semantic verifier").
 - Run artefacts: scratchpad/adapter/runs/VF5/20261016T122441Z-17c4e3/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for VF5.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier)
+- Action: Layer 3 semantic trust for VF5. State at start: completed, trustLevel verified.
+- Plan: read verify-spec-VF5.spec.ts and the code it drives (RunSupervisor.machine, staleCheck/idChanges, the machine
+  `check` action, the status projection); judge each Gherkin step; run the file myself; then one `verdict VF5`.
+- I judge only; I change no source or test file; I read no evidence or key file; I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: the test file (committed in 3789623276), test/task/lib/supervise.ts `runOf` (real TaskRecorder, real writer
+  with `writes: true`), workers.ts `staleCheck`/`idChanges`, the machine `check` action, tasks.md T3.3 (SD-15 texts).
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-VF5.spec.ts` in packages/opencode: 3 pass, 0 fail,
+  62 expect() calls, 18.1 s.
+- Every Gherkin step has an exact assertion; each "records nothing" check follows an observed real stale check, and
+  controls show a changed list is recorded.
+- Verdict: `verdict VF5 trusted` -> trustLevel trusted. No gap.

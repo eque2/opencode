@@ -38,3 +38,18 @@
   State completed, trust untrusted -> verified ("awaiting semantic verifier").
 - Run artefacts: scratchpad/adapter/runs/VF2/20261016T121138Z-666f37/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for VF2.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier)
+- Action: Layer 3 semantic trust for VF2. State at start: completed, trustLevel verified.
+- Plan: read verify-spec-VF2.spec.ts, the command's live-run refusal branch and the helpers; judge each Gherkin step;
+  run the file myself with plain `bun test`; then one `verdict VF2`.
+- I judge only; I change no source or test file; I read no evidence or key file; I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: the test file (committed in 3789623276), test/task/lib/command.ts, core/command.ts `refuse` (writes status.json
+  only when `harness.live` is none), supervise/run.ts HEARTBEAT (5 s), tasks.md T3.2, spec.md defect 2, ruling 3.
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-VF2.spec.ts` in packages/opencode: 2 pass, 0 fail,
+  35 expect() calls, 3.4 s.
+- Every Gherkin step has an exact assertion; a control (no live run -> the refusal writes status.json) proves the
+  status check discriminates.
+- Verdict: `verdict VF2 trusted` -> trustLevel trusted. No gap.

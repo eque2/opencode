@@ -32,3 +32,20 @@
 - Run artefacts: scratchpad/adapter/runs/VF3/20261016T121315Z-fbbe24/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for VF3. Note for the semantic verifier: the JSON-schema step reads the `required` list;
   it does not run a JSON Schema validator (none is a declared dependency of packages/opencode).
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier)
+- Action: Layer 3 semantic trust for VF3. State at start: completed, trustLevel verified.
+- Plan: read verify-spec-VF3.spec.ts, blend/schema.ts, verify.schema.json and the loader's R3 path; judge each Gherkin
+  step, with care for the writer's note (the JSON-schema step reads `required` and runs no validator); run the file
+  myself; then one `verdict VF3`.
+- I judge only; I change no source or test file; I read no evidence or key file; I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: the test file (committed in 3789623276), src/task/blend/schema.ts `VerifyFrontMatter` (ensures required),
+  task-formats/blend/schema/verify.schema.json (root keys), tasks.md T3.1.
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-VF3.spec.ts` in packages/opencode: 4 pass, 0 fail,
+  32 expect() calls, 1.9 s.
+- The writer's note (no JSON Schema validator runs): the step says the schema LISTS ensures as required. The schema
+  root is a draft 2020-12 `type: object` with `additionalProperties: false` and no root `$ref`/`allOf`, so the
+  top-level `required` list is the effective constraint. Reading it proves the step. Not a gap.
+- Verdict: `verdict VF3 trusted` -> trustLevel trusted.

@@ -42,3 +42,22 @@
 - Run artefacts: scratchpad/adapter/runs/VF4/20261016T122024Z-7450c3/{junit.xml,run.log,run.json,mapped.json}.
 - No gap found in the code for VF4. Note: the test does not observe WHICH actor records spec.checked (defect 8 says
   the stale-check worker); the stale check is the only path that records it in this run.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier)
+- Action: Layer 3 semantic trust for VF4. State at start: completed, trustLevel verified.
+- Plan: read verify-spec-VF4.spec.ts, workers.ts `staleCheck`, supervise/run.ts, the machine `check` row and the
+  status projection; judge each Gherkin step, with care for the writer's note (the test does not observe WHICH actor
+  records spec.checked); run the file myself; then one `verdict VF4`.
+- I judge only; I change no source or test file; I read no evidence or key file; I commit nothing.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: the test file (committed in 3789623276), workers.ts `staleCheck`/`idChanges`, supervise/run.ts `checkStale`,
+  the `stale` actor binding and the `staleCadence` region, the committed T1.3 VERIFY.md (the edit patterns match),
+  tasks.md T3.3, spec.md defect 8.
+- Own run: `bun test --timeout=30000 ./test/task/verify-spec-VF4.spec.ts` in packages/opencode: 2 pass, 0 fail,
+  31 expect() calls, 6.6 s.
+- The writer's note (the test does not observe WHICH actor records spec.checked): a text search of src/task finds one
+  producer of `spec.checked`, `TaskWorkers.staleCheck`, invoked by the run supervisor's `stale` actor. The test
+  replaces no actor and sees no spec.checked before the edit and one after, so the fact comes from the stale check.
+  The worker-versus-supervisor detail is internal; the T3.3 unit test covers the order. Not a gap for VF4.
+- Verdict: `verdict VF4 trusted` -> trustLevel trusted.
