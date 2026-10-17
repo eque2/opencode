@@ -256,3 +256,11 @@
 - Remaining validation: a fresh verifier must run one complete TASK_GRAPH_STALE=1 adapter (7 pass, 0 skip), then consume its signed evidence with `state.mjs verify RM22`. The first timeout's resource cause remains unmeasured; the new full-run order is unverified until that run.
 - Resolution (2026-10-17): fresh run `20261017T113011Z-05ff6f` passed all 7 tests, failed 0, skipped 0 in 5,995.202 s. The stale walk ran last and logged 33,944 keys and 331,133 edges. The reporter handed off signed evidence, and `state.mjs verify RM22` set the scenario to completed / verified. No guard-read timeout or cross-test recorder contamination recurred.
 - Status: resolved — structural verification passed; semantic trust awaits a separate verifier.
+
+## D14 — RM22: the canonical and full negative-control walks do not have equal raw stuck-state sets
+- Check: fresh semantic review of `packages/opencode/test/task/verify-spec-RM22.spec.ts` against RM22 in `spec/scenarios.gherkin` (2026-10-17).
+- Actual failure: the row-removed cascade plan produces 27 canonical stuck keys and 39 full-walk stuck keys. The test removes each key's `dead:` field before comparing the sets, then checks that canonical raw keys are a subset of full raw keys. The `dead:` field is part of the walk key and is read by the `firstDead` guard. The verifier rejected RM22; the state CLI reports completed / suspect.
+- Impact: all seven structural tests passed, including the full stale walk, but the literal Gherkin claim that both walks find the same set of stuck states is not proved. RM22 cannot be trusted on this evidence. The other scenarios and quality checks can proceed.
+- Attempts: the T1.10 review accepted equality of unit configurations as a documented relaxation, and the goal's owner ruling 4 accepted a canonical walk with a small-plan reduction check. Neither text explicitly says that unequal raw stuck keys satisfy RM22's "same set" requirement. No test, spec, state or evidence was changed to fit the result.
+- Remaining validation: the owner must decide whether equality modulo `dead:` is the intended reduction contract, or whether the walk or test must prove literal raw-key equality. A fresh verifier must reassess RM22 after an approved correction; do not self-promote suspect trust.
+- Status: open — verdict ambiguity requires an owner decision.
