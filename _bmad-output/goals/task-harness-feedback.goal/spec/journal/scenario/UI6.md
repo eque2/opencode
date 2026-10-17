@@ -50,3 +50,15 @@
 - Focused Bun run: 4 passed, 0 failed, 61 assertions. The command and TUI route paths support the header assertions.
 - Rejected trust: the left-out id expectation reuses `TaskCommand.leftOut`, so a wrong incomplete list survives. The recording Ops also bypasses stored message forwarding.
 - One CLI verdict returned suspect; query returned state completed, trustLevel suspect.
+
+## 2026-10-17 INTENT (fresh Layer 1+2 rerun)
+- Read the D16 rejection and the committed UI6 test. Check the pinned omitted ids and the stored SessionPrompt message path.
+- Run root-pinned oxlint and Prettier, a package Bun trial, one fresh adapter run, and state CLI verify.
+- Record the CLI state and trustLevel without a semantic verdict. Do not edit the test, source, evidence, or state files.
+
+## 2026-10-17 OUTCOME (fresh Layer 1+2 rerun)
+- D16's two reported gaps have explicit assertions in e39c031e31: a fixed T1.2 omitted-ID list and the stored SessionPrompt text-part metadata.
+- Root-pinned oxlint: 0 warnings, 0 errors. Prettier check: clean. Package trial: 5 pass, 0 fail, 69 assertions.
+- Adapter run 20261017T165237Z-f7b265: 5 pass, 0 fail, 0 skip, 69 assertions; JUnit mapping handed off, exit 0.
+- `state.mjs verify UI6`: test file exists, pattern found, executed and passed; `testInCommit: false`; trust suspect -> verified.
+- CLI query: state completed, trustLevel verified. Independent semantic review is pending. No test, source, evidence, key or state file was hand-edited; no commit was made.
