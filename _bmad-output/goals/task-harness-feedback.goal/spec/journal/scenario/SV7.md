@@ -52,3 +52,19 @@
 - `verify SV7 --evidence=...`: exit 0; trust untrusted -> verified. Query: state completed, trustLevel verified.
 - Note kept for the semantic verifier: the random sweep cannot force both outcomes; test 4 proves each outcome
   deterministically.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch SV6-SV10)
+- Action: verify-scenario-trust (Layer 3) for SV7. One `verdict` call, for SV7 only.
+- State at start (query): completed, trustLevel verified.
+- Plan: read the Gherkin, the supporting tasks, the test and the Recorder at the CURRENT HEAD; run the test with plain
+  `bun test`; judge each step; call `verdict SV7`.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: SV7 Gherkin, T2.4 (Supports SV7), the test (unchanged since 6841bc0e5d), recorder.ts (permit,
+  uninterruptible publish then send, nothing after a non-active snapshot), events.ts `read` (durable sequence order),
+  test/task/lib/supervise.ts.
+- Trial at HEAD 5fb09be29c: `bun test --timeout=30000 ./test/task/verify-spec-SV7.spec.ts` -> 5 pass, 0 fail, 77
+  expect() calls, 11.6 s (load 18).
+- Each Gherkin step has a specific assertion; the held store wraps only `publish` at the store boundary.
+- Note kept: the random sweep cannot force both outcomes; test 4 proves each outcome deterministically.
+- `verdict SV7 trusted`: exit 0, trustLevel trusted.

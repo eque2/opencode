@@ -60,3 +60,24 @@
 - Open note for the semantic verifier (unchanged from the first run): an external region's trust passes as
   "start-up" (the alphabet keys it on an empty log); the Gherkin's exception list does not name it. Not covered:
   states with no supervisor fact in these runs (for example a parent in building, which a parent never enters).
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch SV6-SV10)
+- Action: verify-scenario-trust (Layer 3) for SV9. One `verdict` call, for SV9 only.
+- State at start (query): completed, trustLevel verified.
+- Plan: read the Gherkin, the supporting tasks, the alphabet (AD-7), the test and the open wording note in
+  scenario-findings.md; run the test with plain `bun test`; decide whether the test's reading of the start-up external
+  trust meets the Gherkin; call `verdict SV9`.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: SV9 Gherkin, T2.8/T2.9/T2.10, the test (unchanged since 6841bc0e5d), engine-xstate/alphabet.ts, spine AD-7
+  (lines 280-300) and the fact table row for `outside.trusted` (AD-15 start-up step), scenario-findings.md.
+- Trial at HEAD 5fb09be29c: `bun test --timeout=30000 ./test/task/verify-spec-SV9.spec.ts` -> 4 pass, 0 fail, 24
+  expect() calls, 15.2 s (load 17).
+- Decision on the open wording note: the test's reading meets the Gherkin. The spine and the alphabet's own definition
+  give an external region its trust "in the start-up step"; `run.started` is a listed exception that does not move the
+  region; the test accepts the trust only in the real start-up step, for an untrusted region, when the empty-log
+  alphabet holds it; the negative control refuses a later one. The wording gap stays open for the owner (note added to
+  scenario-findings.md).
+- Not exercised but allowed by the exception list: run.resumed, run.ended, obligation.stale. task.failed and
+  task.needs_human are in every active-state alphabet and are not exercised here.
+- `verdict SV9 trusted`: exit 0, trustLevel trusted.

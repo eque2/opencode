@@ -48,3 +48,19 @@
 - Adapter run 20261016T165423Z-6a7ce5 at HEAD 27365884c4: bun exit 0, 2 pass, 0 fail, 44 expect() calls, 24 s.
   Decision: handed-off; the reporter wrote evidence/SV8.json.
 - `verify SV8 --evidence=...`: exit 0; trust untrusted -> verified. Query: state completed, trustLevel verified.
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch SV6-SV10)
+- Action: verify-scenario-trust (Layer 3) for SV8. One `verdict` call, for SV8 only.
+- State at start (query): completed, trustLevel verified.
+- Plan: read the Gherkin, T2.5 and T2.11, the test, command.ts and harness.ts at the CURRENT HEAD (c8ffccfee1 changed
+  harness.ts); run the test with plain `bun test`; judge each step; call `verdict SV8`.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: SV8 Gherkin, T2.5 and T2.11, the test (unchanged since 6841bc0e5d), command.ts (busyLine, live check before
+  git, claim, `Effect.onExit` release, claim token), test/task/lib/command.ts (job registry modes), EXPERIENCE "Busy
+  reply" text (lines 104 and 226).
+- Trial at HEAD 5fb09be29c: `bun test --timeout=30000 ./test/task/verify-spec-SV8.spec.ts` -> 2 pass, 0 fail, 44
+  expect() calls, 10.5 s (load 27).
+- Each Gherkin step has a specific assertion. Minor observation: the live run's path equals its spec path, so the test
+  does not separate the two fields of the busy line; the Gherkin's given is a whole-spec run.
+- `verdict SV8 trusted`: exit 0, trustLevel trusted.

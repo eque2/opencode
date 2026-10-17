@@ -50,3 +50,19 @@
   Decision: handed-off; the reporter wrote evidence/SV6.json.
 - `verify SV6 --evidence=...`: exit 0; structural all true except testInCommit false (not checked for scenarios);
   trust untrusted -> verified. Query: state completed, trustLevel verified (awaiting the semantic verifier).
+
+## 2026-10-16 INTENT (verify-scenario-trust, fresh-context semantic verifier, batch SV6-SV10)
+- Action: verify-scenario-trust (Layer 3) for SV6. One `verdict` call, for SV6 only.
+- State at start (query): completed, trustLevel verified. No `update start` needed.
+- Plan: read the Gherkin, the tasks that support SV6, the committed test file and the code it drives at the CURRENT
+  HEAD (after 077320f8e4 and c8ffccfee1, defects D8 and D9); run the test file with plain `bun test` from
+  packages/opencode; judge each Gherkin step against its assertion; call `verdict SV6 trusted|rejected`.
+
+## 2026-10-16 OUTCOME (verify-scenario-trust)
+- Read: SV6 Gherkin, tasks T2.8/T2.9/T2.10 (Supports SV6), the test (unchanged since 6841bc0e5d), supervise/task.ts
+  (FAILURE_LIMIT 3, retrying after 1 s, failing records `harness error: <error>`), supervise/scenario.ts,
+  supervise/run.ts scenario batch region, test/task/lib/supervise.ts (only the session boundary is scripted).
+- Trial at HEAD 5fb09be29c: `bun test --timeout=30000 ./test/task/verify-spec-SV6.spec.ts` -> 3 pass, 0 fail, 30
+  expect() calls, 6.9 s (load 19).
+- Each Gherkin step has a specific assertion on the real supervisors, workers, Recorder and event store.
+- `verdict SV6 trusted`: exit 0, trustLevel trusted.
