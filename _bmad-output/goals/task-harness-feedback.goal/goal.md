@@ -153,6 +153,7 @@ Owner answers in stage 2 (2026-10-14; `journal/2026-10-14-04-architecture.md`,
 5. **A stopped server → "Show it as still"** (was default 6). AC 40 records it; it narrows AC 23 and
    AC 25 for a server that has stopped.
 6. **Bun scenario evidence → "Use the adapter".** See "Verification" below.
+7. **RM22 "same set of stuck states" → same stuck unit configurations (owner, 2026-10-17).** The negative-control canonical walk has 27 raw stuck keys and the full walk has 39 because the `dead:` key field records the state of the first task-death entry. For the RM22 reduction check, compare the sets after removing that field; keep the raw canonical-subset check and the guard-read key check. This clarifies the accepted fixed-order reduction in ruling 4. It does not waive the full stale walk or its seven-test verification.
 
 Prepare-goal defaults (the owner may overrule): default 4 (a stop finishes the waiting tasks and
 scenarios, AC 31) and default 5 (the D1 and D6 shapes). Where the spine's stop-first outcome rule
