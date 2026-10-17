@@ -276,3 +276,11 @@
 - Update (2026-10-17, independent verifier): the structural adapter passed 5 tests and restored trustLevel verified before this dispatch. The fresh semantic review traced the spy through index.tsx, view.ts, machine.ts, peek.tsx and watch.tsx; the focused rerun passed 5 tests and 110 assertions. One CLI verdict trusted UI2; query returned completed / trusted. The captured plugin actor now ties real keys and mounted readers to the asserted snapshots and ticks.
 - Remaining validation: none for D15.
 - Status: resolved — the plugin-to-actor gap is closed.
+
+## D16 — UI6: the subtree header test derives expected omitted IDs from the implementation
+- Check: independent semantic review of `packages/opencode/test/task/verify-spec-UI6.spec.ts` against UI6 in `spec/scenarios.gherkin` (2026-10-17).
+- Actual failure: the test builds its expected `Left out:` line and metadata with `TaskCommand.leftOut(plan)`, the same function the command uses. An incomplete omitted-scenario list could pass. The recording `Ops` also stops before `SessionPrompt` stores the text part and its metadata. The focused run passed four tests, but the verifier rejected UI6; the CLI reports completed / suspect.
+- Impact: the exact omitted IDs and the stored-header metadata are not proved by this scenario. The other UI6 styling and status assertions passed; other scenarios can proceed.
+- Attempts: the semantic verifier inspected the command and renderer, then issued a specific rejection. No source, test, state or evidence was changed to fit the verdict.
+- Remaining validation: assert a fixed expected omitted-ID list from the spec's task dependencies, exercise the real `SessionPrompt.command` storage path for the header, then rerun structural verification and independent semantic review.
+- Status: open
