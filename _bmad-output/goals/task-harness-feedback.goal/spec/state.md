@@ -86,7 +86,7 @@
 | RM20    | scenario   | completed   |
 | RM21    | scenario   | completed   |
 | RM22    | scenario   | not_started |
-| RM23    | scenario   | not_started |
+| RM23    | scenario   | completed   |
 | RM24    | scenario   | completed   |
 | RM25    | scenario   | completed   |
 | RM26    | scenario   | completed   |
