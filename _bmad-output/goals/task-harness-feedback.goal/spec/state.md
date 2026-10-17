@@ -126,8 +126,8 @@
 | UI4     | scenario   | completed   |
 | UI5     | scenario   | completed   |
 | UI6     | scenario   | completed   |
-| UI7     | scenario   | not_started |
-| UI8     | scenario   | not_started |
+| UI7     | scenario   | completed   |
+| UI8     | scenario   | completed   |
 | UI9     | scenario   | completed   |
 | UI10    | scenario   | completed   |
 | UI11    | scenario   | completed   |
@@ -143,7 +143,7 @@
 | UI21    | scenario   | completed   |
 | UI22    | scenario   | completed   |
 | UI23    | scenario   | completed   |
-| UI24    | scenario   | not_started |
+| UI24    | scenario   | completed   |
 | UI25    | scenario   | completed   |
 | VF1     | scenario   | completed   |
 | VF2     | scenario   | completed   |
