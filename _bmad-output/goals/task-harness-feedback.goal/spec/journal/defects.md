@@ -294,8 +294,10 @@
 - Actual failure: four focused tests pass, but the prompt footer check calls `promptFooter` and scans source text without rendering the prompt component. It cannot prove the visible total or narrow-width behavior. The CLI rejected UI15 as completed / suspect.
 - Impact: other usage surfaces have meaningful assertions, but the prompt footer step remains unproved.
 - Attempts: the semantic verifier inspected the test and source; no test or source changed in that dispatch.
-- Remaining validation: render the real prompt footer with synced child-session totals at normal and narrow widths, then rerun structural verification and independent semantic review.
-- Status: open
+- Update (2026-10-17, builder): `c82eb09d2e` adds a focused render case to UI15. The test mounts the real `Prompt` with its TUI providers and SDK event-backed sync store at 100, 50 and 35 cells. It reads the visible frame before child usage, after both child sessions report 1,402,331 tokens and $2.31, after a live builder update to 1,502,331 tokens and $3.31, and after a free-model update to 11 tokens and $0.00. The narrow frames drop the root's own figure and then the word `tokens`, while keeping the run cost. All four earlier UI15 tests and their assertions remain. No product source changed.
+- Checks: focused UI15 test: 5 pass, 0 fail, 55 assertions. `bun typecheck` in both `packages/opencode` and `packages/tui`, root-pinned oxlint on both changed test files (0 warnings, 0 errors), Prettier and `git diff --check` passed.
+- Remaining validation: a fresh verifier must run structural verification against the committed UI15 scenario test and an independent semantic review against UI15 Gherkin. Only that verifier can update UI15's suspect trust state. No builder verdict was minted.
+- Status: fixed — fresh verification pending.
 
 ## D18 — UI22: the pagedown test bypasses the real keymap
 - Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI22.spec.ts` against UI22 (2026-10-17).
