@@ -43,6 +43,7 @@ import { Screen } from "../../../tui/src/task-ui/designs/screen"
 import { createTuiPluginApi } from "../../../tui/test/fixture/tui-plugin"
 import { mount, wait } from "../../../tui/test/cli/cmd/tui/sync-fixture"
 import { viewFor } from "../../../tui/test/task-ui/view"
+import { mountPromptFooter } from "../../../tui/test/task-ui/prompt-render"
 
 // Scenario UI15 (spec task-harness-feedback, D24, AD-18; tasks T4.5, T4.7, T4.8, T4.11, T4.12): the run's tokens and
 // cost are shown for a /task root session.
@@ -58,11 +59,8 @@ import { viewFor } from "../../../tui/test/task-ui/view"
 // The sessions are opencode's own session records (the SDK `Session`): the root and its child harness sessions
 // `T1.4 builder` (1,000,000 input, 350,000 output, 50,000 reasoning tokens, $2.00) and `T1.4 verifier` (2,000, 300, 31,
 // $0.31), each with large cache counts that are not counted; the run total is 1,402,331 tokens and $2.31.
-// - The prompt footer and the sidebar read the TUI's real sync store (the tui test fixture `mount`: the real
-//   SyncProvider fed by SDK events), so a `session.updated` event changes what they show. The footer is the real
-//   `promptFooter` over `sync.data.session`, the expression the prompt component renders (its source is checked); the
-//   prompt component itself needs the whole app's providers and is not rendered here. The sidebar is the real
-//   built-in Context panel plugin, its state read from the sync store as the plugin adapter reads it.
+// - The prompt footer and the sidebar read the TUI's real sync store fed by SDK events. The prompt component renders
+//   through the app's providers at wide and narrow viewport widths; the sidebar uses its built-in Context panel.
 // - The task-ui is the real plugin entry in a host on the root's route: its session reads go through the SDK client,
 //   so a changed answer reaches the Dock and the HUD on the next session read; each design that shows the run usage
 //   (HUD, full-screen header, Dock, Ticker dialog) also renders on a real taskView actor.
@@ -329,6 +327,106 @@ it.live(
         "11 tokens in the run",
         "$0.00 spent in the run",
       ])
+    }),
+  60_000,
+)
+
+it.live(
+  "[UI15] the real prompt displays synced run usage, updates live and fits its footer at narrow widths",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const state = yield* fs.makeTempDirectoryScoped()
+      yield* fs.writeFileString(path.join(state, "kv.json"), "{}")
+      const widths = [100, 50, 35] as const
+      const prompts = yield* Effect.all(
+        widths.map((width) =>
+          Effect.acquireRelease(
+            Effect.promise(() => mountPromptFooter(ROOT, state, width)),
+            (made) => Effect.sync(() => made.app.renderer.destroy()),
+          ),
+        ),
+        { concurrency: 1 },
+      )
+      const send = (info: Session) => prompts.forEach((prompt) => prompt.emit(updated(info)))
+      const frames = () => Effect.promise(() => Promise.all(prompts.map((prompt) => prompt.frame())))
+      const shown = (frame: string) =>
+        frame
+          .split("\n")
+          .find((line) => line.includes("run "))
+          ?.trim()
+          .split(/\s{3,}/)[0]
+
+      for (const info of [...quiet, ...others]) send(info)
+      yield* Effect.promise(() => wait(() => prompts.every((prompt) => prompt.sync.data.session.length === 6)))
+      expect((yield* frames()).map(shown)).toEqual([undefined, undefined, undefined])
+
+      const own = {
+        id: "msg_root_assistant",
+        sessionID: ROOT,
+        role: "assistant" as const,
+        agent: "build",
+        modelID: "model",
+        providerID: "test",
+        mode: "build",
+        parentID: "msg_root_user",
+        path: { cwd: "/tmp/opencode/packages/tui", root: "/tmp/opencode/packages/tui" },
+        cost: 0.02,
+        tokens: { input: 12_299, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created: 1, completed: 2 },
+      }
+      for (const prompt of prompts) {
+        prompt.emit(
+          updated(session(ROOT, "Release notes", undefined, { input: 0, output: 0, reasoning: 0, cost: 0.02 })),
+        )
+        prompt.emit({
+          directory: "/tmp/opencode/packages/tui",
+          project: "proj_test",
+          payload: {
+            id: "evt_msg_root_assistant",
+            type: "message.updated",
+            properties: { sessionID: ROOT, info: own },
+          },
+        })
+      }
+      for (const info of spent.slice(1)) send(info)
+      yield* Effect.promise(() =>
+        wait(() =>
+          prompts.every(
+            (prompt) =>
+              prompt.sync.data.message[ROOT]?.length === 1 &&
+              prompt.sync.data.session.find((item) => item.id === "ses_v")?.tokens?.output === 300,
+          ),
+        ),
+      )
+      expect((yield* frames()).map(shown)).toEqual([
+        "12.3K · $0.02 · run 1.4M tokens · $2.31",
+        "run 1.4M tokens · $2.31",
+        "run 1.4M · $2.31",
+      ])
+
+      send(more[1])
+      yield* Effect.promise(() =>
+        wait(() => prompts.every((prompt) => prompt.sync.data.session.find((item) => item.id === "ses_b")?.cost === 3)),
+      )
+      expect((yield* frames()).map(shown)).toEqual([
+        "12.3K · $0.02 · run 1.5M tokens · $3.31",
+        "run 1.5M tokens · $3.31",
+        "run 1.5M · $3.31",
+      ])
+
+      send(session("ses_b", "T1.4 builder", ROOT, { input: 10, output: 1, reasoning: 0, cost: 0 }))
+      send(session("ses_v", "T1.4 verifier", ROOT))
+      yield* Effect.promise(() =>
+        wait(() =>
+          prompts.every(
+            (prompt) =>
+              prompt.sync.data.session.find((item) => item.id === "ses_b")?.tokens?.output === 1 &&
+              prompt.sync.data.session.find((item) => item.id === "ses_v")?.tokens === undefined,
+          ),
+        ),
+      )
+      expect(shown((yield* frames())[0] ?? "")).toBe("12.3K · $0.02 · run 11 tokens · $0.00")
     }),
   60_000,
 )
