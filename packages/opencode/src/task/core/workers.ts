@@ -556,7 +556,7 @@ export const summary = (run: Run) =>
       warned: TaskEngineXState.warned(snapshot),
       usage: TaskSummary.usage(spent),
     })
-    yield* run.env.ops.say({ sessionID: run.root, text })
+    yield* run.env.instances.provide({ directory: run.directory }, run.env.ops.say({ sessionID: run.root, text }))
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logError("task harness: the closing summary could not be written", { runID: run.id, cause }),
