@@ -180,21 +180,6 @@ for (const name of ["example-cascade.spec", "example-scenarios.spec"])
     WALK,
   )
 
-// --- the stale walk ----------------------------------------------------------------------------------------------------
-
-stale(
-  "[RM22] the stale walk of the loaded example-cascade plan (full interleaving with staleness, stale key) finds no stuck state",
-  () =>
-    Effect.gen(function* () {
-      const plan = yield* loadPlan("example-cascade.spec")
-      const walked = yield* walk(plan, TaskMachine.machine(plan), engine.initial(plan), fullStale, LIMIT.stale, "stale")
-      console.log(`[RM22] stale walk: ${walked.keys} keys, ${walked.edges} edges`)
-      expect(walked.stuck).toEqual([])
-      expect(walked.statuses).toEqual(["active", "done"])
-    }),
-  STALE_WALK,
-)
-
 // --- the guard reads and the walk key ------------------------------------------------------------------------------
 
 type Reads = Set<string>
@@ -243,15 +228,17 @@ const keyReads = (plan: Plan, mode: "main" | "stale", snapshot: RunSnapshot): Re
 
 // What the wrapped guards record: every read (by guard name, over every macrostep), and the reads made on the
 // context of `state`, the snapshot a transition starts from.
-const guarded: { on: boolean; state: RunSnapshot | undefined; own: Reads; all: Map<string, Reads> } = {
+const makeGuarded = (): { on: boolean; state: RunSnapshot | undefined; own: Reads; all: Map<string, Reads> } => ({
   on: false,
   state: undefined,
   own: new Set(),
   all: new Map(),
-}
+})
+
+type Guarded = ReturnType<typeof makeGuarded>
 
 const watch =
-  <A extends object, P>(name: string, guard: (args: A, params: P) => boolean) =>
+  <A extends object, P>(name: string, guard: (args: A, params: P) => boolean, guarded: Guarded) =>
   (args: A, params: P): boolean => {
     const context = "context" in args ? args.context : undefined
     if (!guarded.on || !Predicate.isObject(context)) return guard(args, params)
@@ -266,26 +253,26 @@ const watch =
   }
 
 const G = TaskMachine.GUARDS
-const WATCHED = {
-  firstDead: watch("firstDead", G.firstDead),
-  stopped: watch("stopped", G.stopped),
-  forTask: watch("forTask", G.forTask),
-  result: watch("result", G.result),
-  unproved: watch("unproved", G.unproved),
-  verdict: watch("verdict", G.verdict),
-  proofFailed: watch("proofFailed", G.proofFailed),
-  underBudget: watch("underBudget", G.underBudget),
-  stale: watch("stale", G.stale),
-  scenarioPassed: watch("scenarioPassed", G.scenarioPassed),
-  scenarioProved: watch("scenarioProved", G.scenarioProved),
-  scenarioTrusted: watch("scenarioTrusted", G.scenarioTrusted),
-  scenarioVerified: watch("scenarioVerified", G.scenarioVerified),
-  trusts: watch("trusts", G.trusts),
-}
+const watchGuards = (guarded: Guarded) => ({
+  firstDead: watch("firstDead", G.firstDead, guarded),
+  stopped: watch("stopped", G.stopped, guarded),
+  forTask: watch("forTask", G.forTask, guarded),
+  result: watch("result", G.result, guarded),
+  unproved: watch("unproved", G.unproved, guarded),
+  verdict: watch("verdict", G.verdict, guarded),
+  proofFailed: watch("proofFailed", G.proofFailed, guarded),
+  underBudget: watch("underBudget", G.underBudget, guarded),
+  stale: watch("stale", G.stale, guarded),
+  scenarioPassed: watch("scenarioPassed", G.scenarioPassed, guarded),
+  scenarioProved: watch("scenarioProved", G.scenarioProved, guarded),
+  scenarioTrusted: watch("scenarioTrusted", G.scenarioTrusted, guarded),
+  scenarioVerified: watch("scenarioVerified", G.scenarioVerified, guarded),
+  trusts: watch("trusts", G.trusts, guarded),
+})
 
 /** The plan's machine with watched guards: the real config, after the generator's checks. */
-const watched = (plan: Plan, built: RunConfig = TaskMachine.config(plan)) =>
-  createMachine(TaskMachine.check(plan, built), { actions: TaskMachine.ACTIONS, guards: WATCHED })
+const watched = (plan: Plan, guarded: Guarded, built: RunConfig = TaskMachine.config(plan)) =>
+  createMachine(TaskMachine.check(plan, built), { actions: TaskMachine.ACTIONS, guards: watchGuards(guarded) })
 
 // The two stops a run can take: not in the progress alphabet, but real facts whose rows read the context.
 const STOPS: ReadonlyArray<Fact> = [
@@ -295,7 +282,7 @@ const STOPS: ReadonlyArray<Fact> = [
 
 it.live("[RM22] the guards watched here are every guard of the run machine", () =>
   Effect.sync(() => {
-    expect(Object.keys(WATCHED).toSorted()).toEqual(Object.keys(TaskMachine.GUARDS).toSorted())
+    expect(Object.keys(watchGuards(makeGuarded())).toSorted()).toEqual(Object.keys(TaskMachine.GUARDS).toSorted())
   }),
 )
 
@@ -309,7 +296,8 @@ for (const [name, root] of [
     () =>
       Effect.gen(function* () {
         const plan = yield* loadPlan(name, root)
-        const machine = watched(plan)
+        const guarded = makeGuarded()
+        const machine = watched(plan, guarded)
         const [first] = yield* initialTransition(machine)
         // The states: every state the full interleaving reaches, with the guards not yet watched.
         guarded.on = false
@@ -375,3 +363,17 @@ for (const [name, root] of [
       }),
     WALK,
   )
+
+// Run the large walk last so it cannot consume the guard-read checks' time budget.
+stale(
+  "[RM22] the stale walk of the loaded example-cascade plan (full interleaving with staleness, stale key) finds no stuck state",
+  () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const walked = yield* walk(plan, TaskMachine.machine(plan), engine.initial(plan), fullStale, LIMIT.stale, "stale")
+      console.log(`[RM22] stale walk: ${walked.keys} keys, ${walked.edges} edges`)
+      expect(walked.stuck).toEqual([])
+      expect(walked.statuses).toEqual(["active", "done"])
+    }),
+  STALE_WALK,
+)
