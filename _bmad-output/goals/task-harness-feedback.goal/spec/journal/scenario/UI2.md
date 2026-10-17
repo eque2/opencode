@@ -79,3 +79,14 @@
 - Adapter run `20261017T141604Z-dba7c2`: Bun JUnit 5 pass, 0 fail, 110 assertions, exit 0; reporter handed off signed UI2 evidence. Adapter decision `handed-off`.
 - `state.mjs verify UI2 --evidence=…/evidence/UI2.json`: structural file/pattern/execution/pass checks true, trust `suspect` → `verified`; `testInCommit` false is reported by the CLI. Query returned state `completed`, trustLevel `verified`.
 - No test or source edit, manual state edit, semantic verdict or commit. The separate semantic verifier must decide whether the repaired assertions close D15.
+
+## 2026-10-17 INTENT (independent semantic trust after D15 repair)
+- Inspect the committed scoped spy and trace the real plugin actor through the key handlers, readers and view adapter.
+- Match each UI2 Gherkin step to assertions, rerun the focused Bun test, then issue exactly one CLI verdict.
+- Do not edit source, tests, enforcement code or protected state. Record the result and write a transcript.
+
+## 2026-10-17 OUTCOME (independent semantic trust after D15 repair)
+- Inspected the f0027830d7 diff, the test, index.tsx, view.ts, actor.ts, machine.ts, peek.tsx and watch.tsx. The scoped spy calls the original viewOf with the captured actor; plugin handlers use that view for keys, route, readers and the rendered slots.
+- The real key test asserts the captured actor's combined context and regions after design, selection, expansion, watch and esc. The mounted-reader test observes that actor's ticks beside SDK requests, status changes and proof-tail output. SimulatedClock assertions pin the exact delays and malformed-status retention.
+- Focused `bun test --timeout=30000 ./test/task/verify-spec-UI2.spec.ts` in packages/opencode: 5 pass, 0 fail, 110 assertions, 22.79 s.
+- One verifier-role `verdict UI2 trusted` succeeded. A state CLI query returned state `completed`, trustLevel `trusted`. D15's missing plugin-to-actor link is closed. No test or source edit and no commit.
