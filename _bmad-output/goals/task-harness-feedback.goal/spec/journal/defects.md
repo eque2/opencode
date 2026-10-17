@@ -264,8 +264,8 @@
 - Attempts: the T1.10 review accepted equality of unit configurations as a documented relaxation, and the goal's owner ruling 4 accepted a canonical walk with a small-plan reduction check. Neither text explicitly says that unequal raw stuck keys satisfy RM22's "same set" requirement. No test, spec, state or evidence was changed to fit the result.
 - Remaining validation: the owner must decide whether equality modulo `dead:` is the intended reduction contract, or whether the walk or test must prove literal raw-key equality. A fresh verifier must reassess RM22 after an approved correction; do not self-promote suspect trust.
 - Resolution (2026-10-17, owner): "Same unit configurations" is the intended meaning. The owner accepted equivalence after removing the first-death key field, matching the earlier canonical-reduction ruling. The test already checks that equivalence, canonical raw-key inclusion, and guard reads; the full seven-test adapter run passed. The charter records this as ruling 7; no assertion or state file was changed to fit the result.
-- Remaining validation: a fresh independent semantic verifier must reassess the existing RM22 test against ruling 7 and issue the CLI verdict. Do not self-promote suspect trust.
-- Status: owner clarification recorded; semantic review pending.
+- Remaining validation: none for RM22. The fresh independent review checked every step against ruling 7, the unchanged test and source, and raw run metadata.
+- Status: resolved (2026-10-17; one CLI verdict set completed/trusted).
 
 ## D15 — UI2: the scenario test does not connect plugin keys to its actor snapshot
 - Check: semantic review of `packages/opencode/test/task/verify-spec-UI2.spec.ts`; focused `bun test --timeout=30000 ./test/task/verify-spec-UI2.spec.ts` in packages/opencode.
