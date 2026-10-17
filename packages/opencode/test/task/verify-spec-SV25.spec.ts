@@ -16,7 +16,6 @@ import { type RunSnapshot, TaskEngineXState } from "@/task/engine-xstate"
 import { testEffect } from "../lib/effect"
 import { backgroundOf, git, jobsOf, seed, services, SESSION, SPEC } from "./lib/command"
 import { facts, loadPlan, trustLeaf } from "./lib/machine"
-import { eventually } from "./lib/supervise"
 
 // Scenario SV25 (spec task-harness-feedback, AD-6, AD-8; tasks T2.10, T2.11): a cancel before the new slice starts
 // never lands in the previous slice.

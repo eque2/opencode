@@ -185,8 +185,12 @@ it.instance(
         phases: PHASES.filter((tag) => snapshot.hasTag(`${unit}:${tag}`)),
       })
       for (const unit of ["T1.2", "T1.3", "S2"]) expect(phase(stopped, unit)).toEqual(phase(live, unit))
-      expect(TaskEngineXState.view(stopped).tasks["T1.2"]?.attempts).toBe(TaskEngineXState.view(live).tasks["T1.2"]?.attempts)
-      expect(TaskEngineXState.view(stopped).tasks["T1.3"]?.attempts).toBe(TaskEngineXState.view(live).tasks["T1.3"]?.attempts)
+      expect(TaskEngineXState.view(stopped).tasks["T1.2"]?.attempts).toBe(
+        TaskEngineXState.view(live).tasks["T1.2"]?.attempts,
+      )
+      expect(TaskEngineXState.view(stopped).tasks["T1.3"]?.attempts).toBe(
+        TaskEngineXState.view(live).tasks["T1.3"]?.attempts,
+      )
       // The slice stays open: a /task of the same path resumes it.
       expect(yield* TaskCommand.sliceOf(plan, after, SPEC)).toEqual({
         kind: "resume",
