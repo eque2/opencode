@@ -15,6 +15,7 @@ import { DockView } from "../../../tui/src/task-ui/designs/2-dock"
 import { HudView } from "../../../tui/src/task-ui/designs/6-hud"
 import { TickerDialog } from "../../../tui/src/task-ui/designs/7-ticker"
 import { Screen } from "../../../tui/src/task-ui/designs/screen"
+import { ShortcutBar } from "../../../tui/src/task-ui/ui"
 import { settle, viewFor } from "../../../tui/test/task-ui/view"
 
 // Scenario UI25 (spec task-harness-feedback, SD-17, AD-13, AD-16; tasks T4.2, T4.8): a status file from before the
@@ -45,12 +46,12 @@ const OLDER = "status from an older harness — type /task to refresh"
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 const none: Sessions = { children: () => () => [], activity: () => () => [], all: () => () => [] }
 
-/** The glyph and the tone colour each state of the two files has in the display table (EXPERIENCE "State vocabulary"). */
-const SHOWN: Record<string, { readonly glyph: string; readonly color: RGBA }> = {
-  waiting: { glyph: "○", color: theme.textMuted },
-  trusted: { glyph: "✓", color: theme.success },
-  budget_exhausted: { glyph: "⊘", color: theme.error },
-  blocked: { glyph: "⊖", color: theme.warning },
+/** Independently expected glyph, label and tone colour for the old files' task states (EXPERIENCE "State vocabulary"). */
+const SHOWN: Record<string, { readonly glyph: string; readonly label: string; readonly color: RGBA }> = {
+  waiting: { glyph: "○", label: "waiting", color: theme.textMuted },
+  trusted: { glyph: "✓", label: "trusted", color: theme.success },
+  budget_exhausted: { glyph: "⊘", label: "budget exhausted", color: theme.error },
+  blocked: { glyph: "⊖", label: "blocked", color: theme.warning },
 }
 
 /** The two old status files, as text: the old harness's and the phase-1 code's. */
@@ -245,7 +246,9 @@ it.live(
         const status = Option.getOrThrow(parse(file.text))
         const tasks = Object.entries(status.tasks)
         const trustedStates = tasks.filter(([, task]) => task.state === "trusted").length
+        const stoppedStates = tasks.filter(([, task]) => ["budget_exhausted", "blocked"].includes(task.state)).length
         expect(trustedStates).toBeGreaterThan(0)
+        expect(stoppedStates).toBeGreaterThan(0)
 
         // The Ledger and the Ticker's task list: each task's glyph and id in its tone, then its state label.
         for (const [name, design, node] of [
@@ -271,7 +274,7 @@ it.live(
             expect({
               ...where,
               row: row.startsWith(lead),
-              label: row.includes(task.state.replaceAll("_", " ")),
+              label: row.includes(SHOWN[task.state].label),
             }).toEqual({ ...where, row: true, label: true })
             expect({ ...where, fg: fgOf(shown.spans, lead.trimEnd()) }).toEqual({
               ...where,
@@ -280,17 +283,71 @@ it.live(
           }
         }
 
-        // The Dock's chips, the Matrix's rows and the Gantt's lanes: each task's glyph and id.
+        // Matrix has no task-state label: its task rows show only a glyph and id.
         for (const design of DESIGNS.filter((item) => ["Dock", "Matrix", "Gantt"].includes(item.name))) {
           const { view } = yield* viewOf(status, design.design)
           const shown = yield* render(() => design.node(view), design.width, design.height)
-          for (const [id, task] of tasks)
+          for (const [id, task] of tasks) {
+            const lead = `${SHOWN[task.state].glyph} ${id}`
+            const row = rowFrom(shown.text, lead)
             expect({
               file: file.name,
               design: design.name,
               id,
-              shown: shown.text.includes(`${SHOWN[task.state].glyph} ${id}`),
+              shown: row.startsWith(lead),
             }).toEqual({ file: file.name, design: design.name, id, shown: true })
+            if (design.name === "Gantt")
+              expect({
+                file: file.name,
+                design: design.name,
+                id,
+                label: row.includes(SHOWN[task.state].label),
+              }).toEqual({
+                file: file.name,
+                design: design.name,
+                id,
+                label: true,
+              })
+          }
+        }
+
+        // Dock shows each selected task's state after its chips, when the strip has enough room.
+        const dock = yield* viewOf(status, 2)
+        const hud = yield* viewOf(status, 6)
+        // HUD displays each selected task's state in its panel.
+        for (const [id, task] of tasks) {
+          dock.view.select(id)
+          hud.view.select(id)
+          yield* Effect.promise(settle)
+          const dockShown = yield* render(
+            () =>
+              createComponent(DockView, {
+                theme: () => theme,
+                view: dock.view,
+                sessions: none,
+                leader: "ctrl+x",
+                width: 240,
+              }),
+            240,
+            8,
+          )
+          const hudShown = yield* render(
+            () => createComponent(HudView, { theme: () => theme, view: hud.view, sessions: none, leader: "ctrl+x" }),
+            80,
+            30,
+          )
+          const where = { file: file.name, id }
+          expect({ ...where, dock: rowFrom(dockShown.text, `▸ ${id} `).includes(SHOWN[task.state].label) }).toEqual({
+            ...where,
+            dock: true,
+          })
+          expect({
+            ...where,
+            hud: rowFrom(hudShown.text, `▸ ${SHOWN[task.state].glyph} ${id} `).includes(SHOWN[task.state].label),
+          }).toEqual({
+            ...where,
+            hud: true,
+          })
         }
 
         // The Board: every column empty, so no task sits in a column its state would name.
@@ -317,22 +374,55 @@ it.live(
         })
         expect(boardShown.text).not.toContain("╭")
 
-        // No count from the states: the trusted count credits no task by its state, and no stopped count shows.
+        // Match every displayed task count, not just the absence of the full state-derived count.
         const total = tasks.length
-        for (const design of DESIGNS) {
+        for (const design of DESIGNS.filter((item) => item.name !== "Ticker")) {
           const { view } = yield* viewOf(status, design.design)
+          const countFrame = yield* render(() => design.node(view), design.width, design.height)
+          const where = { file: file.name, design: design.name }
+          expect({
+            ...where,
+            trusted: countFrame.text.match(new RegExp(`\\b\\d+/${total} trusted\\b`, "g")) ?? [],
+          }).toEqual({
+            ...where,
+            trusted: [`0/${total} trusted`],
+          })
+          expect({ ...where, stopped: countFrame.text.match(/\b\d+ stopped\b/g) ?? [] }).toEqual({
+            ...where,
+            stopped: [],
+          })
           view.setExpanded(true)
           yield* Effect.promise(settle)
           const shown = yield* render(() => design.node(view), design.width, design.height)
-          const where = { file: file.name, design: design.name }
-          expect({ ...where, credited: shown.text.includes(`${trustedStates}/${total} trusted`) }).toEqual({
-            ...where,
-            credited: false,
-          })
-          expect({ ...where, stopped: /\d+ stopped/.test(shown.text) }).toEqual({ ...where, stopped: false })
           // No STOPPED group in the shared region: only the Board's own empty column heading names STOPPED.
           expect({ ...where, groups: shown.text.match(/STOPPED(?! 0\b)/g) ?? [] }).toEqual({ ...where, groups: [] })
         }
+
+        // Ticker's trusted count lives in the shortcut bar, not in its dialog.
+        const ticker = yield* viewOf(status, 7)
+        const barShown = yield* render(
+          () =>
+            createComponent(ShortcutBar, {
+              theme: () => theme,
+              view: ticker.view,
+              sessions: none,
+              leader: "ctrl+x",
+              width: 160,
+            }),
+          160,
+          2,
+        )
+        expect({
+          file: file.name,
+          trusted: barShown.text.match(new RegExp(`\\b\\d+/${total} trusted\\b`, "g")) ?? [],
+        }).toEqual({
+          file: file.name,
+          trusted: [`0/${total} trusted`],
+        })
+        expect({ file: file.name, stopped: barShown.text.match(/\b\d+ stopped\b/g) ?? [] }).toEqual({
+          file: file.name,
+          stopped: [],
+        })
       }
     }),
   180_000,
