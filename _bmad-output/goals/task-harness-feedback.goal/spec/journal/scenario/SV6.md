@@ -66,3 +66,17 @@
   expect() calls, 6.9 s (load 19).
 - Each Gherkin step has a specific assertion on the real supervisors, workers, Recorder and event store.
 - `verdict SV6 trusted`: exit 0, trustLevel trusted.
+
+## 2026-10-17 INTENT (fresh Layer 1+2 hash refresh)
+- Recheck completed SV6 after commit f422e0a91a replaced a global Error with the existing tagged WorkerError.
+- Read the Gherkin and current test, confirm that the failure message and assertions remain intact, and check pinned oxlint and Prettier.
+- Run a focused trial, one signed Bun JUnit adapter run, and `state.mjs verify SV6` for the new source hash.
+- Do not edit the test, source, protected evidence, keys, or state by hand. Do not issue a semantic verdict or commit.
+
+## 2026-10-17 OUTCOME (fresh Layer 1+2 hash refresh)
+- Read the Gherkin, spec intent, T2.8/T2.9, previous SV6 journal, and the test. Commit f422e0a91a changed only the claim failure's error type to `TaskWorkers.WorkerError`; its message and the assertions remained intact.
+- Root-pinned oxlint: 0 warnings, 0 errors. Root-pinned Prettier: clean.
+- Focused trial: 3 pass, 0 fail, 30 assertions in 42.88 s.
+- Signed adapter run 20261017T194637Z-ce07b0: Bun 3 pass, 0 fail, 30 assertions; adapter handed off exit 0.
+- `state.mjs verify SV6` passed all structural checks for the new hash. It changed trust from trusted to verified. Query returned state completed and trustLevel verified; the separate reviewer must rejudge semantics.
+- No test or source edits and no commit. No coverage gap found in the Layer 1+2 check.
