@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, realpath, rm, unlink } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -26,7 +26,7 @@ import TaskUi from "../../../tui/src/task-ui/index"
 import { TaskView } from "../../../tui/src/task-ui/machine"
 import { liveSessions } from "../../../tui/src/task-ui/peek"
 import { NAME, statusFile } from "../../../tui/src/task-ui/store"
-import { viewOf } from "../../../tui/src/task-ui/view"
+import { viewOf, type View, type ViewActor } from "../../../tui/src/task-ui/view"
 import { liveTail } from "../../../tui/src/task-ui/watch"
 import { createTuiPluginApi } from "../../../tui/test/fixture/tui-plugin"
 
@@ -44,7 +44,8 @@ import { createTuiPluginApi } from "../../../tui/test/fixture/tui-plugin"
 // The first test loads the real plugin entry (`TaskUi.tui`, as opencode loads it) on the route of the session ses_root,
 // with opencode's own keymap and the host's slot registry, over a status file in a temporary directory; the keys are
 // pressed on the opentui test renderer and the shortcut bar is read from its frame. The SDK client is a real client
-// over a fetch that answers the root's children (one harness session) and records each abort. The other tests drive the
+// over a fetch that answers the root's children (one harness session) and records each abort. A scoped spy observes
+// the actor passed to the plugin's real viewOf call without replacing its behavior. The other tests drive the
 // real `taskView` machine (with its own feed `read` of `<directory>/.opencode/task/status.json`) on a SimulatedClock
 // that moves only when a test moves it, with the view (`viewOf`), the Peek's session reads (`liveSessions`) and the
 // watch's proof tail (`liveTail`) that the plugin builds over it.
@@ -117,14 +118,14 @@ const meta = {
  * Loads the plugin entry on the route of ROOT, with opencode's keymap and the host's slot registry. The shortcut bar's
  * slot is on screen. The SDK answers ROOT's children with one harness session for each title in `harness`.
  */
-async function loadPlugin(directory: string, harness: ReadonlyArray<string>) {
+async function loadPlugin(directory: string, harness: ReadonlyArray<string>, mounted: ReadonlyArray<string> = []) {
   const requests: Array<string> = []
   const aborted: Array<string> = []
   const toasts: Array<TuiToast> = []
   const navigations: Array<Record<string, unknown> | undefined> = []
   const disposers: Array<TuiDispose> = []
   const slots = createSlots()
-  const handles: { api?: TuiPluginApi } = {}
+  const handles: { api?: TuiPluginApi; actors: ViewActor[]; view?: View } = { actors: [] }
   const [loaded, setLoaded] = createSignal(false)
 
   function Host() {
@@ -196,17 +197,34 @@ async function loadPlugin(directory: string, harness: ReadonlyArray<string>) {
             return loaded()
           },
           get children() {
-            return slots.Slot({ name: "session_prompt_right", session_id: "" })
+            return mounted.length
+              ? ["session_prompt_right", ...mounted].map((name) => slots.Slot({ name, session_id: "" }))
+              : slots.Slot({ name: "session_prompt_right", session_id: "" })
           },
         })
       },
     })
   }
 
-  const app = await testRender(() => createComponent(Host, {}), { width: 250, height: 4 })
+  const app = await testRender(() => createComponent(Host, {}), { width: 250, height: mounted.length ? 30 : 4 })
   const api = handles.api
   if (!api) throw new Error("the host did not render")
-  await TaskUi.tui(api, undefined, meta)
+  // Instrument only this plugin load. The original viewOf still creates the Solid adapter for the real actor.
+  const module = await import("../../../tui/src/task-ui/view")
+  const original = module.viewOf
+  const capture = spyOn(module, "viewOf").mockImplementation((actor) => {
+    handles.actors.push(actor)
+    handles.view = original(actor)
+    return handles.view
+  })
+  try {
+    await TaskUi.tui(api, undefined, meta)
+  } finally {
+    capture.mockRestore()
+  }
+  const actor = handles.actors[0]
+  const view = handles.view
+  if (handles.actors.length !== 1 || !actor || !view) throw new Error("the plugin did not install one view actor")
   setLoaded(true)
   const frame = async () => {
     await app.renderOnce()
@@ -221,6 +239,9 @@ async function loadPlugin(directory: string, harness: ReadonlyArray<string>) {
   return {
     app,
     api,
+    actor,
+    view,
+    snapshot: () => Effect.runSync(actor.getSnapshot),
     requests,
     aborted,
     toasts,
@@ -250,29 +271,37 @@ test("[UI2] the plugin started for a session: design, selection, expansion, watc
     expect(await plugin.shows(`${NAME} Ledger`)).toBe(true)
     expect(await until(() => plugin.requests.includes(`/session/${ROOT}/children`))).toBe(true)
     expect(await plugin.shows("tab select task")).toBe(true)
+    expect(plugin.snapshot().value).toMatchObject({ expansion: "collapsed", watch: "off", stopKey: "disarmed" })
+    expect(plugin.snapshot().context).toMatchObject({ directory, design: 1, root: ROOT, owns: true })
+    expect(plugin.view.selected()).toBe("T1.2")
 
     // Switch the design: ctrl+x v six times, Ledger to Ticker; the plugin keeps it in kv.
     for (let press = 0; press < 6; press++) await plugin.leader("v")
     expect(await plugin.shows(`${NAME} Ticker`)).toBe(true)
     expect(plugin.api.kv.get("task_ui_design", 0)).toBe(7)
     expect(plugin.toasts.at(-1)?.title).toBe("Task design 7: Ticker")
+    expect(plugin.snapshot().context.design).toBe(7)
     // The Ticker's bar names the selected task: the focus, T1.2, the first task in work.
     expect(await plugin.shows("◐ T1.2 building")).toBe(true)
 
     // Select: ctrl+x j moves to the next task.
     await plugin.leader("j")
     expect(await plugin.shows("◑ T1.3 proving")).toBe(true)
+    expect(plugin.snapshot().context.chosen).toEqual(Option.some("T1.3"))
 
     // Expand: ctrl+x o; the bar's key now collapses.
     expect(await plugin.bar()).toContain("ctrl+x o expand")
     await plugin.leader("o")
     expect(await plugin.shows("ctrl+x o collapse")).toBe(true)
+    expect(plugin.snapshot().value).toMatchObject({ expansion: "expanded" })
 
     // Watch: ctrl+x w puts T1.3's builder in the root's watch frame and the bar shows the watch keys.
     await plugin.leader("w")
     expect(await until(() => plugin.navigations.at(-1)?.watch === "ses_harness_0")).toBe(true)
     expect(plugin.navigations.at(-1)).toEqual({ sessionID: ROOT, watch: "ses_harness_0" })
     expect(await plugin.shows("tab next running  ctrl+x w stop watching  esc stop run")).toBe(true)
+    expect(plugin.snapshot().value).toMatchObject({ expansion: "collapsed", watch: "on" })
+    expect(plugin.snapshot().context.target).toBe("ses_harness_0")
     await Bun.sleep(200)
 
     // The stop key once: it warns and arms. (The design switches toasted before: count from here.)
@@ -281,31 +310,86 @@ test("[UI2] the plugin started for a session: design, selection, expansion, watc
     plugin.app.mockInput.pressEscape()
     expect(await until(() => since().length > 0)).toBe(true)
     expect(since()).toEqual(["Press esc again to stop the run"])
+    expect(plugin.snapshot()).toMatchObject({
+      value: { expansion: "collapsed", watch: "on", stopKey: "armed" },
+      context: { design: 7, chosen: Option.some("T1.3"), target: "ses_harness_0" },
+    })
     // Five seconds later it has disarmed: the next esc warns again and stops nothing.
     await Bun.sleep(5_300)
+    expect(await until(() => plugin.snapshot().matches({ stopKey: "disarmed" }), 3_000)).toBe(true)
     plugin.app.mockInput.pressEscape()
     expect(await until(() => since().length > 1)).toBe(true)
     expect(since()).toEqual(["Press esc again to stop the run", "Press esc again to stop the run"])
+    expect(plugin.snapshot().value).toMatchObject({ stopKey: "armed" })
     expect(plugin.aborted).toEqual([])
     // Armed again, a second esc within the window stops the run: the root session is aborted.
     plugin.app.mockInput.pressEscape()
     expect(await until(() => since().length > 2)).toBe(true)
     expect(plugin.aborted).toEqual([ROOT])
     expect(since().at(-1)).toBe(`Run stopped. Type /task ${SPEC} to start it again.`)
+    expect(plugin.snapshot().value).toMatchObject({ stopKey: "disarmed" })
 
     // A status text that does not parse (a half-written file) keeps the last good status on screen.
     await Bun.write(statusFile(directory), "{")
     await Bun.sleep(2_500)
     expect(await plugin.bar()).toContain(`${NAME} Ticker`)
     expect(await plugin.bar()).toContain("◑ T1.3 proving")
+    expect(plugin.snapshot().context.text).toBe("{")
+    expect(plugin.view.status()?.tasks["T1.3"].state).toBe("proving")
     // A file that is gone clears it: the bar goes.
     await unlink(statusFile(directory))
     expect(await until(async () => !(await plugin.frame()).includes(NAME), 5_000)).toBe(true)
+    expect(Option.isNone(plugin.snapshot().context.status)).toBe(true)
   } finally {
     await plugin.dispose()
     await rm(directory, { recursive: true, force: true })
   }
 }, 60_000)
+
+test("[UI2] the plugin's installed readers follow the same actor's delayed feed, session, activity and tail ticks", async () => {
+  const directory = await directoryWith(statusText(Date.now() + 120_000))
+  const log = path.join(directory, ".opencode", "task", "proofs", "T1.3.log")
+  await mkdir(path.dirname(log), { recursive: true })
+  await Bun.write(log, "$ bun test\n")
+  const plugin = await loadPlugin(directory, ["T1.2 builder", "T1.3 builder"], ["sidebar_content", "session_watch"])
+  const count = (path: string) => plugin.requests.filter((request) => request === path).length
+  const children = `/session/${ROOT}/children`
+  const activity = "/session/ses_harness_0/message"
+  try {
+    expect(await until(() => Option.isSome(plugin.snapshot().context.status) && count(children) > 0)).toBe(true)
+    expect(Object.keys(plugin.snapshot().context.ticks)).toEqual(["sessions", "activity", "tail"])
+    // The installed Ledger Peek starts its activity reader when expansion mounts it.
+    await plugin.leader("o")
+    expect(await until(() => plugin.snapshot().matches({ expansion: "expanded" }) && count(activity) > 0)).toBe(true)
+    const before = plugin.snapshot().context.ticks
+    const activityReads = count(activity)
+    const sessionReads = count(children)
+    expect(await until(() => plugin.snapshot().context.ticks.activity > before.activity)).toBe(true)
+    expect(await until(() => count(activity) > activityReads)).toBe(true)
+    expect(await until(() => plugin.snapshot().context.ticks.sessions > before.sessions)).toBe(true)
+    expect(await until(() => count(children) > sessionReads)).toBe(true)
+    await plugin.leader("j")
+    expect(await until(() => Option.getOrUndefined(plugin.snapshot().context.chosen) === "T1.3")).toBe(true)
+
+    // The same actor's feed reads the changed status; no independent plugin poll is installed.
+    await Bun.write(statusFile(directory), statusText(Date.now() + 120_000, { "T1.2": task("trusted") }))
+    const feed = plugin.snapshot().context.text
+    expect(await until(() => plugin.snapshot().context.text !== feed)).toBe(true)
+    expect(plugin.view.status()?.tasks["T1.2"].state).toBe("trusted")
+
+    // Watch a proving task: the mounted session_watch slot installs the proof-tail reader.
+    await plugin.leader("w")
+    expect(await until(() => plugin.snapshot().context.target === "ses_harness_1")).toBe(true)
+    expect(await until(async () => (await plugin.frame()).includes("$ bun test"))).toBe(true)
+    const tail = plugin.snapshot().context.ticks.tail
+    await Bun.write(log, "$ bun test\n 3 pass\n")
+    expect(await until(() => plugin.snapshot().context.ticks.tail > tail)).toBe(true)
+    expect(await until(async () => (await plugin.frame()).includes("3 pass"))).toBe(true)
+  } finally {
+    await plugin.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30_000)
 
 // --- the view machine --------------------------------------------------------------------------------------------
 
