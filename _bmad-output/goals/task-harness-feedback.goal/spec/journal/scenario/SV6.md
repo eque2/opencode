@@ -80,3 +80,14 @@
 - Signed adapter run 20261017T194637Z-ce07b0: Bun 3 pass, 0 fail, 30 assertions; adapter handed off exit 0.
 - `state.mjs verify SV6` passed all structural checks for the new hash. It changed trust from trusted to verified. Query returned state completed and trustLevel verified; the separate reviewer must rejudge semantics.
 - No test or source edits and no commit. No coverage gap found in the Layer 1+2 check.
+
+## 2026-10-17 INTENT (independent semantic recheck after lint fix)
+- Recheck the current SV6 Gherkin and committed test after the structural hash refresh. Inspect each three-failure path and its negative controls against the real supervisors and workers.
+- Run the focused Bun file from packages/opencode. Issue one semantic verdict through the state CLI for SV6 only.
+- Do not read evidence or keys, edit source/test/state, or commit. Write a separate outcome and transcript.
+
+## 2026-10-17 OUTCOME (independent semantic recheck)
+- Read the Gherkin, T2.8/T2.9, current test, real worker paths and the task, scenario and run supervisor failure transitions. The test uses a non-git checkout for real begin and batch failures, and a failing session claim for the real judge worker.
+- Task and batch controls show no fact after the first two failures, one failed fact after the third, a matching git error, and no fourth attempt. The judge control counts three claims and records a rejected scenario verdict with the exact error message. A separate supervisor unit test covers the success-reset rule from T2.8.
+- Focused `bun test --timeout=30000 ./test/task/verify-spec-SV6.spec.ts` in packages/opencode: 3 pass, 0 fail, 30 assertions. The tagged WorkerError retains the old message and assertions.
+- One CLI `verdict SV6 trusted` succeeded through the hookless verification runner. Query: state completed, trustLevel trusted. No Gherkin coverage gap found.
