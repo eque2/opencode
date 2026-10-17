@@ -234,3 +234,9 @@
 - Remaining validation: a fresh adapter run of verify-spec-UI8.spec.ts and `verify UI8` by an independent verifier.
   No builder verdict was minted.
 - Status: fixed
+
+## D12 — UI7/UI8/UI24: package `bunx` selected an incompatible oxlint binary
+- Check: the earlier `bunx oxlint --deny-warnings test/task/verify-spec-UI7.spec.ts` (also UI8 and UI24) from `packages/opencode`.
+- Actual failure: that package `bunx` path fetched oxlint 1.60 and rejected the repository config with `The options.typeAware option is only supported in the root config, but it was found in .../.oxlintrc.json.` This was a binary-resolution problem, not a config defect.
+- Resolution: from the repository root, `npx oxlint --deny-warnings packages/opencode/test/task/verify-spec-UI7.spec.ts packages/opencode/test/task/verify-spec-UI8.spec.ts packages/opencode/test/task/verify-spec-UI24.spec.ts` parsed the config and passed: 0 warnings, 0 errors, 3 files. The UI24-only root-pinned check also passed: 0 warnings, 0 errors. No config or enforcement script changed.
+- Status: resolved
