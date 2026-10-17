@@ -137,7 +137,8 @@ const taskStandIn = (spawns: Array<Spawn>, work = true) =>
       spawns.push(spawnOf(yield* input.run.recorder.actor.getSnapshot, input.run.plan, input))
       const scripted = work ? workOf(input.run.plan, input.task) : []
       for (const fact of scripted) yield* TaskWorkers.record(input.run, fact)
-      if (!work) yield* Effect.never
+      if (!work) return yield* Effect.never
+      return undefined
     }),
   ) as unknown as typeof TaskSupervisor.machine
 
