@@ -62,3 +62,14 @@
 - Adapter run 20261017T165237Z-f7b265: 5 pass, 0 fail, 0 skip, 69 assertions; JUnit mapping handed off, exit 0.
 - `state.mjs verify UI6`: test file exists, pattern found, executed and passed; `testInCommit: false`; trust suspect -> verified.
 - CLI query: state completed, trustLevel verified. Independent semantic review is pending. No test, source, evidence, key or state file was hand-edited; no commit was made.
+
+## 2026-10-17 INTENT (fresh semantic trust)
+- Independently compare every UI6 step with the committed test, the release-notes acceptance dependencies, and the real SessionPrompt storage route.
+- Rerun the focused package test and issue exactly one semantic CLI verdict. Record the outcome and a final transcript.
+- Leave source, tests, protected evidence, keys, and state files untouched.
+
+## 2026-10-17 OUTCOME (fresh semantic trust)
+- The fixed `S1, S2, S4–S13` expectation matches all thirteen acceptance files: only S3 needs T1.2 alone. It does not depend on `TaskCommand.leftOut`.
+- The test calls real `SessionPrompt.command` and reads the stored root-session part through `Session.messages` and `MessageV2.page`; the real projector preserves its metadata. The command, transcript render, status projection, fallback, and older-header assertions cover each UI6 step.
+- Focused package run: 5 pass, 0 fail, 69 assertions. One `state.mjs verdict UI6 trusted` succeeded. The query reports state `completed`, trustLevel `trusted`.
+- D16's two gaps are closed. No source, test, protected evidence, key, or state file was edited by hand. No commit was made.
