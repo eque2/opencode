@@ -305,8 +305,10 @@
 - Actual failure: three focused tests pass, but a stub host finds the pagedown binding and calls its command directly. The test does not send a key through the real keymap and active route. The CLI rejected UI22 as completed / suspect.
 - Impact: the rendered entries, click selection, height and breakpoint checks remain covered; user-key reachability remains unproved.
 - Attempts: the semantic verifier inspected route registration and renderer tests; no edit in that dispatch.
-- Remaining validation: dispatch a real pagedown key through the host keymap while the shared region is active, assert the later entries are reachable, then rerun structural verification and independent semantic review.
-- Status: open
+- Update (2026-10-17, builder): `26603ccd79` mounts the registered Board route under OpenCode's opentui keymap provider. The scenario sends actual PageDown (`ESC [ 6 ~`) and PageUp (`ESC [ 5 ~`) terminal bytes through renderer input. It observes the shared region's own later scenario rows, return to the top, and the original click, height, Peek, status and breakpoint assertions. A fixed sleep for actor selection became a bounded readiness poll after one local run observed the selection before it settled. No production code changed.
+- Checks: focused UI22 test 3 pass, 0 fail, 42 assertions; `bun typecheck` in `packages/opencode`; root-pinned oxlint 0 warnings and 0 errors; root-pinned Prettier and `git diff --check` passed.
+- Remaining validation: a fresh verifier must run structural verification on the committed UI22 test and conduct independent semantic review against UI22 Gherkin. Only that verifier can restore trust from completed / suspect; no builder verdict was minted.
+- Status: fixed — fresh structural and semantic verification pending.
 
 ## D19 — UI24: the status writer's completion before lease release is unproved
 - Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI24.spec.ts` against UI24 (2026-10-17).
