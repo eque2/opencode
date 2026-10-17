@@ -66,3 +66,16 @@
 - Focused rerun: 4 pass, 0 fail, 81 assertions. The real plugin keys, separate machine snapshots, 5-second disarm, simulated read cadences and parse retention passed.
 - Inspected index.tsx, view.ts and actor.ts. The current product source wires the actor correctly, but the scenario assertions do not bind plugin actions to the actor snapshot.
 - One CLI verdict: rejected. The prior state was completed with trustLevel verified; the verdict response set trustLevel suspect. The gap is D15 in defects.md.
+
+## 2026-10-17 INTENT (fresh Layer 1+2 after D15 repair)
+- Query returned completed / suspect. Do not start or mint a semantic verdict.
+- Inspect the committed f0027830d7 test-only repair and its scoped `viewOf` spy. It calls the original view adapter and restores the spy after plugin setup.
+- Run root-pinned oxlint and Prettier, then a package Bun trial. On a pass, run the existing JUnit adapter once and consume its signed result with `state.mjs verify UI2`.
+- Record the CLI state and trustLevel. Leave the semantic decision to the separate verifier.
+
+## 2026-10-17 OUTCOME (fresh Layer 1+2 after D15 repair)
+- Read guardrails, the verify-scenario skill, spec.md, UI2 Gherkin, T4.1/T4.3 tasks and journals, D15, the committed test, plugin index and view. The spy wraps `viewOf(actor)`, calls the original with that same actor, returns its view and restores itself after plugin setup.
+- Root-pinned oxlint: 0 warnings, 0 errors. Prettier: matched. Package trial: 5 pass, 0 fail, 110 assertions, 22.20 s.
+- Adapter run `20261017T141604Z-dba7c2`: Bun JUnit 5 pass, 0 fail, 110 assertions, exit 0; reporter handed off signed UI2 evidence. Adapter decision `handed-off`.
+- `state.mjs verify UI2 --evidence=…/evidence/UI2.json`: structural file/pattern/execution/pass checks true, trust `suspect` → `verified`; `testInCommit` false is reported by the CLI. Query returned state `completed`, trustLevel `verified`.
+- No test or source edit, manual state edit, semantic verdict or commit. The separate semantic verifier must decide whether the repaired assertions close D15.
