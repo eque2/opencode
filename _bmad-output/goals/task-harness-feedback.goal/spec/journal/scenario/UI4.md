@@ -36,3 +36,11 @@
 - Real run 20261016T181505Z-f9a008 through the adapter (file untracked, sha256 prefix 26f6ea65836dd5df): bun exit 0,
   3 pass, 0 fail, 31 expect() calls, 8.3 s. Decision: handed-off.
 - `verify UI4`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-17 INTENT (semantic trust)
+- Compare the rendered lanes and colours with each span and liveness step.
+- Rerun the focused test, issue one CLI verdict, and record the result.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused rerun: 3 pass, 0 fail, 31 assertions. Full rendered lanes distinguish midpoint boundaries, blank gaps, open spans and one-cell final states; captured colours check the warning cell.
+- One CLI verdict: trusted. Prior state completed with trustLevel verified; the verdict response set trustLevel trusted. No semantic gap found.

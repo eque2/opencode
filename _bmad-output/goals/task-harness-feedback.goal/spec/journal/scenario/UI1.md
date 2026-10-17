@@ -38,3 +38,12 @@
 - Real run 20261016T175247Z-189395 through the adapter (file untracked, sha256 prefix bc0190fa1255c54b): bun exit 0,
   5 pass, 0 fail, 44 expect() calls, 7.0 s. Decision: handed-off.
 - `verify UI1`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-17 INTENT (semantic trust)
+- Check each UI1 step against the real Board render, selectors, and source audit.
+- Rerun the focused scenario test, then issue one CLI verdict and record its result.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused rerun: 5 pass, 0 fail, 44 assertions. The real Board render and tag-contradiction cases cover classification, grouping, counts, focus and running selection.
+- Inspected store and Board source. The source scan only catches array literals and two identifiers, but the observed selectors use tags for classification.
+- One CLI verdict: trusted. Prior state completed with trustLevel verified; the verdict response set trustLevel trusted. No material semantic gap.

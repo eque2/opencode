@@ -49,3 +49,20 @@
 - Trials (load 20 to 130): 4 pass twice. Real run 20261016T180552Z-2a2f65 through the adapter (file untracked, sha256
   prefix eaa9252d4ba70afe): bun exit 0, 4 pass, 0 fail, 81 expect() calls, 25.7 s. Decision: handed-off.
 - `verify UI2`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-17 INTENT (semantic trust)
+- Rerun UI2 and inspect plugin-to-actor wiring, not only the independent machine test.
+- Decide whether the real-key assertions and source check prove one machine owns view state.
+- Issue one CLI verdict and record any precise gap.
+
+## 2026-10-17 SEMANTIC GAP (before verdict)
+- The real plugin key test checks visible results, but it never observes the actor created by `TaskUi.tui` or the snapshot after those keys.
+- The snapshot test creates a separate actor with `machineOver` and sends synthetic events directly. It proves the machine can hold those values, not that the plugin's keys dispatch to that same actor.
+- The source check counts `createActor(` and `createSignal(` text and checks one constructor line. It does not assert that the plugin's design, selection, expansion, watch and stop-key handlers read and send through `viewOf(actor)` without parallel state.
+- The cadence test builds `liveSessions` and `liveTail` over its separate actor. It cannot prove that the plugin's installed readers use those delayed transitions for all four feeds.
+- Thus the scenario's one-machine and plugin-cadence claims can survive a disconnected actor or parallel plugin state. Reject UI2 despite the green focused run.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused rerun: 4 pass, 0 fail, 81 assertions. The real plugin keys, separate machine snapshots, 5-second disarm, simulated read cadences and parse retention passed.
+- Inspected index.tsx, view.ts and actor.ts. The current product source wires the actor correctly, but the scenario assertions do not bind plugin actions to the actor snapshot.
+- One CLI verdict: rejected. The prior state was completed with trustLevel verified; the verdict response set trustLevel suspect. The gap is D15 in defects.md.

@@ -43,3 +43,11 @@
 - Trials: 4 pass twice (load 40 to 80). Real run 20261016T181141Z-b1d346 through the adapter (file untracked, sha256
   prefix 9f22a84484bc1535): bun exit 0, 4 pass, 0 fail, 71 expect() calls, 13.1 s. Decision: handed-off.
 - `verify UI3`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-17 INTENT (semantic trust)
+- Check the heartbeat boundary and each run-key permission case against real plugin actions.
+- Rerun the focused test, issue one CLI verdict, and record the outcome.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused rerun: 4 pass, 0 fail, 71 assertions. The heartbeat threshold, disk feed, positive plugin keys, and negative permission and liveness cases cover the steps.
+- One CLI verdict: trusted. Prior state completed with trustLevel verified; the verdict response set trustLevel trusted. No semantic gap found.
