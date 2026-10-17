@@ -759,3 +759,5 @@
 {"ts":"2026-10-17T09:26:23.288Z","kind":"scenario","id":"UI24","status":"completed"}
 {"ts":"2026-10-17T09:28:19.161Z","kind":"scenario","id":"RM23","status":"executing"}
 {"ts":"2026-10-17T09:28:59.851Z","kind":"scenario","id":"RM23","status":"completed"}
+{"ts":"2026-10-17T09:31:04.170Z","kind":"scenario","id":"RM22","status":"executing"}
+{"ts":"2026-10-17T11:20:18.126Z","kind":"scenario","id":"RM22","status":"not_started"}
