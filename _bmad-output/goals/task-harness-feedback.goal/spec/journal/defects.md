@@ -264,3 +264,11 @@
 - Attempts: the T1.10 review accepted equality of unit configurations as a documented relaxation, and the goal's owner ruling 4 accepted a canonical walk with a small-plan reduction check. Neither text explicitly says that unequal raw stuck keys satisfy RM22's "same set" requirement. No test, spec, state or evidence was changed to fit the result.
 - Remaining validation: the owner must decide whether equality modulo `dead:` is the intended reduction contract, or whether the walk or test must prove literal raw-key equality. A fresh verifier must reassess RM22 after an approved correction; do not self-promote suspect trust.
 - Status: open — verdict ambiguity requires an owner decision.
+
+## D15 — UI2: the scenario test does not connect plugin keys to its actor snapshot
+- Check: semantic review of `packages/opencode/test/task/verify-spec-UI2.spec.ts`; focused `bun test --timeout=30000 ./test/task/verify-spec-UI2.spec.ts` in packages/opencode.
+- Actual failure: 4 tests pass, but the plugin-key test checks screen output only. The state and cadence tests construct another actor, so their assertions do not observe the plugin actor that handles those keys.
+- Impact: the one-machine and plugin-cadence Gherkin claims remain unproved. The CLI rejected UI2 with trustLevel suspect. The other scenarios can proceed.
+- Attempts: inspected the plugin, view and actor source; the current wiring uses one actor, but the test's constructor-string count does not enforce that connection. No source or test edit in this semantic dispatch.
+- Remaining validation: assert that the actual plugin actor receives key events and owns the resulting snapshot and installed read cadences, then rerun structural verification and independent semantic review.
+- Status: open
