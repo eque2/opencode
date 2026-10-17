@@ -12,7 +12,7 @@ import { TaskRecorder } from "@/task/core/recorder"
 import { RunSupervisor } from "@/task/core/supervise/run"
 import { ScenarioSupervisor } from "@/task/core/supervise/scenario"
 import { TaskSupervisor } from "@/task/core/supervise/task"
-import type { TaskWorkers } from "@/task/core/workers"
+import { TaskWorkers } from "@/task/core/workers"
 import { TaskEngineXState } from "@/task/engine-xstate"
 import { TaskLimits } from "@/task/limits"
 import { testEffect } from "../lib/effect"
@@ -264,7 +264,7 @@ it.live(
         claim: () =>
           Effect.suspend(() => {
             claims++
-            return Effect.fail(new Error("the session index is closed"))
+            return Effect.fail(new TaskWorkers.WorkerError({ message: "the session index is closed" }))
           }),
       })
       const unit = unitOf(yield* setup.recorder.actor.getSnapshot, "S2")
