@@ -1,9 +1,7 @@
 # State — task-harness-feedback
 
-- Stage: 3 (pursue-goal) running since 2026-10-14 12:25. Gate bound to `ACs.md` (46 criteria, 0 ticked).
-- `[DS]` phase 1: T1.15, T1.1–T1.13 built and complete in the state CLI; T1.14 (conformance, quality gate) in work.
-- Engine: one generated run machine per plan (`engine-xstate/machine.ts`), snapshot engine API
-  (`engine-xstate/index.ts`), alphabet and walk key (`engine-xstate/alphabet.ts`); phase-1 runner reads phase tags.
-- Defects: D1 (stale walk is opt-in, full interleaving too large for a unit test), D2 (machine load made
-  timing-bound tests fail; they pass on a quieter machine). See `spec/journal/defects.md`.
-- Next: T1.14 conformance + gate → T1 review (fresh subagent) → AC 2–6 evidence → checkpoint merge (AC 7, AC 46).
+- Stage: 3 (pursue-goal), gate active on `ACs.md`: 42 of 46 criteria met. The four open criteria are AC 27 (live tmux runs), AC 28 (final merge), AC 29 (final quality gate) and AC 46 (no goal path tracked on dev after the merge).
+- Develop-spec state on 2026-10-17: 54/54 tasks completed, 108/108 scenarios completed and trusted, 5/5 build checks completed with trustLevel `verified`. `state.mjs done` still returns false because BUILD-1, BUILD-2, BUILD-3, BUILD-4 and BUILD-6 need independent trust verdicts. `state.mjs next` gives no recommendation for them; the CLI's `verdict` supports build checks. Do not self-certify them.
+- RM22: the owner clarified that the reduction compares stuck unit configurations, not identical raw keys. Ruling 7 in `goal.md` records this. The full signed seven-test walk passed, and a fresh semantic verifier trusted RM22. D14 is resolved in `spec/journal/defects.md`.
+- Current branch checks: root `bun lint` passed on 2026-10-17 after two test-only lint fixes; the root `bun typecheck` passed earlier, and package typechecks passed after the later test edits. The single-target build with `--skip-embed-web-ui` passed. `bun run test` in packages/tui passed 368 tests, 1 skipped, 0 failed after an earlier load-related failure. The full packages/opencode `bun run test` passed 4,638 tests and failed one RM19 60-second timing assertion at 68.8 seconds; RM19 alone passed at 28.4 seconds. Rerun the full package suite on a quiet host. The final o2 conformance run is still pending. Other sessions drove host load over 100 on 20 cores late on 2026-10-17; do not treat a timing failure under that load as a product verdict.
+- Next: obtain a quiet full opencode suite and the final o2 conformance result. Have a fresh verifier assess the five build checks after the final checks pass. Then perform the live tmux check within four runs and $5, and merge into dev without pushing, following `goal.md` and AC 46.
