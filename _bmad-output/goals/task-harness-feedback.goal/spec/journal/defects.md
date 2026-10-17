@@ -288,3 +288,35 @@
 - Remaining validation: a fresh verifier must run structural verification on the committed UI6 test and an independent semantic review against UI6 Gherkin and release-notes dependencies. Only the verifier can update the scenario's suspect trust state.
 - Resolution (2026-10-17): the fresh adapter passed 5 tests and restored UI6 to verified. A separate semantic reviewer checked the fixed omission list against the acceptance files and read the stored header metadata through `SessionPrompt.command`; the focused run passed 5 tests and 69 assertions. The state CLI set UI6 to completed / trusted.
 - Status: resolved — the omitted-ID and stored-metadata gaps are closed.
+
+## D17 — UI15: the prompt footer is not rendered in its scenario test
+- Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI15.spec.ts` against UI15 in `spec/scenarios.gherkin` (2026-10-17).
+- Actual failure: four focused tests pass, but the prompt footer check calls `promptFooter` and scans source text without rendering the prompt component. It cannot prove the visible total or narrow-width behavior. The CLI rejected UI15 as completed / suspect.
+- Impact: other usage surfaces have meaningful assertions, but the prompt footer step remains unproved.
+- Attempts: the semantic verifier inspected the test and source; no test or source changed in that dispatch.
+- Remaining validation: render the real prompt footer with synced child-session totals at normal and narrow widths, then rerun structural verification and independent semantic review.
+- Status: open
+
+## D18 — UI22: the pagedown test bypasses the real keymap
+- Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI22.spec.ts` against UI22 (2026-10-17).
+- Actual failure: three focused tests pass, but a stub host finds the pagedown binding and calls its command directly. The test does not send a key through the real keymap and active route. The CLI rejected UI22 as completed / suspect.
+- Impact: the rendered entries, click selection, height and breakpoint checks remain covered; user-key reachability remains unproved.
+- Attempts: the semantic verifier inspected route registration and renderer tests; no edit in that dispatch.
+- Remaining validation: dispatch a real pagedown key through the host keymap while the shared region is active, assert the later entries are reachable, then rerun structural verification and independent semantic review.
+- Status: open
+
+## D19 — UI24: the status writer's completion before lease release is unproved
+- Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI24.spec.ts` against UI24 (2026-10-17).
+- Actual failure: two focused tests pass, but the test waits for a free lease and only then reads a done status. A release before the writer finishes, followed by a fast write, could pass. The CLI rejected UI24 as completed / suspect.
+- Impact: the pending permission, next command and closing summary are covered; the causal writer-before-release boundary remains unproved in this run.
+- Attempts: SV21 has a separate instrumented boundary check, but UI24's pending-summary path does not observe it. No edit in the semantic dispatch.
+- Remaining validation: hold or observe the status writer at the release boundary in a real `/task` run, assert that the lease stays held until the write completes, then rerun structural verification and independent semantic review.
+- Status: open
+
+## D20 — UI25: old-status labels and tag-derived counts lack full display assertions
+- Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI25.spec.ts` against UI25 (2026-10-17).
+- Actual failure: four focused tests pass. Ledger and Ticker assert every task's glyph and label, but Dock, Matrix and Gantt check only glyph and id; HUD's task label is not checked. Other designs check absence of one nonzero count string, so a partial state-derived count could pass. The CLI rejected UI25 as completed / suspect.
+- Impact: old-file decoding, still liveness, muted fallback and Board zero columns are covered. Labels and counts across the other designs remain weak.
+- Attempts: the semantic verifier inspected rendered frames and the display table; no edit in that dispatch.
+- Remaining validation: assert the actual state label where each design displays it and independently assert the tag-derived zero counts on every relevant design, then rerun structural verification and independent semantic review.
+- Status: open
