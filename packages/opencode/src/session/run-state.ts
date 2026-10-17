@@ -75,14 +75,14 @@ const layer = Layer.effect(
     })
 
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
-      yield* cancelBackgroundJobs(background, sessionID)
       const data = yield* InstanceState.get(state)
       const existing = MutableHashMap.get(data.runners, sessionID)
-      if (Option.isNone(existing)) {
-        yield* status.set(sessionID, { type: "idle" })
-        return
-      }
-      yield* existing.value.cancel
+      // A job finalizer can wait for the session's turn before it can close.
+      yield* Option.match(existing, {
+        onNone: () => status.set(sessionID, { type: "idle" }),
+        onSome: (runner) => runner.cancel,
+      })
+      yield* cancelBackgroundJobs(background, sessionID)
     })
 
     const ensureRunning = Effect.fn("SessionRunState.ensureRunning")(function* (
