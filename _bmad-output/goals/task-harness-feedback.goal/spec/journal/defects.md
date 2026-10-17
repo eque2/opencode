@@ -119,6 +119,7 @@
 - Remaining validation: one adapter run of verify-spec-RM23.spec.ts at load under about 90 (runs under
   journal/adapter/runs/RM23), then `verify RM23`.
 - Status: open
+- Resolution (2026-10-17): at load averages 10.83/12.61/12.88, a plain trial and the unchanged Bun JUnit adapter each passed all 9 tests with 0 hook failures. The state CLI accepted signed evidence and set RM23 to completed / verified. The high-load hook issue remains an environment sensitivity, but it did not block this verification.
 
 ## D7 — SV6-SV10: the state CLI's `verify` verb was denied by the permission system
 - Check: `node .claude/skills/eque2-code-setup/scripts/state.mjs <spec> verify SV6 --evidence=<spec>/evidence/SV6.json`,
