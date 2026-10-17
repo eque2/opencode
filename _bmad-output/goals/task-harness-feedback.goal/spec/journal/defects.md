@@ -182,3 +182,44 @@
   and a new spawn under the errored run id work. Results as in D8 (harness.test.ts is in the 81 pass).
 - Remaining validation: a fresh adapter run of verify-spec-SV26.spec.ts and `verify SV26` by a verifier.
 - Status: fixed
+
+## D10 — UI7 (also UI8, UI24): the closing summary is never written in the product wiring (InstanceRef not provided)
+- Check: `node <adapter> --file=./test/task/verify-spec-UI7.spec.ts …` (run 20261016T220500Z-5b5b32), test
+  "[UI7] a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario writes one
+  assistant markdown summary in the root session, with no model call". The test uses the product wiring:
+  SessionPrompt's layer graph with the process-wide `TaskHarness.Service` (a global node), `/task` typed through
+  `SessionPrompt.command`, the real background jobs, and a scripted model for S4's judge.
+- Actual failure: the run resumes, the judge's real `verdict` rejects S4, the run machine ends `budget_exhausted`, the
+  job completes and the lease is free, but the root session holds only the run header. The runtime logged
+  "task harness: the closing summary could not be written: Error: InstanceRef not provided".
+- Cause (stack of the logged defect): `TaskWorkers.summary` (src/task/core/workers.ts:559) calls `run.env.ops.say`
+  from the run supervisor's `summary` actor. That actor runs with the harness root's services, which hold no
+  instance context (the root is a global node). `SessionPrompt.say` reaches `SessionRunState.ensureRunning` →
+  `InstanceState` (src/effect/instance-state.ts:16), which dies without `InstanceRef`. The other worker calls into the
+  session runtime go through `env.instances.provide({ directory }, …)` (TaskSessions.create/prompt/cancel); `summary`
+  does not. summary.test.ts fakes `say`, and prompt.test.ts calls `say` inside an instance, so neither caught it.
+- Probe (trial only, removed from the test): the same test with `say` wrapped as
+  `InstanceStore.provide({ directory }, prompt.say(input))` passed both UI7 tests (the exact summary lines, one
+  assistant message, no root model request, and the opentui markdown render shows the reasons as written).
+- Impact: in a real `/task` run no closing summary ever reaches the root transcript (UI7, UI8, UI24 fail). The run
+  still ends, closes and frees the lease (UI23's path is unaffected).
+- Attempts: none on the code (a verify dispatch changes no source file).
+- Remaining validation: after a fix, an adapter run of verify-spec-UI7 (and UI8, UI24) and `verify` by a verifier.
+- Status: open
+
+## D11 — UI8: aborting the root session while its turn runs drops the closing summary
+- Check: verify-spec-UI8.spec.ts, test "[UI8] the user aborts the root session while its turn is in flight: …". In the
+  product run (adapter run 20261016T221641Z-a00389) it fails first on D10. In a trial with D10 bypassed (`say` wrapped
+  in `InstanceStore.provide({ directory }, …)` through `TaskCommand.run`; trial only, not in the test file), the two
+  other UI8 tests pass and this one fails: the runtime logged "task harness: the closing summary was dropped".
+- Actual failure: with the run's S4 judge in flight and a root turn in flight, `SessionPrompt.cancel(root)` runs
+  `SessionRunState.cancel`, which first awaits `cancelBackgroundJobs` (src/session/run-state.ts:77-78) and only then
+  cancels the root runner. `BackgroundJob.cancel` closes the job scope and waits for its finalizers; the job's cancel
+  finalizer `RunSupervisor.cancel` waits up to `cancelDeadline` (live 5 s) for the supervisor to close; the
+  supervisor is in `summarizing`, where `say` waits behind the root turn, which is not cancelled yet. At the
+  deadline the supervisor is removed and the summary is dropped; then the root turn is cancelled.
+- Impact: UI8's "the user aborts the root session" case never writes the summary (and every abort with a live run
+  takes the full cancel deadline). The "run ends" and "job cancelled" cases pass in the trial.
+- Attempts: none on the code (a verify dispatch changes no source file).
+- Remaining validation: after D10 and D11 are fixed, an adapter run of verify-spec-UI8 and `verify UI8`.
+- Status: open

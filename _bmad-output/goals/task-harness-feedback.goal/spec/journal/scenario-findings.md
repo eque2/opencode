@@ -19,3 +19,6 @@ Spec wording gaps and observations that the scenario verifiers raised. None bloc
   Gherkin's exception list does not name it. The test accepts an external trust only in the start-up step (the job's
   first fact and the external trusts straight after it) and only when the empty-log alphabet holds it; its negative
   control refuses a later external trust. Name the start-up trust in SV9, or key the alphabet on the start-up step.
+  Semantic verifier (2026-10-16, SV9 trusted): the test's reading meets the Gherkin. The spine (AD-7, AD-15, the fact
+  table) puts the external trust in the alphabet "in the start-up step", and `run.started` is a listed exception that
+  does not move the region. The wording gap stays open for the owner.
