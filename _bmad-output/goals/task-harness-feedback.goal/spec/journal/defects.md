@@ -317,6 +317,10 @@
 - Impact: the pending permission, next command and closing summary are covered; the causal writer-before-release boundary remains unproved in this run.
 - Attempts: SV21 has a separate instrumented boundary check, but UI24's pending-summary path does not observe it. No edit in the semantic dispatch.
 - Remaining validation: hold or observe the status writer at the release boundary in a real `/task` run, assert that the lease stays held until the write completes, then rerun structural verification and independent semantic review.
+- Update (2026-10-17, builder): `ef9e8a93a5` wraps only the real harness service's `release` call in the UI24 test. Before forwarding the first release, the test reads the live run supervisor's actual writer fiber and the decoded status file. It requires `{ lease: "held", writer: "ended", state: "done" }` at that boundary, while the root permission request still holds the summary. A release before writer completion now fails even if a quick later write would put `done` on disk. Both original UI24 cases and all their assertions remain; no product code changed.
+- Attempts: an initial per-case `FileSystem` override and a graph-layer override did not reach the actual writer. Their focused trials timed out awaiting the intercepted rename. The harness release observer uses the same supervisor fiber boundary as SV21 and passed both real `SessionPrompt.command` cases.
+- Checks: focused UI24: 2 pass, 0 fail, 39 assertions. `bun typecheck` in `packages/opencode`, root-pinned oxlint (0 warnings, 0 errors), root-pinned Prettier and `git diff --check` passed.
+- Remaining validation: a fresh verifier must run the committed UI24 scenario through the JUnit adapter, consume its signed evidence with the state CLI's ordinary `verify UI24`, and independently review the writer/release boundary against UI24 Gherkin. Only the verifier can restore trust from completed / suspect. No builder verdict was minted.
 - Status: open
 
 ## D20 — UI25: old-status labels and tag-derived counts lack full display assertions
