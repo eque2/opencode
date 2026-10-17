@@ -104,7 +104,10 @@
 - Remaining validation: one adapter run of verify-spec-RM22.spec.ts with TASK_GRAPH_STALE=1 and --overall-ms and
   --idle-ms of about 14 400 000, on a quiet machine, then `verify RM22`. machine.ts changed after the last logged
   stale walk (0ee865afbb), so that log is not evidence for the current tree.
-- Status: open
+- Update (2026-10-17): the opt-in full-interleaving stale walk actually ran and passed on this tree: 33 944 keys,
+  331 133 edges, no stuck state, in 6 193.094 s. The adapter's seven-test run failed three later guard-read tests,
+  so RM22 stays untrusted for D13, not for a missing stale walk.
+- Status: resolved — the missing stale-walk execution ran; D13 tracks the remaining failure.
 
 ## D6 — RM23: the preload's afterAll hook passes its 30 s bound under load when the file runs alone
 - Check: scenario RM23, `bun test --timeout=30000 ./test/task/verify-spec-RM23.spec.ts` in packages/opencode.
@@ -241,3 +244,11 @@
 - Actual failure: that package `bunx` path fetched oxlint 1.60 and rejected the repository config with `The options.typeAware option is only supported in the root config, but it was found in .../.oxlintrc.json.` This was a binary-resolution problem, not a config defect.
 - Resolution: from the repository root, `npx oxlint --deny-warnings packages/opencode/test/task/verify-spec-UI7.spec.ts packages/opencode/test/task/verify-spec-UI8.spec.ts packages/opencode/test/task/verify-spec-UI24.spec.ts` parsed the config and passed: 0 warnings, 0 errors, 3 files. The UI24-only root-pinned check also passed: 0 warnings, 0 errors. No config or enforcement script changed.
 - Status: resolved
+
+## D13 — RM22: full adapter run fails three guard-read checks after the stale walk
+- Check: `TASK_GRAPH_STALE=1 node spec/journal/adapter/bun-junit-scenario-adapter.mjs --cwd=<worktree>/packages/opencode --file=./test/task/verify-spec-RM22.spec.ts --runs=<spec>/journal/adapter/runs/RM22 --spec-folder=<spec> --reporter=<worktree>/.claude/skills/eque2-code-setup/scripts/scenario-state-reporter.mjs --overall-ms=14400000 --idle-ms=14400000`; run `20261017T093222Z-22547c`.
+- Actual failure: JUnit: 7 tests, 4 pass, 3 fail, 0 skip (Bun exit 1, adapter exit 1). The cascade guard-read test timed out after 120000 ms. The scenarios guard-read test reported `main key misses units/T1.3 (task.failed)`, `main key misses units/T1.3/attempts (task.failed)`, `stale key misses units/T1.3 (obligation.stale)`, and `stale key misses units/T1.3/attempts (obligation.stale)`. The outside-run guard-read test reported `{ path: "units/T1.1.c1", main: false }` instead of `main: true`. The first timeout may have affected the shared guard recorder in the later tests; this cause is not proved.
+- Impact: RM22 remains untrusted. The full stale walk itself passed (33 944 keys, 331 133 edges, no stuck state), and the two reduction tests passed. The single failing adapter run cannot verify the whole scenario.
+- Attempts: the prior quick trial passed six and skipped the stale walk in 58.83 s. The one full adapter run took 6 357.298 s. The test file hash matched before and after; the source files and HEAD did not change during this run. No test or source code was changed. No adapter retry was attempted.
+- Remaining validation: diagnose the cascade guard-read timeout and the two later assertion failures; obtain one complete, unskipped, seven-pass adapter run and consume its evidence with `state.mjs verify RM22`.
+- Status: open
