@@ -6,7 +6,21 @@ import { Effect, FileSystem, Layer, Option, Result } from "effect"
 import { createComponent, type JSX } from "solid-js"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { BackgroundJob } from "@/background/job"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { LSP } from "@/lsp/lsp"
+import { MCP } from "@/mcp"
+import { InstanceStore } from "@/project/instance-store"
+import { MessageV2 } from "@/session/message-v2"
+import { SessionPrompt } from "@/session/prompt"
+import { Session } from "@/session/session"
+import { SessionStatus } from "@/session/status"
+import { SessionSummary } from "@/session/summary"
 import { TaskCommand } from "@/task/core/command"
 import { TaskHarness } from "@/task/core/harness"
 import type { Plan } from "@/task/core/model"
@@ -21,7 +35,7 @@ import { LedgerView } from "../../../tui/src/task-ui/designs/1-ledger"
 import type { Sessions } from "../../../tui/src/task-ui/peek"
 import { viewFor } from "../../../tui/test/task-ui/view"
 import { testEffect } from "../lib/effect"
-import { jobsOf, runTaskInputs, SPEC, seed, statusFile } from "./lib/command"
+import { backgroundOf, jobsOf, runTaskInputs, SPEC, seed, statusFile } from "./lib/command"
 import { facts, loadPlan } from "./lib/machine"
 
 // Scenario UI6 (spec task-harness-feedback, D17, AD-13; tasks T4.10, T4.8): the run header shows the spec title.
@@ -40,11 +54,40 @@ import { facts, loadPlan } from "./lib/machine"
 // (lib/command). The transcript is the real TUI code, imported by relative path: the session route's user message
 // splits a message's parts with `splitHeader` and draws them with `MessageBody` / `TaskHeader`
 // (packages/tui/src/routes/session/task-header.tsx), rendered with the opentui test renderer from the parts the
-// command sent. The status run is the real projection (`TaskStatus.project` over the engine's snapshot after
-// `run.started`), written by `TaskStatus.write`, decoded by the task-ui's own `parse` and drawn by its Ledger.
+// command sent. A separate command test uses the real SessionPrompt and session projector to read the stored header.
+// The status run is the real projection (`TaskStatus.project` over the engine's snapshot after `run.started`), written
+// by `TaskStatus.write`, decoded by the task-ui's own `parse` and drawn by its Ledger.
 
 const store = LayerNode.compile(LayerNode.group([EventV2Bridge.node, Database.node]))
 const it = testEffect(Layer.mergeAll(store, NodeServices.layer))
+const storedJobs = jobsOf()
+// Only the job starter and services unrelated to a no-reply header are replaced. The prompt and session stores run.
+const storedHeader = testEffect(
+  Layer.mergeAll(
+    LayerNode.compile(
+      LayerNode.group([
+        SessionPrompt.node,
+        Session.node,
+        SessionStatus.node,
+        SessionProjector.node,
+        MessageV2.node,
+        FSUtil.node,
+        BackgroundJob.node,
+        Database.node,
+        EventV2Bridge.node,
+      ]),
+      [
+        [BackgroundJob.node, Layer.succeed(BackgroundJob.Service, backgroundOf(storedJobs))],
+        [SessionSummary.node, Layer.mock(SessionSummary.Service, { summarize: () => Effect.void })],
+        [LSP.node, Layer.mock(LSP.Service, { init: () => Effect.void })],
+        [MCP.node, Layer.mock(MCP.Service, { prompts: () => Effect.succeed({}) })],
+        [RuntimeFlags.node, RuntimeFlags.layer({ experimentalEventSystem: true })],
+      ],
+    ),
+    NodeServices.layer,
+    Layer.mock(InstanceStore.Service, {}),
+  ),
+)
 
 const theme = Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, "dark"))
 const none: Sessions = { children: () => () => [], activity: () => () => [], all: () => () => [] }
@@ -53,6 +96,8 @@ const TITLE = "Release notes from conventional commits"
 const SPEC_ID = "release-notes.spec"
 const T1_2 = `${SPEC}/T1-release-notes.task/T1.2-version-bump.task`
 const T1_2_TITLE = "Compute the next version"
+// acceptance/S3.md needs only T1.2. Each other acceptance/S*.md needs a task outside this subtree.
+const T1_2_LEFT_OUT = ["S1", "S2", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13"]
 const LATER = "task-formats/blend/example-scenarios.spec"
 const LATER_TITLE = "Slugs for release titles"
 
@@ -156,21 +201,21 @@ it.instance(
       const part = inputs[0]?.parts[0]
       expect(inputs[0]?.parts).toHaveLength(1)
 
-      // The scenarios the subtree leaves out: from the loaded plan of the T1.2 folder, as the command computes them.
+      // Pin the omitted ids from acceptance/S*.md, independent of the command's filter.
       const plan = yield* loadPlan(SPEC_ID, "T1.2")
       const leftOut = TaskCommand.leftOut(plan)
-      expect(leftOut.length).toBeGreaterThan(0)
+      expect(leftOut).toEqual(T1_2_LEFT_OUT)
       expect(leftOut).not.toContain("S3")
       // The first message: "Implementing **T1.2 <title>** from spec **<title>**", then the Left out line.
       const head = `Implementing **T1.2 ${T1_2_TITLE}** from spec **${TITLE}**`
-      const leftLine = `Left out: ${leftOut.join(", ")} — they need tasks outside this run.`
+      const leftLine = `Left out: ${T1_2_LEFT_OUT.join(", ")} — they need tasks outside this run.`
       expect(part?.text).toBe(`${head}\n${leftLine}`)
       expect(part?.metadata).toEqual({
         taskHarness: {
           header: {
             spec: { id: SPEC_ID, title: TITLE },
             task: { id: "T1.2", title: T1_2_TITLE },
-            leftOut: [...leftOut],
+            leftOut: T1_2_LEFT_OUT,
           },
         },
       })
@@ -193,6 +238,42 @@ it.instance(
       const whole = TaskCommand.header(yield* loadPlan(SPEC_ID))
       expect(whole.text).toBe(`Implementing spec **${TITLE}**`)
       expect((yield* transcript([{ type: "text", ...whole }])).lines).toEqual([`Implementing spec ${TITLE}`])
+    }),
+  { git: true },
+)
+
+storedHeader.instance(
+  "[UI6] SessionPrompt.command stores the T1.2 header text and structured metadata in the root session",
+  () =>
+    Effect.gen(function* () {
+      yield* seed(SPEC)
+      const sessions = yield* Session.Service
+      const prompt = yield* SessionPrompt.Service
+      const chat = yield* sessions.create({
+        title: "UI6 root",
+        model: { providerID: ProviderV2.ID.make("test"), id: ModelV2.ID.make("test-model") },
+      })
+      const header = yield* prompt.command({ sessionID: chat.id, command: "task", arguments: T1_2 })
+      expect(storedJobs.starts).toHaveLength(1)
+      expect(header.info.role).toBe("user")
+      const stored = yield* sessions.messages({ sessionID: chat.id })
+      expect(stored).toHaveLength(1)
+      expect(stored[0]?.info.id).toBe(header.info.id)
+      expect(stored[0]?.parts).toEqual(header.parts)
+      expect(stored[0]?.parts).toHaveLength(1)
+      expect(stored[0]?.parts[0]).toMatchObject({
+        type: "text",
+        text: `Implementing **T1.2 ${T1_2_TITLE}** from spec **${TITLE}**\nLeft out: ${T1_2_LEFT_OUT.join(", ")} — they need tasks outside this run.`,
+      })
+      expect(stored[0]?.parts.find((part) => part.type === "text")?.metadata).toEqual({
+        taskHarness: {
+          header: {
+            spec: { id: SPEC_ID, title: TITLE },
+            task: { id: "T1.2", title: T1_2_TITLE },
+            leftOut: T1_2_LEFT_OUT,
+          },
+        },
+      })
     }),
   { git: true },
 )
