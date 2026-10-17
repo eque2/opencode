@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { expect } from "bun:test"
-import { Effect, Exit, Fiber, Layer, Logger, Option, Schema } from "effect"
+import { Effect, Exit, Fiber, FileSystem, Layer, Logger, Option, Predicate, Schema } from "effect"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import type { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
@@ -123,26 +123,74 @@ const root = LayerNode.group([
   LayerNode.make({ service: TestLLMServer, layer: TestLLMServer.layer, deps: [] }),
 ])
 
+interface ReleaseObservation {
+  readonly lease: "held" | "free"
+  readonly writer: "ended" | "running" | "unknown"
+  readonly state: TaskStatus.Status["run"]["state"]
+}
+
+// Observe the real writer fiber and status file just before the real harness processes release.
+const observedHarness = (released: ReleaseObservation[]) =>
+  LayerNode.make({
+    service: TaskHarness.Service,
+    layer: Layer.effect(
+      TaskHarness.Service,
+      Effect.gen(function* () {
+        const real = yield* TaskHarness.make
+        const fs = yield* FileSystem.FileSystem
+        return TaskHarness.Service.of({
+          ...real,
+          release: (directory, runID) =>
+            Effect.gen(function* () {
+              const live = yield* real.live(directory)
+              const ref = yield* real.system.get(TaskHarness.systemId.run(runID))
+              const snapshot: unknown = Option.isSome(ref) ? yield* ref.value.getSnapshot : undefined
+              const context = Predicate.hasProperty(snapshot, "context") ? snapshot.context : undefined
+              const fiber = Predicate.hasProperty(context, "writer") ? context.writer : undefined
+              const writer = Fiber.isFiber(fiber) ? (fiber.pollUnsafe() === undefined ? "running" : "ended") : "unknown"
+              const text = yield* fs
+                .readFileString(path.join(directory, ".opencode/task/status.json"))
+                .pipe(Effect.orDie)
+              const status = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(text)
+              released.push({
+                lease: Option.isSome(live) && live.value.runID === runID ? "held" : "free",
+                writer,
+                state: status.run.state,
+              })
+              yield* real.release(directory, runID)
+            }),
+        })
+      }),
+    ).pipe(Layer.provide(NodeServices.layer)),
+    deps: [Session.node, SessionStatus.node, EventV2Bridge.node, BackgroundJob.node, Database.node],
+    tag: TaskHarness.node.tag,
+  })
+
 const logged: Array<unknown> = []
-const it = testEffect(
-  Layer.mergeAll(
-    LayerNode.compile(root, [
-      [SessionSummary.node, summaryStub],
-      [LSP.node, lsp],
-      [MCP.node, mcp],
-      [RuntimeFlags.node, RuntimeFlags.layer({ experimentalEventSystem: true })],
-    ]).pipe(
-      Layer.provide(
-        Logger.layer([
-          Logger.make<unknown, void>((options) => {
-            logged.push(options.message)
-          }),
-        ]),
+const scenario = (title: string, rootGone: boolean) => {
+  const released: ReleaseObservation[] = []
+  const it = testEffect(
+    Layer.mergeAll(
+      LayerNode.compile(root, [
+        [TaskHarness.node, observedHarness(released)],
+        [SessionSummary.node, summaryStub],
+        [LSP.node, lsp],
+        [MCP.node, mcp],
+        [RuntimeFlags.node, RuntimeFlags.layer({ experimentalEventSystem: true })],
+      ]).pipe(
+        Layer.provide(
+          Logger.layer([
+            Logger.make<unknown, void>((options) => {
+              logged.push(options.message)
+            }),
+          ]),
+        ),
       ),
+      NodeServices.layer,
     ),
-    NodeServices.layer,
-  ),
-)
+  )
+  it.instance(title, () => runCase(rootGone, released), { git: true }, 180_000)
+}
 
 const configOf = (url: string): Partial<ConfigV1.Info> => ({
   model: "test/test-model",
@@ -192,7 +240,7 @@ const sliceOf = (plan: Plan, base: string): ReadonlyArray<Fact> => {
   ]
 }
 
-const runCase = (rootGone: boolean) =>
+const runCase = (rootGone: boolean, released: ReleaseObservation[]) =>
   Effect.gen(function* () {
     const { directory } = yield* TestInstance
     const llm = yield* TestLLMServer
@@ -266,6 +314,9 @@ const runCase = (rootGone: boolean) =>
       "the directory lease stayed busy while the summary waited",
       "60 seconds",
     )
+    // The first release is the supervisor's, before the summary. The writer fiber has ended and
+    // its final done snapshot is on disk while the lease is still held at that exact boundary.
+    expect(released[0]).toEqual({ lease: "held", writer: "ended", state: "done" })
     const statusText = yield* fsutil.readFileString(path.join(directory, ".opencode/task/status.json"))
     const status = Schema.decodeUnknownSync(Schema.fromJsonString(TaskStatus.Status))(statusText)
     expect(status.run.state).toBe("done")
@@ -322,16 +373,12 @@ const runCase = (rootGone: boolean) =>
     expect(messages.at(-1)?.info.id).toBe(summary.info.id)
   })
 
-it.instance(
+scenario(
   "[UI24] a permission prompt holds the root turn; the done status precedes lease release, a second /task is not busy, and one summary follows the reply",
-  () => runCase(false),
-  { git: true },
-  180_000,
+  false,
 )
 
-it.instance(
+scenario(
   "[UI24] when the root disappears during the permission wait, the done run stays free and logs one failed summary",
-  () => runCase(true),
-  { git: true },
-  180_000,
+  true,
 )
