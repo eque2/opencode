@@ -204,8 +204,13 @@
 - Impact: in a real `/task` run no closing summary ever reaches the root transcript (UI7, UI8, UI24 fail). The run
   still ends, closes and frees the lease (UI23's path is unaffected).
 - Attempts: none on the code (a verify dispatch changes no source file).
-- Remaining validation: after a fix, an adapter run of verify-spec-UI7 (and UI8, UI24) and `verify` by a verifier.
-- Status: open
+- Update (2026-10-17, builder): fixed in e63744e21b. `TaskWorkers.summary` now provides the run directory
+  through `InstanceStore` when it calls `say`, as the child-session operations do. The committed UI7 scenario is
+  green (2 pass), and UI8 reaches its independent abort-order failure instead of `InstanceRef not provided`.
+  Package typecheck, targeted oxlint, eslint and prettier checks pass.
+- Remaining validation: fresh adapter runs of UI7 and UI8, plus UI24 when its scenario file exists, and `verify`
+  by independent verifiers. No builder verdict was minted.
+- Status: fixed
 
 ## D11 — UI8: aborting the root session while its turn runs drops the closing summary
 - Check: verify-spec-UI8.spec.ts, test "[UI8] the user aborts the root session while its turn is in flight: …". In the
@@ -221,5 +226,11 @@
 - Impact: UI8's "the user aborts the root session" case never writes the summary (and every abort with a live run
   takes the full cancel deadline). The "run ends" and "job cancelled" cases pass in the trial.
 - Attempts: none on the code (a verify dispatch changes no source file).
-- Remaining validation: after D10 and D11 are fixed, an adapter run of verify-spec-UI8 and `verify UI8`.
-- Status: open
+- Update (2026-10-17, builder): fixed in e2cb2bb1f0. `SessionRunState.cancel` interrupts the session runner
+  before it awaits the related background jobs. This lets a waiting summary acquire the root session after the
+  aborted turn, within the job's cancellation deadline. The committed UI8 scenario passes all 3 cases; the
+  focused `prompt.test.ts` cancel and summary tests pass (14 pass). Package typecheck and targeted oxlint, eslint
+  and prettier checks pass.
+- Remaining validation: a fresh adapter run of verify-spec-UI8.spec.ts and `verify UI8` by an independent verifier.
+  No builder verdict was minted.
+- Status: fixed
