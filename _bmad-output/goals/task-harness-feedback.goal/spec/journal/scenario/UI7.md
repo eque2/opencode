@@ -46,3 +46,9 @@
 - Adapter run `20261017T091336Z-f6137d`: 2 pass, 0 fail, exit 0; reporter produced signed evidence.
 - `verify UI7`: structural checks pass, trust untrusted → verified. Query: state completed, trustLevel verified.
 - The test covers the run fold, real judge verdict, one assistant summary, usage, warning, exact sections, escaping, and markdown render. No scenario coverage gap found.
+
+## 2026-10-17 INTENT (independent semantic review)
+- CLI reports completed / verified. Read the Gherkin, committed integration tests, T4.11 journal, summary implementation and UX contract. Run the registered file and assess the final-state trigger, message role and content, warning, model-call boundary and rendered escaping. Issue one CLI verdict. Do not edit tests or source.
+
+## 2026-10-17 OUTCOME (independent semantic review)
+- Two tests passed, 27 assertions. The resumed stored slice, real judge and final machine drive the root summary. Exact text and a rendered markdown frame cover every stated output. Called `verdict UI7 trusted` once; CLI query reports state completed, trustLevel trusted. No Gherkin gap found.

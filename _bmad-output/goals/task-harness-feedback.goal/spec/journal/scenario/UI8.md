@@ -38,3 +38,9 @@
 - Adapter run `20261017T091529Z-f4d797`: 3 pass, 0 fail, exit 0; reporter produced signed evidence.
 - `verify UI8`: all structural checks passed; trust untrusted → verified. Query: state completed, trustLevel verified.
 - Three cases cover normal run end, root abort, and job cancellation during a root turn, followed by one summary and a later model turn. No scenario coverage gap found.
+
+## 2026-10-17 INTENT (independent semantic review)
+- CLI reports completed / verified. Read the full three-case test and the T4.11 summary contract. Run the file and check each distinct end path, turn-order assertion, single summary and later model request. Issue one CLI verdict; do not edit tests or source.
+
+## 2026-10-17 OUTCOME (independent semantic review)
+- Three tests passed with 48 assertions. Each end path runs through the product boundary, and the root model turn is held by a gate. The summary order, single write and later model hit are asserted in each path. Called `verdict UI8 trusted` once; CLI query reports state completed, trustLevel trusted. No Gherkin gap found.

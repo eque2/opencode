@@ -16,3 +16,9 @@
 - oxlint --deny-warnings: 0/0; prettier --check: clean; `bun typecheck`: clean.
 - Trials: 4 pass, 172 expects (3.7 s, 10.8 s). Adapter run 20261016T215047Z-78ad98: 4 pass, bun exit 0, exit 0.
 - `verify DOC1`: structural pass. State completed, trustLevel verified.
+
+## 2026-10-17 INTENT (independent semantic review)
+- CLI reports completed / verified. Read the full README Validation section, the four committed tests, Gherkin and T3.11 journal. Run the registered file and check each prose claim against its assertion, then issue one semantic verdict. Do not edit source or tests.
+
+## 2026-10-17 OUTCOME (independent semantic review)
+- Four tests passed with 172 assertions. The assertions read the README and exercise the command, loader and machine for its concrete claims. Called `verdict DOC1 trusted` once; CLI query reports state completed, trustLevel trusted. No Gherkin gap found.
