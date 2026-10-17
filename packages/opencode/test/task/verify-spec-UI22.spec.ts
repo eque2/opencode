@@ -3,19 +3,24 @@ import { expect } from "bun:test"
 import { Effect, FileSystem, Option, Result } from "effect"
 import path from "path"
 import { ScrollBoxRenderable, type Renderable } from "@opentui/core"
-import { testRender } from "@opentui/solid"
-import { createComponent, createRoot, type JSX } from "solid-js"
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
+import { createBindingLookup } from "@opentui/keymap/extras"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { testRender, useRenderer } from "@opentui/solid"
+import { createComponent, onCleanup } from "solid-js"
+import type { TuiPluginApi, TuiRouteDefinition } from "@opencode-ai/plugin/tui"
 import type { Fact, Plan } from "@/task/core/model"
 import { TaskStatus } from "@/task/core/status"
 import { TaskEngineXState } from "@/task/engine-xstate"
-import { testEffect } from "../lib/effect"
+import { pollWithTimeout, testEffect } from "../lib/effect"
 import { facts, loadPlan, trustLeaf } from "./lib/machine"
 import { DEFAULT_THEMES, resolveTheme } from "../../../tui/src/theme"
+import { TuiKeybind } from "../../../tui/src/config/keybind"
+import { OpencodeKeymapProvider, registerOpencodeKeymap } from "../../../tui/src/keymap"
 import type { Sessions } from "../../../tui/src/task-ui/peek"
 import { parse, tagged, type Status } from "../../../tui/src/task-ui/store"
 import type { Ctx } from "../../../tui/src/task-ui/ui"
 import { Screen, registerScreen } from "../../../tui/src/task-ui/designs/screen"
+import { createTuiPluginApi } from "../../../tui/test/fixture/tui-plugin"
 import { settle, viewFor } from "../../../tui/test/task-ui/view"
 
 // Scenario UI22 (spec task-harness-feedback, EXPERIENCE "Shared region" → Height, Accessibility; tasks T4.4, T4.6):
@@ -31,11 +36,10 @@ import { settle, viewFor } from "../../../tui/test/task-ui/view"
 // "merge conflict", then the user cancels) folded by the engine, projected by `TaskStatus.project`, written by
 // `TaskStatus.write`, and read back with the task-ui's `parse`. It has 13 scenarios and 5 stopped tasks in 4 STOPPED
 // lines: T1.2 failed; T1 and T1.4 blocked by T1.2; T1.5 blocked by T1.4; T1.3 cancelled.
-// The full-screen design is the Board's route as the plugin opens it: the real `registerScreen` registers the route
-// and, when it renders, the keymap layer that binds pagedown and pageup to the region's scroll box; a stub host keeps
-// that layer, and a key press runs the command the layer binds to the key. The view is a real taskView actor (the tui
-// test helper `viewFor`); a stub session source gives the selected task's builder 8 activity lines, so the Peek has
-// lines to shrink. Components render through `createComponent` (this file is .spec.ts, so it has no JSX).
+// The full-screen Board route is registered and mounted with opencode's real opentui keymap. Renderer input reaches
+// its active layer, which pages the shared region. The view is a real taskView actor (the tui test helper `viewFor`);
+// a stub session source gives the selected task's builder 8 activity lines, so the Peek has lines to shrink.
+// Components render through `createComponent` (this file is .spec.ts, so it has no JSX).
 
 const it = testEffect(NodeServices.layer)
 
@@ -89,7 +93,10 @@ const boardView = (status: Status) =>
     )
     made.view.setExpanded(true)
     made.view.select("T1.3")
-    yield* Effect.promise(settle)
+    yield* pollWithTimeout(
+      Effect.sync(() => (made.view.selected() === "T1.3" ? true : undefined)),
+      "the Board did not select T1.3",
+    )
     expect(made.view.selected()).toBe("T1.3")
     return made.view
   })
@@ -106,56 +113,52 @@ const sessions: Sessions = {
   all: () => () => [],
 }
 
-/** The Board's full-screen route as `registerScreen` registers it, and the key presses of its keymap layer. */
+/** Mount the registered Board route inside the opentui keymap provider that receives renderer key events. */
 const route = (view: View) => {
-  const layers: Array<{
-    commands: Array<{ name: string; run: () => unknown }>
-    bindings: Array<{ key: string; cmd: string }>
-  }> = []
-  const routes: Array<{ name: string; render: () => JSX.Element }> = []
-  const host = {
-    route: {
-      register: (list: typeof routes) => void routes.push(...list),
-      current: { name: "task-ui" },
-      navigate: () => {},
-    },
-    keymap: {
-      registerLayer: (layer: (typeof layers)[number]) => {
-        layers.push(layer)
-        return () => {}
+  function Host() {
+    const renderer = useRenderer()
+    const keymap = createDefaultOpenTuiKeymap(renderer)
+    const keybinds = createBindingLookup(TuiKeybind.toBindingConfig(TuiKeybind.parse({})), {
+      commandMap: TuiKeybind.CommandMap,
+      bindingDefaults: TuiKeybind.bindingDefaults(),
+    })
+    onCleanup(registerOpencodeKeymap(keymap, renderer, { keybinds, leader_timeout: 2000 }))
+    const routes: TuiRouteDefinition[] = []
+    const base = createTuiPluginApi({ renderer, keymap })
+    const api: TuiPluginApi = {
+      ...base,
+      route: {
+        ...base.route,
+        register: (list) => {
+          routes.push(...list)
+          return () => {}
+        },
+        current: { name: "task-ui" },
       },
-    },
-    ui: { toast: () => {}, dialog: { replace: () => {}, setSize: () => {}, clear: () => {} } },
-    attention: { notify: async () => {} },
-  }
-  const ctx: Ctx = {
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- registerScreen reads only the route, keymap, ui and attention members above
-    api: host as unknown as TuiPluginApi,
-    view,
-    sessions,
-    theme: () => theme,
-    active: () => true,
-    leader: "ctrl+x",
-    root: () => "",
-    owns: () => true,
-    harness: () => [],
-    logs: () => [],
-  }
-  const dispose = createRoot((stop) => {
+    }
+    const ctx: Ctx = {
+      api,
+      view,
+      sessions,
+      theme: () => theme,
+      active: () => true,
+      leader: "ctrl+x",
+      root: () => "",
+      owns: () => true,
+      harness: () => [],
+      logs: () => [],
+    }
     registerScreen(ctx)
-    return stop
-  })
-  // A key press runs the command that the newest layer binding the key binds to it.
-  const press = (key: string) => {
-    const layer = layers.findLast((item) => item.bindings.some((binding) => binding.key === key))
-    const name = layer?.bindings.find((binding) => binding.key === key)?.cmd
-    const command = layer?.commands.find((item) => item.name === name)
-    if (!command) throw new Error(`no command for ${key}`)
-    command.run()
+    const page = routes.find((item) => item.name === api.route.current.name)
+    if (!page) throw new Error("registerScreen registered no active task-ui route")
+    return createComponent(OpencodeKeymapProvider, {
+      keymap,
+      get children() {
+        return page.render({})
+      },
+    })
   }
-  const page = routes.find((item) => item.name === "task-ui")
-  if (!page) throw new Error("registerScreen registered no task-ui route")
-  return { page: page.render, press, dispose }
+  return () => createComponent(Host, {})
 }
 
 const linesOf = (frame: string) => frame.split("\n").map((line) => line.trimEnd())
@@ -207,24 +210,19 @@ it.live(
       // With room, at 80 rows, the Peek shows several activity lines.
       const roomy = route(yield* boardView(status))
       const tall = yield* Effect.promise(async () => {
-        const app = await testRender(roomy.page, { width: 120, height: 80 })
+        const app = await testRender(roomy, { width: 120, height: 80 })
         await app.renderOnce()
         const frame = app.captureCharFrame()
         app.renderer.destroy()
         return frame
       })
-      roomy.dispose()
       expect(activityLines(tall)).toBeGreaterThan(1)
 
       const view = yield* boardView(status)
       const screen = route(view)
       const app = yield* Effect.acquireRelease(
-        Effect.promise(() => testRender(screen.page, { width: 120, height: 24 })),
-        (made) =>
-          Effect.sync(() => {
-            made.renderer.destroy()
-            screen.dispose()
-          }),
+        Effect.promise(() => testRender(screen, { width: 120, height: 24 })),
+        (made) => Effect.sync(() => made.renderer.destroy()),
       )
       yield* Effect.promise(() => app.renderOnce())
       const first = app.captureCharFrame()
@@ -238,10 +236,11 @@ it.live(
       const firstPage = inBox(first, region)
       expect(SCENARIOS.every((id) => firstPage.some((row) => row.startsWith(`${id} `, 2)))).toBe(false)
 
-      // pagedown, page by page, brings every STOPPED line and every scenario into the region's own cells.
+      // Send terminal PageDown bytes through the renderer. The mock input's literal "pagedown" types nine letters.
+      // Page by page, every STOPPED line and scenario enters the region's own cells.
       const seen = [...firstPage]
       for (let page = 0; page < 10; page++) {
-        screen.press("pagedown")
+        app.mockInput.pressKey("\x1b[6~")
         yield* Effect.promise(() => app.renderOnce())
         seen.push(...inBox(app.captureCharFrame(), region))
       }
@@ -254,7 +253,7 @@ it.live(
       expect(seen.find((row) => row.startsWith("S13 ", 2))).toStartWith("⊖ S13 blocked by T1.4: blocked")
 
       // pageup goes back to the top, where the STOPPED list is.
-      for (let page = 0; page < 10; page++) screen.press("pageup")
+      for (let page = 0; page < 10; page++) app.mockInput.pressKey("\x1b[5~")
       yield* Effect.promise(() => app.renderOnce())
       expect(region.scrollTop).toBe(0)
       const top = app.captureCharFrame()
