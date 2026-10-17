@@ -41,3 +41,12 @@
 - `verify UI6 --evidence=<spec>/evidence/UI6.json`: structural pass (testInCommit false, as expected). State
   completed, trust untrusted -> verified ("awaiting semantic verifier").
 - No gap found in the code for UI6.
+
+## 2026-10-17 INTENT (semantic trust)
+- Trace each UI6 assertion from the real command input to the session route's header renderer and status projection.
+- Rerun the focused test file and issue one CLI verdict.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused Bun run: 4 passed, 0 failed, 61 assertions. The command and TUI route paths support the header assertions.
+- Rejected trust: the left-out id expectation reuses `TaskCommand.leftOut`, so a wrong incomplete list survives. The recording Ops also bypasses stored message forwarding.
+- One CLI verdict returned suspect; query returned state completed, trustLevel suspect.

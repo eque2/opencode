@@ -43,3 +43,11 @@
 - Real run 20261016T181959Z-c0cf47 through the adapter (file untracked, sha256 prefix f4dac768ceac9787): bun exit 0,
   4 pass, 0 fail, 102 expect() calls, 20.1 s. Decision: handed-off.
 - `verify UI5`: structural pass (testInCommit false). State completed, trust untrusted -> verified.
+
+## 2026-10-17 INTENT (semantic trust)
+- Independently compare the four UI5 tests with the Gherkin steps and the task-ui wait render paths.
+- Rerun the focused file, then issue one Layer-3 verdict through the verifier runner.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused Bun run: 4 passed, 0 failed, 102 assertions. Source trace: shared wait sentences, Board card, Peek heading, shared region and shortcut bar.
+- One CLI verdict: trusted. Query: state completed, trustLevel trusted. No material Gherkin gap.

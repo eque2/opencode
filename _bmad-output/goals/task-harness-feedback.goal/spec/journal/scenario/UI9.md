@@ -40,3 +40,11 @@
 - `verify UI9 --evidence=<spec>/evidence/UI9.json`: structural pass (testInCommit false). State completed, trust
   untrusted -> verified ("awaiting semantic verifier").
 - Note (not a defect): in every region the failed task's 155-char reason is cut with `…`; the Peek shows it whole.
+
+## 2026-10-17 INTENT (semantic trust)
+- Compare projected dead and blocked tasks with each rendered STOPPED list, Peek heading and collapsed view.
+- Rerun the focused file, then issue one CLI verdict.
+
+## 2026-10-17 OUTCOME (semantic trust)
+- Focused Bun run: 4 passed, 0 failed, 204 assertions. The rendered region and Peek checks cover the reasons and causes.
+- One CLI verdict trusted; query returned state completed, trustLevel trusted. No material Gherkin gap.
