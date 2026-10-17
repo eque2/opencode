@@ -321,7 +321,8 @@
 - Attempts: an initial per-case `FileSystem` override and a graph-layer override did not reach the actual writer. Their focused trials timed out awaiting the intercepted rename. The harness release observer uses the same supervisor fiber boundary as SV21 and passed both real `SessionPrompt.command` cases.
 - Checks: focused UI24: 2 pass, 0 fail, 39 assertions. `bun typecheck` in `packages/opencode`, root-pinned oxlint (0 warnings, 0 errors), root-pinned Prettier and `git diff --check` passed.
 - Remaining validation: a fresh verifier must run the committed UI24 scenario through the JUnit adapter, consume its signed evidence with the state CLI's ordinary `verify UI24`, and independently review the writer/release boundary against UI24 Gherkin. Only the verifier can restore trust from completed / suspect. No builder verdict was minted.
-- Status: open
+- Resolution (2026-10-17): the fresh structural adapter run and CLI verify restored verified status. An independent reviewer traced the graph replacement through the real command and supervisor, reran the focused test (2 pass, 39 assertions), and confirmed the writer fiber and done status at the held-lease release boundary. One CLI verdict accepted trusted; query reports completed / trusted.
+- Status: resolved — release-before-write would fail the boundary assertion.
 
 ## D20 — UI25: old-status labels and tag-derived counts lack full display assertions
 - Check: fresh semantic review of `packages/opencode/test/task/verify-spec-UI25.spec.ts` against UI25 (2026-10-17).
