@@ -31,7 +31,9 @@ const it = testEffect(NodeServices.layer)
 
 // The walk's hang guard: about three times the edges a walk of this plan dequeues (the port counts each dequeue).
 const LIMIT = 5_000
-const WITHIN_MS = 60_000
+// Owner ruling 8 (goal.md, 2026-10-18) raised the Gherkin's 60 s bound to 180 s: the walk took 68.8 s under the shared
+// host's load against about 28 s alone. LIMIT stays the deterministic guard against a state-space blow-up.
+const WITHIN_MS = 180_000
 
 // The unit a fact of the alphabet belongs to.
 const unitOf = (fact: Fact) => {
@@ -115,7 +117,7 @@ it.live("[RM19] owner ruling 4: the release-notes plan passes the structural tot
 )
 
 it.live(
-  "[RM19] owner ruling 4: every state reachable with the canonical interleaving is walked within 60 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done",
+  "[RM19] owner rulings 4 and 8: every state reachable with the canonical interleaving is walked within 180 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done",
   () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
@@ -151,7 +153,7 @@ it.live(
         expect([machineState(state, "T1.5"), machineState(state, "T1")]).toEqual(["blocked", "blocked"])
       }
     }),
-  150_000,
+  300_000,
 )
 
 it.live("[RM19] the walk's stuck detector reports stuck states on a small plan whose blocked rows are removed", () =>
