@@ -69,7 +69,10 @@
   concurrent CLI tests at their 30 s bound and that one at 15 s, with and without the D4 preload change, and on `dev`
   in the main checkout at load 14 the same way. So the bound needs a quiet machine; the script now waits for a 1-minute
   load under 5 and a 5-minute load under 7.
-- Status: open — the checkpoint gate must run on a quiet machine.
+- Update 2026-10-18: the owner declined to wait for a quiet host ("Just get on with it") and raised RM19's walk
+  bound to 180 s (owner ruling 8, commits 9a1039d1f8 and 6c46ed46f0; RM19 re-verified and trusted). At load 30-50
+  the walk took 45.6-63.9 s. The final AC 29 suite runs at the current load.
+- Status: open — other timing-bound tests can still fail under load.
 
 ## D3 — BUILD-3 failed on dev: the web UI module did not resolve without the web UI
 - Check: BUILD-3, `bun run --cwd packages/opencode build --single --skip-install --skip-embed-web-ui`.
@@ -121,7 +124,7 @@
   import only to warm the hook (a workaround in the test for a load problem).
 - Remaining validation: one adapter run of verify-spec-RM23.spec.ts at load under about 90 (runs under
   journal/adapter/runs/RM23), then `verify RM23`.
-- Status: open
+- Status: resolved (2026-10-18 query: RM23 completed, trustLevel trusted).
 - Resolution (2026-10-17): at load averages 10.83/12.61/12.88, a plain trial and the unchanged Bun JUnit adapter each passed all 9 tests with 0 hook failures. The state CLI accepted signed evidence and set RM23 to completed / verified. The high-load hook issue remains an environment sensitivity, but it did not block this verification.
 
 ## D7 — SV6-SV10: the state CLI's `verify` verb was denied by the permission system
@@ -134,7 +137,7 @@
 - Attempts: none (a denied action is not repeated).
 - Remaining validation: `verify SV6` ... `verify SV10` with their evidence files, by the orchestrator or with the
   owner's permission, while each test file is unchanged (the evidence holds its source hash).
-- Status: open
+- Status: resolved (2026-10-18 query: SV6, SV7, SV8, SV9 and SV10 each completed, trustLevel trusted).
 
 ## D8 — SV26: a unit supervisor that errors is spawned again, and its unit records task.failed twice
 - Check: `bun test --timeout=30000 ./test/task/verify-spec-SV26.spec.ts` in packages/opencode (test 1, "[SV26] a
