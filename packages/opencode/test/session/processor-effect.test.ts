@@ -114,9 +114,11 @@ const isPayloadOf =
   (event: EventV2.Payload): event is EventV2.Payload<D> =>
     event.type === definition.type
 
+// 10 s, not 500 ms: the processor's text part lands later on a loaded host (owner ruling 10 of the task-harness-feedback
+// goal); the bound catches a hang, not a speed.
 const waitFor = <A>(check: Effect.Effect<A | undefined>, message: string) =>
   Effect.gen(function* () {
-    const stop = Date.now() + 500
+    const stop = Date.now() + 10_000
     while (Date.now() < stop) {
       const value = yield* check
       if (value !== undefined) return value
