@@ -343,20 +343,24 @@ const summariesOf = (flight: Flight) =>
     messages.filter((message) => message.info.role === "assistant" && textOf(message).startsWith(OUTCOME)),
   )
 
-// The run machine is final and the lease is free: the summary step is next.
+// The lease is free and the run stored `last`: the summary step is next. The run frees its lease only after the writer
+// wrote the final snapshot (SD-19), so the poll reads the lease and the store and does not fold: a fold of this slice
+// takes seconds on a loaded host, and a fold every 20 ms slowed the run it waited for past the cancel deadline and past
+// a 60 s bound (2026-10-18 and 2026-10-19 suite runs). It returns the run's slice for `ended`.
 const runFinal = (flight: Flight, last: Fact["type"]) =>
   pollWithTimeout(
     Effect.gen(function* () {
-      const stored = yield* TaskEvents.read((yield* Database.Service).db, flight.id)
-      const run = TaskEvents.latestRun(stored)
-      if (Option.isNone(run) || !run.value.some((fact) => fact.type === last)) return undefined
-      if (!TaskEngineXState.ended(TaskEvents.fold(TaskEngineXState.XStateEngine, flight.plan, run.value)))
-        return undefined
-      return Option.isNone(yield* flight.harness.live(flight.directory)) ? true : undefined
+      if (Option.isSome(yield* flight.harness.live(flight.directory))) return undefined
+      const run = TaskEvents.latestRun(yield* TaskEvents.read((yield* Database.Service).db, flight.id))
+      return Option.isSome(run) && run.value.some((fact) => fact.type === last) ? run.value : undefined
     }),
-    "the run machine never became final with a free lease",
-    "60 seconds",
+    "the run never stored its last fact with a free lease",
+    "120 seconds",
   )
+
+// The run machine of the slice is final.
+const ended = (flight: Flight, slice: ReadonlyArray<Fact>) =>
+  expect(TaskEngineXState.ended(TaskEvents.fold(TaskEngineXState.XStateEngine, flight.plan, slice))).toBe(true)
 
 // The run has closed: its job ended and its supervisor is gone.
 const closed = (flight: Flight) =>
@@ -412,7 +416,7 @@ it.instance(
       const flight = yield* inFlight
       // When the run ends: the judge's verdict makes the run machine final, and the lease is freed.
       yield* Deferred.succeed(flight.judge, undefined)
-      yield* runFinal(flight, "scenario.verified")
+      ended(flight, yield* runFinal(flight, "scenario.verified"))
       // Then the summary waits for the turn: nothing is written while the root turn runs.
       yield* Effect.sleep("1 second")
       expect(yield* summariesOf(flight)).toEqual([])
@@ -426,7 +430,7 @@ it.instance(
       yield* writtenOnceAfterTheTurn(flight)
     }),
   { git: true },
-  180_000,
+  300_000,
 )
 
 it.instance(
@@ -447,7 +451,7 @@ it.instance(
       yield* Deferred.succeed(flight.root, undefined)
     }),
   { git: true },
-  180_000,
+  300_000,
 )
 
 it.instance(
@@ -458,7 +462,7 @@ it.instance(
       // When the run is cancelled: its job is cancelled; the run records run.cancelled and frees the lease. The cancel
       // returns once the job's finalizers end, so it runs on its own fiber while the root turn goes on.
       const cancelling = yield* (yield* BackgroundJob.Service).cancel(flight.id).pipe(Effect.forkChild)
-      yield* runFinal(flight, "run.cancelled")
+      const slice = yield* runFinal(flight, "run.cancelled")
       // Then the summary waits for the turn: nothing is written while the root turn runs.
       yield* Effect.sleep("500 millis")
       expect(yield* summariesOf(flight)).toEqual([])
@@ -469,9 +473,10 @@ it.instance(
       expect(textOf(turn)).toBe(ANSWER)
       yield* Fiber.join(cancelling)
       yield* closed(flight)
+      ended(flight, slice)
       yield* writtenOnceAfterTheTurn(flight)
       yield* Deferred.succeed(flight.judge, undefined)
     }),
   { git: true },
-  180_000,
+  300_000,
 )
