@@ -150,10 +150,12 @@ export class TimeoutError extends Schema.TaggedError<TimeoutError>()("TestTimeou
   message: Schema.String,
 }) {}
 
+// The default bounds wait for work that slows with the shared host's load (owner ruling 10 of the task-harness-feedback
+// goal: at load 60-130 the old 2 s and 5 s defaults failed tests whose work was correct). They bound a hang, not a speed.
 export const awaitWithTimeout = <A, E, R>(
   self: Effect.Effect<A, E, R>,
   message: string,
-  duration: Duration.Input = "2 seconds",
+  duration: Duration.Input = "20 seconds",
 ) =>
   self.pipe(
     Effect.timeoutOrElse({
@@ -165,7 +167,7 @@ export const awaitWithTimeout = <A, E, R>(
 export const pollWithTimeout = <A, E, R>(
   self: Effect.Effect<A | undefined, E, R>,
   message: string,
-  duration: Duration.Input = "5 seconds",
+  duration: Duration.Input = "30 seconds",
 ) =>
   Effect.gen(function* () {
     while (true) {
