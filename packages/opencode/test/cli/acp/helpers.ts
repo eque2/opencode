@@ -1,7 +1,7 @@
 import { expect } from "bun:test"
 import type { InitializeResponse, NewSessionResponse, SessionConfigOption } from "@agentclientprotocol/sdk"
 import { Effect } from "effect"
-import type { CliFixture } from "../../lib/cli-process"
+import type { AcpHandle, CliFixture } from "../../lib/cli-process"
 import { testProviderConfig } from "../../lib/test-provider"
 import {
   createAcpClient as createJsonRpcAcpClient,
@@ -27,6 +27,11 @@ export function initialize(acp: AcpClient) {
       }),
     )
   })
+}
+
+/** Initializes an agent spawned with `opencode.acp()`; its reply shows that the agent has started and reads stdin. */
+export function initializeHandle(acp: AcpHandle) {
+  return initialize(createJsonRpcAcpClient(acp))
 }
 
 export function newSession(acp: AcpClient, cwd: string) {

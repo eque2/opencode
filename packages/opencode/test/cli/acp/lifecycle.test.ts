@@ -8,7 +8,7 @@ import type {
 import { Duration, Effect } from "effect"
 import { cliIt } from "../../lib/cli-process"
 import { expectOk, selectConfigOption } from "./acp-test-client"
-import { createAcpClient, initialize, newSession, verifierConfig } from "./helpers"
+import { createAcpClient, initialize, initializeHandle, newSession, verifierConfig } from "./helpers"
 
 describe("opencode acp lifecycle subprocess", () => {
   cliIt.live(
@@ -16,6 +16,9 @@ describe("opencode acp lifecycle subprocess", () => {
     ({ opencode }) =>
       Effect.gen(function* () {
         const acp = yield* opencode.acp()
+        // Wait for the agent's first reply, so the 5 s bound measures the shutdown on EOF, not bun's start-up, which
+        // alone takes 4-8 s on a loaded host.
+        yield* initializeHandle(acp)
         acp.close()
 
         const code = yield* Effect.promise(() => acp.exited).pipe(Effect.timeout(Duration.seconds(5)))
