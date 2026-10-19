@@ -44,3 +44,46 @@
 
 ## 2026-10-17 OUTCOME (independent semantic review)
 - Three tests passed with 48 assertions. Each end path runs through the product boundary, and the root model turn is held by a gate. The summary order, single write and later model hit are asserted in each path. Called `verdict UI8 trusted` once; CLI query reports state completed, trustLevel trusted. No Gherkin gap found.
+
+## 2026-10-19 INTENT (re-verification after 688450d923)
+- State at start: completed, trusted. Do not run `update UI8 start` (completed scenario).
+- 688450d923 changed only the committed test: `runFinal` polls the lease and the stored facts (no fold every 20 ms), each of
+  the two cases that use it asserts once that the folded slice is ended; bound 60 s -> 120 s, test timeouts 180 s -> 300 s.
+- Plan: check with `git show 688450d923` that the behaviour and every assertion stay; run root-pinned oxlint and Prettier;
+  one focused trial; one fresh adapter run; `verify UI8` with the new evidence. No edits to source, test or state; no commit.
+
+## 2026-10-19 OUTCOME (re-verification after 688450d923)
+- `git show 688450d923`: only verify-spec-UI8.spec.ts changed. `runFinal` now waits for a free lease and the `last` fact
+  and returns the slice; new `ended(flight, slice)` asserts the folded slice is ended (run-ends case right after
+  `runFinal`, cancel case after `closed`, on the same captured slice). Every other assertion and the three When paths
+  are unchanged; bound 120 s, test timeouts 300 s. No product code changed.
+- Root-pinned oxlint 1.60.0 `--deny-warnings` (from the repository root): 0 warnings, 0 errors. Prettier 3.6.2: clean.
+- Trial (load ~17): 3 pass, 0 fail, 50 expect() calls, 43.03 s.
+- Adapter run `20261019T115122Z-1ff91b`: 3 pass, 0 fail, bunExit 0, decision handed-off, adapter exit 0; signed evidence.
+- `verify UI8`: exit 0; structural testFileExists/testPatternFound/testExecuted/testPassed true (testInCommit false);
+  trust trusted -> verified. Query: completed, verified. Semantic rejudgement is left to a separate verifier.
+
+## 2026-10-19 INTENT (independent semantic review after 688450d923)
+- State at start: completed, verified (structural run 20261019T115122Z-1ff91b). Fresh-context trust dispatch.
+- Read the current Gherkin, `git show 688450d923`, the whole committed test, and the real code it drives: the lease
+  release after the final snapshot (SD-19) in src/task/core/supervise/run.ts and harness.ts, and the summary step.
+- Judge: can a free lease plus the last stored fact let a case pass while the run machine is not final, or before the
+  summary step? Does every Gherkin step stay covered?
+- Rerun the focused test from packages/opencode. Issue exactly one CLI verdict for UI8 through verification-runner.py.
+  No edits to source, test or state; no commit.
+
+## 2026-10-19 OUTCOME (independent semantic review after 688450d923)
+- The test file is identical to 688450d923. The commit changed only `runFinal` (lease + `last` fact, returns the slice),
+  added `ended(flight, slice)`, and raised the bounds. Every other assertion and all three When paths are unchanged.
+- Lease soundness: the lease is freed only by (a) the supervisor's `finish` (after the run actor left `active` and the
+  writer ended; `summarizing` follows), (b) `closing` after a failed start, or (c) the job scope finalizer. (c) runs
+  last, after the cancel finalizer (`untilClosed` or the 5 s deadline, then `removeRun`). Run-ends case: `latestRun`
+  already holds S1-S12 `scenario.verified`, so the wait is the lease alone; only (a) applies, so the summary step is next.
+  Cancel case: a release by the deadline path drops the summary, and the summary-log and one-summary checks fail it.
+  A not-final machine fails `ended(slice)`. The Recorder stores a fact before it applies it, so the stored slice
+  matches the actor. No false pass found.
+- Every Gherkin step stays covered (Given: held judge + held root turn, busy; When: three paths; Then: no summary in the
+  window, then exactly one summary after the turn, answering the header; And: a later prompt gets a model turn).
+- Rerun (load 26): 3 pass, 0 fail, 50 expect() calls, 32.39 s.
+- `verdict UI8 trusted` through verification-runner.py: exit 0, trustLevel trusted. Query: completed, trusted.
+- Residual (not a gap): the "waits" window is time-based (1 s / 0.5 s), as in the earlier trusted version.
