@@ -339,3 +339,16 @@
 - Remaining validation: a fresh verifier must run the committed UI25 test through the JUnit adapter, consume its signed evidence with the ordinary state CLI `verify UI25`, and independently review the rendered labels and exact zero counts against UI25 Gherkin. Only that verifier can restore trust from completed / suspect; the builder minted no verdict.
 - Resolution (2026-10-17): fresh structural verification passed. A separate semantic reviewer inspected all seven renderer paths and the revised assertions. The focused test passed 4/4 with 221 assertions. One CLI verdict accepted trusted; the query reports completed / trusted.
 - Status: resolved — old-status labels and exact tag-derived zero counts are asserted where displayed.
+
+## D21 — AC 29: the acp "stdin EOF exits cleanly" test timed its 5 s bound from the spawn
+- Check: AC 29 `bun run test` in packages/opencode, run 2 of 2026-10-18 (HEAD 1fa837e23b),
+  `test/cli/acp/lifecycle.test.ts` "stdin EOF exits cleanly".
+- Actual failure: `Operation timed out after '5s'`. The test closed stdin at once after the spawn, so the bound
+  covered bun's start-up. At load 33-55, `opencode --version` alone took 3.8-4.3 s and `acp` with stdin closed took
+  5.3-8.4 s. The test failed the same way on dev in the main checkout (6.7-7.1 s), so it is not a harness regression.
+- Resolution: `f8990aae96` waits for the agent's reply to `initialize` (new helper `initializeHandle`), then closes
+  stdin; the exit-code and 5 s assertions are unchanged. 3 of 3 single runs and the whole file (6 pass) passed at
+  load 49-52.
+- Same suite run, not reproduced alone: `tool.shell > basic [zsh]` ("(no output)") and `loop continues when finish
+  is unknown` (30 s test timeout) each passed alone at load 44-55 on 2026-10-19. D2 tracks them.
+- Status: fixed — a test change outside the task harness, for the owner's final review.
