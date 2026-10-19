@@ -32,8 +32,9 @@ const it = testEffect(NodeServices.layer)
 // The walk's hang guard: about three times the edges a walk of this plan dequeues (the port counts each dequeue).
 const LIMIT = 5_000
 // Owner ruling 8 (goal.md, 2026-10-18) raised the Gherkin's 60 s bound to 180 s: the walk took 68.8 s under the shared
-// host's load against about 28 s alone. LIMIT stays the deterministic guard against a state-space blow-up.
-const WITHIN_MS = 180_000
+// host's load against about 28 s alone. Ruling 10 (2026-10-19) raised it to 600 s: at load 80-170 the walk passed the
+// 300 s test timeout. LIMIT stays the deterministic guard against a state-space blow-up.
+const WITHIN_MS = 600_000
 
 // The unit a fact of the alphabet belongs to.
 const unitOf = (fact: Fact) => {
@@ -117,7 +118,7 @@ it.live("[RM19] owner ruling 4: the release-notes plan passes the structural tot
 )
 
 it.live(
-  "[RM19] owner rulings 4 and 8: every state reachable with the canonical interleaving is walked within 180 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done",
+  "[RM19] owner rulings 4, 8 and 10: every state reachable with the canonical interleaving is walked within 600 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done",
   () =>
     Effect.gen(function* () {
       const plan = yield* loadPlan("release-notes.spec")
@@ -153,19 +154,23 @@ it.live(
         expect([machineState(state, "T1.5"), machineState(state, "T1")]).toEqual(["blocked", "blocked"])
       }
     }),
-  300_000,
+  900_000,
 )
 
-it.live("[RM19] the walk's stuck detector reports stuck states on a small plan whose blocked rows are removed", () =>
-  Effect.gen(function* () {
-    const plan = yield* loadPlan("example-cascade.spec")
-    const intact = yield* walk(plan, TaskMachine.machine(plan), TaskEngineXState.initial(plan))
-    expect(intact.stuck).toEqual([])
-    const broken = withoutBlocked(plan)
-    const [from] = yield* initialTransition(broken)
-    const walked = yield* walk(plan, broken, from)
-    expect(walked.stuck.length).toBeGreaterThan(0)
-    // A stuck state of the copy: T1.1 dead and T1.2, which is after T1.1, still waiting with nothing to move it.
-    expect(walked.stuck.some((name) => name.includes("|T1.2:waiting@"))).toBe(true)
-  }),
+it.live(
+  "[RM19] the walk's stuck detector reports stuck states on a small plan whose blocked rows are removed",
+  () =>
+    Effect.gen(function* () {
+      const plan = yield* loadPlan("example-cascade.spec")
+      const intact = yield* walk(plan, TaskMachine.machine(plan), TaskEngineXState.initial(plan))
+      expect(intact.stuck).toEqual([])
+      const broken = withoutBlocked(plan)
+      const [from] = yield* initialTransition(broken)
+      const walked = yield* walk(plan, broken, from)
+      expect(walked.stuck.length).toBeGreaterThan(0)
+      // A stuck state of the copy: T1.1 dead and T1.2, which is after T1.1, still waiting with nothing to move it.
+      expect(walked.stuck.some((name) => name.includes("|T1.2:waiting@"))).toBe(true)
+    }),
+  // Owner ruling 10: two walks of a small plan; at load 170 they passed the 30 s default.
+  300_000,
 )
