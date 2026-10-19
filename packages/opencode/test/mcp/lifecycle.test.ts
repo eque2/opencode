@@ -194,6 +194,8 @@ it.instance("advertises and lists the instance directory as its root", () =>
     const roots = yield* pollWithTimeout(
       Effect.sync(() => server.state.roots),
       "server did not receive roots",
+      // Owner ruling 10 of the task-harness-feedback goal: the 30 s default ran out in a full suite run at load 50-70.
+      "120 seconds",
     )
     expect(roots).toEqual([{ uri: pathToFileURL(test.directory).href }])
   }),
