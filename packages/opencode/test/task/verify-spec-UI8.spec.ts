@@ -320,7 +320,9 @@ const inFlight = Effect.gen(function* () {
   yield* pollWithTimeout(
     Effect.map(llm.hits, (hits) => (hits.some(judging) ? true : undefined)),
     "S4's judge never asked its model",
-    "60 seconds",
+    // Owner ruling 10: the bounds of this file wait for work that slows with the shared host's load (a full suite run
+    // at load 60-100 passed 60 s here); they bound a hang, not a speed.
+    "240 seconds",
   )
   // Given a root session with a turn in flight: the user's question waits on its model.
   const turn = yield* prompt
@@ -329,7 +331,7 @@ const inFlight = Effect.gen(function* () {
   yield* pollWithTimeout(
     Effect.map(llm.hits, (hits) => (hits.some((hit) => holds(hit, QUESTION)) ? true : undefined)),
     "the root turn never asked its model",
-    "30 seconds",
+    "120 seconds",
   )
   expect((yield* (yield* SessionStatus.Service).get(session.id)).type).toBe("busy")
   return { id, directory, session: session.id, header, judge, root, turn, prompt, sessions, harness, plan, llm }
@@ -355,7 +357,7 @@ const runFinal = (flight: Flight, last: Fact["type"]) =>
       return Option.isSome(run) && run.value.some((fact) => fact.type === last) ? run.value : undefined
     }),
     "the run never stored its last fact with a free lease",
-    "120 seconds",
+    "240 seconds",
   )
 
 // The run machine of the slice is final.
@@ -373,7 +375,7 @@ const closed = (flight: Flight) =>
         return (yield* flight.harness.running(flight.id)) ? undefined : true
       }),
       "the run never closed",
-      "60 seconds",
+      "240 seconds",
     )
   })
 
@@ -430,7 +432,7 @@ it.instance(
       yield* writtenOnceAfterTheTurn(flight)
     }),
   { git: true },
-  300_000,
+  900_000,
 )
 
 it.instance(
@@ -451,7 +453,7 @@ it.instance(
       yield* Deferred.succeed(flight.root, undefined)
     }),
   { git: true },
-  300_000,
+  900_000,
 )
 
 it.instance(
@@ -478,5 +480,5 @@ it.instance(
       yield* Deferred.succeed(flight.judge, undefined)
     }),
   { git: true },
-  300_000,
+  900_000,
 )
