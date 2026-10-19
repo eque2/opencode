@@ -232,6 +232,14 @@ const quiet = (actor: Supervisor) =>
     "the supervisor is quiet",
   )
 
+// The supervisor waits out its retry pause: the pause's timer is set, so a clock move fires it. A fixed sleep before the
+// move raced the failure under load: a move made before the timer was set fired nothing, and the next proof never ran.
+const retrying = (actor: Supervisor) =>
+  eventually(
+    Effect.map(actor.getSnapshot, (snapshot) => snapshot.matches({ live: { work: "retrying" } })),
+    "the supervisor waits to retry",
+  )
+
 // The run supervisor's part: `unit.moved` for the task's newest entry. A record from a worker reaches the run actor
 // through its mailbox, so the move waits until the run actor holds an entry newer than the last one sent.
 const move = Effect.fnUntraced(function* (
@@ -264,12 +272,14 @@ const storedFacts = Effect.fnUntraced(function* (id: string) {
   return yield* TaskEvents.read(db.db, id)
 })
 
-// Waits until `check` holds (the workers and the relay run on their own fibers).
+// Waits until `check` holds (the workers and the relay run on their own fibers). Up to 6000 tries (a minute or more):
+// at load 50-70 a proof step took longer than the 2000 tries this had before (owner ruling 10 of the
+// task-harness-feedback goal); the bound catches a hang, not a speed.
 const eventually = Effect.fnUntraced(function* (
   check: Effect.Effect<boolean, unknown, Database.Service>,
   what: string,
 ) {
-  for (let tries = 0; tries < 2000; tries++) {
+  for (let tries = 0; tries < 6000; tries++) {
     if (yield* check) return yield* Effect.void
     yield* Effect.sleep(10)
   }
@@ -778,18 +788,18 @@ describe("worker failures (SV6, SV9, SV27)", () => {
             return yield* new TaskWorkers.WorkerError({ message: `the proof of ${input.task.id} broke` })
           }).pipe(Effect.asVoid),
       )
-      yield* spawn(setup, "T1.1", { clock, actors: { prove: failing } })
+      const actor = yield* spawn(setup, "T1.1", { clock, actors: { prove: failing } })
       yield* eventually(
         Effect.sync(() => tries === 1),
         "the first try",
       )
-      yield* settle
+      yield* retrying(actor)
       yield* clock.increment(1_000)
       yield* eventually(
         Effect.sync(() => tries === 2),
         "the second try",
       )
-      yield* settle
+      yield* retrying(actor)
       expect(yield* storedTypes(setup.id)).toEqual([])
       yield* clock.increment(1_000)
       yield* stored(setup.id, 1)
@@ -800,68 +810,72 @@ describe("worker failures (SV6, SV9, SV27)", () => {
     }),
   )
 
-  it.live("resets the failure count on a success", () =>
-    Effect.gen(function* () {
-      const plan = yield* loadPlan("release-notes.spec")
-      const f = facts()
-      const clock = new SimulatedClock()
-      const setup = {
-        plan,
-        ...(yield* runOf({ plan, directory: "/root", stored: [f.runStarted(), f.started("T1.1"), f.ready("T1.1")] })),
-      }
-      let proofs = 0
-      // Fails twice, succeeds on the third try, then fails on every later try.
-      const flaky = fromEffect(
-        ({ input }: { input: { run: TaskWorkers.Run; task: BlendModel.Task; spec: BlendModel.Spec } }) =>
-          Effect.gen(function* () {
-            yield* FileSystem.FileSystem
-            yield* Path.Path
-            proofs++
-            if (proofs !== 3) return yield* new TaskWorkers.WorkerError({ message: "flaky" })
-            const results = obligationIds(plan, input.task.id).map((id) => ({ id, status: "needs-judge" as const }))
-            return yield* TaskWorkers.record(input.run, { type: "task.proved", task: input.task.id, results })
-          }).pipe(Effect.asVoid),
-      )
-      const actor = yield* spawn(setup, "T1.1", { clock, actors: { prove: flaky } })
-      yield* eventually(
-        Effect.sync(() => proofs === 1),
-        "proof 1",
-      )
-      yield* settle
-      yield* clock.increment(1_000)
-      yield* eventually(
-        Effect.sync(() => proofs === 2),
-        "proof 2",
-      )
-      yield* settle
-      yield* clock.increment(1_000)
-      yield* stored(setup.id, 1)
-      yield* quiet(actor)
-      expect((yield* actor.getSnapshot).context.failures).toBe(0)
-      // A later proving entry: two more failures stay under the limit, as the count started again at the success.
-      yield* actor.send({
-        type: "unit.moved",
-        unit: "T1.1",
-        entry: 100,
-        state: "proving",
-        tags: ["active", "proving"],
-        latest: true,
-        at: 0,
-      })
-      yield* eventually(
-        Effect.sync(() => proofs === 4),
-        "proof 4",
-      )
-      yield* settle
-      yield* clock.increment(1_000)
-      yield* eventually(
-        Effect.sync(() => proofs === 5),
-        "proof 5",
-      )
-      yield* settle
-      expect(yield* storedTypes(setup.id)).toEqual(["task.proved"])
-      expect((yield* actor.getSnapshot).context.failures).toBe(2)
-    }),
+  it.live(
+    "resets the failure count on a success",
+    () =>
+      Effect.gen(function* () {
+        const plan = yield* loadPlan("release-notes.spec")
+        const f = facts()
+        const clock = new SimulatedClock()
+        const setup = {
+          plan,
+          ...(yield* runOf({ plan, directory: "/root", stored: [f.runStarted(), f.started("T1.1"), f.ready("T1.1")] })),
+        }
+        let proofs = 0
+        // Fails twice, succeeds on the third try, then fails on every later try.
+        const flaky = fromEffect(
+          ({ input }: { input: { run: TaskWorkers.Run; task: BlendModel.Task; spec: BlendModel.Spec } }) =>
+            Effect.gen(function* () {
+              yield* FileSystem.FileSystem
+              yield* Path.Path
+              proofs++
+              if (proofs !== 3) return yield* new TaskWorkers.WorkerError({ message: "flaky" })
+              const results = obligationIds(plan, input.task.id).map((id) => ({ id, status: "needs-judge" as const }))
+              return yield* TaskWorkers.record(input.run, { type: "task.proved", task: input.task.id, results })
+            }).pipe(Effect.asVoid),
+        )
+        const actor = yield* spawn(setup, "T1.1", { clock, actors: { prove: flaky } })
+        yield* eventually(
+          Effect.sync(() => proofs === 1),
+          "proof 1",
+        )
+        yield* retrying(actor)
+        yield* clock.increment(1_000)
+        yield* eventually(
+          Effect.sync(() => proofs === 2),
+          "proof 2",
+        )
+        yield* retrying(actor)
+        yield* clock.increment(1_000)
+        yield* stored(setup.id, 1)
+        yield* quiet(actor)
+        expect((yield* actor.getSnapshot).context.failures).toBe(0)
+        // A later proving entry: two more failures stay under the limit, as the count started again at the success.
+        yield* actor.send({
+          type: "unit.moved",
+          unit: "T1.1",
+          entry: 100,
+          state: "proving",
+          tags: ["active", "proving"],
+          latest: true,
+          at: 0,
+        })
+        yield* eventually(
+          Effect.sync(() => proofs === 4),
+          "proof 4",
+        )
+        yield* retrying(actor)
+        yield* clock.increment(1_000)
+        yield* eventually(
+          Effect.sync(() => proofs === 5),
+          "proof 5",
+        )
+        yield* settle
+        expect(yield* storedTypes(setup.id)).toEqual(["task.proved"])
+        expect((yield* actor.getSnapshot).context.failures).toBe(2)
+      }),
+    // Owner ruling 10: five proof steps, each waited for by `eventually`; the 60 s default is too short under load.
+    300_000,
   )
 
   it.live("SV9 a task_ready during the proofs records nothing: only the proof's fact follows", () =>
