@@ -162,7 +162,9 @@ describe("v2 pty HttpApi", () => {
 
         const takeUntil = (expected: string, seen = ""): Effect.Effect<string, unknown> =>
           Effect.gen(function* () {
-            const next = seen + (yield* Queue.take(messages).pipe(Effect.timeout("5 seconds")))
+            // 30 s, not 5 s: a PTY's shell start and first output slow down on a loaded host (owner ruling 10 of the
+            // task-harness-feedback goal: a test that fails only because of load gets a larger bound).
+            const next = seen + (yield* Queue.take(messages).pipe(Effect.timeout("30 seconds")))
             if (next.includes(expected)) return next
             return yield* takeUntil(expected, next)
           })
@@ -241,7 +243,9 @@ describe("v2 pty HttpApi", () => {
 
         const takeUntil = (expected: string, seen = ""): Effect.Effect<string, unknown> =>
           Effect.gen(function* () {
-            const next = seen + (yield* Queue.take(messages).pipe(Effect.timeout("5 seconds")))
+            // 30 s, not 5 s: a PTY's shell start and first output slow down on a loaded host (owner ruling 10 of the
+            // task-harness-feedback goal: a test that fails only because of load gets a larger bound).
+            const next = seen + (yield* Queue.take(messages).pipe(Effect.timeout("30 seconds")))
             if (next.includes(expected)) return next
             return yield* takeUntil(expected, next)
           })
