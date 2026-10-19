@@ -255,6 +255,8 @@ function makeHttpNoLLMServer(input?: { mcpInstructions?: MCP.ServerInstructions[
   return makePrompt(input)
 }
 
+// No test here has an explicit timeout under 60 s: on the shared host of the task-harness-feedback goal, load 60-130
+// made 3 s and 10 s timeouts fail while the work was correct (owner ruling 10). A timeout bounds a hang, not a speed.
 const it = testEffect(makeHttp())
 const noLLMServer = testEffect(makeHttpNoLLMServer())
 const raceNoLLMServer = testEffect(makeHttpNoLLMServer({ processor: "blocking" }))
@@ -634,7 +636,7 @@ it.instance(
       })
       expect(answer.parts.some((part) => part.type === "text" && part.text === "an answer")).toBe(true)
     }),
-  15_000,
+  60_000,
 )
 
 it.instance("summary: UI23 say fails when the session is gone", () =>
@@ -696,7 +698,7 @@ withMcpInstructions.instance(
       expect(body).toContain("Use lookup before mutate.")
       yield* Fiber.interrupt(fiber)
     }),
-  15_000,
+  60_000,
 )
 
 it.instance("legacy prompt emits message events without session.next events", () =>
@@ -1195,7 +1197,7 @@ it.instance(
       yield* prompt.cancel(chat.id)
       yield* Fiber.await(fiber)
     }),
-  5_000,
+  60_000,
 )
 
 it.instance(
@@ -1240,7 +1242,7 @@ it.instance(
       yield* prompt.cancel(chat.id)
       yield* Fiber.await(fiber)
     }),
-  10_000,
+  60_000,
 )
 
 it.instance(
@@ -1264,7 +1266,7 @@ it.instance(
       yield* Fiber.await(fiber)
       expect((yield* status.get(chat.id)).type).toBe("idle")
     }),
-  3_000,
+  60_000,
 )
 
 // Cancel semantics
@@ -1403,7 +1405,7 @@ raceNoLLMServer.instance(
       }
     }),
   { config: cfg },
-  3_000,
+  60_000,
 )
 
 noLLMServer.instance(
@@ -1485,7 +1487,7 @@ it.instance(
       expect((yield* status.get(chat.id)).type).toBe("idle")
       expect((yield* status.get(childID)).type).toBe("idle")
     }),
-  10_000,
+  60_000,
 )
 
 it.instance(
@@ -1513,7 +1515,7 @@ it.instance(
       }
     }),
   { git: true },
-  10_000,
+  60_000,
 )
 
 // Queue semantics
@@ -1891,7 +1893,7 @@ it.instance(
       expect(yield* llm.calls).toBe(1)
     }),
   { git: true },
-  10_000,
+  60_000,
 )
 
 it.instance(
@@ -1930,7 +1932,7 @@ it.instance(
       expect(yield* llm.calls).toBe(1)
     }),
   { git: true },
-  10_000,
+  60_000,
 )
 
 unix(
