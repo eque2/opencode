@@ -1,0 +1,56 @@
+ ◆ In the Flow Board Slugs for release titles · run: done                                                                                                                       57.7K tokens · $0.23 ▰▰▰▰▰▰▰▰▰▰ 2/2 trusted
+
+ WAITING 0                 BUILDING 0                PROVING 0                 VERIFYING 0               TRUSTED 2                 STOPPED 0                       ╔═ ◆ In the Flow · T1 details · read-only ═════════════╗
+                                                                                                         ╭───────────────────────╮                                 ║ BUILDER  trusted · attempt 1 · 51s                   ║
+                                                                                                         │ ✓ T1                  │                                 ║   no builder session yet                             ║
+                                                                                                         │ trusted               │                                 ║ PROOFS   1 obligations · 1 trusted                   ║
+                                                                                                         │ attempt 1 · 51s       │                                 ║   ✓ e1 trusted                                       ║
+                                                                                                         │ proofs 1/1            │                                 ║ VERIFIER parent review                               ║
+                                                                                                         ╰───────────────────────╯                                 ║   › read .opencode/task/worktrees/50274474/T1.1/pac… ║
+                                                                                                         ╭───────────────────────╮                                 ║   › read .opencode/task/worktrees/50274474/T1.1/tsc… ║
+                                                                                                         │ ✓ T1.1                │                                 ║   › glob task-formats                                ║
+                                                                                                         │ trusted               │                                 ║   › read task-formats/blend/example-scenarios.spec/… ║
+                                                                                                         │ attempt 1 · 56s       │                                 ║   › glob task-formats/blend/example-scenarios.spec/… ║
+                                                                                                         │ proofs 1/1            │                                 ║   › bash git diff f889533aa159d19b0753cfbaf024b59b8… ║
+                                                                                                         ╰───────────────────────╯                                 ║   › read task-formats/blend/example-scenarios.spec/… ║
+                                                                                                                                                                   ║   ✓ T1.e1 trusted                                    ║
+                                                                                                                                                                   ╚══════════════════════════════════════════════════════╝
+                                                                                                                                                                   SCENARIOS 1 · 1/1 trusted
+                                                                                                                                                                   ✓ S1 trusted · A release title becomes its slug
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ j/k select task · v next design · pgup/pgdn scroll · ctrl+x w watch · esc collapse

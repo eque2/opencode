@@ -352,3 +352,31 @@
 - Same suite run, not reproduced alone: `tool.shell > basic [zsh]` ("(no output)") and `loop continues when finish
   is unknown` (30 s test timeout) each passed alone at load 44-55 on 2026-10-19. D2 tracks them.
 - Status: fixed — a test change outside the task harness, for the owner's final review.
+
+## D22 — AC 27: the TUI does not know `/task` when an MCP server offers prompts
+- Check: AC 27 live run 1 (lc1-scenarios, 2026-10-19 14:47 BST): `/task task-formats/blend/…scenarios.spec` typed in
+  the TUI went to the model as a plain prompt. The autocomplete listed no server command (`/init`, `/review`, `/task`).
+- Actual failure: the server log has `schema rejection kind=Body reason="Expected JSON value at [3]["template"]"`.
+  `Command.list` returns an MCP prompt command whose `template` is a getter that returns a Promise
+  (`src/command/index.ts`); the instance `GET /command` response (`Command.Info`, `template: Schema.Unknown`) cannot
+  encode it, so the whole list fails and `sync.data.command` stays empty. The owner's global config has two MCP
+  servers. Neither file changed on this branch, so dev fails the same way.
+- Impact: in a TUI whose MCP servers offer prompts, every server command — `/task` included — is sent to the model as
+  text. Run 1 cost $0.13 before it was interrupted.
+- Workaround for the live check: runs 2 and 3 disabled both MCP servers through `OPENCODE_CONFIG_CONTENT`; `/task`
+  then appeared in the autocomplete and dispatched.
+- Remaining: a fix in the command list (a JSON value for an MCP prompt's template, or the field left out), test-first
+  with an MCP prompt command, plus `bun run test:httpapi` and `check:generated`. Outside the task harness; for the
+  owner's decision.
+- Status: open — worked around for AC 27.
+
+## D23 — AC 29: UI3 and UI8 waits too short or too busy under load
+- Check: the 2026-10-19 full `packages/opencode` suite runs 3 and 4.
+- Actual failures: UI3 "stop key arms only while live" read `live` one 15 ms settle after the simulated clock moved;
+  UI8 logged the summary as dropped past the 5 s cancel deadline, and once waited past 60 s for the run's end. UI8's
+  wait folded the release-notes slice every 20 ms; a fold takes seconds under load and slowed the run it waited for
+  (the S4 verdict took 17 s to land).
+- Resolution: `162ce61dee` (UI3 waits up to 100 settles for each positive change) and `688450d923` (UI8 polls the
+  lease and the stored facts, then folds once). No assertion changed. Both scenarios were re-verified and trusted
+  (`e085a5a91c`, `09e0ef8454`). The UI8 file now runs in 32–36 s instead of 70–80 s; the cancel case passed 8 of 8.
+- Status: fixed — test-only.
