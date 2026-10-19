@@ -51,3 +51,47 @@
 ## 2026-10-17 OUTCOME (semantic trust)
 - Focused rerun: 4 pass, 0 fail, 71 assertions. The heartbeat threshold, disk feed, positive plugin keys, and negative permission and liveness cases cover the steps.
 - One CLI verdict: trusted. Prior state completed with trustLevel verified; the verdict response set trustLevel trusted. No semantic gap found.
+
+## 2026-10-19 INTENT (structural re-verify after 162ce61dee)
+- Action: verify (Layer 1+2) only. No verdict, no `update start` (UI3 is completed, trustLevel trusted at query).
+- Commit 162ce61dee added a local `until` helper (up to 100 settles) before three positive checks in the
+  "stop key arms only while live" case; the source hash changed, so the evidence must be refreshed.
+- Plan: read the Gherkin and the changed case; confirm with `git show 162ce61dee` that no assertion changed;
+  run root-pinned oxlint (from the repository root) and Prettier on the file; one focused `bun test` trial in
+  packages/opencode; one fresh adapter run (runs dir journal/adapter/runs/UI3); `verify UI3` with the new evidence.
+  No source, test, or state edit; no commit.
+
+## 2026-10-19 OUTCOME (structural re-verify after 162ce61dee)
+- `git show 162ce61dee`: 9 added lines, 0 removed, in the "stop key arms only while live" case only. A local
+  `until` (up to 100 `settle()` calls) runs before three positive checks: the warn after the first press, the new
+  liveness after `advance(1_000)`, and the ["warn", "run"] stop while live. Each waits for the same condition that
+  the unchanged `expect` then checks. The checks that nothing happened (still/ended presses, the second press after
+  the view left live) keep the single settle inside `press()`. Intended behaviour is unchanged. The test file is
+  committed and clean at HEAD 162ce61dee.
+- Root oxlint 1.60.0 `--deny-warnings` (run from the repository root): 0 warnings, 0 errors. Prettier 3.6.2
+  `--check`: clean.
+- Trial (packages/opencode, load about 12-15): 4 pass, 0 fail, 71 expect() calls, 16.7 s.
+- Adapter run 20261019T110041Z-7b5b6e: bun exit 0, tests=4 pass=4 fail=0 skip=0, decision handed-off, exit 0;
+  the reporter wrote signed passing evidence for UI3.
+- `verify UI3`: exit 0; structural testFileExists, testPatternFound, testExecuted, testPassed true; testInCommit
+  false. Trust trusted -> verified ("awaiting semantic verifier"). Query after: state completed, trustLevel verified.
+- No gap found. A separate fresh verifier rejudges semantics.
+
+## 2026-10-19 INTENT (semantic trust after 162ce61dee)
+- Action: verify-scenario-trust. Query at start: state completed, trustLevel verified. No `update start`.
+- Plan: read the current Gherkin (scenarios.gherkin, spec.md), the committed test, `git show 162ce61dee`, and the
+  real code the test drives (task-ui machine.ts liveness and stopKey, ui.tsx registerTab, watch.tsx stop and watch
+  keys, index.tsx plugin entry). Judge whether the bounded `until` waits can hide a failure. Rerun the focused test
+  from packages/opencode. Issue exactly one CLI verdict through verification-runner.py. No source, test, or state
+  edit; no commit.
+
+## 2026-10-19 OUTCOME (semantic trust after 162ce61dee)
+- Test file clean at HEAD 162ce61dee. `git show 162ce61dee`: 9 added lines, 0 removed, only in the stop-key case.
+- The `until` waits cannot hide a failure. Each wait stops on the expected positive change, or after 100 settles,
+  and the unchanged exact `toEqual` then runs. A missing event or an extra event still fails. The SimulatedClock
+  does not move during a real-time wait, so the 5 s `stopWindow` cannot disarm the key. The disarm stays
+  attributable to the `armed.always` liveness guard (machine.ts 266).
+- Residual note (not new): the negative checks keep one 15 ms settle. A late wrong emit under heavy load can escape
+  one run. An unloaded run catches it, and the machine unit tests kill the same mutations.
+- Focused rerun (packages/opencode, load about 13-15): 4 pass, 0 fail, 71 expect() calls, 15.86 s.
+- One CLI verdict through verification-runner.py: trusted, exit 0. Query after: state completed, trustLevel trusted.
