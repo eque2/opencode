@@ -507,6 +507,12 @@ test("[UI3] the stop key arms only while live, and a key armed while live stops 
     }
     return { ...made, heard, press }
   }
+  // The actor's events and the feed's read after a clock move reach the test asynchronously, and one settle is too
+  // short on a loaded host (the 2026-10-19 suite run saw "live" after the move), so a check that something happened
+  // waits up to 100 settles, as `viewFor` does for its first read. A check that nothing happened keeps one settle.
+  const until = async (done: () => boolean) => {
+    for (let tries = 0; tries < 100 && !done(); tries++) await settle()
+  }
   // Still (the heartbeat 15 001 ms old) or ended: the key does not arm, so two presses neither warn nor stop.
   for (const [name, status] of [
     ["still", statusOf(statusText(NOW - LIVE_MS - 1))],
@@ -527,8 +533,10 @@ test("[UI3] the stop key arms only while live, and a key armed while live stops 
     const made = await watched(live, [later])
     expect(made.view.liveness()).toBe("live")
     await made.press()
+    await until(() => made.heard.length > 0)
     expect({ name, heard: made.heard }).toEqual({ name, heard: ["warn"] })
     await made.advance(1_000)
+    await until(() => made.view.liveness() === name)
     expect({ name, liveness: made.view.liveness() }).toEqual({ name, liveness: name })
     await made.press()
     expect({ name, heard: made.heard }).toEqual({ name, heard: ["warn"] })
@@ -538,6 +546,7 @@ test("[UI3] the stop key arms only while live, and a key armed while live stops 
   const made = await watched(live)
   await made.press()
   await made.press()
+  await until(() => made.heard.length > 1)
   expect(made.heard).toEqual(["warn", "run"])
   made.dispose()
 })
