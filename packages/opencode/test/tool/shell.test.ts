@@ -1,7 +1,8 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Effect, Exit, Layer, Option } from "effect"
+import { Cause, Effect, Exit, Layer, Option, Stream } from "effect"
+import { ChildProcessSpawner, make as makeSpawner, makeHandle } from "effect/process/ChildProcessSpawner"
 import type * as Scope from "effect/Scope"
 import os from "os"
 import path from "path"
@@ -175,6 +176,20 @@ const mustTruncate = (result: {
   )
 }
 
+// The real spawner, with each output chunk held for 300 ms before the tool sees it: the process has exited and its
+// output streams have closed while the tool still reads. On a loaded host this happens by chance; here it is certain.
+const slowOutput = Layer.effect(
+  ChildProcessSpawner,
+  Effect.gen(function* () {
+    const real = yield* ChildProcessSpawner
+    return makeSpawner((command) =>
+      Effect.map(real.spawn(command), (handle) =>
+        makeHandle({ ...handle, all: handle.all.pipe(Stream.tap(() => Effect.sleep("300 millis"))) }),
+      ),
+    )
+  }),
+)
+
 describe("tool.shell", () => {
   each("basic", () =>
     runIn(
@@ -183,6 +198,19 @@ describe("tool.shell", () => {
         const result = yield* run({
           command: "echo test",
         })
+        expect(result.metadata.exit).toBe(0)
+        expect(result.metadata.output).toContain("test")
+      }),
+    ),
+  )
+
+  // The tool once returned "(no output)" for `echo test` in a full suite run: it closed the output reader as soon as
+  // the process exited, before the reader had passed on the output it had already read.
+  each("keeps output that is still being read when the process exits", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const result = yield* run({ command: "echo test" }).pipe(Effect.provide(slowOutput))
         expect(result.metadata.exit).toBe(0)
         expect(result.metadata.output).toContain("test")
       }),
@@ -721,7 +749,9 @@ describe("tool.shell permissions", () => {
             )
             const extDirReq = requests.find((r) => r.permission === "external_directory")
             expect(extDirReq).toBeDefined()
-            expect(extDirReq!.patterns).toContain(yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")))
+            expect(extDirReq!.patterns).toContain(
+              yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+            )
           }),
         ),
       ),
