@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="bun test" tests="1" assertions="1" failures="0" skipped="0" time="0.017614">
-  <testsuite name="selfedit.test.ts" file="selfedit.test.ts" tests="1" assertions="1" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
-    <testcase name="[FX6] edits its own file" classname="" time="0.00084" file="selfedit.test.ts" line="3" assertions="1" />
-  </testsuite>
-</testsuites>

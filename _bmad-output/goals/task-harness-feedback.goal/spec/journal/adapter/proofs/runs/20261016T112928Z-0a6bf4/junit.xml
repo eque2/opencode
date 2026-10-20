@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="bun test" tests="2" assertions="2" failures="0" skipped="0" time="0.017423">
-  <testsuite name="pass.test.ts" file="pass.test.ts" tests="2" assertions="2" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
-    <testcase name="[FX2] first pass" classname="" time="0.000043" file="pass.test.ts" line="2" assertions="1" />
-    <testsuite name="group" file="pass.test.ts" line="3" tests="1" assertions="1" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
-      <testcase name="[FX2] second pass" classname="group" time="0.000019" file="pass.test.ts" line="3" assertions="1" />
-    </testsuite>
-  </testsuite>
-</testsuites>

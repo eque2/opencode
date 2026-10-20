@@ -1,9 +1,0 @@
-[bun-junit-adapter] runId=20261016T112928Z-085ca5 cwd=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures
-[bun-junit-adapter] $ bun test --timeout=30000 --reporter=junit --reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-085ca5/junit.xml ./selfedit.test.ts
-
- 1 pass
- 0 fail
- 1 expect() calls
-Ran 1 test across 1 file. [17.00ms]
-[bun-junit-adapter] REFUSED R4: the test file changed during the run (0d69120cc6c70b1e -> 7ceef4f4c9a743b2)
-[bun-junit-adapter] runId=20261016T112928Z-085ca5 decision=refused:R4 exit=3 manifest=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-085ca5/run.json

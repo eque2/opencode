@@ -1,9 +1,0 @@
-[bun-junit-adapter] runId=20261016T112929Z-058877 cwd=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures
-[bun-junit-adapter] $ /private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/shims/other-file.sh test --timeout=30000 --reporter=junit --reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112929Z-058877/junit.xml ./pass.test.ts
-
- 1 pass
- 0 fail
- 1 expect() calls
-Ran 1 test across 1 file. [11.00ms]
-[bun-junit-adapter] REFUSED R1: the report is for 'other.test.ts', not './pass.test.ts'
-[bun-junit-adapter] runId=20261016T112929Z-058877 decision=refused:R1 exit=3 manifest=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112929Z-058877/run.json
