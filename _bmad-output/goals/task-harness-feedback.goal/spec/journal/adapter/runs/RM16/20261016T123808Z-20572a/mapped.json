@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM16.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM16] the plan holds leaves T1.1, T1.2 after T1.1 and T1.3 after T1.1, with no order between T1.2 and T1.3",
+        "result": {
+          "state": "pass",
+          "duration": 559.448
+        }
+      },
+      {
+        "name": "[RM16] the verdict that makes T1.1 trusted makes T1.2 and T1.3 both ready in the snapshot that apply returns",
+        "result": {
+          "state": "pass",
+          "duration": 500.935
+        }
+      },
+      {
+        "name": "[RM16] the siblings become ready in one step also when T1.1 is trusted by its proof's verification of passed results",
+        "result": {
+          "state": "pass",
+          "duration": 879.9639999999999
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 12154
+    }
+  }
+]

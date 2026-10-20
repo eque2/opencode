@@ -1,0 +1,57 @@
+{
+  "scenarioId": "RM23",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM23.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-17T09:28:53.658Z",
+  "durationMs": 305.344,
+  "testResults": [
+    {
+      "name": "[RM23] the port is pinned: the root catalog names 0.2.0 exactly and the resolved package is 0.2.0",
+      "status": "passed",
+      "duration": 3.1710000000000003
+    },
+    {
+      "name": "[RM23] a state id is split on dots: #T1.4/x names the node T1 and the path 4/x; #T1_4/x resolves",
+      "status": "passed",
+      "duration": 47.421
+    },
+    {
+      "name": "[RM23] a final state inside a parallel region still takes events",
+      "status": "passed",
+      "duration": 4.764
+    },
+    {
+      "name": "[RM23] an onDone target re-enters the parallel region and resets its children; onDone without a target does not",
+      "status": "passed",
+      "duration": 17.555
+    },
+    {
+      "name": "[RM23] a pure transition on a done snapshot still runs a microstep",
+      "status": "passed",
+      "duration": 2.888
+    },
+    {
+      "name": "[RM23] raised and done events carry no time, while the event sent in does",
+      "status": "passed",
+      "duration": 3.624
+    },
+    {
+      "name": "[RM23] snapshot tags are an array, not a Set, and hasTag reads them",
+      "status": "passed",
+      "duration": 1.348
+    },
+    {
+      "name": "[RM23] an eventless loop past the iteration cap fails with a TransitionError; a shorter one does not",
+      "status": "passed",
+      "duration": 212.469
+    },
+    {
+      "name": "[RM23] the walk limit counts dequeued edges, not keys",
+      "status": "passed",
+      "duration": 12.104000000000001
+    }
+  ],
+  "_sourceHash": "5f5fd59c7ff22d17",
+  "_keyId": "53bde7c7",
+  "_hmac": "1eb1534e1c4b69a20dde6f4c4befe85e363f671ac5a8a91a1d2a5f6e870ff0d3"
+}

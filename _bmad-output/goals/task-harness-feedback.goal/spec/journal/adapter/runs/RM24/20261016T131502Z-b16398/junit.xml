@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="47" failures="0" skipped="0" time="89.273658">
+  <testsuite name="test/task/verify-spec-RM24.spec.ts" file="test/task/verify-spec-RM24.spec.ts" tests="5" assertions="47" failures="0" skipped="0" time="13.521" hostname="mac-studio-m1">
+    <testcase name="[RM24] the old schema names every field of a status file written before the change" classname="" time="0.666573" file="test/task/verify-spec-RM24.spec.ts" line="194" assertions="2" />
+    <testcase name="[RM24] a phase-1 fold of the observed facts writes status.json with T1.5 and T1 blocked, reason &quot;blocked by T1.4: budget exhausted&quot;" classname="" time="3.094566" file="test/task/verify-spec-RM24.spec.ts" line="207" assertions="10" />
+    <testcase name="[RM24] the status.json of the phase-1 fold keeps every field it had before the change" classname="" time="2.670054" file="test/task/verify-spec-RM24.spec.ts" line="217" assertions="13" />
+    <testcase name="[RM24] the run&apos;s status writer, recording the observed facts, writes T1.5 and T1 blocked, reason &quot;blocked by T1.4: budget exhausted&quot;" classname="" time="3.38431" file="test/task/verify-spec-RM24.spec.ts" line="225" assertions="9" />
+    <testcase name="[RM24] the status.json of the run&apos;s status writer keeps every field it had before the change" classname="" time="3.707366" file="test/task/verify-spec-RM24.spec.ts" line="236" assertions="13" />
+  </testsuite>
+</testsuites>

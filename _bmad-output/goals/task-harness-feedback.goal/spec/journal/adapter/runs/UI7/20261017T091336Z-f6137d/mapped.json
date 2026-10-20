@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI7.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI7] a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario writes one assistant markdown summary in the root session, with no model call",
+        "result": {
+          "state": "pass",
+          "duration": 9758.835
+        }
+      },
+      {
+        "name": "[UI7] in the transcript, the summary's reasons show <, *, _, a backtick and | as the model wrote them",
+        "result": {
+          "state": "pass",
+          "duration": 291.536
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 15220
+    }
+  }
+]

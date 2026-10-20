@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="51" failures="0" skipped="0" time="6.470864">
+  <testsuite name="test/task/verify-spec-RM18.spec.ts" file="test/task/verify-spec-RM18.spec.ts" tests="5" assertions="51" failures="0" skipped="0" time="3.432" hostname="mac-studio-m1">
+    <testcase name="[RM18] a run proceeds to done: the runner starts each task only while the snapshot tags it ready, keeps running while the machine is not done, and stops when it is done, with no run.ended recorded" classname="" time="1.732573" file="test/task/verify-spec-RM18.spec.ts" line="206" assertions="27" />
+    <testcase name="[RM18] the runner keeps no readiness check of its own: it starts a task the snapshot tags ready, and never one it does not tag" classname="" time="0.891617" file="test/task/verify-spec-RM18.spec.ts" line="279" assertions="5" />
+    <testcase name="[RM18] the runner keeps no done decision of its own: with every unit final in a machine that is not done, it keeps running" classname="" time="0.215479" file="test/task/verify-spec-RM18.spec.ts" line="338" assertions="9" />
+    <testcase name="[RM18] the runner keeps no outside trust set: it reads an outside trust from the snapshot" classname="" time="0.467481" file="test/task/verify-spec-RM18.spec.ts" line="375" assertions="3" />
+    <testcase name="[RM18] the runner&apos;s source: the polled runner is gone, no done or readiness helper of its own remains, and every run.ended it records has state failed, never done" classname="" time="0.127206" file="test/task/verify-spec-RM18.spec.ts" line="475" assertions="7" />
+  </testsuite>
+</testsuites>

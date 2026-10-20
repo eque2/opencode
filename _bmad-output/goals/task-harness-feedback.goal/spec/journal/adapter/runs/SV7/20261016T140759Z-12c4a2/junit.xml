@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="77" failures="0" skipped="0" time="52.86757">
+  <testsuite name="test/task/verify-spec-SV7.spec.ts" file="test/task/verify-spec-SV7.spec.ts" tests="5" assertions="77" failures="0" skipped="0" time="25.377" hostname="mac-studio-m1">
+    <testcase name="[SV7] two supervisors that stall at the same moment: the store order equals the fold order and at never decreases" classname="" time="5.969674" file="test/task/verify-spec-SV7.spec.ts" line="113" assertions="14" />
+    <testcase name="[SV7] forty records at once through the record worker keep one order in the store and the fold, at never decreasing" classname="" time="6.487389" file="test/task/verify-spec-SV7.spec.ts" line="157" assertions="44" />
+    <testcase name="[SV7] a record after the run is done stores nothing: not the supervisors&apos; stalls, not a record that queued behind the end" classname="" time="3.389196" file="test/task/verify-spec-SV7.spec.ts" line="185" assertions="9" />
+    <testcase name="[SV7] an interrupted record leaves nothing when it waited on the permit, and the whole fact when it was storing" classname="" time="5.986014" file="test/task/verify-spec-SV7.spec.ts" line="272" assertions="7" />
+    <testcase name="[SV7] thirty records interrupted at random moments: each fact is stored and folded, or neither" classname="" time="3.546602" file="test/task/verify-spec-SV7.spec.ts" line="321" assertions="3" />
+  </testsuite>
+</testsuites>

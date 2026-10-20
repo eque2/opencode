@@ -1,0 +1,74 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM23.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM23] the port is pinned: the root catalog names 0.2.0 exactly and the resolved package is 0.2.0",
+        "result": {
+          "state": "pass",
+          "duration": 3.1710000000000003
+        }
+      },
+      {
+        "name": "[RM23] a state id is split on dots: #T1.4/x names the node T1 and the path 4/x; #T1_4/x resolves",
+        "result": {
+          "state": "pass",
+          "duration": 47.421
+        }
+      },
+      {
+        "name": "[RM23] a final state inside a parallel region still takes events",
+        "result": {
+          "state": "pass",
+          "duration": 4.764
+        }
+      },
+      {
+        "name": "[RM23] an onDone target re-enters the parallel region and resets its children; onDone without a target does not",
+        "result": {
+          "state": "pass",
+          "duration": 17.555
+        }
+      },
+      {
+        "name": "[RM23] a pure transition on a done snapshot still runs a microstep",
+        "result": {
+          "state": "pass",
+          "duration": 2.888
+        }
+      },
+      {
+        "name": "[RM23] raised and done events carry no time, while the event sent in does",
+        "result": {
+          "state": "pass",
+          "duration": 3.624
+        }
+      },
+      {
+        "name": "[RM23] snapshot tags are an array, not a Set, and hasTag reads them",
+        "result": {
+          "state": "pass",
+          "duration": 1.348
+        }
+      },
+      {
+        "name": "[RM23] an eventless loop past the iteration cap fails with a TransitionError; a shorter one does not",
+        "result": {
+          "state": "pass",
+          "duration": 212.469
+        }
+      },
+      {
+        "name": "[RM23] the walk limit counts dequeued edges, not keys",
+        "result": {
+          "state": "pass",
+          "duration": 12.104000000000001
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 4014
+    }
+  }
+]

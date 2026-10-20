@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="82" failures="0" skipped="0" time="15.688004">
+  <testsuite name="test/task/verify-spec-UI11.spec.ts" file="test/task/verify-spec-UI11.spec.ts" tests="2" assertions="82" failures="0" skipped="0" time="4.281" hostname="mac-studio-m1">
+    <testcase name="[UI11] the given status: T1.2 running since its start, T1.1 ended 3m 12s after its start, T1.3 never started; the run is live" classname="" time="1.148457" file="test/task/verify-spec-UI11.spec.ts" line="167" assertions="7" />
+    <testcase name="[UI11] while live: the running task counts from its start, the ended task is fixed, the unstarted task is blank, in the Gantt, the Matrix, the Board card, the HUD line and the Peek heading" classname="" time="3.133053" file="test/task/verify-spec-UI11.spec.ts" line="189" assertions="75" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="40" failures="0" skipped="0" time="40.237987">
+  <testsuite name="test/task/verify-spec-SV21.spec.ts" file="test/task/verify-spec-SV21.spec.ts" tests="2" assertions="40" failures="0" skipped="0" time="25.635" hostname="mac-studio-m1">
+    <testcase name="[SV21] a run that ends done: its status writer stops before each lease release, and the next /task is not busy" classname="" time="11.053881" file="test/task/verify-spec-SV21.spec.ts" line="185" assertions="26" />
+    <testcase name="[SV21] a run that is cancelled: its status writer stops before each lease release, and the next /task is not busy" classname="" time="14.582823" file="test/task/verify-spec-SV21.spec.ts" line="268" assertions="14" />
+  </testsuite>
+</testsuites>

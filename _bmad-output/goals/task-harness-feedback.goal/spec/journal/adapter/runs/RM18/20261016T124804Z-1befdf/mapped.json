@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM18.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM18] a run proceeds to done: the runner starts each task only while the snapshot tags it ready, keeps running while the machine is not done, and stops when it is done, with no run.ended recorded",
+        "result": {
+          "state": "pass",
+          "duration": 1732.5729999999999
+        }
+      },
+      {
+        "name": "[RM18] the runner keeps no readiness check of its own: it starts a task the snapshot tags ready, and never one it does not tag",
+        "result": {
+          "state": "pass",
+          "duration": 891.617
+        }
+      },
+      {
+        "name": "[RM18] the runner keeps no done decision of its own: with every unit final in a machine that is not done, it keeps running",
+        "result": {
+          "state": "pass",
+          "duration": 215.479
+        }
+      },
+      {
+        "name": "[RM18] the runner keeps no outside trust set: it reads an outside trust from the snapshot",
+        "result": {
+          "state": "pass",
+          "duration": 467.481
+        }
+      },
+      {
+        "name": "[RM18] the runner's source: the polled runner is gone, no done or readiness helper of its own remains, and every run.ended it records has state failed, never done",
+        "result": {
+          "state": "pass",
+          "duration": 127.20600000000002
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 6501
+    }
+  }
+]

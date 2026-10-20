@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="227" failures="0" skipped="0" time="42.449554">
+  <testsuite name="test/task/verify-spec-UI13.spec.ts" file="test/task/verify-spec-UI13.spec.ts" tests="3" assertions="227" failures="0" skipped="0" time="17.995" hostname="mac-studio-m1">
+    <testcase name="[UI13] no design&apos;s shortcut bar shows a /task-design switch part while the run is live" classname="" time="10.902227" file="test/task/verify-spec-UI13.spec.ts" line="103" assertions="114" />
+    <testcase name="[UI13] a narrow bar of a live run drops keys from the end and never shows the /task-design part" classname="" time="3.514117" file="test/task/verify-spec-UI13.spec.ts" line="183" assertions="70" />
+    <testcase name="[UI13] /task-design still switches every design from the command list, and the bar of the live run never shows it" classname="" time="3.579847" file="test/task/verify-spec-UI13.spec.ts" line="384" assertions="43" />
+  </testsuite>
+</testsuites>

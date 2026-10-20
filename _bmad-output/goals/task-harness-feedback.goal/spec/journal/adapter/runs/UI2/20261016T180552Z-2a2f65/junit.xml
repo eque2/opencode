@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="81" failures="0" skipped="0" time="25.678612">
+  <testsuite name="test/task/verify-spec-UI2.spec.ts" file="test/task/verify-spec-UI2.spec.ts" tests="4" assertions="81" failures="0" skipped="0" time="13.082" hostname="mac-studio-m1">
+    <testcase name="[UI2] the plugin started for a session: design, selection, expansion, watch and one stop key, then the 5 s disarm and a status that does not parse" classname="" time="11.336345" file="test/task/verify-spec-UI2.spec.ts" line="245" assertions="24" />
+    <testcase name="[UI2] the design, the selection, the expansion, the watch target and the stop-key arming are states and context of one view machine" classname="" time="0.643791" file="test/task/verify-spec-UI2.spec.ts" line="355" assertions="17" />
+    <testcase name="[UI2] the status, the session list, the activity lines and the proof-log tail are read by delayed transitions every 1 s, 2 s, 1.5 s and 500 ms" classname="" time="0.767784" file="test/task/verify-spec-UI2.spec.ts" line="441" assertions="24" />
+    <testcase name="[UI2] a status text that does not parse keeps the last good status" classname="" time="0.336413" file="test/task/verify-spec-UI2.spec.ts" line="528" assertions="16" />
+  </testsuite>
+</testsuites>

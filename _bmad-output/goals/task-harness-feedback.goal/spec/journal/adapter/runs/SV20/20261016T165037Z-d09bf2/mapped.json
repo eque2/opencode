@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV20.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV20] /task trust T9 is stored on the directory aggregate and once on the run aggregate, and T1.5 becomes ready",
+        "result": {
+          "state": "pass",
+          "duration": 17228.963
+        }
+      },
+      {
+        "name": "[SV20] a /task trust of an id with no untrusted outside region records nothing on the run aggregate",
+        "result": {
+          "state": "pass",
+          "duration": 11267.127999999999
+        }
+      },
+      {
+        "name": "[SV20] a /task trust recorded before the run started is applied once, directly after run.started",
+        "result": {
+          "state": "pass",
+          "duration": 4859.558
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 43445
+    }
+  }
+]

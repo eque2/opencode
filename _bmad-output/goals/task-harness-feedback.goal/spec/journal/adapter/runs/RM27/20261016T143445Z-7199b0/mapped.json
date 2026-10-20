@@ -1,0 +1,53 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM27.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM27] the plan: T1.4 after T1.1, an independent T1.2, and S1 needing T1.2",
+        "result": {
+          "state": "pass",
+          "duration": 156.841
+        }
+      },
+      {
+        "name": "[RM27] given T1.1 budget exhausted, T1.4 blocked by T1.1, T1.2 building and S1 waiting",
+        "result": {
+          "state": "pass",
+          "duration": 250.965
+        }
+      },
+      {
+        "name": "[RM27] run.cancelled \"user stop\" ends the run budget exhausted, the state of the task that died first (AC 4)",
+        "result": {
+          "state": "pass",
+          "duration": 116.823
+        }
+      },
+      {
+        "name": "[RM27] the run reason holds the T1.1 line, then \"T1.4 blocked by T1.1\", then \"user stop\"",
+        "result": {
+          "state": "pass",
+          "duration": 108.24000000000001
+        }
+      },
+      {
+        "name": "[RM27] T1.2 and S1 are cancelled, T1.1 stays budget exhausted, and the blocked tasks stay blocked",
+        "result": {
+          "state": "pass",
+          "duration": 93.52199999999999
+        }
+      },
+      {
+        "name": "[RM27] the same stop with no dead task ends cancelled with the stop's reason (rule 2)",
+        "result": {
+          "state": "pass",
+          "duration": 88.661
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 10605
+    }
+  }
+]

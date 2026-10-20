@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM9.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM9] the plan: T3 after T2, T2 after T1, S1 needs T3, from the loader",
+        "result": {
+          "state": "pass",
+          "duration": 672.351
+        }
+      },
+      {
+        "name": "[RM9] when T1 fails, T2 is blocked by T1 and T3 by T2 in the same fold step",
+        "result": {
+          "state": "pass",
+          "duration": 323.232
+        }
+      },
+      {
+        "name": "[RM9] S1 is blocked by T3 in the same fold step",
+        "result": {
+          "state": "pass",
+          "duration": 273.22400000000005
+        }
+      },
+      {
+        "name": "[RM9] a task with two dead dependencies names the first one in dependency order",
+        "result": {
+          "state": "pass",
+          "duration": 258.525
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 9891
+    }
+  }
+]

@@ -1,0 +1,25 @@
+[bun-junit-adapter] runId=20261016T112846Z-036ec4 cwd=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures
+[bun-junit-adapter] $ bun test --timeout=30000 --reporter=junit --reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112846Z-036ec4/junit.xml ./mixed.test.ts
+
+mixed.test.ts:
+1 | import { describe, expect, test } from "bun:test"
+2 | 
+3 | test("[FX1] top pass & <ok>", () => { expect(1).toBe(1) })
+4 | test("[FX1] top fail", () => { expect(1).toBe(2) })
+                                             ^
+error: expect(received).toBe(expected)
+
+Expected: 2
+Received: 1
+
+      at <anonymous> (/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/mixed.test.ts:4:42)
+(fail) [FX1] top fail [0.12ms]
+
+ 3 pass
+ 1 skip
+ 1 todo
+ 1 fail
+ 4 expect() calls
+Ran 6 tests across 1 file. [16.00ms]
+[bun-junit-adapter] mapped: tests=6 pass=3 fail=1 skip=2 file=fail bunExit=1
+[bun-junit-adapter] runId=20261016T112846Z-036ec4 decision=dry-run:mapped exit=1 manifest=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112846Z-036ec4/run.json

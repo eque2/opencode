@@ -1,0 +1,40 @@
+{
+  "runId": "20261016T121456Z-5639a1",
+  "adapter": "bun-junit-scenario-adapter.mjs",
+  "mode": "real",
+  "cwd": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode",
+  "file": "./test/task/verify-spec-RM8c.spec.ts",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM8c.spec.ts",
+  "junit": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/runs/RM8c/20261016T121456Z-5639a1/junit.xml",
+  "log": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/runs/RM8c/20261016T121456Z-5639a1/run.log",
+  "bun": "bun",
+  "command": [
+    "bun",
+    "test",
+    "--timeout=30000",
+    "--reporter=junit",
+    "--reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/runs/RM8c/20261016T121456Z-5639a1/junit.xml",
+    "./test/task/verify-spec-RM8c.spec.ts"
+  ],
+  "hashBefore": "d79e132f87f02f8b03c8c6dc2e83bcb1141c6d707a12456afd8a72a4fa51ece4",
+  "bunExit": 0,
+  "signal": null,
+  "durationMs": 4088,
+  "hashAfter": "d79e132f87f02f8b03c8c6dc2e83bcb1141c6d707a12456afd8a72a4fa51ece4",
+  "summary": {
+    "ran": 3,
+    "files": 1,
+    "pass": 3,
+    "fail": 0,
+    "skip": 0,
+    "todo": 0
+  },
+  "counts": {
+    "tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0
+  },
+  "decision": "handed-off",
+  "adapterExit": 0
+}

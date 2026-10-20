@@ -1,0 +1,37 @@
+{
+  "scenarioId": "RM15",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM15.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:35:22.941Z",
+  "durationMs": 1505.2160000000001,
+  "testResults": [
+    {
+      "name": "[RM15] the release-notes plan orders T1.3 after T1.1, T1.4 after T1.2 and T1.3, under the parent T1",
+      "status": "passed",
+      "duration": 255.06
+    },
+    {
+      "name": "[RM15] when T1.1 is trusted and T1.2 is not, T1.3 is ready and T1.4 is waiting, in each state of T1.2 short of trusted",
+      "status": "passed",
+      "duration": 251.90800000000002
+    },
+    {
+      "name": "[RM15] T1.4 becomes ready only when every after task, T1.2 and T1.3, is trusted",
+      "status": "passed",
+      "duration": 312.232
+    },
+    {
+      "name": "[RM15] the parent T1 is waiting until every child is trusted, and is ready once the last child is",
+      "status": "passed",
+      "duration": 329.757
+    },
+    {
+      "name": "[RM15] when a trusted dependency goes stale, a ready dependant returns to waiting",
+      "status": "passed",
+      "duration": 356.259
+    }
+  ],
+  "_sourceHash": "77cea9052ffcff06",
+  "_keyId": "53bde7c7",
+  "_hmac": "eac09874367d3e8049fc19090844bd881614ae37f1f46e83d9bb2cc73d65f34d"
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="84" failures="0" skipped="0" time="19.965622">
+  <testsuite name="test/task/verify-spec-RM25.spec.ts" file="test/task/verify-spec-RM25.spec.ts" tests="7" assertions="84" failures="0" skipped="0" time="10.463" hostname="mac-studio-m1">
+    <testcase name="[RM25] the loaded example-cascade plan: T1.1 has budget 1, T1.2 waits on T1.1, T1.3 is independent" classname="" time="2.317685" file="test/task/verify-spec-RM25.spec.ts" line="127" assertions="12" />
+    <testcase name="[RM25] T1.1 starts at task.started, ends at the failing proof, with spans waiting, building, proving and a zero-length budget_exhausted" classname="" time="0.741738" file="test/task/verify-spec-RM25.spec.ts" line="152" assertions="13" />
+    <testcase name="[RM25] the blocked T1.2 has an end time and no start time" classname="" time="0.707221" file="test/task/verify-spec-RM25.spec.ts" line="180" assertions="6" />
+    <testcase name="[RM25] a stale obligation on the trusted T1.3 clears its end time and starts its clock again" classname="" time="0.882198" file="test/task/verify-spec-RM25.spec.ts" line="196" assertions="12" />
+    <testcase name="[RM25] the times and spans are the fact times only: a shifted clock shifts every value by the same amount" classname="" time="0.915099" file="test/task/verify-spec-RM25.spec.ts" line="226" assertions="10" />
+    <testcase name="[RM25] the status projection copies the machine&apos;s times and spans unchanged" classname="" time="0.822379" file="test/task/verify-spec-RM25.spec.ts" line="248" assertions="16" />
+    <testcase name="[RM25] the run&apos;s live actor and status writer write the same times and spans as the fold" classname="" time="4.079338" file="test/task/verify-spec-RM25.spec.ts" line="311" assertions="15" />
+  </testsuite>
+</testsuites>

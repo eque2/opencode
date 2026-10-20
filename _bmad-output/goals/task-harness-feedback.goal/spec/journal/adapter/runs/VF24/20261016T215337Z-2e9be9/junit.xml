@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="96" failures="0" skipped="0" time="20.714655">
+  <testsuite name="test/task/verify-spec-VF24.spec.ts" file="test/task/verify-spec-VF24.spec.ts" tests="6" assertions="96" failures="0" skipped="0" time="16.84" hostname="mac-studio-m1">
+    <testcase name="[VF24] a newer whole-spec slice with T1.1 trusted and an older subtree slice whose path no longer loads: the newer slice decides and the T1.3 run starts" classname="" time="3.426075" file="test/task/verify-spec-VF24.spec.ts" line="125" assertions="17" />
+    <testcase name="[VF24] the trust walk starts at the newest slice: an older slice that does not load, and an older one with T1.1 budget exhausted, are never reached" classname="" time="2.542914" file="test/task/verify-spec-VF24.spec.ts" line="143" assertions="14" />
+    <testcase name="[VF24] the walk stops at the first slice that loads and holds T1.1: a newest T1.4 subtree slice without T1.1 is passed over, and the older slice that does not load is never reached" classname="" time="2.610876" file="test/task/verify-spec-VF24.spec.ts" line="158" assertions="14" />
+    <testcase name="[VF24] when the slice that does not load is the newest, the T1.3 run is refused with one plain line that names its path and says &quot;run the whole spec once to record a newer run&quot;" classname="" time="2.084275" file="test/task/verify-spec-VF24.spec.ts" line="173" assertions="21" />
+    <testcase name="[VF24] a slice that does not load still blocks when it is newer than the deciding slice, even if a newer slice without T1.1 follows it" classname="" time="2.125089" file="test/task/verify-spec-VF24.spec.ts" line="199" assertions="13" />
+    <testcase name="[VF24] the trust walk itself: TaskCommand.folderTrust over the stored slices gives trusted, or blocked with the path" classname="" time="4.053808" file="test/task/verify-spec-VF24.spec.ts" line="213" assertions="17" />
+  </testsuite>
+</testsuites>

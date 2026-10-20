@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="26" failures="0" skipped="0" time="88.139455">
+  <testsuite name="test/task/verify-spec-RM19.spec.ts" file="test/task/verify-spec-RM19.spec.ts" tests="3" assertions="26" failures="0" skipped="0" time="80.107" hostname="mac-studio-m1">
+    <testcase name="[RM19] owner ruling 4: the release-notes plan passes the structural totality check before any walk" classname="" time="1.740963" file="test/task/verify-spec-RM19.spec.ts" line="106" assertions="5" />
+    <testcase name="[RM19] owner rulings 4, 8 and 10: every state reachable with the canonical interleaving is walked within 600 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done" classname="" time="68.745633" file="test/task/verify-spec-RM19.spec.ts" line="121" assertions="18" />
+    <testcase name="[RM19] the walk&apos;s stuck detector reports stuck states on a small plan whose blocked rows are removed" classname="" time="9.622834" file="test/task/verify-spec-RM19.spec.ts" line="161" assertions="3" />
+  </testsuite>
+</testsuites>

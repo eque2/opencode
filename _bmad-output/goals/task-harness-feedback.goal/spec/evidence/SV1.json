@@ -1,0 +1,52 @@
+{
+  "scenarioId": "SV1",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV1.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:18:49.510Z",
+  "durationMs": 14984.367999999999,
+  "testResults": [
+    {
+      "name": "[SV1] the inspection finds each named construct in a planted source (negative control)",
+      "status": "passed",
+      "duration": 255.777
+    },
+    {
+      "name": "[SV1] the harness source is the phase-2 tree: no polled runner module, and the scan covers every file",
+      "status": "passed",
+      "duration": 188.64000000000001
+    },
+    {
+      "name": "[SV1] holds no polled loop and no tick counter: the only polls are the two AD-17 process entries",
+      "status": "passed",
+      "duration": 92.30099999999999
+    },
+    {
+      "name": "[SV1] holds no stale cadence counter: the cadence is a delayed transition of the run supervisor",
+      "status": "passed",
+      "duration": 75.849
+    },
+    {
+      "name": "[SV1] holds no failure map and no runner failure limit: each FAILURE_LIMIT is a guard over a context count",
+      "status": "passed",
+      "duration": 62.699000000000005
+    },
+    {
+      "name": "[SV1] holds no stopping flag, children list, worker FiberMap or judged-state list",
+      "status": "passed",
+      "duration": 74.178
+    },
+    {
+      "name": "[SV1] holds no process-wide run registry: no module-level mutable binding or collection keyed by a run",
+      "status": "passed",
+      "duration": 37.008
+    },
+    {
+      "name": "[SV1] a live run that /task started is found through the harness actor system by its run id, and only there",
+      "status": "passed",
+      "duration": 14197.916
+    }
+  ],
+  "_sourceHash": "f9ae7f1d4d6896cb",
+  "_keyId": "53bde7c7",
+  "_hmac": "4479da612c87d2d8190ee45d8aaede40562cf2e01ac5337d4de67243ef32d50f"
+}

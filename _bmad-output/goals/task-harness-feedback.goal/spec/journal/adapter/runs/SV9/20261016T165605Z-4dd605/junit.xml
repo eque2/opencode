@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="24" failures="0" skipped="0" time="30.679091">
+  <testsuite name="test/task/verify-spec-SV9.spec.ts" file="test/task/verify-spec-SV9.spec.ts" tests="4" assertions="24" failures="0" skipped="0" time="21.671" hostname="mac-studio-m1">
+    <testcase name="[SV9] example-scenarios: each fact of a leaf, a parent and a scenario in each of its states is in the alphabet of that state" classname="" time="8.999935" file="test/task/verify-spec-SV9.spec.ts" line="282" assertions="8" />
+    <testcase name="[SV9] example-cascade: nudges, an unready proof, a repetition and a budget exhausted record only allowed facts" classname="" time="5.584828" file="test/task/verify-spec-SV9.spec.ts" line="335" assertions="11" />
+    <testcase name="[SV9] release-notes T1.5: external trusts at start-up, a forwarded outside trust, spec checks and a cancel are allowed" classname="" time="5.995641" file="test/task/verify-spec-SV9.spec.ts" line="385" assertions="3" />
+    <testcase name="[SV9] the replay check finds a fact outside the alphabet of its state, and an external trust after start-up" classname="" time="1.09367" file="test/task/verify-spec-SV9.spec.ts" line="452" assertions="2" />
+  </testsuite>
+</testsuites>

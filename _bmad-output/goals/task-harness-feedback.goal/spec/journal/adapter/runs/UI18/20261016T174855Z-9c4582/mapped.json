@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI18.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI18] the harness's status has a blocked task and a blocked scenario, and ⊖ is the warning tone's own",
+        "result": {
+          "state": "pass",
+          "duration": 4263.637
+        }
+      },
+      {
+        "name": "[UI18] every design draws the blocked task and the blocked scenario as ⊖ in the warning tone",
+        "result": {
+          "state": "pass",
+          "duration": 3815.198
+        }
+      },
+      {
+        "name": "[UI18] the Matrix legend lists ⊖ blocked",
+        "result": {
+          "state": "pass",
+          "duration": 1533.154
+        }
+      },
+      {
+        "name": "[UI18] a Ticker toast for a task that turns blocked shows its reason, through the host",
+        "result": {
+          "state": "pass",
+          "duration": 2568.028
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 20956
+    }
+  }
+]

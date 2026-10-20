@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="31" failures="0" skipped="0" time="15.126113">
+  <testsuite name="test/task/verify-spec-VF4.spec.ts" file="test/task/verify-spec-VF4.spec.ts" tests="2" assertions="31" failures="0" skipped="0" time="10.337" hostname="mac-studio-m1">
+    <testcase name="[VF4] a live run whose spec stops validating: the stale check records spec.checked with the failures, the run gets a history entry, and status.json run.warning holds one line per failure" classname="" time="5.15592" file="test/task/verify-spec-VF4.spec.ts" line="137" assertions="15" />
+    <testcase name="[VF4] the run keeps working on the plan it loaded: same obligations and old text, and it goes on to start the plan&apos;s tasks" classname="" time="5.182372" file="test/task/verify-spec-VF4.spec.ts" line="182" assertions="16" />
+  </testsuite>
+</testsuites>

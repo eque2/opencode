@@ -1,0 +1,47 @@
+{
+  "scenarioId": "VF21",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF21.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:46:01.026Z",
+  "durationMs": 15280.392,
+  "testResults": [
+    {
+      "name": "[VF21] /task trust T1.1 typed and no stored slice: /task on the T1.3 task folder is refused with the R12 line for T1.3 and T1.1",
+      "status": "passed",
+      "duration": 1164.267
+    },
+    {
+      "name": "[VF21] /task trust T1.1 typed and a stored slice in which T1.1 is not trusted: the T1.3 run is still refused with the R12 line",
+      "status": "passed",
+      "duration": 2238.585
+    },
+    {
+      "name": "[VF21] an older slice with T1.1 trusted and a newer slice where T1.1 ended cancelled (T1.1 trusted again, reopened by a stale obligation, then the run cancelled): the T1.3 run is refused",
+      "status": "passed",
+      "duration": 2927.442
+    },
+    {
+      "name": "[VF21] an older slice with T1.1 trusted and a newer slice where T1.1 ended cancelled (T1.1 started, then the run cancelled): the T1.3 run is refused",
+      "status": "passed",
+      "duration": 2479.4049999999997
+    },
+    {
+      "name": "[VF21] control: the older slice with T1.1 trusted, stored alone, lets the T1.3 run start",
+      "status": "passed",
+      "duration": 1626.457
+    },
+    {
+      "name": "[VF21] an old slice that has no path and T1.1 trusted counts as a whole-spec slice: the T1.3 run starts",
+      "status": "passed",
+      "duration": 2494.777
+    },
+    {
+      "name": "[VF21] control: the same old slice with no path but T1.1 not trusted is refused with the R12 line",
+      "status": "passed",
+      "duration": 2349.459
+    }
+  ],
+  "_sourceHash": "fa1d894e8fc020a0",
+  "_keyId": "53bde7c7",
+  "_hmac": "8607a7d12e671f8814c9c731b9408bf96388dc5b606f36ca45d11d91b7686c82"
+}

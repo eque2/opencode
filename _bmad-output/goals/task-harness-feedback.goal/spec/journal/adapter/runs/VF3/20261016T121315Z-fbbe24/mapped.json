@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF3.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF3] a leaf VERIFY.md with no ensures key fails the load with the one R3 line 'ensures' is required",
+        "result": {
+          "state": "pass",
+          "duration": 34.552
+        }
+      },
+      {
+        "name": "[VF3] the JSON schema of VERIFY.md lists ensures as required, at the top level",
+        "result": {
+          "state": "pass",
+          "duration": 8.965
+        }
+      },
+      {
+        "name": "[VF3] the release-notes and provider-ordering-admin specs still load with no failure",
+        "result": {
+          "state": "pass",
+          "duration": 38.97
+        }
+      },
+      {
+        "name": "[VF3] control: the same copy with its ensures block kept loads with no failure",
+        "result": {
+          "state": "pass",
+          "duration": 15.575000000000001
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 1912
+    }
+  }
+]

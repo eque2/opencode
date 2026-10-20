@@ -1,0 +1,27 @@
+{
+  "scenarioId": "RM21",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM21.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:44:45.698Z",
+  "durationMs": 35741.282999999996,
+  "testResults": [
+    {
+      "name": "[RM21] the copy of the release-notes config has no blocked row and keeps every other row",
+      "status": "passed",
+      "duration": 1034.5310000000002
+    },
+    {
+      "name": "[RM21] the walk of the copy reports a stuck state with T1.1 to T1.3 trusted, T1.4 budget exhausted, and T1.5 and T1 waiting",
+      "status": "passed",
+      "duration": 17816.075999999997
+    },
+    {
+      "name": "[RM21] the observed facts, folded on the copy, reach that stuck configuration and nothing moves T1.5 or T1",
+      "status": "passed",
+      "duration": 16890.676
+    }
+  ],
+  "_sourceHash": "04630464ee826f44",
+  "_keyId": "53bde7c7",
+  "_hmac": "cbe8b6040790b1459fa3d4210bd39ed28a9d8194bcdc1d9abec91061a29472e9"
+}

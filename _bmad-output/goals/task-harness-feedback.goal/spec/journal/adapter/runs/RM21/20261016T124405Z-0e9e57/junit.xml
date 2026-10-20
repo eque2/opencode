@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="994" failures="0" skipped="0" time="40.181029">
+  <testsuite name="test/task/verify-spec-RM21.spec.ts" file="test/task/verify-spec-RM21.spec.ts" tests="3" assertions="994" failures="0" skipped="0" time="35.74" hostname="mac-studio-m1">
+    <testcase name="[RM21] the copy of the release-notes config has no blocked row and keeps every other row" classname="" time="1.034531" file="test/task/verify-spec-RM21.spec.ts" line="122" assertions="9" />
+    <testcase name="[RM21] the walk of the copy reports a stuck state with T1.1 to T1.3 trusted, T1.4 budget exhausted, and T1.5 and T1 waiting" classname="" time="17.816076" file="test/task/verify-spec-RM21.spec.ts" line="143" assertions="10" />
+    <testcase name="[RM21] the observed facts, folded on the copy, reach that stuck configuration and nothing moves T1.5 or T1" classname="" time="16.890676" file="test/task/verify-spec-RM21.spec.ts" line="173" assertions="975" />
+  </testsuite>
+</testsuites>

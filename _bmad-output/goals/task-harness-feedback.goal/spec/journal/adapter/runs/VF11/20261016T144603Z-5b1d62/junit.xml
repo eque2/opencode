@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="18" failures="0" skipped="0" time="19.576431">
+  <testsuite name="test/task/verify-spec-VF11.spec.ts" file="test/task/verify-spec-VF11.spec.ts" tests="2" assertions="18" failures="0" skipped="0" time="3.862" hostname="mac-studio-m1">
+    <testcase name="[VF11] the self-after folder is refused with one R7 line that names the cycle T1.1 → T1.1" classname="" time="1.877979" file="test/task/verify-spec-VF11.spec.ts" line="42" assertions="14" />
+    <testcase name="[VF11] /task on a task folder inside the self-after folder is refused with the same R7 line" classname="" time="1.985877" file="test/task/verify-spec-VF11.spec.ts" line="94" assertions="4" />
+  </testsuite>
+</testsuites>

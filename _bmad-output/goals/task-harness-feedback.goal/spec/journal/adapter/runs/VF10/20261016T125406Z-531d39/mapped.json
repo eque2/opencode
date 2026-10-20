@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF10.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF10] the cycle folder is refused with one R7 line that names the cycle through T1.1 and T1.2",
+        "result": {
+          "state": "pass",
+          "duration": 5384.6179999999995
+        }
+      },
+      {
+        "name": "[VF10] /task on a task folder inside the cycle folder is refused with the same R7 line",
+        "result": {
+          "state": "pass",
+          "duration": 2887.76
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 44785
+    }
+  }
+]

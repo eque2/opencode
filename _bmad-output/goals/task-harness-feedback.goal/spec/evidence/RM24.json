@@ -1,0 +1,37 @@
+{
+  "scenarioId": "RM24",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM24.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T13:16:32.881Z",
+  "durationMs": 13522.868999999999,
+  "testResults": [
+    {
+      "name": "[RM24] the old schema names every field of a status file written before the change",
+      "status": "passed",
+      "duration": 666.573
+    },
+    {
+      "name": "[RM24] a phase-1 fold of the observed facts writes status.json with T1.5 and T1 blocked, reason \"blocked by T1.4: budget exhausted\"",
+      "status": "passed",
+      "duration": 3094.566
+    },
+    {
+      "name": "[RM24] the status.json of the phase-1 fold keeps every field it had before the change",
+      "status": "passed",
+      "duration": 2670.054
+    },
+    {
+      "name": "[RM24] the run's status writer, recording the observed facts, writes T1.5 and T1 blocked, reason \"blocked by T1.4: budget exhausted\"",
+      "status": "passed",
+      "duration": 3384.31
+    },
+    {
+      "name": "[RM24] the status.json of the run's status writer keeps every field it had before the change",
+      "status": "passed",
+      "duration": 3707.366
+    }
+  ],
+  "_sourceHash": "1b46766cb8241132",
+  "_keyId": "53bde7c7",
+  "_hmac": "59a57929d51888be694e7debdf4e4ac55ad34909acbaff79043a266b5f383218"
+}

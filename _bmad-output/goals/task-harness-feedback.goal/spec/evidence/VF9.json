@@ -1,0 +1,22 @@
+{
+  "scenarioId": "VF9",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF9.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:50:21.108Z",
+  "durationMs": 631.83,
+  "testResults": [
+    {
+      "name": "[VF9] the format-faults folder is refused with an R1, an R3 and an R4 line, in the loader's rule order, and nothing else",
+      "status": "passed",
+      "duration": 360.942
+    },
+    {
+      "name": "[VF9] /task on a task folder inside the format-faults folder lists the same three lines in the same order",
+      "status": "passed",
+      "duration": 270.88800000000003
+    }
+  ],
+  "_sourceHash": "7ac4f152d0f9e76c",
+  "_keyId": "53bde7c7",
+  "_hmac": "c3fa9ad5929dab6a7be9b1c2058f2d63ff5ee7de805ce9d0de2bd2d7977c7d76"
+}

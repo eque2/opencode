@@ -1,0 +1,32 @@
+{
+  "scenarioId": "RM3",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM3.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:14:43.225Z",
+  "durationMs": 3279.008,
+  "testResults": [
+    {
+      "name": "[RM3] the engine module's exports hold no obligation, task, scenario or run machine",
+      "status": "passed",
+      "duration": 676.3820000000001
+    },
+    {
+      "name": "[RM3] no obligation, task, scenario or run machine is defined beside the generated machine",
+      "status": "passed",
+      "duration": 822.102
+    },
+    {
+      "name": "[RM3] no stepTask, stepRun, cancel, staleAlone or follows code exists",
+      "status": "passed",
+      "duration": 1272.613
+    },
+    {
+      "name": "[RM3] XStateEngine keeps its name and its initial and apply members over an opaque snapshot",
+      "status": "passed",
+      "duration": 507.911
+    }
+  ],
+  "_sourceHash": "9a3d75d97ace454b",
+  "_keyId": "53bde7c7",
+  "_hmac": "0e19e6a081a0e1c81f4557b1a19fecb70930a695cddffaf2364a8aa2342e6ad0"
+}

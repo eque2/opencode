@@ -1,0 +1,22 @@
+{
+  "scenarioId": "VF13",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF13.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:55:08.853Z",
+  "durationMs": 3608.9260000000004,
+  "testResults": [
+    {
+      "name": "[VF13] the no-ensures folder is refused with one R3 line for the leaf VERIFY.md that has no ensures",
+      "status": "passed",
+      "duration": 2105.753
+    },
+    {
+      "name": "[VF13] /task on the T1.1 task folder of the no-ensures folder is refused with the same R3 line",
+      "status": "passed",
+      "duration": 1503.173
+    }
+  ],
+  "_sourceHash": "7fb5a1e9df2e9167",
+  "_keyId": "53bde7c7",
+  "_hmac": "029f4dc80a1eaf9ed7e9fe8aed7752a01e77f1d1815749d48ba8fd2aeaf90620"
+}

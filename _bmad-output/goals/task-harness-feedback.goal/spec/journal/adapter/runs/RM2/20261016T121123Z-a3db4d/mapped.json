@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM2.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM2] a plan whose task ids give two equal explicit state ids makes the generation die naming the id",
+        "result": {
+          "state": "pass",
+          "duration": 50.668
+        }
+      },
+      {
+        "name": "[RM2] a task id that repeats an obligation's explicit state ids makes the generation die naming that id",
+        "result": {
+          "state": "pass",
+          "duration": 9.897
+        }
+      },
+      {
+        "name": "[RM2] every generated machine caps eventless iterations at 1000",
+        "result": {
+          "state": "pass",
+          "duration": 5867.26
+        }
+      },
+      {
+        "name": "[RM2] no generated machine for any plan has a delayed transition, an invoked actor, a spawned actor or a custom action",
+        "result": {
+          "state": "pass",
+          "duration": 3471.894
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 11673
+    }
+  }
+]

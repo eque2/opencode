@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="185" failures="0" skipped="0" time="8.440592">
+  <testsuite name="test/task/verify-spec-UI25.spec.ts" file="test/task/verify-spec-UI25.spec.ts" tests="4" assertions="185" failures="0" skipped="0" time="2.537" hostname="mac-studio-m1">
+    <testcase name="[UI25] the old harness&apos;s and the phase-1 code&apos;s status files have no tags, no title and no heartbeat" classname="" time="0.105727" file="test/task/verify-spec-UI25.spec.ts" line="172" assertions="17" />
+    <testcase name="[UI25] the view of an old status file is still at any clock; a fresh heartbeat with tags makes a view live" classname="" time="0.31579" file="test/task/verify-spec-UI25.spec.ts" line="191" assertions="6" />
+    <testcase name="[UI25] every design shows the muted older-status line" classname="" time="0.950521" file="test/task/verify-spec-UI25.spec.ts" line="215" assertions="29" />
+    <testcase name="[UI25] the tasks show their display-table glyph and state label, with no Board column, count or STOPPED group derived from them" classname="" time="1.167291" file="test/task/verify-spec-UI25.spec.ts" line="241" assertions="133" />
+  </testsuite>
+</testsuites>

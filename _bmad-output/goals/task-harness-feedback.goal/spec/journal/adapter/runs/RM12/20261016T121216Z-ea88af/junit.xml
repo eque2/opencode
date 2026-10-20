@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="24" failures="0" skipped="0" time="1.439555">
+  <testsuite name="test/task/verify-spec-RM12.spec.ts" file="test/task/verify-spec-RM12.spec.ts" tests="2" assertions="24" failures="0" skipped="0" time="0.082" hostname="mac-studio-m1">
+    <testcase name="[RM12] owner ruling 1: every task trusted and the runnable scenario S1 rejected by its verifier gives the outcome failed with the line &apos;acceptance not proved: S1 rejected&apos;" classname="" time="0.056428" file="test/task/verify-spec-RM12.spec.ts" line="40" assertions="20" />
+    <testcase name="[RM12] owner ruling 1 control: the same run with S1 trusted by its verifier ends done with no reason" classname="" time="0.026703" file="test/task/verify-spec-RM12.spec.ts" line="85" assertions="4" />
+  </testsuite>
+</testsuites>

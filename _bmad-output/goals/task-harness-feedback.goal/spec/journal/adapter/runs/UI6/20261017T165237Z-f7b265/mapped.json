@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI6.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI6] /task on the whole spec: the first message reads Implementing spec and the title, from structured header metadata; the transcript draws it muted and bold from that metadata",
+        "result": {
+          "state": "pass",
+          "duration": 1315.732
+        }
+      },
+      {
+        "name": "[UI6] /task on the T1.2 subtree: Implementing, the task id and title, then from spec and the spec title; the left-out scenarios follow on a muted line",
+        "result": {
+          "state": "pass",
+          "duration": 1053.8339999999998
+        }
+      },
+      {
+        "name": "[UI6] SessionPrompt.command stores the T1.2 header text and structured metadata in the root session",
+        "result": {
+          "state": "pass",
+          "duration": 3015.222
+        }
+      },
+      {
+        "name": "[UI6] the status run carries the title, and for a subtree run the task; an empty title falls back to the spec id in the header, the transcript and the status",
+        "result": {
+          "state": "pass",
+          "duration": 2621.6400000000003
+        }
+      },
+      {
+        "name": "[UI6] an older header in the scrollback keeps its own title when a later run starts",
+        "result": {
+          "state": "pass",
+          "duration": 1628.499
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 17266
+    }
+  }
+]

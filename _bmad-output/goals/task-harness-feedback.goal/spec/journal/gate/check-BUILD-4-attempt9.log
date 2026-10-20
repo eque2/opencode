@@ -1,0 +1,142 @@
+Fri 16 Oct 2026 11:25:56 BST
+157cf0dc74
+11:25  up 12 days,  6:14, 4 users, load averages: 11.75 8.06 7.13
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/config/config.test.ts:
+[10:27:15.277] INFO (#55265): creating instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-n2c2r968p1p",
+}
+[10:27:15.277] INFO (#55265): fromDirectory {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-n2c2r968p1p",
+}
+[10:27:15.356] INFO (#55283): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-89817/config/opencode/config.json",
+}
+[10:27:15.357] INFO (#55283): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-89817/config/opencode/opencode.json",
+}
+[10:27:15.357] INFO (#55283): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-89817/config/opencode/opencode.jsonc",
+}
+[10:27:15.370] INFO (#55288): disposing all instances
+[10:27:15.370] INFO (#55288): disposing instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-n2c2r968p1p",
+}
+
+test/plugin/github-copilot-models.test.ts:
+[10:27:25.537] WARN (#60531): Copilot model list failed {
+  error: {
+    _tag: "CopilotModels.Error",
+    message: "timeout",
+    cause: 475 |   expect(models["claude-opus-4.7"].api.npm).toBe("@ai-sdk/anthropic")
+476 |   expect(models["claude-opus-4.7"].variants).toBeUndefined()
+477 | })
+478 | 
+479 | test("remaps fallback oauth model urls to the enterprise host", async () => {
+480 |   stubFetch(() => Promise.reject(new Error("timeout")))
+                                           ^
+error: timeout
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:480:38)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:487:40)
+,
+  },
+} {
+  category: "provider.discovery",
+}
+
+test/server/httpapi-mdns.test.ts:
+[10:28:12.431] WARN (#1244506): mDNS enabled but hostname is loopback; skipping mDNS publish
+
+test/task/engine-xstate-graph.test.ts:
+release-notes walk 338 keys 746 edges
+example walk example-cascade.spec 108 keys 292 edges
+example walk example-outside-run.spec 29 keys 74 edges
+example walk example-scenarios.spec 23 keys 46 edges
+outside-run subtree walk 14 keys 35 edges
+negative control 398 keys 806 edges 33 stuck
+reduction 292 1310 27 39
+
+test/acp/service-session.test.ts:
+[10:35:19.142] ERROR (#3136661): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+[10:35:19.142] ERROR (#3136662): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+
+test/control-plane/workspace.test.ts:
+[10:35:21.443] INFO (#3153839): disposing all instances
+[10:35:30.073] INFO (#3253695): disposing all instances
+
+test/session/compaction.test.ts:
+[10:38:51.394] ERROR (#4130217): 1256 |         const exit = yield* Fiber.await(fiber).pipe(Effect.timeout("250 millis"))
+1257 | 
+1258 |         expect(Exit.isFailure(exit)).toBe(true)
+1259 |         if (Exit.isFailure(exit)) {
+1260 |           expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+1261 |           expect(Date.now() - start).toBeLessThan(250)
+       ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < 250
+Received: 370
+
+      at toBeLessThan (native:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/session/compaction.test.ts:1261:38
+
+1256 |         const exit = yield* Fiber.await(fiber).pipe(Effect.timeout("250 millis"))
+1257 | 
+1258 |         expect(Exit.isFailure(exit)).toBe(true)
+1259 |         if (Exit.isFailure(exit)) {
+1260 |           expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+1261 |           expect(Date.now() - start).toBeLessThan(250)
+       ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < 250
+Received: 370
+
+      at toBeLessThan (native:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/session/compaction.test.ts:1261:38
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2745:7
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:421:21
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+      at processTicksAndRejections (native:1:1)
+(fail) session.compaction.process > stops quickly when aborted during retry backoff [2564.60ms]
+error: script "test" was terminated by signal SIGTERM (Polite quit request)
+EXIT=143
+Fri 16 Oct 2026 11:40:15 BST
+11:40  up 12 days,  6:28, 3 users, load averages: 16.78 14.43 12.20

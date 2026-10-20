@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="66" failures="0" skipped="0" time="28.387235">
+  <testsuite name="test/task/verify-spec-SV18.spec.ts" file="test/task/verify-spec-SV18.spec.ts" tests="3" assertions="66" failures="0" skipped="0" time="15.996" hostname="mac-studio-m1">
+    <testcase name="[SV18] the audit fails on a planted Ref, MutableHashMap, SynchronizedRef, FiberMap, setInterval, polled loop, module-level let or list of states, and names the file and the identifier" classname="" time="8.616042" file="test/task/verify-spec-SV18.spec.ts" line="237" assertions="43" />
+    <testcase name="[SV18] in the task-ui the audit also fails on a planted Effect.sleep or Schedule, and names the file and the identifier; outside the task-ui the same code passes" classname="" time="4.505976" file="test/task/verify-spec-SV18.spec.ts" line="264" assertions="17" />
+    <testcase name="[SV18] on the real tree the audit passes with only allowlist entries, and an entry without its written reason fails" classname="" time="2.87538" file="test/task/verify-spec-SV18.spec.ts" line="280" assertions="6" />
+  </testsuite>
+</testsuites>

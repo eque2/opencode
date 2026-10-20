@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF4.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF4] a live run whose spec stops validating: the stale check records spec.checked with the failures, the run gets a history entry, and status.json run.warning holds one line per failure",
+        "result": {
+          "state": "pass",
+          "duration": 5155.92
+        }
+      },
+      {
+        "name": "[VF4] the run keeps working on the plan it loaded: same obligations and old text, and it goes on to start the plan's tasks",
+        "result": {
+          "state": "pass",
+          "duration": 5182.372
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 15178
+    }
+  }
+]

@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF6.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF6] with no stored run, /task on the T1.3 task folder is refused before any work with the R12 line naming T1.3 and T1.1",
+        "result": {
+          "state": "pass",
+          "duration": 1142.6009999999999
+        }
+      },
+      {
+        "name": "[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice in which T1.1 ended trusted",
+        "result": {
+          "state": "pass",
+          "duration": 2563.8390000000004
+        }
+      },
+      {
+        "name": "[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice in which T1.1 was trusted, then its obligation went stale",
+        "result": {
+          "state": "pass",
+          "duration": 2378.476
+        }
+      },
+      {
+        "name": "[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice with outside.trusted T1.1, which a task region does not take",
+        "result": {
+          "state": "pass",
+          "duration": 2160.044
+        }
+      },
+      {
+        "name": "[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a T1.3-subtree slice with outside.trusted T1.1, which its external region takes",
+        "result": {
+          "state": "pass",
+          "duration": 1442.698
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 15366
+    }
+  }
+]

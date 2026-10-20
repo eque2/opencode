@@ -1,0 +1,73 @@
+$ bun turbo typecheck
+• turbo 2.10.2
+
+   • Packages in scope: @opencode-ai/app, @opencode-ai/cli, @opencode-ai/client, @opencode-ai/codemode, @opencode-ai/console-app, @opencode-ai/console-core, @opencode-ai/console-function, @opencode-ai/console-mail, @opencode-ai/console-resource, @opencode-ai/console-support, @opencode-ai/core, @opencode-ai/desktop, @opencode-ai/effect-drizzle-sqlite, @opencode-ai/effect-sqlite-node, @opencode-ai/enterprise, @opencode-ai/function, @opencode-ai/http-recorder, @opencode-ai/httpapi-codegen, @opencode-ai/llm, @opencode-ai/plugin, @opencode-ai/protocol, @opencode-ai/schema, @opencode-ai/script, @opencode-ai/sdk, @opencode-ai/sdk-next, @opencode-ai/server, @opencode-ai/session-ui, @opencode-ai/slack, @opencode-ai/stats-app, @opencode-ai/stats-core, @opencode-ai/stats-server, @opencode-ai/storybook, @opencode-ai/tui, @opencode-ai/ui, @opencode-ai/web, opencode
+   • Running typecheck in 36 packages
+   • Remote caching disabled, using shared worktree cache
+
+opencode:typecheck: cache miss, executing 0bf91fd0ad66da4a
+@opencode-ai/sdk:typecheck: cache hit, replaying logs 246d468be2945757
+@opencode-ai/enterprise:typecheck: cache hit, replaying logs 1c7a87545e53e0f5
+@opencode-ai/sdk:typecheck: $ tsgo --noEmit
+@opencode-ai/enterprise:typecheck: $ tsgo --noEmit
+@opencode-ai/http-recorder:typecheck: cache hit, replaying logs 07dd69fd47f301e4
+@opencode-ai/http-recorder:typecheck: $ tsgo --noEmit
+@opencode-ai/console-app:typecheck: cache hit, replaying logs 3f4f14ea8a2eb97f
+@opencode-ai/protocol:typecheck: cache hit, replaying logs b9e4b47ca6fada59
+@opencode-ai/ui:typecheck: cache hit, replaying logs 5bd17f9f90afeffe
+@opencode-ai/console-support:typecheck: cache hit, replaying logs 808640dd68d04aa7
+@opencode-ai/protocol:typecheck: $ tsgo --noEmit
+@opencode-ai/ui:typecheck: $ tsgo --noEmit
+@opencode-ai/console-app:typecheck: $ tsgo --noEmit
+@opencode-ai/console-core:typecheck: cache hit, replaying logs 34dd2555a7ac8f4d
+@opencode-ai/effect-sqlite-node:typecheck: cache hit, replaying logs 281f2651fb036b53
+@opencode-ai/console-core:typecheck: $ tsgo --noEmit
+@opencode-ai/stats-app:typecheck: cache hit, replaying logs 484703f29a16c06c
+@opencode-ai/console-support:typecheck: $ tsgo --noEmit
+@opencode-ai/stats-app:typecheck: $ tsgo --noEmit
+@opencode-ai/tui:typecheck: cache hit, replaying logs 3ebdbdf24e3c1f62
+@opencode-ai/tui:typecheck: $ tsgo --noEmit
+@opencode-ai/console-function:typecheck: cache hit, replaying logs 1b557b0615796e51
+@opencode-ai/console-function:typecheck: $ tsgo --noEmit
+@opencode-ai/effect-sqlite-node:typecheck: $ tsgo --noEmit
+@opencode-ai/plugin:typecheck: cache hit, replaying logs ab575d6bc25e8957
+@opencode-ai/plugin:typecheck: $ tsgo --noEmit
+@opencode-ai/app:typecheck: cache hit, replaying logs ba5e71f79d91da9c
+@opencode-ai/server:typecheck: cache hit, replaying logs 306af25a63258af6
+@opencode-ai/server:typecheck: $ tsgo --noEmit
+@opencode-ai/slack:typecheck: cache hit, replaying logs 66ea0e4d3baac884
+@opencode-ai/effect-drizzle-sqlite:typecheck: cache hit, replaying logs a54a0aff623bb8d0
+@opencode-ai/effect-drizzle-sqlite:typecheck: $ tsgo --noEmit
+@opencode-ai/sdk-next:typecheck: cache hit, replaying logs e8cd6067d5657b3e
+@opencode-ai/stats-server:typecheck: cache hit, replaying logs 75dead00d8b56375
+@opencode-ai/sdk-next:typecheck: $ tsgo --noEmit
+@opencode-ai/app:typecheck: $ tsgo -b
+@opencode-ai/stats-server:typecheck: $ tsgo --noEmit
+@opencode-ai/slack:typecheck: $ tsgo --noEmit
+@opencode-ai/desktop:typecheck: cache hit, replaying logs 73f5f3087b684628
+@opencode-ai/llm:typecheck: cache hit, replaying logs dffe3ad16cfd48fc
+@opencode-ai/desktop:typecheck: $ tsgo -b
+@opencode-ai/llm:typecheck: $ tsgo --noEmit
+@opencode-ai/stats-core:typecheck: cache hit, replaying logs 6e21fa84ebce00e4
+@opencode-ai/stats-core:typecheck: $ tsgo --noEmit
+@opencode-ai/cli:typecheck: cache hit, replaying logs 36582edfbc813911
+@opencode-ai/httpapi-codegen:typecheck: cache hit, replaying logs 63b163b4a42605b2
+@opencode-ai/cli:typecheck: $ tsgo --noEmit
+@opencode-ai/httpapi-codegen:typecheck: $ tsgo --noEmit
+@opencode-ai/client:typecheck: cache hit, replaying logs 3154bf98490e81b7
+@opencode-ai/schema:typecheck: cache hit, replaying logs e65b012e50eaaf06
+opencode:typecheck: $ tsgo --noEmit
+@opencode-ai/client:typecheck: $ tsgo --noEmit
+@opencode-ai/schema:typecheck: $ tsgo --noEmit
+@opencode-ai/session-ui:typecheck: cache hit, replaying logs eef58382776c4b65
+@opencode-ai/session-ui:typecheck: $ tsgo --noEmit
+@opencode-ai/codemode:typecheck: cache hit, replaying logs bab79171fa2f8667
+@opencode-ai/codemode:typecheck: $ tsgo --noEmit
+@opencode-ai/core:typecheck: cache hit, replaying logs 8d8eff0f7515fed5
+@opencode-ai/core:typecheck: $ tsgo --noEmit
+
+ Tasks:    30 successful, 30 total
+Cached:    29 cached, 30 total
+  Time:    29.233s 
+
+EXIT=0

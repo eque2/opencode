@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM26.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM26] the checkpoint is the phase-1 merge into dev, and it left the task-ui unchanged",
+        "result": {
+          "state": "pass",
+          "duration": 396.31300000000005
+        }
+      },
+      {
+        "name": "[RM26] the phase-1 status of the observed facts has T1.5 and T1 blocked by T1.4 budget exhausted",
+        "result": {
+          "state": "pass",
+          "duration": 2911.631
+        }
+      },
+      {
+        "name": "[RM26] the checkpoint's task-ui renders it on the Board: T1.5 and T1 in STOPPED, labelled blocked, with their cause",
+        "result": {
+          "state": "pass",
+          "duration": 5179.4039999999995
+        }
+      },
+      {
+        "name": "[RM26] the task-ui of this tree still shows the blocked T1.5 and T1 of the projected status in STOPPED with their cause (T2.3)",
+        "result": {
+          "state": "pass",
+          "duration": 7072.311
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 26243
+    }
+  }
+]

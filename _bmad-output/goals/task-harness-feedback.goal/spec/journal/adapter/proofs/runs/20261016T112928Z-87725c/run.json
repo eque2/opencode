@@ -1,0 +1,41 @@
+{
+  "runId": "20261016T112928Z-87725c",
+  "adapter": "bun-junit-scenario-adapter.mjs",
+  "mode": "dry-run",
+  "cwd": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures",
+  "file": "./throw-module.test.ts",
+  "testFile": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/throw-module.test.ts",
+  "junit": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-87725c/junit.xml",
+  "log": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-87725c/run.log",
+  "bun": "bun",
+  "command": [
+    "bun",
+    "test",
+    "--timeout=30000",
+    "--reporter=junit",
+    "--reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-87725c/junit.xml",
+    "./throw-module.test.ts"
+  ],
+  "hashBefore": "144d03124c176698cc4261501e3e27e37a9de029243a36be3532da8db3fc2a4a",
+  "bunExit": 1,
+  "signal": null,
+  "durationMs": 19,
+  "hashAfter": "144d03124c176698cc4261501e3e27e37a9de029243a36be3532da8db3fc2a4a",
+  "summary": {
+    "ran": 1,
+    "files": 1,
+    "pass": 0,
+    "fail": 1,
+    "skip": 0,
+    "todo": 0
+  },
+  "counts": {
+    "tests": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "note": "no report; non-zero exit"
+  },
+  "decision": "dry-run:mapped",
+  "adapterExit": 1
+}

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="38" failures="0" skipped="0" time="5.515445">
+  <testsuite name="test/task/verify-spec-VF23.spec.ts" file="test/task/verify-spec-VF23.spec.ts" tests="2" assertions="38" failures="0" skipped="0" time="1.34" hostname="mac-studio-m1">
+    <testcase name="[VF23] a spec with an R3 front-matter fault and an R7 cycle: /task lists only the R3 line, and the R7 line appears once the R3 fault is fixed" classname="" time="1.340478" file="test/task/verify-spec-VF23.spec.ts" line="47" assertions="21" />
+    <testcase name="[VF23] the blend README&apos;s Validation section states the two rule stages" classname="" time="0.000752" file="test/task/verify-spec-VF23.spec.ts" line="125" assertions="17" />
+  </testsuite>
+</testsuites>

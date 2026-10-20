@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="921" failures="0" skipped="0" time="30.860367">
+  <testsuite name="test/task/verify-spec-RM29.spec.ts" file="test/task/verify-spec-RM29.spec.ts" tests="7" assertions="921" failures="0" skipped="0" time="24.643" hostname="mac-studio-m1">
+    <testcase name="[RM29] the totality check fails on the copy without T1.5&apos;s row for T1.4 budget exhausted, naming T1.5, waiting and the outcome" classname="" time="2.350268" file="test/task/verify-spec-RM29.spec.ts" line="108" assertions="9" />
+    <testcase name="[RM29] without the check, the copy strands T1.5 on the observed facts: the stuck run the check prevents" classname="" time="2.81455" file="test/task/verify-spec-RM29.spec.ts" line="140" assertions="5" />
+    <testcase name="[RM29] the scan of every real plan passes: each waiting unit state has a row for every final outcome of what it waits on" classname="" time="5.408638" file="test/task/verify-spec-RM29.spec.ts" line="212" assertions="83" />
+    <testcase name="[RM29] on the real machine, T1.5 waiting is blocked by T1.4 for each way T1.4 ends other than trusted" classname="" time="2.138494" file="test/task/verify-spec-RM29.spec.ts" line="237" assertions="8" />
+    <testcase name="[RM29] the scan refuses a non-final state with no way out, and an outcome that cannot settle" classname="" time="1.510775" file="test/task/verify-spec-RM29.spec.ts" line="277" assertions="31" />
+    <testcase name="[RM29] on the real machines, a unit stands still only on an untrusted outside or external region, and the run settles once every region is final" classname="" time="8.367573" file="test/task/verify-spec-RM29.spec.ts" line="369" assertions="777" />
+    <testcase name="[RM29] T1.5 waits on the outside T9, and in its subtree run on the external T1.3 and T1.4, until a fact trusts them" classname="" time="2.056697" file="test/task/verify-spec-RM29.spec.ts" line="494" assertions="8" />
+  </testsuite>
+</testsuites>

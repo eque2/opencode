@@ -1,0 +1,37 @@
+{
+  "scenarioId": "SV7",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV7.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T16:52:57.551Z",
+  "durationMs": 39075.658,
+  "testResults": [
+    {
+      "name": "[SV7] two supervisors that stall at the same moment: the store order equals the fold order and at never decreases",
+      "status": "passed",
+      "duration": 10331.343
+    },
+    {
+      "name": "[SV7] forty records at once through the record worker keep one order in the store and the fold, at never decreasing",
+      "status": "passed",
+      "duration": 10335.131000000001
+    },
+    {
+      "name": "[SV7] a record after the run is done stores nothing: not the supervisors' stalls, not a record that queued behind the end",
+      "status": "passed",
+      "duration": 7364.694
+    },
+    {
+      "name": "[SV7] an interrupted record leaves nothing when it waited on the permit, and the whole fact when it was storing",
+      "status": "passed",
+      "duration": 8806.585000000001
+    },
+    {
+      "name": "[SV7] thirty records interrupted at random moments: each fact is stored and folded, or neither",
+      "status": "passed",
+      "duration": 2237.905
+    }
+  ],
+  "_sourceHash": "b60135c492e7f3d5",
+  "_keyId": "53bde7c7",
+  "_hmac": "48aff1d8f35106094c80f6c54bab63ca145846490b5ea8e4eebf19ccd20ff5e3"
+}

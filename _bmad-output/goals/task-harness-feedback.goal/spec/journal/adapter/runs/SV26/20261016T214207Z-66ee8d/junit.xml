@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="49" failures="0" skipped="0" time="18.436307">
+  <testsuite name="test/task/verify-spec-SV26.spec.ts" file="test/task/verify-spec-SV26.spec.ts" tests="4" assertions="49" failures="0" skipped="0" time="11.624" hostname="mac-studio-m1">
+    <testcase name="[SV26] a task supervisor that errors counts as three worker failures: its unit records task.failed with harness error: &lt;defect&gt; once, and the run still ends" classname="" time="4.805883" file="test/task/verify-spec-SV26.spec.ts" line="104" assertions="16" />
+    <testcase name="[SV26] a run supervisor that errors ends the job&apos;s wait: the Recorder stores nothing more, the defect is logged and the lease is released" classname="" time="2.755575" file="test/task/verify-spec-SV26.spec.ts" line="174" assertions="11" />
+    <testcase name="[SV26] a run actor that errors ends the run: the job&apos;s wait ends, the Recorder stores nothing more, the defect is logged and the lease is released" classname="" time="2.129" file="test/task/verify-spec-SV26.spec.ts" line="224" assertions="9" />
+    <testcase name="[SV26] a later /task treats a slice whose fold dies as ended, logs it, and its start message says a new slice starts" classname="" time="1.935828" file="test/task/verify-spec-SV26.spec.ts" line="289" assertions="13" />
+  </testsuite>
+</testsuites>

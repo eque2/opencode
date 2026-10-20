@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="62" failures="0" skipped="0" time="8.925364">
+  <testsuite name="test/task/verify-spec-VF5.spec.ts" file="test/task/verify-spec-VF5.spec.ts" tests="3" assertions="62" failures="0" skipped="0" time="5.469" hostname="mac-studio-m1">
+    <testcase name="[VF5] a run whose warning shows two failures: when the spec validates again, spec.checked is recorded with no failures and the warning goes" classname="" time="1.452092" file="test/task/verify-spec-VF5.spec.ts" line="202" assertions="17" />
+    <testcase name="[VF5] a reload with the same failures as the current warning records nothing; a changed list does" classname="" time="2.532793" file="test/task/verify-spec-VF5.spec.ts" line="229" assertions="18" />
+    <testcase name="[VF5] a valid reload that adds or removes an obligation id of the plan counts as a failure, and the run keeps the old text" classname="" time="1.485531" file="test/task/verify-spec-VF5.spec.ts" line="260" assertions="27" />
+  </testsuite>
+</testsuites>

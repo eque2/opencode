@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="8" assertions="43" failures="0" skipped="0" time="28.607505">
+  <testsuite name="test/task/verify-spec-SV1.spec.ts" file="test/task/verify-spec-SV1.spec.ts" tests="8" assertions="43" failures="0" skipped="0" time="14.98" hostname="mac-studio-m1">
+    <testcase name="[SV1] the inspection finds each named construct in a planted source (negative control)" classname="" time="0.255777" file="test/task/verify-spec-SV1.spec.ts" line="456" assertions="10" />
+    <testcase name="[SV1] the harness source is the phase-2 tree: no polled runner module, and the scan covers every file" classname="" time="0.18864" file="test/task/verify-spec-SV1.spec.ts" line="511" assertions="4" />
+    <testcase name="[SV1] holds no polled loop and no tick counter: the only polls are the two AD-17 process entries" classname="" time="0.092301" file="test/task/verify-spec-SV1.spec.ts" line="535" assertions="3" />
+    <testcase name="[SV1] holds no stale cadence counter: the cadence is a delayed transition of the run supervisor" classname="" time="0.075849" file="test/task/verify-spec-SV1.spec.ts" line="547" assertions="3" />
+    <testcase name="[SV1] holds no failure map and no runner failure limit: each FAILURE_LIMIT is a guard over a context count" classname="" time="0.062699" file="test/task/verify-spec-SV1.spec.ts" line="560" assertions="3" />
+    <testcase name="[SV1] holds no stopping flag, children list, worker FiberMap or judged-state list" classname="" time="0.074178" file="test/task/verify-spec-SV1.spec.ts" line="575" assertions="6" />
+    <testcase name="[SV1] holds no process-wide run registry: no module-level mutable binding or collection keyed by a run" classname="" time="0.037008" file="test/task/verify-spec-SV1.spec.ts" line="609" assertions="2" />
+    <testcase name="[SV1] a live run that /task started is found through the harness actor system by its run id, and only there" classname="" time="14.197916" file="test/task/verify-spec-SV1.spec.ts" line="623" assertions="12" />
+  </testsuite>
+</testsuites>

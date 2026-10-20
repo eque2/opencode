@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="19" failures="0" skipped="0" time="38.419483">
+  <testsuite name="test/task/verify-spec-VF18.spec.ts" file="test/task/verify-spec-VF18.spec.ts" tests="1" assertions="19" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="[VF18] a scripted run of the scenarios folder" file="test/task/verify-spec-VF18.spec.ts" line="60" tests="1" assertions="19" failures="0" skipped="0" time="30.882" hostname="mac-studio-m1">
+      <testcase name="[VF18] /task on example-scenarios with the scripted model: T1.1 trusted, T1 trusted by its review, S1 proved by its tagged test and trusted by the verifier, and the run ends done" classname="[VF18] a scripted run of the scenarios folder" time="30.882242" file="test/task/verify-spec-VF18.spec.ts" line="62" assertions="19" />
+    </testsuite>
+  </testsuite>
+</testsuites>

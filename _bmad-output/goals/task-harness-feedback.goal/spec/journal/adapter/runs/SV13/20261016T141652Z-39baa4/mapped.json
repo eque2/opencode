@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV13.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV13] task_ready in the claimed builder session reaches its task supervisor, which records task.ready only when the turn ends",
+        "result": {
+          "state": "pass",
+          "duration": 5174.306
+        }
+      },
+      {
+        "name": "[SV13] verdict in the claimed verifier session reaches the task supervisor, which records task.verified only when the turn ends",
+        "result": {
+          "state": "pass",
+          "duration": 3243.434
+        }
+      },
+      {
+        "name": "[SV13] a call repeated past the limit in the claimed builder session reaches its task supervisor, which records task.repeated only when the turn ends",
+        "result": {
+          "state": "pass",
+          "duration": 2696.3360000000002
+        }
+      },
+      {
+        "name": "[SV13] a tool call in a session that no supervisor owns records nothing, and the tool says so, while the run's own sessions stay owned",
+        "result": {
+          "state": "pass",
+          "duration": 2646.3450000000003
+        }
+      },
+      {
+        "name": "[SV13] every claim of a run is removed when the run ends, by its wall clock or by a cancel, and a claim of another run stays",
+        "result": {
+          "state": "pass",
+          "duration": 12374.662
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 35960
+    }
+  }
+]

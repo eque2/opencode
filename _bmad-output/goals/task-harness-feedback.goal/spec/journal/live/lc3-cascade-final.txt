@@ -1,0 +1,56 @@
+ ◆ In the Flow Board Number helpers that fail on purpose · run: budget exhausted                                                                                    58.5K tokens · $0.23 ▰▰▰▱▱▱▱▱▱▱ 1/4 trusted · 3 stopped
+ T1.1 budget exhausted (+2 more)
+
+ WAITING 0                 BUILDING 0                PROVING 0                 VERIFYING 0               TRUSTED 1                 STOPPED 3                       ╔═ ◆ In the Flow · T1.1 details · read-only ═══════════╗
+                                                                                                         ╭───────────────────────╮ ╭───────────────────────╮       ║ BUILDER  budget exhausted · attempt 1 · 1m 24s       ║
+                                                                                                         │ ✓ T1.3                │ │ ⊘ T1.1                │       ║          T1.1.c1: BUILD-1: exit 1:                   ║
+                                                                                                         │ trusted               │ │ budget exhausted      │       ║   › read task-formats/blend/example-cascade.spec/SP… ║
+                                                                                                         │ attempt 1 · 1m 24s    │ │ attempt 1 · 1m 24s    │       ║   › apply_patch Success. Updated the following file… ║
+                                                                                                         │ proofs 1/1            │ │ proofs 0/1            │       ║   › bash bun test                                    ║
+                                                                                                         ╰───────────────────────╯ │ T1.1.c1: BUILD-1:     │       ║   › bash bun run typecheck && bun run lint           ║
+                                                                                                                                   │ exit 1:               │       ║   › bash sh -c 'exit 1'                              ║
+                                                                                                                                   ╰───────────────────────╯       ║   › bash git status --short && git diff --check && … ║
+                                                                                                                                   ╭───────────────────────╮       ║   ◆ task_ready: Added the strict, pure `sum` export… ║
+                                                                                                                                   │ ⊖ T1                  │       ║ PROOFS   1 obligations · 0 trusted · 1 failed        ║
+                                                                                                                                   │ blocked by T1.1:      │       ║   ✗ c1 failed — BUILD-1: exit 1:                     ║
+                                                                                                                                   │ budget exhausted      │       ║ VERIFIER                                             ║
+                                                                                                                                   │ proofs 0/1            │       ║   no verifier session yet                            ║
+                                                                                                                                   ╰───────────────────────╯       ╚══════════════════════════════════════════════════════╝
+                                                                                                                                   ╭───────────────────────╮       STOPPED 3
+                                                                                                                                   │ ⊖ T1.2                │       ⊘ T1.1 budget exhausted — T1.1.c1: BUILD-1: exit 1:
+                                                                                                                                   │ blocked by T1.1:      │       ⊖ T1, T1.2 blocked by T1.1: budget exhausted
+                                                                                                                                   │ budget exhausted      │       SCENARIOS none in this run
+                                                                                                                                   │ proofs 0/1            │
+                                                                                                                                   ╰───────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ j/k select task · v next design · pgup/pgdn scroll · ctrl+x w watch · esc collapse

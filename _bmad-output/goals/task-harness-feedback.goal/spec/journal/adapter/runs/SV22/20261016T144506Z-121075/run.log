@@ -1,0 +1,43 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-SV22.spec.ts:
+[14:45:34.144] ERROR (#12): 160 |       expect((yield* recorded).slice(2)).toEqual([
+161 |         { type: "task.failed", at: expect.any(Number), task: "T1.1", reason: REASON },
+162 |       ])
+163 |       expect(seen.cancels).toEqual([T1_1])
+164 |       const failed = yield* recorder.actor.getSnapshot
+165 |       expect(engine.unitState(failed, "T1.1")).toBe("failed")
+      ^
+error: expect(received).toBe(expected)
+
+Expected: "failed"
+Received: "building"
+
+      at toBe (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV22.spec.ts:165:48
+
+160 |       expect((yield* recorded).slice(2)).toEqual([
+161 |         { type: "task.failed", at: expect.any(Number), task: "T1.1", reason: REASON },
+162 |       ])
+163 |       expect(seen.cancels).toEqual([T1_1])
+164 |       const failed = yield* recorder.actor.getSnapshot
+165 |       expect(engine.unitState(failed, "T1.1")).toBe("failed")
+      ^
+error: expect(received).toBe(expected)
+
+Expected: "failed"
+Received: "building"
+
+      at toBe (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV22.spec.ts:165:48
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+(fail) [SV22] the wall clock of a building task fails only that task, while an independent task keeps building [8866.72ms]
+
+ 0 pass
+ 1 fail
+ 11 expect() calls
+Ran 1 test across 1 file. [27.63s]

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="39" failures="0" skipped="0" time="9.580403">
+  <testsuite name="test/task/verify-spec-UI17.spec.ts" file="test/task/verify-spec-UI17.spec.ts" tests="4" assertions="39" failures="0" skipped="0" time="3.358" hostname="mac-studio-m1">
+    <testcase name="[UI17] /task on the format-faults folder writes a refused status with three failure lines and no task" classname="" time="0.862398" file="test/task/verify-spec-UI17.spec.ts" line="112" assertions="8" />
+    <testcase name="[UI17] the Ledger shows run: refused and every failure line in the error tone, each cut to its width" classname="" time="0.803738" file="test/task/verify-spec-UI17.spec.ts" line="131" assertions="9" />
+    <testcase name="[UI17] each full-screen design&apos;s body reads No work started: the spec was refused. with every failure line" classname="" time="0.885081" file="test/task/verify-spec-UI17.spec.ts" line="160" assertions="18" />
+    <testcase name="[UI17] the plugin&apos;s Ledger in the sidebar reads the refused status file: run: refused and every failure line" classname="" time="0.808037" file="test/task/verify-spec-UI17.spec.ts" line="330" assertions="4" />
+  </testsuite>
+</testsuites>

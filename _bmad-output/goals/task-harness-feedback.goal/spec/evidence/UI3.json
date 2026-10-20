@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI3",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI3.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-19T11:00:58.920Z",
+  "durationMs": 10224.197,
+  "testResults": [
+    {
+      "name": "[UI3] the view is live while the run lacks ended and its heartbeat is at most 15 s old; still, ended or absent otherwise",
+      "status": "passed",
+      "duration": 3308.4280000000003
+    },
+    {
+      "name": "[UI3] while the view is live and the session owns its harness sessions, Tab, the watch key and esc twice act on the run",
+      "status": "passed",
+      "duration": 993.059
+    },
+    {
+      "name": "[UI3] the run keys leave the run alone when the session does not own it, when the view is still or ended, and with no file",
+      "status": "passed",
+      "duration": 5491.94
+    },
+    {
+      "name": "[UI3] the stop key arms only while live, and a key armed while live stops nothing once the view is still or ended",
+      "status": "passed",
+      "duration": 430.77
+    }
+  ],
+  "_sourceHash": "93fd61d8cd7aaa74",
+  "_keyId": "53bde7c7",
+  "_hmac": "36cb2d3ae232b27e0c82b6eec99c8f92521680dda5e63c7e6702b648f426eedb"
+}

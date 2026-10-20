@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="32" failures="0" skipped="0" time="12.45771">
+  <testsuite name="test/task/verify-spec-SV27.spec.ts" file="test/task/verify-spec-SV27.spec.ts" tests="1" assertions="32" failures="0" skipped="0" time="6.989" hostname="mac-studio-m1">
+    <testcase name="[SV27] a scope close without a job cancel records no stop, counts no worker failure, writes no summary, and the next /task resumes" classname="" time="6.989953" file="test/task/verify-spec-SV27.spec.ts" line="111" assertions="32" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV11.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV11] a retry status that names the spend cap records task.needs_human with a 'spend cap:' reason, stops the turn, and records no nudge; a retry status that names no spend cap records nothing",
+        "result": {
+          "state": "pass",
+          "duration": 13733.882
+        }
+      },
+      {
+        "name": "[SV11] a turn that ends on a spend-cap error records task.needs_human with a 'spend cap:' reason and no nudge, where a turn that ends on another error is nudged",
+        "result": {
+          "state": "pass",
+          "duration": 17549.872
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 76504
+    }
+  }
+]

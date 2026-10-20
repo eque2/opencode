@@ -1,0 +1,47 @@
+{
+  "scenarioId": "VF22",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF22.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:48:27.537Z",
+  "durationMs": 2496.971,
+  "testResults": [
+    {
+      "name": "[VF22] a spec folder with only SPEC.md, with no outside precondition: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+      "status": "passed",
+      "duration": 498.476
+    },
+    {
+      "name": "[VF22] the generator refuses the plan of a spec with only SPEC.md, with no outside precondition: it has no task region",
+      "status": "passed",
+      "duration": 354.08099999999996
+    },
+    {
+      "name": "[VF22] a spec folder with only SPEC.md with its outside preconditions T8 and T9: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+      "status": "passed",
+      "duration": 402.37899999999996
+    },
+    {
+      "name": "[VF22] the generator refuses the plan of a spec with only SPEC.md with its outside preconditions T8 and T9: it has no task region",
+      "status": "passed",
+      "duration": 340.528
+    },
+    {
+      "name": "[VF22] a spec folder with only outside preconditions and a scenario that needs T8: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+      "status": "passed",
+      "duration": 383.247
+    },
+    {
+      "name": "[VF22] the generator refuses the plan of a spec with only outside preconditions and a scenario that needs T8: it has no task region",
+      "status": "passed",
+      "duration": 350.78700000000003
+    },
+    {
+      "name": "[VF22] control: the generator builds the machine of the release-notes plan, which holds tasks",
+      "status": "passed",
+      "duration": 167.473
+    }
+  ],
+  "_sourceHash": "d694baec67ad7a24",
+  "_keyId": "53bde7c7",
+  "_hmac": "18b9e02db543a960ba819c03b81677bfa21ed2e101c2d8dc84a08f498a915d33"
+}

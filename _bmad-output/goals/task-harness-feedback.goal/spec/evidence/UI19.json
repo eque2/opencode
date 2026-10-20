@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI19",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI19.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T17:56:18.400Z",
+  "durationMs": 34151.405,
+  "testResults": [
+    {
+      "name": "[UI19] the harness ends the run done with the reason line 'not run: S13 waits on T8'",
+      "status": "passed",
+      "duration": 9556.35
+    },
+    {
+      "name": "[UI19] the Ledger and the full-screen header draw the done run's not-run line in the muted tone",
+      "status": "passed",
+      "duration": 4903.727
+    },
+    {
+      "name": "[UI19] the Ticker raises no notification for the done run's not-run line; a clean done run and a stopped run each raise one",
+      "status": "passed",
+      "duration": 15813.271999999999
+    },
+    {
+      "name": "[UI19] a run with the stopped tag shows its reason line in the error tone in the Ledger and the full-screen header",
+      "status": "passed",
+      "duration": 3878.056
+    }
+  ],
+  "_sourceHash": "abda24a4588740d6",
+  "_keyId": "53bde7c7",
+  "_hmac": "16c6b0fa1ff627721b20843fe026450d6df3bd88f5ed3487639ebca3e60e3f8e"
+}

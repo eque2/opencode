@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="23" failures="0" skipped="0" time="3.127195">
+  <testsuite name="test/task/verify-spec-SV3.spec.ts" file="test/task/verify-spec-SV3.spec.ts" tests="2" assertions="23" failures="0" skipped="0" time="1.608" hostname="mac-studio-m1">
+    <testcase name="[SV3] /task with the same path folds the open slice, records run.resumed with that path, and the supervisor starts what the folded state asks for" classname="" time="0.942283" file="test/task/verify-spec-SV3.spec.ts" line="136" assertions="15" />
+    <testcase name="[SV3] /task with a different path starts a new slice, and so does /task with the same path after the slice ended" classname="" time="0.666892" file="test/task/verify-spec-SV3.spec.ts" line="207" assertions="8" />
+  </testsuite>
+</testsuites>

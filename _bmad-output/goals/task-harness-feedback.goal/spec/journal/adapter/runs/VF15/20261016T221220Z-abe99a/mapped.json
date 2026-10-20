@@ -1,0 +1,51 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF15.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF15] the two live-check folders load, before and after ensures becomes required",
+        "tasks": [
+          {
+            "name": "[VF15] the two folders were built in phase 1: the phase-1 commit holds them as they are on disk",
+            "result": {
+              "state": "pass",
+              "duration": 644.652
+            }
+          },
+          {
+            "name": "[VF15] each folder loads with no failure in phase 1 and again once ensures is required, to the same model",
+            "result": {
+              "state": "pass",
+              "duration": 1225.029
+            }
+          },
+          {
+            "name": "[VF15] control: a leaf with no ensures loads with no failure in phase 1 but fails the required-ensures R3 today",
+            "result": {
+              "state": "pass",
+              "duration": 994.15
+            }
+          },
+          {
+            "name": "[VF15] example-cascade's T1.1 gate BUILD-1 exits 1 on every run and names no file",
+            "result": {
+              "state": "pass",
+              "duration": 1127.453
+            }
+          },
+          {
+            "name": "[VF15] example-scenarios' S1 is proved by a test titled with [S1], and by no test without that tag",
+            "result": {
+              "state": "pass",
+              "duration": 769.05
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 10893
+    }
+  }
+]

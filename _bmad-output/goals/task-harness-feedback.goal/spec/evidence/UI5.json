@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI5",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI5.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T18:20:21.440Z",
+  "durationMs": 6925.538,
+  "testResults": [
+    {
+      "name": "[UI5] the Board card and the Peek read the outside wait with its trust command and the external wait without one",
+      "status": "passed",
+      "duration": 837.265
+    },
+    {
+      "name": "[UI5] the outside wait reads the same line on every design, and each design's shortcut bar has an outside-wait part",
+      "status": "passed",
+      "duration": 2941.937
+    },
+    {
+      "name": "[UI5] the external wait never gets a trust command, in any view of any design",
+      "status": "passed",
+      "duration": 2250.206
+    },
+    {
+      "name": "[UI5] the harness's own projection of a subtree run reads the same way: the outside wait with its command, the external waits without",
+      "status": "passed",
+      "duration": 896.13
+    }
+  ],
+  "_sourceHash": "f4dac768ceac9787",
+  "_keyId": "53bde7c7",
+  "_hmac": "afd9f27aaafdf9fd46dc8154668c8ee0f990d2a52c97c5367ba14f4dafcbd620"
+}

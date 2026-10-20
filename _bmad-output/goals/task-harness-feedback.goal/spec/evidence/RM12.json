@@ -1,0 +1,22 @@
+{
+  "scenarioId": "RM12",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM12.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:12:18.229Z",
+  "durationMs": 83.131,
+  "testResults": [
+    {
+      "name": "[RM12] owner ruling 1: every task trusted and the runnable scenario S1 rejected by its verifier gives the outcome failed with the line 'acceptance not proved: S1 rejected'",
+      "status": "passed",
+      "duration": 56.428
+    },
+    {
+      "name": "[RM12] owner ruling 1 control: the same run with S1 trusted by its verifier ends done with no reason",
+      "status": "passed",
+      "duration": 26.703
+    }
+  ],
+  "_sourceHash": "e923e65315ec86ed",
+  "_keyId": "53bde7c7",
+  "_hmac": "84d7f2f9884d4b20ff17e7442b163c4c4c327f201d539531d4646dcdbcdc2285"
+}

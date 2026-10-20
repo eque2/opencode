@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="38" failures="0" skipped="0" time="43.344539">
+  <testsuite name="test/task/verify-spec-SV20.spec.ts" file="test/task/verify-spec-SV20.spec.ts" tests="3" assertions="38" failures="0" skipped="0" time="33.354" hostname="mac-studio-m1">
+    <testcase name="[SV20] /task trust T9 is stored on the directory aggregate and once on the run aggregate, and T1.5 becomes ready" classname="" time="17.228963" file="test/task/verify-spec-SV20.spec.ts" line="128" assertions="13" />
+    <testcase name="[SV20] a /task trust of an id with no untrusted outside region records nothing on the run aggregate" classname="" time="11.267128" file="test/task/verify-spec-SV20.spec.ts" line="167" assertions="16" />
+    <testcase name="[SV20] a /task trust recorded before the run started is applied once, directly after run.started" classname="" time="4.859558" file="test/task/verify-spec-SV20.spec.ts" line="201" assertions="9" />
+  </testsuite>
+</testsuites>

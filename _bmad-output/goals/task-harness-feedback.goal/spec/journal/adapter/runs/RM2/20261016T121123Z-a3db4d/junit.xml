@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="520" failures="0" skipped="0" time="11.64179">
+  <testsuite name="test/task/verify-spec-RM2.spec.ts" file="test/task/verify-spec-RM2.spec.ts" tests="4" assertions="520" failures="0" skipped="0" time="9.397" hostname="mac-studio-m1">
+    <testcase name="[RM2] a plan whose task ids give two equal explicit state ids makes the generation die naming the id" classname="" time="0.050668" file="test/task/verify-spec-RM2.spec.ts" line="116" assertions="23" />
+    <testcase name="[RM2] a task id that repeats an obligation&apos;s explicit state ids makes the generation die naming that id" classname="" time="0.009897" file="test/task/verify-spec-RM2.spec.ts" line="149" assertions="8" />
+    <testcase name="[RM2] every generated machine caps eventless iterations at 1000" classname="" time="5.86726" file="test/task/verify-spec-RM2.spec.ts" line="171" assertions="75" />
+    <testcase name="[RM2] no generated machine for any plan has a delayed transition, an invoked actor, a spawned actor or a custom action" classname="" time="3.471894" file="test/task/verify-spec-RM2.spec.ts" line="220" assertions="414" />
+  </testsuite>
+</testsuites>

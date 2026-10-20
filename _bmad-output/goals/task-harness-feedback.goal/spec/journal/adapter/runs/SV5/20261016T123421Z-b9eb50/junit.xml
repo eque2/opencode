@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="40" failures="0" skipped="0" time="5.339657">
+  <testsuite name="test/task/verify-spec-SV5.spec.ts" file="test/task/verify-spec-SV5.spec.ts" tests="4" assertions="40" failures="0" skipped="0" time="2.31" hostname="mac-studio-m1">
+    <testcase name="[SV5] with the stale check held on the checkout lock, 5 seconds touch the status file once with a newer heartbeat" classname="" time="1.191093" file="test/task/verify-spec-SV5.spec.ts" line="174" assertions="15" />
+    <testcase name="[SV5] a touch whose status write fails is logged and records no fact; the heartbeat goes on" classname="" time="0.272186" file="test/task/verify-spec-SV5.spec.ts" line="227" assertions="7" />
+    <testcase name="[SV5] a touch worker that fails is logged by the run supervisor, records no fact, and the heartbeat goes on" classname="" time="0.285631" file="test/task/verify-spec-SV5.spec.ts" line="278" assertions="8" />
+    <testcase name="[SV5] the run wall clock records run.ended in state failed when it expires, while the stale check still waits" classname="" time="0.562419" file="test/task/verify-spec-SV5.spec.ts" line="320" assertions="10" />
+  </testsuite>
+</testsuites>

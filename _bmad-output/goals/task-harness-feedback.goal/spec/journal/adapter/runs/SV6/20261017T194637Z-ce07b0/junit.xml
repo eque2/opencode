@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="30" failures="0" skipped="0" time="36.295865">
+  <testsuite name="test/task/verify-spec-SV6.spec.ts" file="test/task/verify-spec-SV6.spec.ts" tests="3" assertions="30" failures="0" skipped="0" time="17.728" hostname="mac-studio-m1">
+    <testcase name="[SV6] a task supervisor whose begin worker fails three times in a row records task.failed with a harness error" classname="" time="8.360679" file="test/task/verify-spec-SV6.spec.ts" line="48" assertions="12" />
+    <testcase name="[SV6] a scenario batch whose worker fails three times in a row records scenario.proved failed with a harness error" classname="" time="3.576013" file="test/task/verify-spec-SV6.spec.ts" line="149" assertions="12" />
+    <testcase name="[SV6] a scenario supervisor whose judge worker fails three times in a row records scenario.verified rejected with a harness error" classname="" time="5.792301" file="test/task/verify-spec-SV6.spec.ts" line="250" assertions="6" />
+  </testsuite>
+</testsuites>

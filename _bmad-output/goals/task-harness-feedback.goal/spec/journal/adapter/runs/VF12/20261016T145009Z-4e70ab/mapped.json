@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF12.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF12] the unknown-after folder is refused with one R6 line that names T7",
+        "result": {
+          "state": "pass",
+          "duration": 3177.216
+        }
+      },
+      {
+        "name": "[VF12] /task on a task folder inside the unknown-after folder is refused with the same R6 line",
+        "result": {
+          "state": "pass",
+          "duration": 3011.758
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 21641
+    }
+  }
+]

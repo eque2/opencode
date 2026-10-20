@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="35" failures="0" skipped="0" time="3.726312">
+  <testsuite name="test/task/verify-spec-VF2.spec.ts" file="test/task/verify-spec-VF2.spec.ts" tests="2" assertions="35" failures="0" skipped="0" time="1.699" hostname="mac-studio-m1">
+    <testcase name="[VF2] with a run live in the directory, /task on a faulty spec gets the refusal message in the session" classname="" time="0.927524" file="test/task/verify-spec-VF2.spec.ts" line="124" assertions="11" />
+    <testcase name="[VF2] the status file still shows the live run after the refusal, and the live run keeps the lease" classname="" time="0.772245" file="test/task/verify-spec-VF2.spec.ts" line="145" assertions="24" />
+  </testsuite>
+</testsuites>

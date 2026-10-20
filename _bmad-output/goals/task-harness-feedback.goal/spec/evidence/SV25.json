@@ -1,0 +1,17 @@
+{
+  "scenarioId": "SV25",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV25.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:39:51.573Z",
+  "durationMs": 5218.524,
+  "testResults": [
+    {
+      "name": "[SV25] a job cancelled before the new slice stores run.started records run.cancelled after it, and the previous slice is unchanged",
+      "status": "passed",
+      "duration": 5218.524
+    }
+  ],
+  "_sourceHash": "1033f21ee0dee4b4",
+  "_keyId": "53bde7c7",
+  "_hmac": "a69e4a97c2ac728d2dfebe95a103d88ca0ff94a7262b7a2379879656b6e2bbe4"
+}

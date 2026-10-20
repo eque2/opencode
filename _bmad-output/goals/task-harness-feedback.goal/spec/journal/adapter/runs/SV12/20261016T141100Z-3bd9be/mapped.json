@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV12.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV12] an idle builder is nudged with nudge 1, then nudge 2; when it then calls task_ready, task.ready names its head and the proof runs on that head",
+        "result": {
+          "state": "pass",
+          "duration": 2324.801
+        }
+      },
+      {
+        "name": "[SV12] an idle builder is nudged with nudge 1, then nudge 2; when the third turn also ends idle, its work is committed and the task records 'the builder ended without task_ready'",
+        "result": {
+          "state": "pass",
+          "duration": 1580.857
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 8859
+    }
+  }
+]

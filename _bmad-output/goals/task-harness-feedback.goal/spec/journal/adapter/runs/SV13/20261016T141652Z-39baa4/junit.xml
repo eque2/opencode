@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="51" failures="0" skipped="0" time="35.900085">
+  <testsuite name="test/task/verify-spec-SV13.spec.ts" file="test/task/verify-spec-SV13.spec.ts" tests="5" assertions="51" failures="0" skipped="0" time="26.133" hostname="mac-studio-m1">
+    <testcase name="[SV13] task_ready in the claimed builder session reaches its task supervisor, which records task.ready only when the turn ends" classname="" time="5.174306" file="test/task/verify-spec-SV13.spec.ts" line="173" assertions="7" />
+    <testcase name="[SV13] verdict in the claimed verifier session reaches the task supervisor, which records task.verified only when the turn ends" classname="" time="3.243434" file="test/task/verify-spec-SV13.spec.ts" line="234" assertions="8" />
+    <testcase name="[SV13] a call repeated past the limit in the claimed builder session reaches its task supervisor, which records task.repeated only when the turn ends" classname="" time="2.696336" file="test/task/verify-spec-SV13.spec.ts" line="323" assertions="7" />
+    <testcase name="[SV13] a tool call in a session that no supervisor owns records nothing, and the tool says so, while the run&apos;s own sessions stay owned" classname="" time="2.646345" file="test/task/verify-spec-SV13.spec.ts" line="385" assertions="12" />
+    <testcase name="[SV13] every claim of a run is removed when the run ends, by its wall clock or by a cancel, and a claim of another run stays" classname="" time="12.374662" file="test/task/verify-spec-SV13.spec.ts" line="480" assertions="17" />
+  </testsuite>
+</testsuites>

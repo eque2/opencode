@@ -1,0 +1,23 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF18.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF18] a scripted run of the scenarios folder",
+        "tasks": [
+          {
+            "name": "[VF18] /task on example-scenarios with the scripted model: T1.1 trusted, T1 trusted by its review, S1 proved by its tagged test and trusted by the verifier, and the run ends done",
+            "result": {
+              "state": "pass",
+              "duration": 30882.242000000002
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 38477
+    }
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "scenarioId": "DOC1",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-DOC1.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:50:54.353Z",
+  "durationMs": 2953.7760000000003,
+  "testResults": [
+    {
+      "name": "[DOC1] the Validation section says what runs before any work starts and how a refusal appears, as the real /task does",
+      "status": "passed",
+      "duration": 1175.4340000000002
+    },
+    {
+      "name": "[DOC1] the Validation section lists every rule R1 to R13 with the place in the code that enforces it",
+      "status": "passed",
+      "duration": 17.368000000000002
+    },
+    {
+      "name": "[DOC1] the Validation section says how the run machine holds the order and which graph faults are refused, as the engine and the loader do",
+      "status": "passed",
+      "duration": 251.87300000000002
+    },
+    {
+      "name": "[DOC1] the Validation section names the six fault folders and the two live-check folders, and each row is what the real /task answers",
+      "status": "passed",
+      "duration": 1509.101
+    }
+  ],
+  "_sourceHash": "d4e0e548aaf386be",
+  "_keyId": "53bde7c7",
+  "_hmac": "899cbbd94336c1fb23e3fe8523797fdfff408e357f69a79042427923d12f642a"
+}

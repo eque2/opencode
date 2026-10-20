@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM8a.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM8a] the stored old slices: every old fact type, run.started without a path, and run.ended done last",
+        "result": {
+          "state": "pass",
+          "duration": 43.621
+        }
+      },
+      {
+        "name": "[RM8a] every stored fact folds through the new machine: each one moves the snapshot, and none dies",
+        "result": {
+          "state": "pass",
+          "duration": 475.85699999999997
+        }
+      },
+      {
+        "name": "[RM8a] the stored run.ended folds as a stop with its own state: the run ends done, unfinished units cancelled",
+        "result": {
+          "state": "pass",
+          "duration": 278.506
+        }
+      },
+      {
+        "name": "[RM8a] /task on the whole spec records run.started with the path for a new slice, because the stored old slice ended",
+        "result": {
+          "state": "pass",
+          "duration": 1162.828
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 3353
+    }
+  }
+]

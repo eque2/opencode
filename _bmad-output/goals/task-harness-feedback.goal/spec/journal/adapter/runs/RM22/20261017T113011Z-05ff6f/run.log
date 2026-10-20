@@ -1,0 +1,59 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-RM22.spec.ts:
+[RM22] example-cascade.spec: with rows 108/292 and 276/1310 keys/edges, 0 stuck expected; without rows 27 and 39 stuck keys, 27 configurations
+[RM22] example-scenarios.spec: with rows 23/46 and 27/62 keys/edges, 0 stuck expected; without rows 3 and 3 stuck keys, 3 configurations
+[RM22] example-cascade.spec: 276 states; guard reads {
+  forTask: [],
+  firstDead: [
+    "log", "log/#", "log/#/to", "log/#/unit", "units", "units/T1", "units/T1.1", "units/T1.1.c1",
+    "units/T1.1.c1/kind", "units/T1.1/kind", "units/T1.2", "units/T1.2.c1", "units/T1.2.c1/kind",
+    "units/T1.2/kind", "units/T1.3", "units/T1.3.c1", "units/T1.3.c1/kind", "units/T1.3/kind",
+    "units/T1.e1", "units/T1.e1/kind", "units/T1/kind", "units/run", "units/run/kind"
+  ],
+  stopped: [ "stop", "stop/state" ],
+  underBudget: [ "units", "units/T1.1", "units/T1.1/attempts", "units/T1.2", "units/T1.2/attempts",
+    "units/T1.3", "units/T1.3/attempts"
+  ],
+  result: [],
+  proofFailed: [],
+  stale: [],
+  unproved: [],
+  verdict: [],
+}
+[RM22] example-scenarios.spec: 27 states; guard reads {
+  forTask: [],
+  firstDead: [
+    "log", "log/#", "log/#/to", "log/#/unit", "units", "units/S1", "units/S1/kind", "units/T1", "units/T1.1",
+    "units/T1.1.c1", "units/T1.1.c1/kind", "units/T1.1/kind", "units/T1.e1", "units/T1.e1/kind",
+    "units/T1/kind", "units/run", "units/run/kind"
+  ],
+  stopped: [ "stop", "stop/state" ],
+  underBudget: [ "units", "units/T1.1", "units/T1.1/attempts" ],
+  result: [],
+  proofFailed: [],
+  stale: [],
+  unproved: [],
+  scenarioPassed: [],
+  verdict: [],
+  scenarioTrusted: [],
+}
+[RM22] example-outside-run.spec T1.2: 14 states; guard reads {
+  trusts: [],
+  firstDead: [
+    "log", "log/#", "log/#/to", "log/#/unit", "units", "units/T1.1", "units/T1.1/kind", "units/T1.2",
+    "units/T1.2.c1", "units/T1.2.c1/kind", "units/T1.2/kind", "units/run", "units/run/kind"
+  ],
+  stopped: [ "stop", "stop/state" ],
+  forTask: [],
+  underBudget: [ "units", "units/T1.2", "units/T1.2/attempts" ],
+  result: [],
+  proofFailed: [],
+  stale: [],
+}
+[RM22] stale walk: 33944 keys, 331133 edges
+
+ 7 pass
+ 0 fail
+ 197 expect() calls
+Ran 7 tests across 1 file. [5995.05s]

@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV18.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV18] the audit fails on a planted Ref, MutableHashMap, SynchronizedRef, FiberMap, setInterval, polled loop, module-level let or list of states, and names the file and the identifier",
+        "result": {
+          "state": "pass",
+          "duration": 8616.042
+        }
+      },
+      {
+        "name": "[SV18] in the task-ui the audit also fails on a planted Effect.sleep or Schedule, and names the file and the identifier; outside the task-ui the same code passes",
+        "result": {
+          "state": "pass",
+          "duration": 4505.976000000001
+        }
+      },
+      {
+        "name": "[SV18] on the real tree the audit passes with only allowlist entries, and an entry without its written reason fails",
+        "result": {
+          "state": "pass",
+          "duration": 2875.3799999999997
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 28449
+    }
+  }
+]

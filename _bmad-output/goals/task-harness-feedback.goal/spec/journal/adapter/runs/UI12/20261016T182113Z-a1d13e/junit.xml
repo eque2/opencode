@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="139" failures="0" skipped="0" time="19.487595">
+  <testsuite name="test/task/verify-spec-UI12.spec.ts" file="test/task/verify-spec-UI12.spec.ts" tests="3" assertions="139" failures="0" skipped="0" time="10.649" hostname="mac-studio-m1">
+    <testcase name="[UI12] the given status: the heartbeat is 1m 40s after T1.2&apos;s start and the run has not ended; read more than 15 s later the view stands still" classname="" time="2.964406" file="test/task/verify-spec-UI12.spec.ts" line="198" assertions="15" />
+    <testcase name="[UI12] a running task&apos;s duration stops at the heartbeat time in every placement, however late the view reads; at 15 s it still counts" classname="" time="4.746869" file="test/task/verify-spec-UI12.spec.ts" line="224" assertions="40" />
+    <testcase name="[UI12] the diamond is a static ◆ at every In the Flow mark while the run stands still, with the host&apos;s animations on; while live it moves" classname="" time="2.939571" file="test/task/verify-spec-UI12.spec.ts" line="257" assertions="84" />
+  </testsuite>
+</testsuites>

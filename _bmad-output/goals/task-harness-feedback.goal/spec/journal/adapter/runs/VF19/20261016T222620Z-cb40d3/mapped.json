@@ -1,0 +1,51 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF19.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF19] every refusal form reads as the UX document sets",
+        "tasks": [
+          {
+            "name": "[VF19] a spec with one loader failure: the counted header, its one line, then the fix hint",
+            "result": {
+              "state": "pass",
+              "duration": 862.159
+            }
+          },
+          {
+            "name": "[VF19] the loader-failure refusal names the path as the user typed it, in the header and in the hint",
+            "result": {
+              "state": "pass",
+              "duration": 905.3409999999999
+            }
+          },
+          {
+            "name": "[VF19] a subtree run with an untrusted folder task outside it ends with the hint to run the whole spec or a folder that holds T1.1",
+            "result": {
+              "state": "pass",
+              "duration": 996.8489999999999
+            }
+          },
+          {
+            "name": "[VF19] a subtree run with two untrusted folder tasks outside it names both in the hint, joined by and",
+            "result": {
+              "state": "pass",
+              "duration": 1248.386
+            }
+          },
+          {
+            "name": "[VF19] a checkout with an uncommitted change: the plain header and one plain line, with no hint",
+            "result": {
+              "state": "pass",
+              "duration": 969.6519999999999
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 10667
+    }
+  }
+]

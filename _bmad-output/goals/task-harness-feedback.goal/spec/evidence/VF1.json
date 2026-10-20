@@ -1,0 +1,27 @@
+{
+  "scenarioId": "VF1",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF1.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T11:58:00.353Z",
+  "durationMs": 1955.4399999999998,
+  "testResults": [
+    {
+      "name": "[VF1] a spec folder with three loader failures: the reply is the counted header, each failure line in loader order, then the hint",
+      "status": "passed",
+      "duration": 938.376
+    },
+    {
+      "name": "[VF1] the status run reason holds exactly the three failure lines: no header, no hint",
+      "status": "passed",
+      "duration": 495.70799999999997
+    },
+    {
+      "name": "[VF1] the header and the hint name the path as typed; the lines and the run reason are the same three failures",
+      "status": "passed",
+      "duration": 521.356
+    }
+  ],
+  "_sourceHash": "3ff23f5975bf9260",
+  "_keyId": "53bde7c7",
+  "_hmac": "ed68e7c0060098a531d5a659ba0d40a9884eed5cbb777405b4c2e4a33d9817c5"
+}

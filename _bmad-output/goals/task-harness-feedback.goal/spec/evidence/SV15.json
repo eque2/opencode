@@ -1,0 +1,37 @@
+{
+  "scenarioId": "SV15",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV15.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:37:17.561Z",
+  "durationMs": 12748.906,
+  "testResults": [
+    {
+      "name": "[SV15] each task, obligation and scenario carries its state, its tags, its blocked cause, its start and end times and, for a task, its spans, as the snapshot holds them",
+      "status": "passed",
+      "duration": 2001.658
+    },
+    {
+      "name": "[SV15] the run carries its title, spec id, path, start and end times, and each scenario carries its loader title with no leading id",
+      "status": "passed",
+      "duration": 2016.0110000000002
+    },
+    {
+      "name": "[SV15] the projection derives no state of its own: after every fact it shows the machine's states, class tags only in their order, no phase or waits: tag, and waits that follow the machine, not the plan",
+      "status": "passed",
+      "duration": 4017.2160000000003
+    },
+    {
+      "name": "[SV15] the old run-state and waitingOn derivations from the plan no longer exist",
+      "status": "passed",
+      "duration": 884.593
+    },
+    {
+      "name": "[SV15] an obligation, which never blocks, carries no blocked cause, while blocked tasks and scenarios do",
+      "status": "passed",
+      "duration": 3829.428
+    }
+  ],
+  "_sourceHash": "3174eed10b7f47e2",
+  "_keyId": "53bde7c7",
+  "_hmac": "b19ddb930619f0f3453e34d04aeb65350c24a9f49c483f4c8e61ecc16e401819"
+}

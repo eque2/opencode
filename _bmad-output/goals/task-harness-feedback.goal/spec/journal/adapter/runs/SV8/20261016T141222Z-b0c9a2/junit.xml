@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="44" failures="0" skipped="0" time="9.115771">
+  <testsuite name="test/task/verify-spec-SV8.spec.ts" file="test/task/verify-spec-SV8.spec.ts" tests="2" assertions="44" failures="0" skipped="0" time="3.78" hostname="mac-studio-m1">
+    <testcase name="[SV8] with a live run of release-notes, /task for a valid spec starts nothing and answers one line naming the live run&apos;s spec and path" classname="" time="2.759085" file="test/task/verify-spec-SV8.spec.ts" line="70" assertions="33" />
+    <testcase name="[SV8] a claim whose background job does not start is released, so the next /task is not busy" classname="" time="1.021053" file="test/task/verify-spec-SV8.spec.ts" line="137" assertions="11" />
+  </testsuite>
+</testsuites>

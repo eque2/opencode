@@ -1,0 +1,22 @@
+{
+  "scenarioId": "VF2",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF2.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:11:42.369Z",
+  "durationMs": 1699.769,
+  "testResults": [
+    {
+      "name": "[VF2] with a run live in the directory, /task on a faulty spec gets the refusal message in the session",
+      "status": "passed",
+      "duration": 927.524
+    },
+    {
+      "name": "[VF2] the status file still shows the live run after the refusal, and the live run keeps the lease",
+      "status": "passed",
+      "duration": 772.245
+    }
+  ],
+  "_sourceHash": "743e039510b36857",
+  "_keyId": "53bde7c7",
+  "_hmac": "c7ef03792d17cb97b63308680175a9e2fa4ce69b6a7c87287eec57696610045c"
+}

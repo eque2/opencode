@@ -1,0 +1,27 @@
+{
+  "scenarioId": "RM10",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM10.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T11:59:33.156Z",
+  "durationMs": 109.17,
+  "testResults": [
+    {
+      "name": "[RM10] the plan holds two independent leaves T1.1 and T1.2, and both are building",
+      "status": "passed",
+      "duration": 48.437
+    },
+    {
+      "name": "[RM10] after T1.1 is budget exhausted the run keeps running while T1.2 builds, proves and is verified, and settles budget exhausted only when T1.2 is final",
+      "status": "passed",
+      "duration": 34.214
+    },
+    {
+      "name": "[RM10] the run settles on whichever final state T1.2 reaches, and the outcome stays the budget exhaustion of T1.1",
+      "status": "passed",
+      "duration": 26.519000000000002
+    }
+  ],
+  "_sourceHash": "80533aefd1214d7f",
+  "_keyId": "53bde7c7",
+  "_hmac": "199035b0db6b57e6fd1511c51b6804780b129e5f67f0c82b673fce3f91e7b8cc"
+}

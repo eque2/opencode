@@ -1,0 +1,423 @@
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/config/config.test.ts:
+[03:50:17.506] INFO (#55199): creating instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ads631tudp",
+}
+[03:50:17.507] INFO (#55199): fromDirectory {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ads631tudp",
+}
+[03:50:17.666] INFO (#55217): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/config.json",
+}
+[03:50:17.667] INFO (#55217): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.json",
+}
+[03:50:17.667] INFO (#55217): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.jsonc",
+}
+[03:50:17.732] INFO (#55222): disposing all instances
+[03:50:17.733] INFO (#55222): disposing instance {
+  directory: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ads631tudp",
+}
+
+test/plugin/github-copilot-models.test.ts:
+[03:50:41.264] WARN (#60466): Copilot model list failed {
+  error: {
+    _tag: "CopilotModels.Error",
+    message: "timeout",
+    cause: 475 |   expect(models["claude-opus-4.7"].api.npm).toBe("@ai-sdk/anthropic")
+476 |   expect(models["claude-opus-4.7"].variants).toBeUndefined()
+477 | })
+478 | 
+479 | test("remaps fallback oauth model urls to the enterprise host", async () => {
+480 |   stubFetch(() => Promise.reject(new Error("timeout")))
+                                           ^
+error: timeout
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:480:38)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/plugin/github-copilot-models.test.ts:487:40)
+,
+  },
+} {
+  category: "provider.discovery",
+}
+
+test/server/httpapi-mdns.test.ts:
+[03:52:24.084] WARN (#1235787): mDNS enabled but hostname is loopback; skipping mDNS publish
+
+test/task/engine-xstate-graph.test.ts:
+release-notes walk 338 keys 746 edges
+live-check walks 23 46 108 292
+negative control 398 keys 806 edges 33 stuck
+reduction 292 1310 27 39
+
+test/acp/service-session.test.ts:
+[04:01:06.135] ERROR (#2950502): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+[04:01:06.136] ERROR (#2950503): failed to abort ACP backing session {
+  error: {
+    _tag: "ACPServiceFailureError",
+    safeMessage: "OpenCode service failure",
+    service: "session",
+  },
+  sessionID: "ses_new",
+}
+
+test/control-plane/workspace.test.ts:
+[04:01:08.694] INFO (#2967488): disposing all instances
+[04:01:15.947] INFO (#3066208): disposing all instances
+
+test/session/llm.test.ts:
+[04:03:09.648] INFO (#3959025): stream {
+  providerID: "openai",
+  modelID: "gpt-5.2",
+  "session.id": "session-test-native-flag-off",
+  small: "false",
+  agent: "test",
+  mode: "primary",
+}
+[04:03:09.656] INFO (#3959156): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/config.json",
+}
+[04:03:09.657] INFO (#3959156): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.json",
+}
+[04:03:09.657] INFO (#3959156): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.jsonc",
+}
+[04:03:09.658] INFO (#3959152): loading {
+  path: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-hyz83cmt2p9/opencode.json",
+}
+[04:03:09.801] INFO (#3959151): providers resolved {
+  providers: [ "openai:config" ],
+  count: 1,
+} {
+  category: "provider.state",
+}
+[04:03:09.802] INFO (#3959025): llm runtime selected {
+  "llm.runtime": "ai-sdk",
+  "llm.provider": "openai",
+  "llm.model": "gpt-5.2",
+}
+[04:03:09.806] INFO (#3959504): LLM prompt {
+  providerID: "openai",
+  modelID: "gpt-5.2",
+  "session.id": "session-test-native-flag-off",
+  messageCount: 2,
+  toolCount: 0,
+} {
+  category: "llm.prompt",
+}
+[04:03:09.818] INFO (#3959025): LLM step finish {
+  reason: "stop",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: 0,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: 0,
+  totalTokens: 2,
+  copilotNanoAiu: undefined,
+} {
+  category: "llm.usage",
+}
+[04:03:09.818] INFO (#3959025): LLM finish {
+  reason: "stop",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: 0,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: 0,
+  totalTokens: 2,
+  copilotNanoAiu: undefined,
+} {
+  category: "llm.usage",
+}
+[04:03:09.992] INFO (#3960690): stream {
+  providerID: "openai",
+  modelID: "gpt-5.2",
+  "session.id": "session-test-native",
+  small: "false",
+  agent: "test",
+  mode: "primary",
+}
+[04:03:10.000] INFO (#3960822): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/config.json",
+}
+[04:03:10.000] INFO (#3960822): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.json",
+}
+[04:03:10.001] INFO (#3960822): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.jsonc",
+}
+[04:03:10.001] INFO (#3960818): loading {
+  path: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-zhsiyrl3iq8/opencode.json",
+}
+[04:03:10.140] INFO (#3960817): providers resolved {
+  providers: [ "openai:config" ],
+  count: 1,
+} {
+  category: "provider.state",
+}
+[04:03:10.141] INFO (#3960690): llm runtime selected {
+  "llm.runtime": "native",
+  "llm.provider": "openai",
+  "llm.model": "gpt-5.2",
+}
+[04:03:10.147] INFO (#3960690): LLM step finish {
+  reason: "stop",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+[04:03:10.147] INFO (#3960690): LLM finish {
+  reason: "stop",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+[04:03:10.319] INFO (#3962348): stream {
+  providerID: "openai",
+  modelID: "gpt-5.2",
+  "session.id": "session-test-native-injected-tool",
+  small: "false",
+  agent: "test",
+  mode: "primary",
+}
+[04:03:10.326] INFO (#3962480): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/config.json",
+}
+[04:03:10.327] INFO (#3962480): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.json",
+}
+[04:03:10.327] INFO (#3962480): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.jsonc",
+}
+[04:03:10.328] INFO (#3962476): loading {
+  path: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-wdyu7itaw0c/opencode.json",
+}
+[04:03:10.468] INFO (#3962475): providers resolved {
+  providers: [ "openai:config" ],
+  count: 1,
+} {
+  category: "provider.state",
+}
+[04:03:10.469] INFO (#3962348): llm runtime selected {
+  "llm.runtime": "native",
+  "llm.provider": "openai",
+  "llm.model": "gpt-5.2",
+}
+[04:03:10.473] INFO (#3962348): LLM step finish {
+  reason: "tool-calls",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+[04:03:10.473] INFO (#3962348): LLM finish {
+  reason: "tool-calls",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+[04:03:10.656] INFO (#3964008): stream {
+  providerID: "openai",
+  modelID: "gpt-5.2",
+  "session.id": "session-test-native-tool",
+  small: "false",
+  agent: "test",
+  mode: "primary",
+}
+[04:03:10.664] INFO (#3964140): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/config.json",
+}
+[04:03:10.665] INFO (#3964140): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.json",
+}
+[04:03:10.665] INFO (#3964140): loading {
+  path: "/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-data-94322/config/opencode/opencode.jsonc",
+}
+[04:03:10.666] INFO (#3964136): loading {
+  path: "/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-ld0j7v5kucf/opencode.json",
+}
+[04:03:10.805] INFO (#3964135): providers resolved {
+  providers: [ "openai:config" ],
+  count: 1,
+} {
+  category: "provider.state",
+}
+[04:03:10.806] INFO (#3964008): llm runtime selected {
+  "llm.runtime": "native",
+  "llm.provider": "openai",
+  "llm.model": "gpt-5.2",
+}
+[04:03:10.809] INFO (#3964008): LLM step finish {
+  reason: "tool-calls",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+[04:03:10.809] INFO (#3964008): LLM finish {
+  reason: "tool-calls",
+  inputTokens: 1,
+  outputTokens: 1,
+  cacheReadInputTokens: undefined,
+  cacheWriteInputTokens: undefined,
+  reasoningTokens: undefined,
+  totalTokens: 2,
+} {
+  category: "llm.usage",
+}
+
+test/cli/tui/plugin-add.test.ts:
+[tui.plugin] failed to resolve tui plugin: Plugin directory /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-4sui5jp2plf/retry-plugin is missing package.json or index file {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-4sui5jp2plf/retry-plugin",
+  retry: false,
+  error: {
+    type: "PluginTargetError",
+    message: "Plugin directory /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-4sui5jp2plf/retry-plugin is missing package.json or index file",
+    stack: "Error: Plugin directory /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-4sui5jp2plf/retry-plugin is missing package.json or index file\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:253:17)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8392:9)\n    at processTicksAndRejections (native)",
+    formatted: "Error: Plugin directory /private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-4sui5jp2plf/retry-plugin is missing package.json or index file\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:253:17)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8392:9)\n    at processTicksAndRejections (native)",
+  },
+}
+
+test/cli/tui/plugin-lifecycle.test.ts:
+[tui.plugin] failed to initialize tui plugin: bad plugin {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-nadgdtqbi5/bad-plugin.ts",
+  id: "demo.bad",
+  error: {
+    type: "Error",
+    message: "bad plugin",
+    stack: "Error: bad plugin\n    at tui (/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-nadgdtqbi5/bad-plugin.ts:8:15)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+    formatted: "Error: bad plugin\n    at tui (/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-nadgdtqbi5/bad-plugin.ts:8:15)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+  },
+}
+[tui.plugin] timed out cleaning up tui plugin {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-6pk7tbs8tcv/timeout-plugin.ts",
+  id: "demo.timeout",
+  timeout: 25,
+}
+
+test/cli/tui/plugin-loader-entrypoint.test.ts:
+[tui.plugin] tui plugin has no entrypoint {
+  path: "acme-plugin@1.0.0",
+  retry: false,
+  message: "Plugin acme-plugin@1.0.0 does not expose a tui entrypoint",
+}
+[tui.plugin] failed to resolve tui plugin entry: Plugin acme-plugin@1.0.0 resolved tui entry outside plugin directory {
+  path: "acme-plugin@1.0.0",
+  retry: false,
+  error: {
+    type: "PluginEntryError",
+    message: "Plugin acme-plugin@1.0.0 resolved tui entry outside plugin directory",
+    stack: "Error: Plugin acme-plugin@1.0.0 resolved tui entry outside plugin directory\n    at outsidePluginDirectory (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:137:10)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:146:17)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9)\n    at <anonymous> (node:fs:363:13)\n    at processTicksAndRejections (native)",
+    formatted: "Error: Plugin acme-plugin@1.0.0 resolved tui entry outside plugin directory\n    at outsidePluginDirectory (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:137:10)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:146:17)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9)\n    at <anonymous> (node:fs:363:13)\n    at processTicksAndRejections (native)",
+  },
+}
+[tui.plugin] failed to load tui plugin: Plugin acme-plugin@1.0.0 must default export either server() or tui(), not both {
+  path: "acme-plugin@1.0.0",
+  target: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-c2r2h0udxyc/mods/acme-plugin/tui.js",
+  retry: false,
+  error: {
+    type: "PluginExportError",
+    message: "Plugin acme-plugin@1.0.0 must default export either server() or tui(), not both",
+    stack: "Error: Plugin acme-plugin@1.0.0 must default export either server() or tui(), not both\n    at v1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:419:7)\n    at readV1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:439:50)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+    formatted: "Error: Plugin acme-plugin@1.0.0 must default export either server() or tui(), not both\n    at v1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:419:7)\n    at readV1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:439:50)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+  },
+}
+[tui.plugin] tui plugin has no entrypoint {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-nq8wqolazcf/mods/dir-plugin",
+  retry: false,
+  message: "Plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-nq8wqolazcf/mods/dir-plugin does not expose a tui entrypoint",
+}
+
+test/cli/tui/plugin-loader.test.ts:
+[tui.plugin] failed to load tui plugin: Unexpected Ï {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/binary-plugin",
+  target: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/binary-plugin",
+  retry: false,
+  error: {
+    message: "Unexpected Ï",
+    type: "BuildMessage",
+    formatted: "{\n  \"name\": \"BuildMessage\",\n  \"position\": {\n    \"lineText\": \"Ïúíþ\\f\\u0000\\u0000\\u0001\",\n    \"file\": \"/private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/binary-plugin\",\n    \"namespace\": \"file\",\n    \"line\": 1,\n    \"column\": 1,\n    \"length\": 1,\n    \"offset\": 0\n  },\n  \"message\": \"Unexpected Ï\",\n  \"level\": \"error\"\n}",
+  },
+}
+[tui.plugin] failed to load tui plugin: Plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts must default export an object with tui() {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts",
+  target: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts",
+  retry: false,
+  error: {
+    type: "PluginExportError",
+    message: "Plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts must default export an object with tui()",
+    stack: "Error: Plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts must default export an object with tui()\n    at v1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:426:24)\n    at readV1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:439:50)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+    formatted: "Error: Plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/invalid-shape-plugin.ts must default export an object with tui()\n    at v1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:426:24)\n    at readV1Plugin (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:439:50)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:757:22)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+  },
+}
+[tui.plugin] failed to load tui plugin: Path plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts must export id {
+  path: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts",
+  target: "file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts",
+  retry: false,
+  error: {
+    type: "PluginExportError",
+    message: "Path plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts must export id",
+    stack: "Error: Path plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts must export id\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:450:40)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+    formatted: "Error: Path plugin file:///private/var/folders/x_/mlr9mcxd5gq0csqytn1dlr1c0000gn/T/opencode-test-a3v69ze0fah/missing-id-plugin.ts must export id\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/src/plugin/shared.ts:450:40)\n    at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:977:28)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:783:7)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2467:9)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2519:19)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2530:31)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:767:3)\n    at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:802:38)\n    at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:451:88)\n    at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:400:23)\n    at runInAsyncScope (node:async_hooks:137:23)\n    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:806:17)\n    at processTicksAndRejections (native)",
+  },
+}
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>j"; binding was skipped until the token is registered
+
+test/cli/run/footer.view.test.tsx:
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>down"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>down"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+[unknown-token] [Keymap] Unknown token "leader" in key sequence "<leader>e"; binding was skipped until the token is registered
+
+ 4001 pass
+ 41 skip
+ 1 todo
+ 0 fail
+ 50 snapshots, 33610 expect() calls
+Ran 4043 tests across 281 files. [1181.77s]

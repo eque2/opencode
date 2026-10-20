@@ -1,0 +1,27 @@
+{
+  "scenarioId": "VF20",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF20.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:42:49.153Z",
+  "durationMs": 7999.657999999999,
+  "testResults": [
+    {
+      "name": "[VF20] T1.1 trusted in one slice, then budget exhausted in a later slice: /task on the T1.3 task folder is refused with the R12 line naming T1.3 and T1.1",
+      "status": "passed",
+      "duration": 2995.5099999999998
+    },
+    {
+      "name": "[VF20] the latest slice decides, not any slice: the same two slices stored in the other order let the T1.3 run start",
+      "status": "passed",
+      "duration": 2492.422
+    },
+    {
+      "name": "[VF20] only the budget-exhausted slice stored: the T1.3 run is refused with the same R12 line",
+      "status": "passed",
+      "duration": 2511.726
+    }
+  ],
+  "_sourceHash": "3f3c5d386bb44422",
+  "_keyId": "53bde7c7",
+  "_hmac": "b9b9f0cefd09add218826ce5948577a2c2d972dff1876a59b0e088cabca73187"
+}

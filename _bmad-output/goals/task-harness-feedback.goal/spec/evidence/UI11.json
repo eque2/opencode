@@ -1,0 +1,22 @@
+{
+  "scenarioId": "UI11",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI11.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T18:16:54.507Z",
+  "durationMs": 4281.51,
+  "testResults": [
+    {
+      "name": "[UI11] the given status: T1.2 running since its start, T1.1 ended 3m 12s after its start, T1.3 never started; the run is live",
+      "status": "passed",
+      "duration": 1148.457
+    },
+    {
+      "name": "[UI11] while live: the running task counts from its start, the ended task is fixed, the unstarted task is blank, in the Gantt, the Matrix, the Board card, the HUD line and the Peek heading",
+      "status": "passed",
+      "duration": 3133.053
+    }
+  ],
+  "_sourceHash": "50099f9011f003b0",
+  "_keyId": "53bde7c7",
+  "_hmac": "47c2c4289624401ebf516ecdfca609ee46617ea0bc5bfc8f16fb52bdb9006ed4"
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="38" failures="0" skipped="0" time="36.644888">
+  <testsuite name="test/task/verify-spec-SV19.spec.ts" file="test/task/verify-spec-SV19.spec.ts" tests="3" assertions="38" failures="0" skipped="0" time="12.839" hostname="mac-studio-m1">
+    <testcase name="[SV19] the spine&apos;s AD-17 table reads as the final allowlist: its rows, identifiers and files" classname="" time="0.329107" file="test/task/verify-spec-SV19.spec.ts" line="232" assertions="11" />
+    <testcase name="[SV19] at the end of phase 2 the audit passed, and its entries for the harness source equal the final entries for that tree" classname="" time="5.678895" file="test/task/verify-spec-SV19.spec.ts" line="264" assertions="13" />
+    <testcase name="[SV19] at the end of the goal the whole allowlist equals the spine&apos;s final allowlist and no interim entry remains" classname="" time="6.832346" file="test/task/verify-spec-SV19.spec.ts" line="299" assertions="14" />
+  </testsuite>
+</testsuites>

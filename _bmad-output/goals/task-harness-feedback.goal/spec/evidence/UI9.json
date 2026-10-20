@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI9",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI9.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T18:04:56.698Z",
+  "durationMs": 14704.473999999998,
+  "testResults": [
+    {
+      "name": "[UI9] the given status: T1.2 budget exhausted, T1.3 failed, and T1.4, T1.5 and T1 blocked by them, each with its reason",
+      "status": "passed",
+      "duration": 4796.692
+    },
+    {
+      "name": "[UI9] each of the seven designs expanded: the shared region lists each stopped task with its reason or upstream cause",
+      "status": "passed",
+      "duration": 3890.572
+    },
+    {
+      "name": "[UI9] each of the seven designs expanded: the Peek BUILDER heading shows the selected task's reason in full, wrapped, in its tone",
+      "status": "passed",
+      "duration": 3541.328
+    },
+    {
+      "name": "[UI9] the collapsed views keep only the glyph: no reason and no cause, and each stopped task shown by its glyph",
+      "status": "passed",
+      "duration": 2475.882
+    }
+  ],
+  "_sourceHash": "63202e426e09d194",
+  "_keyId": "53bde7c7",
+  "_hmac": "263b3a41a90206537b440eb9ccb4f013dbd3bc3e5483737efc032ce78603cb55"
+}

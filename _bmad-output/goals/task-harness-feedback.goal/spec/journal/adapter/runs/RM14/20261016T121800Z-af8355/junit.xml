@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="171" failures="0" skipped="0" time="14.740586">
+  <testsuite name="test/task/verify-spec-RM14.spec.ts" file="test/task/verify-spec-RM14.spec.ts" tests="3" assertions="171" failures="0" skipped="0" time="4.631" hostname="mac-studio-m1">
+    <testcase name="[RM14] default 4: a cancel with a reason cancels the building, ready and waiting tasks, keeps the trusted task and every obligation, and ends the run cancelled with that reason" classname="" time="1.79699" file="test/task/verify-spec-RM14.spec.ts" line="117" assertions="83" />
+    <testcase name="[RM14] default 4: a cancel after a task died gives the dead task&apos;s state, not cancelled" classname="" time="1.41547" file="test/task/verify-spec-RM14.spec.ts" line="141" assertions="5" />
+    <testcase name="[RM14] default 4: a run wall-clock stop cancels the unfinished units in the same way and gives the run.ended state, failed, as the outcome" classname="" time="1.420621" file="test/task/verify-spec-RM14.spec.ts" line="159" assertions="83" />
+  </testsuite>
+</testsuites>

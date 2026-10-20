@@ -1,0 +1,27 @@
+{
+  "scenarioId": "UI22",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI22.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-17T18:08:56.253Z",
+  "durationMs": 4281.957,
+  "testResults": [
+    {
+      "name": "[UI22] the harness's status has 13 scenarios and 5 stopped tasks",
+      "status": "passed",
+      "duration": 1548.65
+    },
+    {
+      "name": "[UI22] at 120 × 24 the region keeps 8 rows, the Peek's activity lines shrink first, pagedown reaches every entry, and a click on a STOPPED line selects its first task",
+      "status": "passed",
+      "duration": 1525.19
+    },
+    {
+      "name": "[UI22] under 149 cells the Board's right pane sits below the board; from 149 it sits beside it",
+      "status": "passed",
+      "duration": 1208.1170000000002
+    }
+  ],
+  "_sourceHash": "b5fb9c50d5bdc7ef",
+  "_keyId": "53bde7c7",
+  "_hmac": "9e3056df22a40f185a55b58fbd8727c75d499669d7d738ce3f05c265b021461d"
+}

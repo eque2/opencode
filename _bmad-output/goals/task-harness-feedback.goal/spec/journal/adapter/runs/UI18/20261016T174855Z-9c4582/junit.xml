@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="58" failures="0" skipped="0" time="20.878469">
+  <testsuite name="test/task/verify-spec-UI18.spec.ts" file="test/task/verify-spec-UI18.spec.ts" tests="4" assertions="58" failures="0" skipped="0" time="12.179" hostname="mac-studio-m1">
+    <testcase name="[UI18] the harness&apos;s status has a blocked task and a blocked scenario, and ⊖ is the warning tone&apos;s own" classname="" time="4.263637" file="test/task/verify-spec-UI18.spec.ts" line="137" assertions="15" />
+    <testcase name="[UI18] every design draws the blocked task and the blocked scenario as ⊖ in the warning tone" classname="" time="3.815198" file="test/task/verify-spec-UI18.spec.ts" line="158" assertions="28" />
+    <testcase name="[UI18] the Matrix legend lists ⊖ blocked" classname="" time="1.533154" file="test/task/verify-spec-UI18.spec.ts" line="195" assertions="2" />
+    <testcase name="[UI18] a Ticker toast for a task that turns blocked shows its reason, through the host" classname="" time="2.568028" file="test/task/verify-spec-UI18.spec.ts" line="221" assertions="13" />
+  </testsuite>
+</testsuites>

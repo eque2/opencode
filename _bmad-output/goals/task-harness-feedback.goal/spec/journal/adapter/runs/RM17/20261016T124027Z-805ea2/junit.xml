@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="44" failures="0" skipped="0" time="11.84253">
+  <testsuite name="test/task/verify-spec-RM17.spec.ts" file="test/task/verify-spec-RM17.spec.ts" tests="3" assertions="44" failures="0" skipped="0" time="3.897" hostname="mac-studio-m1">
+    <testcase name="[RM17] with T1.1-T1.4 trusted, every scenario whose needs are trusted trusted, and T9 untrusted, T1.5 is waiting on T9 and the run is waiting, not ended" classname="" time="1.542722" file="test/task/verify-spec-RM17.spec.ts" line="54" assertions="24" />
+    <testcase name="[RM17] when outside.trusted for T9 is applied T1.5 becomes ready, and a second trust of T9 changes nothing" classname="" time="1.524806" file="test/task/verify-spec-RM17.spec.ts" line="97" assertions="15" />
+    <testcase name="[RM17] a trust of T9 while T1.3 or T1.4 is not trusted leaves T1.5 waiting on that task alone" classname="" time="0.83164" file="test/task/verify-spec-RM17.spec.ts" line="134" assertions="5" />
+  </testsuite>
+</testsuites>

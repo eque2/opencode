@@ -1,0 +1,30 @@
+[
+  {
+    "filepath": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/pass.test.ts",
+    "tasks": [
+      {
+        "name": "[FX2] first pass",
+        "result": {
+          "state": "pass",
+          "duration": 0.043000000000000003
+        }
+      },
+      {
+        "name": "group",
+        "tasks": [
+          {
+            "name": "[FX2] second pass",
+            "result": {
+              "state": "pass",
+              "duration": 0.019
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 26
+    }
+  }
+]

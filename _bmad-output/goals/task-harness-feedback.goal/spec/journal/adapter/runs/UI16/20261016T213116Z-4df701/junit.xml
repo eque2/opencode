@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="77" failures="0" skipped="0" time="15.203623">
+  <testsuite name="test/task/verify-spec-UI16.spec.ts" file="test/task/verify-spec-UI16.spec.ts" tests="4" assertions="77" failures="0" skipped="0" time="11.673" hostname="mac-studio-m1">
+    <testcase name="[UI16] the harness&apos;s warned status holds the two failure lines; every run-state surface shows the warning&apos;s one line" classname="" time="1.220664" file="test/task/verify-spec-UI16.spec.ts" line="314" assertions="31" />
+    <testcase name="[UI16] the shared region of every expanded view lists the warning&apos;s line, each failure line, then the note" classname="" time="0.849929" file="test/task/verify-spec-UI16.spec.ts" line="340" assertions="14" />
+    <testcase name="[UI16] the warning goes from every surface and every shared region once the next spec check validates" classname="" time="1.18377" file="test/task/verify-spec-UI16.spec.ts" line="363" assertions="22" />
+    <testcase name="[UI16] the real plugin toasts the warning once while the status keeps it, and the warning goes when the status loses it" classname="" time="8.421115" file="test/task/verify-spec-UI16.spec.ts" line="527" assertions="10" />
+  </testsuite>
+</testsuites>

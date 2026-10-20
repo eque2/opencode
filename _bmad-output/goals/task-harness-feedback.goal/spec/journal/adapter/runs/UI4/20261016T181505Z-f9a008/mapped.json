@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI4.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI4] each lane cell shows the span that holds its middle time; cells before the first span, after the last, and with no span are blank",
+        "result": {
+          "state": "pass",
+          "duration": 302.741
+        }
+      },
+      {
+        "name": "[UI4] an open span runs to now while the view is live and to the heartbeat while it is still",
+        "result": {
+          "state": "pass",
+          "duration": 285.147
+        }
+      },
+      {
+        "name": "[UI4] a final state with no length takes one cell, and a blocked task shows one warning cell",
+        "result": {
+          "state": "pass",
+          "duration": 56.292
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 8437
+    }
+  }
+]

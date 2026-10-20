@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI25.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI25] the old harness's and the phase-1 code's status files have no tags, no title and no heartbeat",
+        "result": {
+          "state": "pass",
+          "duration": 105.727
+        }
+      },
+      {
+        "name": "[UI25] the view of an old status file is still at any clock; a fresh heartbeat with tags makes a view live",
+        "result": {
+          "state": "pass",
+          "duration": 315.79
+        }
+      },
+      {
+        "name": "[UI25] every design shows the muted older-status line",
+        "result": {
+          "state": "pass",
+          "duration": 950.521
+        }
+      },
+      {
+        "name": "[UI25] the tasks show their display-table glyph and state label, with no Board column, count or STOPPED group derived from them",
+        "result": {
+          "state": "pass",
+          "duration": 1167.2910000000002
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 8478
+    }
+  }
+]

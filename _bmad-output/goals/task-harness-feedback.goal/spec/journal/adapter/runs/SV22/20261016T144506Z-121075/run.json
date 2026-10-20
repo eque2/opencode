@@ -1,0 +1,40 @@
+{
+  "runId": "20261016T144506Z-121075",
+  "adapter": "bun-junit-scenario-adapter.mjs",
+  "mode": "real",
+  "cwd": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode",
+  "file": "./test/task/verify-spec-SV22.spec.ts",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV22.spec.ts",
+  "junit": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/_bmad-output/goals/task-harness-feedback.goal/spec/journal/adapter/runs/SV22/20261016T144506Z-121075/junit.xml",
+  "log": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/_bmad-output/goals/task-harness-feedback.goal/spec/journal/adapter/runs/SV22/20261016T144506Z-121075/run.log",
+  "bun": "bun",
+  "command": [
+    "bun",
+    "test",
+    "--timeout=30000",
+    "--reporter=junit",
+    "--reporter-outfile=/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/_bmad-output/goals/task-harness-feedback.goal/spec/journal/adapter/runs/SV22/20261016T144506Z-121075/junit.xml",
+    "./test/task/verify-spec-SV22.spec.ts"
+  ],
+  "hashBefore": "c314daf7d9f437bd01f11917bd8a239716b6cc4d63a732e05846459056bcd582",
+  "bunExit": 1,
+  "signal": null,
+  "durationMs": 27692,
+  "hashAfter": "c314daf7d9f437bd01f11917bd8a239716b6cc4d63a732e05846459056bcd582",
+  "summary": {
+    "ran": 1,
+    "files": 1,
+    "pass": 0,
+    "fail": 1,
+    "skip": 0,
+    "todo": 0
+  },
+  "counts": {
+    "tests": 1,
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0
+  },
+  "decision": "handed-off",
+  "adapterExit": 1
+}

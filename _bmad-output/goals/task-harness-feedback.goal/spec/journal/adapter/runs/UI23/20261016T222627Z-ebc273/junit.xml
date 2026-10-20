@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="37" failures="0" skipped="0" time="20.969874">
+  <testsuite name="test/task/verify-spec-UI23.spec.ts" file="test/task/verify-spec-UI23.spec.ts" tests="2" assertions="37" failures="0" skipped="0" time="15.939" hostname="mac-studio-m1">
+    <testcase name="[UI23] a root session deleted while its run goes on: when the run machine is final, the failed say is logged, the supervisor closes, the job ends, the lease is free and the next /task is not busy" classname="" time="10.236521" file="test/task/verify-spec-UI23.spec.ts" line="347" assertions="21" />
+    <testcase name="[UI23] a root session deleted by the product&apos;s delete: the run ends, the supervisor closes, the job ends, the lease is free and the next /task is not busy" classname="" time="5.703392" file="test/task/verify-spec-UI23.spec.ts" line="370" assertions="16" />
+  </testsuite>
+</testsuites>

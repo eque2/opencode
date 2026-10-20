@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="23" failures="0" skipped="0" time="32.954413">
+  <testsuite name="test/task/verify-spec-SV22.spec.ts" file="test/task/verify-spec-SV22.spec.ts" tests="1" assertions="23" failures="0" skipped="0" time="12.172" hostname="mac-studio-m1">
+    <testcase name="[SV22] the wall clock of a building task fails only that task, while an independent task keeps building" classname="" time="12.172443" file="test/task/verify-spec-SV22.spec.ts" line="60" assertions="23" />
+  </testsuite>
+</testsuites>

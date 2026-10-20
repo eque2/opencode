@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="35" failures="0" skipped="0" time="7.028165">
+  <testsuite name="test/task/verify-spec-VF1.spec.ts" file="test/task/verify-spec-VF1.spec.ts" tests="3" assertions="35" failures="0" skipped="0" time="1.954" hostname="mac-studio-m1">
+    <testcase name="[VF1] a spec folder with three loader failures: the reply is the counted header, each failure line in loader order, then the hint" classname="" time="0.938376" file="test/task/verify-spec-VF1.spec.ts" line="79" assertions="19" />
+    <testcase name="[VF1] the status run reason holds exactly the three failure lines: no header, no hint" classname="" time="0.495708" file="test/task/verify-spec-VF1.spec.ts" line="117" assertions="10" />
+    <testcase name="[VF1] the header and the hint name the path as typed; the lines and the run reason are the same three failures" classname="" time="0.521356" file="test/task/verify-spec-VF1.spec.ts" line="136" assertions="6" />
+  </testsuite>
+</testsuites>

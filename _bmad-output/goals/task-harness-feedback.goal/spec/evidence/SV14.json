@@ -1,0 +1,42 @@
+{
+  "scenarioId": "SV14",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV14.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:27:06.749Z",
+  "durationMs": 16887.725,
+  "testResults": [
+    {
+      "name": "[SV14] the inspection finds each construct in a planted source (negative control)",
+      "status": "passed",
+      "duration": 253.973
+    },
+    {
+      "name": "[SV14] the session watch and the hooks hold no Ref, no MutableHashMap, no other mutable cell or keyed collection, no polled loop and no module-level let",
+      "status": "passed",
+      "duration": 84.552
+    },
+    {
+      "name": "[SV14] the phase-1 watch and hook state is gone: no builderTurn in the sessions module, no hook maps, take, watch or unwatch",
+      "status": "passed",
+      "duration": 81.532
+    },
+    {
+      "name": "[SV14] in the task supervisor the stall is the delayed transition of the watched turn, and the spend cap and the idle end are guards",
+      "status": "passed",
+      "duration": 30.608
+    },
+    {
+      "name": "[SV14] a live supervisor stalls only when its own clock passes streamIdle, never as wall time passes",
+      "status": "passed",
+      "duration": 7648.023
+    },
+    {
+      "name": "[SV14] a live supervisor decides the idle end and the spend cap by its guards, with its clock still",
+      "status": "passed",
+      "duration": 8789.037
+    }
+  ],
+  "_sourceHash": "fe380f92c5d0a185",
+  "_keyId": "53bde7c7",
+  "_hmac": "ae961d82ecd0dcf75c26c6de4934916bb48108a4d9ede2eee8bb132b000c49b9"
+}

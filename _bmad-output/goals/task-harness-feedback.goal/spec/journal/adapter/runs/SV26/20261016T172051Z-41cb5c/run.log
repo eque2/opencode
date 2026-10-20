@@ -1,0 +1,134 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-SV26.spec.ts:
+144 |       const failed = facts.flatMap((fact) => (fact.type === "task.failed" ? [fact] : []))
+145 |       for (const fact of failed) expect(fact.reason).toBe("harness error: the supervisor broke")
+146 |       // The leaves ready at the start are T1.1 and T1.2 (T1.3 to T1.5 come after them). One supervisor error counts
+147 |       // as all three worker failures: each of the two units gets one supervisor and records task.failed once, and is
+148 |       // never supervised again. No worker ran: no task.started.
+149 |       expect({ spawned: spawned.toSorted(), failed: failed.map((fact) => fact.task).toSorted() }).toEqual({
+      ^
+error: expect(received).toEqual(expected)
+
+@@ -4,3 +4,3 @@
+      "T1.2",
++     "T1.2",
+    ],
+@@ -8,3 +8,3 @@
+      "T1.1",
++     "T1.2",
+      "T1.2",
+
+- Expected  - 0
++ Received  + 2
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV26.spec.ts:149:99
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:1183:5
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:657:4)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at releaseTakers (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Queue.js:1595:11)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Queue.js:1608:5
+      at runTasks (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:172:15)
+      at afterScheduled (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:162:10)
+[17:21:00.418] ERROR (#12): 144 |       const failed = facts.flatMap((fact) => (fact.type === "task.failed" ? [fact] : []))
+145 |       for (const fact of failed) expect(fact.reason).toBe("harness error: the supervisor broke")
+146 |       // The leaves ready at the start are T1.1 and T1.2 (T1.3 to T1.5 come after them). One supervisor error counts
+147 |       // as all three worker failures: each of the two units gets one supervisor and records task.failed once, and is
+148 |       // never supervised again. No worker ran: no task.started.
+149 |       expect({ spawned: spawned.toSorted(), failed: failed.map((fact) => fact.task).toSorted() }).toEqual({
+      ^
+error: expect(received).toEqual(expected)
+
+@@ -4,3 +4,3 @@
+      "T1.2",
++     "T1.2",
+    ],
+@@ -8,3 +8,3 @@
+      "T1.1",
++     "T1.2",
+      "T1.2",
+
+- Expected  - 0
++ Received  + 2
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV26.spec.ts:149:99
+
+(fail) [SV26] a task supervisor that errors counts as three worker failures: its unit records task.failed with harness error: <defect> once, and the run still ends [3483.72ms]
+[17:21:02.811] ERROR (#2078): 201 |       expect(Exit.isSuccess(exit)).toBe(true)
+202 |       // The defect is logged.
+203 |       expect(logged(messages, "task harness: the run supervisor stopped with an error")).toBe(true)
+204 |       expect(logged(messages, "the run supervisor broke")).toBe(true)
+205 |       // The directory lease is released and the run is gone from the harness.
+206 |       expect(yield* real.live(directory)).toEqual(Option.none())
+      ^
+error: expect(received).toEqual(expected)
+
+- {}
++ {
++   "value": {
++     "path": "task-formats/blend/release-notes.spec",
++     "runID": "task_d3c3c9d3ec111a02",
++     "spec": "task-formats/blend/release-notes.spec",
++   },
++ }
+
+- Expected  - 1
++ Received  + 7
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV26.spec.ts:206:43
+
+201 |       expect(Exit.isSuccess(exit)).toBe(true)
+202 |       // The defect is logged.
+203 |       expect(logged(messages, "task harness: the run supervisor stopped with an error")).toBe(true)
+204 |       expect(logged(messages, "the run supervisor broke")).toBe(true)
+205 |       // The directory lease is released and the run is gone from the harness.
+206 |       expect(yield* real.live(directory)).toEqual(Option.none())
+      ^
+error: expect(received).toEqual(expected)
+
+- {}
++ {
++   "value": {
++     "path": "task-formats/blend/release-notes.spec",
++     "runID": "task_d3c3c9d3ec111a02",
++     "spec": "task-formats/blend/release-notes.spec",
++   },
++ }
+
+- Expected  - 1
++ Received  + 7
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV26.spec.ts:206:43
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9
+      at node:fs:363:13
+      at processTicksAndRejections (unknown:7:39)
+(fail) [SV26] a run supervisor that errors ends the job's wait: the Recorder stores nothing more, the defect is logged and the lease is released [2390.41ms]
+
+ 2 pass
+ 2 fail
+ 33 expect() calls
+Ran 4 tests across 1 file. [14.94s]

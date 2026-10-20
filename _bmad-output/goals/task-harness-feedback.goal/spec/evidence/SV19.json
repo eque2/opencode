@@ -1,0 +1,27 @@
+{
+  "scenarioId": "SV19",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV19.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:49:50.326Z",
+  "durationMs": 12840.348,
+  "testResults": [
+    {
+      "name": "[SV19] the spine's AD-17 table reads as the final allowlist: its rows, identifiers and files",
+      "status": "passed",
+      "duration": 329.10699999999997
+    },
+    {
+      "name": "[SV19] at the end of phase 2 the audit passed, and its entries for the harness source equal the final entries for that tree",
+      "status": "passed",
+      "duration": 5678.8949999999995
+    },
+    {
+      "name": "[SV19] at the end of the goal the whole allowlist equals the spine's final allowlist and no interim entry remains",
+      "status": "passed",
+      "duration": 6832.3460000000005
+    }
+  ],
+  "_sourceHash": "a1ef6e0fc3ef96f0",
+  "_keyId": "53bde7c7",
+  "_hmac": "5d2cf5ac4b9c087d0e237d5136c7b37b71a1e8eefe1e24d694a03fd609862c11"
+}

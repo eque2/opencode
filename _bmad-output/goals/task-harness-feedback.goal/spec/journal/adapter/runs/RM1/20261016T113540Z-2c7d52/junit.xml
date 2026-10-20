@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="1360" failures="0" skipped="0" time="3.308731">
+  <testsuite name="test/task/verify-spec-RM1.spec.ts" file="test/task/verify-spec-RM1.spec.ts" tests="5" assertions="1360" failures="0" skipped="0" time="0.929" hostname="mac-studio-m1">
+    <testcase name="[RM1] the release-notes plan loads, and the engine&apos;s first snapshot comes from its one generated machine" classname="" time="0.344053" file="test/task/verify-spec-RM1.spec.ts" line="159" assertions="129" />
+    <testcase name="[RM1] the root is parallel with exactly the regions active and outcome" classname="" time="0.094661" file="test/task/verify-spec-RM1.spec.ts" line="199" assertions="12" />
+    <testcase name="[RM1] active holds one region for each task in plan order, then each scenario, then each outside precondition" classname="" time="0.090462" file="test/task/verify-spec-RM1.spec.ts" line="215" assertions="24" />
+    <testcase name="[RM1] each task region is parallel with one evidence sub-region for each obligation and a work sub-region" classname="" time="0.09552" file="test/task/verify-spec-RM1.spec.ts" line="255" assertions="333" />
+    <testcase name="[RM1] every unit state has an explicit id, a meta record of unit, kind and state, and only closed-vocabulary tags" classname="" time="0.306909" file="test/task/verify-spec-RM1.spec.ts" line="300" assertions="862" />
+  </testsuite>
+</testsuites>

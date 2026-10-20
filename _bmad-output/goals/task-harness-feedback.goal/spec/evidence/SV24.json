@@ -1,0 +1,17 @@
+{
+  "scenarioId": "SV24",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV24.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T16:53:16.815Z",
+  "durationMs": 8159.86,
+  "testResults": [
+    {
+      "name": "[SV24] on resume the new task supervisor claims the reused T1.2 builder session, waits for the index entry before the prompt, and task_ready from it reaches the supervisor",
+      "status": "passed",
+      "duration": 8159.86
+    }
+  ],
+  "_sourceHash": "06eb5680662db45c",
+  "_keyId": "53bde7c7",
+  "_hmac": "85c4b7e7a3684eb6a642bc11113fe54c1715e124a601d2d430af01ac55fee64a"
+}

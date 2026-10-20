@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="136" failures="0" skipped="0" time="46.499107">
+  <testsuite name="test/task/verify-spec-SV16.spec.ts" file="test/task/verify-spec-SV16.spec.ts" tests="2" assertions="136" failures="0" skipped="0" time="30.016" hostname="mac-studio-m1">
+    <testcase name="[SV16] in a live run the writer writes each committed macrostep once, done last, each heartbeat touch rewrites the last snapshot with a fresh aliveAt, and nothing writes after done" classname="" time="24.436765" file="test/task/verify-spec-SV16.spec.ts" line="121" assertions="71" />
+    <testcase name="[SV16] under a burst of records and touches with no wait, each macrostep is written once in order, done last, and every touch rewrites the snapshot written just before it" classname="" time="5.580863" file="test/task/verify-spec-SV16.spec.ts" line="247" assertions="65" />
+  </testsuite>
+</testsuites>

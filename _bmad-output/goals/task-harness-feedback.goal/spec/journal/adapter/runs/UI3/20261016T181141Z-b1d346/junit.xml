@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="71" failures="0" skipped="0" time="13.1267">
+  <testsuite name="test/task/verify-spec-UI3.spec.ts" file="test/task/verify-spec-UI3.spec.ts" tests="4" assertions="71" failures="0" skipped="0" time="9.705" hostname="mac-studio-m1">
+    <testcase name="[UI3] the view is live while the run lacks ended and its heartbeat is at most 15 s old; still, ended or absent otherwise" classname="" time="3.042932" file="test/task/verify-spec-UI3.spec.ts" line="144" assertions="21" />
+    <testcase name="[UI3] while the view is live and the session owns its harness sessions, Tab, the watch key and esc twice act on the run" classname="" time="0.914736" file="test/task/verify-spec-UI3.spec.ts" line="379" assertions="14" />
+    <testcase name="[UI3] the run keys leave the run alone when the session does not own it, when the view is still or ended, and with no file" classname="" time="5.403397" file="test/task/verify-spec-UI3.spec.ts" line="442" assertions="23" />
+    <testcase name="[UI3] the stop key arms only while live, and a key armed while live stops nothing once the view is still or ended" classname="" time="0.346991" file="test/task/verify-spec-UI3.spec.ts" line="495" assertions="13" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,53 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI20.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI20] a cancel with no dead task: the outcome line is the stop and its first reason line",
+        "result": {
+          "state": "pass",
+          "duration": 1904.633
+        }
+      },
+      {
+        "name": "[UI20] a cancel after a dead task, and a dead task: the outcome line is the dead task's state",
+        "result": {
+          "state": "pass",
+          "duration": 2321.736
+        }
+      },
+      {
+        "name": "[UI20] a rejected scenario with every task trusted: the outcome line is failed: acceptance not proved",
+        "result": {
+          "state": "pass",
+          "duration": 1565.636
+        }
+      },
+      {
+        "name": "[UI20] a done run with one parked scenario: the outcome line is done · 1 scenario not run",
+        "result": {
+          "state": "pass",
+          "duration": 1750.194
+        }
+      },
+      {
+        "name": "[UI20] a subtree run: the summary starts with the task id and title, then from spec and the spec title",
+        "result": {
+          "state": "pass",
+          "duration": 129.864
+        }
+      },
+      {
+        "name": "[UI20] a spec that stopped validating and then validated again still gives the run-warning line",
+        "result": {
+          "state": "pass",
+          "duration": 1430.235
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 14894
+    }
+  }
+]

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="123" failures="0" skipped="0" time="39.277801">
+  <testsuite name="test/task/verify-spec-RM28.spec.ts" file="test/task/verify-spec-RM28.spec.ts" tests="5" assertions="123" failures="0" skipped="0" time="16.29" hostname="mac-studio-m1">
+    <testcase name="[RM28] the broken machine is the generated one until task.started enters the broken state" classname="" time="5.69961" file="test/task/verify-spec-RM28.spec.ts" line="67" assertions="6" />
+    <testcase name="[RM28] when task.started enters the broken state, apply dies with a defect that names the error" classname="" time="2.000693" file="test/task/verify-spec-RM28.spec.ts" line="90" assertions="8" />
+    <testcase name="[RM28] apply never returns a snapshot whose status is error" classname="" time="2.896278" file="test/task/verify-spec-RM28.spec.ts" line="116" assertions="57" />
+    <testcase name="[RM28] the generator&apos;s config scan refuses a stateIn id that names no state, plain or nested in a guard" classname="" time="0.341005" file="test/task/verify-spec-RM28.spec.ts" line="185" assertions="24" />
+    <testcase name="[RM28] every guard of every real plan&apos;s machine names a state, and the scan passes them" classname="" time="5.354805" file="test/task/verify-spec-RM28.spec.ts" line="246" assertions="28" />
+  </testsuite>
+</testsuites>

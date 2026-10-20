@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="9" assertions="37" failures="0" skipped="0" time="3.972551">
+  <testsuite name="test/task/verify-spec-RM23.spec.ts" file="test/task/verify-spec-RM23.spec.ts" tests="9" assertions="37" failures="0" skipped="0" time="0.301" hostname="mac-studio-m1">
+    <testcase name="[RM23] the port is pinned: the root catalog names 0.2.0 exactly and the resolved package is 0.2.0" classname="" time="0.003171" file="test/task/verify-spec-RM23.spec.ts" line="44" assertions="3" />
+    <testcase name="[RM23] a state id is split on dots: #T1.4/x names the node T1 and the path 4/x; #T1_4/x resolves" classname="" time="0.047421" file="test/task/verify-spec-RM23.spec.ts" line="59" assertions="7" />
+    <testcase name="[RM23] a final state inside a parallel region still takes events" classname="" time="0.004764" file="test/task/verify-spec-RM23.spec.ts" line="98" assertions="4" />
+    <testcase name="[RM23] an onDone target re-enters the parallel region and resets its children; onDone without a target does not" classname="" time="0.017555" file="test/task/verify-spec-RM23.spec.ts" line="115" assertions="3" />
+    <testcase name="[RM23] a pure transition on a done snapshot still runs a microstep" classname="" time="0.002888" file="test/task/verify-spec-RM23.spec.ts" line="145" assertions="5" />
+    <testcase name="[RM23] raised and done events carry no time, while the event sent in does" classname="" time="0.003624" file="test/task/verify-spec-RM23.spec.ts" line="164" assertions="1" />
+    <testcase name="[RM23] snapshot tags are an array, not a Set, and hasTag reads them" classname="" time="0.001348" file="test/task/verify-spec-RM23.spec.ts" line="193" assertions="5" />
+    <testcase name="[RM23] an eventless loop past the iteration cap fails with a TransitionError; a shorter one does not" classname="" time="0.212469" file="test/task/verify-spec-RM23.spec.ts" line="209" assertions="3" />
+    <testcase name="[RM23] the walk limit counts dequeued edges, not keys" classname="" time="0.012104" file="test/task/verify-spec-RM23.spec.ts" line="243" assertions="6" />
+  </testsuite>
+</testsuites>

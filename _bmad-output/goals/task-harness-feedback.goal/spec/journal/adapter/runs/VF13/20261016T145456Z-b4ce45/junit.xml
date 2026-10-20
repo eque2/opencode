@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="19" failures="0" skipped="0" time="11.855741">
+  <testsuite name="test/task/verify-spec-VF13.spec.ts" file="test/task/verify-spec-VF13.spec.ts" tests="2" assertions="19" failures="0" skipped="0" time="3.608" hostname="mac-studio-m1">
+    <testcase name="[VF13] the no-ensures folder is refused with one R3 line for the leaf VERIFY.md that has no ensures" classname="" time="2.105753" file="test/task/verify-spec-VF13.spec.ts" line="36" assertions="15" />
+    <testcase name="[VF13] /task on the T1.1 task folder of the no-ensures folder is refused with the same R3 line" classname="" time="1.503173" file="test/task/verify-spec-VF13.spec.ts" line="89" assertions="4" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="197" failures="0" skipped="0" time="5995.053013">
+  <testsuite name="test/task/verify-spec-RM22.spec.ts" file="test/task/verify-spec-RM22.spec.ts" tests="7" assertions="197" failures="0" skipped="0" time="5989.45" hostname="mac-studio-m1">
+    <testcase name="[RM22] on the small plan example-cascade.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows" classname="" time="19.581366" file="test/task/verify-spec-RM22.spec.ts" line="148" assertions="36" />
+    <testcase name="[RM22] on the small plan example-scenarios.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows" classname="" time="1.318267" file="test/task/verify-spec-RM22.spec.ts" line="148" assertions="12" />
+    <testcase name="[RM22] the guards watched here are every guard of the run machine" classname="" time="0.001493" file="test/task/verify-spec-RM22.spec.ts" line="283" assertions="1" />
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-cascade.spec)" classname="" time="32.029516" file="test/task/verify-spec-RM22.spec.ts" line="295" assertions="62" />
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-scenarios.spec)" classname="" time="1.537156" file="test/task/verify-spec-RM22.spec.ts" line="295" assertions="46" />
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-outside-run.spec T1.2)" classname="" time="0.503009" file="test/task/verify-spec-RM22.spec.ts" line="295" assertions="38" />
+    <testcase name="[RM22] the stale walk of the loaded example-cascade plan (full interleaving with staleness, stale key) finds no stuck state" classname="" time="5934.481291" file="test/task/verify-spec-RM22.spec.ts" line="369" assertions="2" />
+  </testsuite>
+</testsuites>

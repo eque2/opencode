@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="69" failures="0" skipped="0" time="17.17609">
+  <testsuite name="test/task/verify-spec-UI6.spec.ts" file="test/task/verify-spec-UI6.spec.ts" tests="5" assertions="69" failures="0" skipped="0" time="9.632" hostname="mac-studio-m1">
+    <testcase name="[UI6] /task on the whole spec: the first message reads Implementing spec and the title, from structured header metadata; the transcript draws it muted and bold from that metadata" classname="" time="1.315732" file="test/task/verify-spec-UI6.spec.ts" line="149" assertions="15" />
+    <testcase name="[UI6] /task on the T1.2 subtree: Implementing, the task id and title, then from spec and the spec title; the left-out scenarios follow on a muted line" classname="" time="1.053834" file="test/task/verify-spec-UI6.spec.ts" line="194" assertions="18" />
+    <testcase name="[UI6] SessionPrompt.command stores the T1.2 header text and structured metadata in the root session" classname="" time="3.015222" file="test/task/verify-spec-UI6.spec.ts" line="246" assertions="8" />
+    <testcase name="[UI6] the status run carries the title, and for a subtree run the task; an empty title falls back to the spec id in the header, the transcript and the status" classname="" time="2.62164" file="test/task/verify-spec-UI6.spec.ts" line="282" assertions="15" />
+    <testcase name="[UI6] an older header in the scrollback keeps its own title when a later run starts" classname="" time="1.628499" file="test/task/verify-spec-UI6.spec.ts" line="339" assertions="13" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV26.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV26] a task supervisor that errors counts as three worker failures: its unit records task.failed with harness error: <defect> once, and the run still ends",
+        "result": {
+          "state": "fail",
+          "duration": 3483.723
+        }
+      },
+      {
+        "name": "[SV26] a run supervisor that errors ends the job's wait: the Recorder stores nothing more, the defect is logged and the lease is released",
+        "result": {
+          "state": "fail",
+          "duration": 2390.411
+        }
+      },
+      {
+        "name": "[SV26] a run actor that errors ends the run: the job's wait ends, the Recorder stores nothing more, the defect is logged and the lease is released",
+        "result": {
+          "state": "pass",
+          "duration": 1899.094
+        }
+      },
+      {
+        "name": "[SV26] a later /task treats a slice whose fold dies as ended, logs it, and its start message says a new slice starts",
+        "result": {
+          "state": "pass",
+          "duration": 1392.378
+        }
+      }
+    ],
+    "result": {
+      "state": "fail",
+      "duration": 15023
+    }
+  }
+]

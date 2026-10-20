@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="4394" failures="0" skipped="0" time="32.060372">
+  <testsuite name="test/task/verify-spec-SV15.spec.ts" file="test/task/verify-spec-SV15.spec.ts" tests="5" assertions="4394" failures="0" skipped="0" time="12.747" hostname="mac-studio-m1">
+    <testcase name="[SV15] each task, obligation and scenario carries its state, its tags, its blocked cause, its start and end times and, for a task, its spans, as the snapshot holds them" classname="" time="2.001658" file="test/task/verify-spec-SV15.spec.ts" line="87" assertions="200" />
+    <testcase name="[SV15] the run carries its title, spec id, path, start and end times, and each scenario carries its loader title with no leading id" classname="" time="2.016011" file="test/task/verify-spec-SV15.spec.ts" line="229" assertions="59" />
+    <testcase name="[SV15] the projection derives no state of its own: after every fact it shows the machine&apos;s states, class tags only in their order, no phase or waits: tag, and waits that follow the machine, not the plan" classname="" time="4.017216" file="test/task/verify-spec-SV15.spec.ts" line="284" assertions="2798" />
+    <testcase name="[SV15] the old run-state and waitingOn derivations from the plan no longer exist" classname="" time="0.884593" file="test/task/verify-spec-SV15.spec.ts" line="354" assertions="26" />
+    <testcase name="[SV15] an obligation, which never blocks, carries no blocked cause, while blocked tasks and scenarios do" classname="" time="3.829428" file="test/task/verify-spec-SV15.spec.ts" line="423" assertions="1311" />
+  </testsuite>
+</testsuites>

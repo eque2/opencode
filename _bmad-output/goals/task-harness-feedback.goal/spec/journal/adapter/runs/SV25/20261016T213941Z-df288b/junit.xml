@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="25" failures="0" skipped="0" time="9.164142">
+  <testsuite name="test/task/verify-spec-SV25.spec.ts" file="test/task/verify-spec-SV25.spec.ts" tests="1" assertions="25" failures="0" skipped="0" time="5.218" hostname="mac-studio-m1">
+    <testcase name="[SV25] a job cancelled before the new slice stores run.started records run.cancelled after it, and the previous slice is unchanged" classname="" time="5.218524" file="test/task/verify-spec-SV25.spec.ts" line="75" assertions="25" />
+  </testsuite>
+</testsuites>

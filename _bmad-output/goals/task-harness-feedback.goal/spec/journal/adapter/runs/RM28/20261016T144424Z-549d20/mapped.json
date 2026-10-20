@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM28.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM28] the broken machine is the generated one until task.started enters the broken state",
+        "result": {
+          "state": "pass",
+          "duration": 5699.61
+        }
+      },
+      {
+        "name": "[RM28] when task.started enters the broken state, apply dies with a defect that names the error",
+        "result": {
+          "state": "pass",
+          "duration": 2000.693
+        }
+      },
+      {
+        "name": "[RM28] apply never returns a snapshot whose status is error",
+        "result": {
+          "state": "pass",
+          "duration": 2896.2780000000002
+        }
+      },
+      {
+        "name": "[RM28] the generator's config scan refuses a stateIn id that names no state, plain or nested in a guard",
+        "result": {
+          "state": "pass",
+          "duration": 341.005
+        }
+      },
+      {
+        "name": "[RM28] every guard of every real plan's machine names a state, and the scan passes them",
+        "result": {
+          "state": "pass",
+          "duration": 5354.804999999999
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 39387
+    }
+  }
+]

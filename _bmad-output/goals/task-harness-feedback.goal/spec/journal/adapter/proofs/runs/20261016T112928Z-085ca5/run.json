@@ -1,0 +1,30 @@
+{
+  "runId": "20261016T112928Z-085ca5",
+  "adapter": "bun-junit-scenario-adapter.mjs",
+  "mode": "dry-run",
+  "cwd": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures",
+  "file": "./selfedit.test.ts",
+  "testFile": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/selfedit.test.ts",
+  "junit": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-085ca5/junit.xml",
+  "log": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-085ca5/run.log",
+  "bun": "bun",
+  "command": [
+    "bun",
+    "test",
+    "--timeout=30000",
+    "--reporter=junit",
+    "--reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-085ca5/junit.xml",
+    "./selfedit.test.ts"
+  ],
+  "hashBefore": "0d69120cc6c70b1e971b5fd72e2c392cb4c0815d7317832cc8ae3aef6a00ddef",
+  "bunExit": 0,
+  "signal": null,
+  "durationMs": 27,
+  "hashAfter": "7ceef4f4c9a743b2af5d0b9556fbd3169307f45296456802ff4c16207979f3e4",
+  "decision": "refused:R4",
+  "adapterExit": 3,
+  "refusal": {
+    "rule": "R4",
+    "reason": "the test file changed during the run (0d69120cc6c70b1e -> 7ceef4f4c9a743b2)"
+  }
+}

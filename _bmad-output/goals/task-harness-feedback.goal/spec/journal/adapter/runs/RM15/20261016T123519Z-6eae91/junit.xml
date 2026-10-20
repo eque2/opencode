@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="64" failures="0" skipped="0" time="3.414404">
+  <testsuite name="test/task/verify-spec-RM15.spec.ts" file="test/task/verify-spec-RM15.spec.ts" tests="5" assertions="64" failures="0" skipped="0" time="1.503" hostname="mac-studio-m1">
+    <testcase name="[RM15] the release-notes plan orders T1.3 after T1.1, T1.4 after T1.2 and T1.3, under the parent T1" classname="" time="0.25506" file="test/task/verify-spec-RM15.spec.ts" line="82" assertions="6" />
+    <testcase name="[RM15] when T1.1 is trusted and T1.2 is not, T1.3 is ready and T1.4 is waiting, in each state of T1.2 short of trusted" classname="" time="0.251908" file="test/task/verify-spec-RM15.spec.ts" line="105" assertions="19" />
+    <testcase name="[RM15] T1.4 becomes ready only when every after task, T1.2 and T1.3, is trusted" classname="" time="0.312232" file="test/task/verify-spec-RM15.spec.ts" line="143" assertions="7" />
+    <testcase name="[RM15] the parent T1 is waiting until every child is trusted, and is ready once the last child is" classname="" time="0.329757" file="test/task/verify-spec-RM15.spec.ts" line="166" assertions="21" />
+    <testcase name="[RM15] when a trusted dependency goes stale, a ready dependant returns to waiting" classname="" time="0.356259" file="test/task/verify-spec-RM15.spec.ts" line="190" assertions="11" />
+  </testsuite>
+</testsuites>

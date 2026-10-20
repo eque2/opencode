@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="42" failures="0" skipped="0" time="27.369232">
+  <testsuite name="test/task/verify-spec-UI21.spec.ts" file="test/task/verify-spec-UI21.spec.ts" tests="5" assertions="42" failures="0" skipped="0" time="15.915" hostname="mac-studio-m1">
+    <testcase name="[UI21] the harness&apos;s statuses: 2 stopped tasks, a run waiting only on T9, a cancelled task with no start, no scenarios" classname="" time="5.839158" file="test/task/verify-spec-UI21.spec.ts" line="187" assertions="10" />
+    <testcase name="[UI21] each trusted count ends with · 2 stopped in the error tone, and shows nothing at 0" classname="" time="4.213139" file="test/task/verify-spec-UI21.spec.ts" line="213" assertions="21" />
+    <testcase name="[UI21] the watch band reads that nothing is running and gives the trust command for T9" classname="" time="1.165388" file="test/task/verify-spec-UI21.spec.ts" line="242" assertions="2" />
+    <testcase name="[UI21] the Peek of a cancelled task with no start time reads that the task did not start" classname="" time="2.037611" file="test/task/verify-spec-UI21.spec.ts" line="260" assertions="5" />
+    <testcase name="[UI21] with no scenarios in the run, the SCENARIOS heading reads SCENARIOS none in this run" classname="" time="2.661483" file="test/task/verify-spec-UI21.spec.ts" line="297" assertions="4" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="211" failures="0" skipped="0" time="4.420012">
+  <testsuite name="test/task/verify-spec-RM6.spec.ts" file="test/task/verify-spec-RM6.spec.ts" tests="3" assertions="211" failures="0" skipped="0" time="2.072" hostname="mac-studio-m1">
+    <testcase name="[RM6] a fact that matches no row returns the identical snapshot of a running run, unmutated" classname="" time="0.704193" file="test/task/verify-spec-RM6.spec.ts" line="92" assertions="78" />
+    <testcase name="[RM6] a fact applied to a snapshot whose run has ended returns that snapshot unchanged" classname="" time="0.697189" file="test/task/verify-spec-RM6.spec.ts" line="159" assertions="117" />
+    <testcase name="[RM6] a snapshot made by another machine makes apply die" classname="" time="0.671869" file="test/task/verify-spec-RM6.spec.ts" line="211" assertions="16" />
+  </testsuite>
+</testsuites>

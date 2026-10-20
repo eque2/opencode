@@ -1,0 +1,37 @@
+{
+  "scenarioId": "RM1",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM1.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T11:35:43.899Z",
+  "durationMs": 931.605,
+  "testResults": [
+    {
+      "name": "[RM1] the release-notes plan loads, and the engine's first snapshot comes from its one generated machine",
+      "status": "passed",
+      "duration": 344.053
+    },
+    {
+      "name": "[RM1] the root is parallel with exactly the regions active and outcome",
+      "status": "passed",
+      "duration": 94.661
+    },
+    {
+      "name": "[RM1] active holds one region for each task in plan order, then each scenario, then each outside precondition",
+      "status": "passed",
+      "duration": 90.462
+    },
+    {
+      "name": "[RM1] each task region is parallel with one evidence sub-region for each obligation and a work sub-region",
+      "status": "passed",
+      "duration": 95.52
+    },
+    {
+      "name": "[RM1] every unit state has an explicit id, a meta record of unit, kind and state, and only closed-vocabulary tags",
+      "status": "passed",
+      "duration": 306.909
+    }
+  ],
+  "_sourceHash": "f213ca3b2184a051",
+  "_keyId": "53bde7c7",
+  "_hmac": "34091a6c19ce743bc4466ee8bc03998998c0b85b463e41e500acce2f65e69f07"
+}

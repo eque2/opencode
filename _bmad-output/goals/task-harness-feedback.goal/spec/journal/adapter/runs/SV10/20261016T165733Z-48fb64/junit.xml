@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="18" failures="0" skipped="0" time="10.893844">
+  <testsuite name="test/task/verify-spec-SV10.spec.ts" file="test/task/verify-spec-SV10.spec.ts" tests="1" assertions="18" failures="0" skipped="0" time="2.019" hostname="mac-studio-m1">
+    <testcase name="[SV10] a quiet builder stream is cancelled after streamIdle, task.stalled is recorded, and the builder continues in the same attempt" classname="" time="2.01912" file="test/task/verify-spec-SV10.spec.ts" line="46" assertions="18" />
+  </testsuite>
+</testsuites>

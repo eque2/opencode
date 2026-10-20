@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="44" failures="0" skipped="0" time="7.015731">
+  <testsuite name="test/task/verify-spec-UI1.spec.ts" file="test/task/verify-spec-UI1.spec.ts" tests="5" assertions="44" failures="0" skipped="0" time="0.914" hostname="mac-studio-m1">
+    <testcase name="[UI1] the Board puts waiting tasks in WAITING, active tasks in their phase&apos;s column, stopped tasks in STOPPED and other ended tasks in TRUSTED" classname="" time="0.257661" file="test/task/verify-spec-UI1.spec.ts" line="158" assertions="9" />
+    <testcase name="[UI1] STOPPED groups the dead tasks, then the blocked tasks, then the rest, on the Board and in the STOPPED list" classname="" time="0.075921" file="test/task/verify-spec-UI1.spec.ts" line="178" assertions="3" />
+    <testcase name="[UI1] the counts, the focus and the next running task come from the tags" classname="" time="0.131138" file="test/task/verify-spec-UI1.spec.ts" line="198" assertions="17" />
+    <testcase name="[UI1] the tags alone decide: unknown state names classify the same, and a state that contradicts its tags follows the tags" classname="" time="0.116932" file="test/task/verify-spec-UI1.spec.ts" line="250" assertions="10" />
+    <testcase name="[UI1] the task-ui keeps no list of active or ended state names" classname="" time="0.335872" file="test/task/verify-spec-UI1.spec.ts" line="343" assertions="5" />
+  </testsuite>
+</testsuites>

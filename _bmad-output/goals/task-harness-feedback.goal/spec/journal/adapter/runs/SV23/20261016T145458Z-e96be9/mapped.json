@@ -1,0 +1,18 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV23.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV23] no task.stalled while the builder's tool runs past the stream idle time, and the stall timer starts again when the tool ends",
+        "result": {
+          "state": "pass",
+          "duration": 4976.391
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 11181
+    }
+  }
+]

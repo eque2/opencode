@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM4.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM4] every test of the old file appears once in the header list as ported, re-baselined or retired",
+        "result": {
+          "state": "pass",
+          "duration": 47.977
+        }
+      },
+      {
+        "name": "[RM4] each re-baselined test names the decision or owner ruling that changed it",
+        "result": {
+          "state": "pass",
+          "duration": 11.787
+        }
+      },
+      {
+        "name": "[RM4] each retired test names the guard that replaces it, and that guard holds",
+        "result": {
+          "state": "pass",
+          "duration": 751.187
+        }
+      },
+      {
+        "name": "[RM4] every listed test runs as a fact sequence through initial, apply and the selectors",
+        "result": {
+          "state": "pass",
+          "duration": 6323.954
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 10167
+    }
+  }
+]

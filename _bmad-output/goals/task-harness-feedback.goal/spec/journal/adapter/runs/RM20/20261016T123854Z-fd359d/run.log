@@ -1,0 +1,12 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-RM20.spec.ts:
+[RM20] example-scenarios.spec: 23 keys, 46 edges, 754 ms
+[RM20] example-cascade.spec: 108 keys, 292 edges, 5488 ms
+[RM20] example-outside-run.spec: 29 keys, 74 edges, 1640 ms
+[RM20] example-outside-run.spec T1.2: 14 keys, 35 edges, 363 ms
+
+ 4 pass
+ 0 fail
+ 38 expect() calls
+Ran 4 tests across 1 file. [23.32s]

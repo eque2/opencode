@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="20" failures="0" skipped="0" time="21.556191">
+  <testsuite name="test/task/verify-spec-VF12.spec.ts" file="test/task/verify-spec-VF12.spec.ts" tests="2" assertions="20" failures="0" skipped="0" time="6.188" hostname="mac-studio-m1">
+    <testcase name="[VF12] the unknown-after folder is refused with one R6 line that names T7" classname="" time="3.177216" file="test/task/verify-spec-VF12.spec.ts" line="41" assertions="16" />
+    <testcase name="[VF12] /task on a task folder inside the unknown-after folder is refused with the same R6 line" classname="" time="3.011758" file="test/task/verify-spec-VF12.spec.ts" line="95" assertions="4" />
+  </testsuite>
+</testsuites>

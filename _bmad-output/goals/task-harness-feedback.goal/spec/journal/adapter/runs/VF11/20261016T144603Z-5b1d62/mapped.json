@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF11.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF11] the self-after folder is refused with one R7 line that names the cycle T1.1 → T1.1",
+        "result": {
+          "state": "pass",
+          "duration": 1877.979
+        }
+      },
+      {
+        "name": "[VF11] /task on a task folder inside the self-after folder is refused with the same R7 line",
+        "result": {
+          "state": "pass",
+          "duration": 1985.877
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 19642
+    }
+  }
+]

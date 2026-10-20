@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI17",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI17.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:35:36.858Z",
+  "durationMs": 3359.254,
+  "testResults": [
+    {
+      "name": "[UI17] /task on the format-faults folder writes a refused status with three failure lines and no task",
+      "status": "passed",
+      "duration": 862.398
+    },
+    {
+      "name": "[UI17] the Ledger shows run: refused and every failure line in the error tone, each cut to its width",
+      "status": "passed",
+      "duration": 803.7379999999999
+    },
+    {
+      "name": "[UI17] each full-screen design's body reads No work started: the spec was refused. with every failure line",
+      "status": "passed",
+      "duration": 885.081
+    },
+    {
+      "name": "[UI17] the plugin's Ledger in the sidebar reads the refused status file: run: refused and every failure line",
+      "status": "passed",
+      "duration": 808.037
+    }
+  ],
+  "_sourceHash": "4468574ca608b312",
+  "_keyId": "53bde7c7",
+  "_hmac": "e8b4d085b8c20f926766712581f7317d51a4c96331bd99a4af798254f21d7f56"
+}

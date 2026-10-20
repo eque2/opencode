@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM13.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM13] owner ruling 1: with T9 trusted and T8 untrusted, S13 is parked and shows as waiting, and the run ends done with 'not run: S13 waits on T8'",
+        "result": {
+          "state": "pass",
+          "duration": 677.351
+        }
+      },
+      {
+        "name": "[RM13] owner ruling 1: when T8 is trusted before the run settles, S13 moves from parked to ready",
+        "result": {
+          "state": "pass",
+          "duration": 587.067
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 3341
+    }
+  }
+]

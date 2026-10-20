@@ -1,0 +1,22 @@
+{
+  "scenarioId": "VF16",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF16.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T22:16:19.446Z",
+  "durationMs": 905.4549999999999,
+  "testResults": [
+    {
+      "name": "[VF16] the demo seed copies every example folder > [VF16] task-demo.sh seeds an empty folder with every example spec folder beside release-notes and provider-ordering-admin, and prints both live-check commands",
+      "status": "passed",
+      "duration": 849.602
+    },
+    {
+      "name": "[VF16] the demo seed copies every example folder > [VF16] a demo folder that is not empty and not an earlier demo is refused and left as it was",
+      "status": "passed",
+      "duration": 55.853
+    }
+  ],
+  "_sourceHash": "0cd8bf7cd2075757",
+  "_keyId": "53bde7c7",
+  "_hmac": "4068f38cd627c6b84eeb61df3ce2a6dadd9f240884f40c0f5cb92acc15da7858"
+}

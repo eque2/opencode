@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="171" failures="0" skipped="0" time="4.569749">
+  <testsuite name="test/task/verify-spec-VF16.spec.ts" file="test/task/verify-spec-VF16.spec.ts" tests="2" assertions="171" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="[VF16] the demo seed copies every example folder" file="test/task/verify-spec-VF16.spec.ts" line="63" tests="2" assertions="171" failures="0" skipped="0" time="0.904" hostname="mac-studio-m1">
+      <testcase name="[VF16] task-demo.sh seeds an empty folder with every example spec folder beside release-notes and provider-ordering-admin, and prints both live-check commands" classname="[VF16] the demo seed copies every example folder" time="0.849602" file="test/task/verify-spec-VF16.spec.ts" line="65" assertions="168" />
+      <testcase name="[VF16] a demo folder that is not empty and not an earlier demo is refused and left as it was" classname="[VF16] the demo seed copies every example folder" time="0.055853" file="test/task/verify-spec-VF16.spec.ts" line="123" assertions="3" />
+    </testsuite>
+  </testsuite>
+</testsuites>

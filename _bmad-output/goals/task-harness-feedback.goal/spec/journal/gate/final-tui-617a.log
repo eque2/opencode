@@ -1,0 +1,128 @@
+$ bun test --timeout 30000 --only-failures
+bun test v1.3.14 (0d9b296a)
+
+test/theme-provider.test.tsx:
+[16:36:38.716] WARN (#48): Theme colors do not resolve {
+  theme: "broken",
+  error: "Color reference \"missing\" not found in defs or theme",
+}
+[16:36:38.721] WARN (#51): Theme colors do not resolve {
+  theme: "broken",
+  error: "Color reference \"missing\" not found in defs or theme",
+}
+[16:36:38.721] WARN (#52): Theme colors do not resolve {
+  theme: "broken",
+  error: "Color reference \"missing\" not found in defs or theme",
+}
+
+test/app-lifecycle.test.tsx:
+[16:36:45.727] ERROR (#405): tui bootstrap failed TuiSync.RequestError: ConfigRemoteAuthError
+    at catch (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/context/sync.tsx:48:21) {
+  [cause]: Error: ConfigRemoteAuthError
+      at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/sdk/js/src/v2/gen/client/client.gen.ts:217:28)
+      at processTicksAndRejections (native) {
+    [cause]: Error: {"body":{"name":"ConfigRemoteAuthError","data":{"url":"https://example.com","remote":"https://config.example.com/opencode.json"}},"status":400}
+  }
+}
+
+test/keymap.test.tsx:
+[16:36:45.822] WARN (#420): Opencode mode stack is not registered for this keymap
+
+test/cli/tui/diff-viewer-file-tree.test.tsx:
+[16:37:17.790] ERROR (#4916): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:17.874] ERROR (#4923): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:17.957] ERROR (#4930): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.050] ERROR (#4937): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:43)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (unknown:7:39)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.158] ERROR (#4944): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:43)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (unknown:7:39)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.249] ERROR (#4951): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.313] ERROR (#4958): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+
+test/cli/tui/diff-viewer.test.tsx:
+[16:37:18.448] ERROR (#4966): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.592] ERROR (#4975): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:43)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (unknown:7:39)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:18.886] ERROR (#4984): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+[16:37:19.011] ERROR (#4993): Failed to read KV state PlatformError: NotFound: FileSystem.readFile (/tmp/opencode/state/kv.json)
+    at systemError (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/PlatformError.js:177:39)
+    at <anonymous> (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node-shared@4.0.3+b10868da9591cb2f/node_modules/@effect/platform-node-shared/dist/NodeFileSystem.js:367:73)
+    at processTicksAndRejections (native)
+    at TuiPersistence.readText (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:17:10)
+    at TuiPersistence.readText (definition) (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/tui/src/util/persistence.ts:10:32) {
+  [cause]: Error: ENOENT: no such file or directory, open '/tmp/opencode/state/kv.json'
+}
+
+ 368 pass
+ 1 skip
+ 0 fail
+ 8 snapshots, 1519 expect() calls
+Ran 369 tests across 54 files. [45.12s]
+TUI_EXIT=0

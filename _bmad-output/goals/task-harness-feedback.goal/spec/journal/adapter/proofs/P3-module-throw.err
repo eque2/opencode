@@ -1,0 +1,21 @@
+[bun-junit-adapter] runId=20261016T112928Z-87725c cwd=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures
+[bun-junit-adapter] $ bun test --timeout=30000 --reporter=junit --reporter-outfile=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-87725c/junit.xml ./throw-module.test.ts
+
+throw-module.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | import { expect, test } from "bun:test"
+2 | throw new Error("module-level throw before any test")
+              ^
+error: module-level throw before any test
+      at /private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/throw-module.test.ts:2:11
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [9.00ms]
+[bun-junit-adapter] mapped: tests=0 pass=0 fail=0 skip=0 file=fail bunExit=1
+[bun-junit-adapter] runId=20261016T112928Z-87725c decision=dry-run:mapped exit=1 manifest=/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/proofs/runs/20261016T112928Z-87725c/run.json

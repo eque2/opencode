@@ -1,0 +1,27 @@
+{
+  "scenarioId": "UI10",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI10.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T18:11:34.167Z",
+  "durationMs": 3910.1859999999997,
+  "testResults": [
+    {
+      "name": "[UI10] the given status: thirteen scenarios with titles, S4 rejected with its reason, S13 parked on the outside precondition T8",
+      "status": "passed",
+      "duration": 1034.119
+    },
+    {
+      "name": "[UI10] each of the seven designs expanded at 120 x 40: the shared region lists S1 to S13 with glyph, id, state label and title, and S4's reason under its entry",
+      "status": "passed",
+      "duration": 1318.866
+    },
+    {
+      "name": "[UI10] after the run ends the parked scenario reads not run in each of the seven designs; while the run is live it reads its wait",
+      "status": "passed",
+      "duration": 1557.201
+    }
+  ],
+  "_sourceHash": "0ff0315f9128441d",
+  "_keyId": "53bde7c7",
+  "_hmac": "410ceac91d7f997e9d94d0fc801f84a3ca0c86ef51d8057ea14f15eebd764573"
+}

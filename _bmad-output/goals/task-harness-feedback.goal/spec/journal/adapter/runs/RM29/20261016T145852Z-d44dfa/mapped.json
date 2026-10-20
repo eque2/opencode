@@ -1,0 +1,60 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM29.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM29] the totality check fails on the copy without T1.5's row for T1.4 budget exhausted, naming T1.5, waiting and the outcome",
+        "result": {
+          "state": "pass",
+          "duration": 2350.268
+        }
+      },
+      {
+        "name": "[RM29] without the check, the copy strands T1.5 on the observed facts: the stuck run the check prevents",
+        "result": {
+          "state": "pass",
+          "duration": 2814.55
+        }
+      },
+      {
+        "name": "[RM29] the scan of every real plan passes: each waiting unit state has a row for every final outcome of what it waits on",
+        "result": {
+          "state": "pass",
+          "duration": 5408.638
+        }
+      },
+      {
+        "name": "[RM29] on the real machine, T1.5 waiting is blocked by T1.4 for each way T1.4 ends other than trusted",
+        "result": {
+          "state": "pass",
+          "duration": 2138.494
+        }
+      },
+      {
+        "name": "[RM29] the scan refuses a non-final state with no way out, and an outcome that cannot settle",
+        "result": {
+          "state": "pass",
+          "duration": 1510.775
+        }
+      },
+      {
+        "name": "[RM29] on the real machines, a unit stands still only on an untrusted outside or external region, and the run settles once every region is final",
+        "result": {
+          "state": "pass",
+          "duration": 8367.573
+        }
+      },
+      {
+        "name": "[RM29] T1.5 waits on the outside T9, and in its subtree run on the external T1.3 and T1.4, until a fact trusts them",
+        "result": {
+          "state": "pass",
+          "duration": 2056.697
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 30925
+    }
+  }
+]

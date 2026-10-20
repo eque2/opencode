@@ -1,0 +1,17 @@
+{
+  "scenarioId": "SV27",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV27.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:43:40.396Z",
+  "durationMs": 5999.87,
+  "testResults": [
+    {
+      "name": "[SV27] a scope close without a job cancel records no stop, counts no worker failure, writes no summary, and the next /task resumes",
+      "status": "passed",
+      "duration": 5999.87
+    }
+  ],
+  "_sourceHash": "8fd00ad533799cb1",
+  "_keyId": "53bde7c7",
+  "_hmac": "f781b51f29980817ad5df655ad3ac32ef66e7eac4b56ab7b2bf27a515ad863dc"
+}

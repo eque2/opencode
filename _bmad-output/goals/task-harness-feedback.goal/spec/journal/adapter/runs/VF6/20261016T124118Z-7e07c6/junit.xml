@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="42" failures="0" skipped="0" time="15.313064">
+  <testsuite name="test/task/verify-spec-VF6.spec.ts" file="test/task/verify-spec-VF6.spec.ts" tests="5" assertions="42" failures="0" skipped="0" time="9.685" hostname="mac-studio-m1">
+    <testcase name="[VF6] with no stored run, /task on the T1.3 task folder is refused before any work with the R12 line naming T1.3 and T1.1" classname="" time="1.142601" file="test/task/verify-spec-VF6.spec.ts" line="56" assertions="16" />
+    <testcase name="[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice in which T1.1 ended trusted" classname="" time="2.563839" file="test/task/verify-spec-VF6.spec.ts" line="151" assertions="6" />
+    <testcase name="[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice in which T1.1 was trusted, then its obligation went stale" classname="" time="2.378476" file="test/task/verify-spec-VF6.spec.ts" line="151" assertions="7" />
+    <testcase name="[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a whole-spec slice with outside.trusted T1.1, which a task region does not take" classname="" time="2.160044" file="test/task/verify-spec-VF6.spec.ts" line="151" assertions="7" />
+    <testcase name="[VF6] the trust of T1.1 is read by folding each stored slice through its own plan: a T1.3-subtree slice with outside.trusted T1.1, which its external region takes" classname="" time="1.442698" file="test/task/verify-spec-VF6.spec.ts" line="151" assertions="6" />
+  </testsuite>
+</testsuites>

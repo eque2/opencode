@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV16.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV16] in a live run the writer writes each committed macrostep once, done last, each heartbeat touch rewrites the last snapshot with a fresh aliveAt, and nothing writes after done",
+        "result": {
+          "state": "pass",
+          "duration": 24436.765
+        }
+      },
+      {
+        "name": "[SV16] under a burst of records and touches with no wait, each macrostep is written once in order, done last, and every touch rewrites the snapshot written just before it",
+        "result": {
+          "state": "pass",
+          "duration": 5580.863
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 46593
+    }
+  }
+]

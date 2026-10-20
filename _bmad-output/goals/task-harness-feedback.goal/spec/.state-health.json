@@ -1,0 +1,40 @@
+{
+  "command": "health",
+  "ok": true,
+  "timestamp": "2026-10-20T02:03:59.958Z",
+  "version": "0.67.1",
+  "specFolder": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/_bmad-output/goals/task-harness-feedback.goal/spec",
+  "checks": {
+    "db": {
+      "ok": true
+    },
+    "evidenceKey": {
+      "ok": true
+    },
+    "integrity": {
+      "ok": true,
+      "detail": "171 actor(s) integrity-verified"
+    },
+    "trustGraph": {
+      "ok": true,
+      "detail": "4 machine verbs"
+    },
+    "claudeWorker": {
+      "ok": true,
+      "detail": "2.1.299 (Claude Code)"
+    },
+    "evidencePathRoundtrip": {
+      "ok": true,
+      "detail": "NA: no verified scenarios to round-trip (fresh store)"
+    },
+    "scenarioFilenameRouting": {
+      "ok": true,
+      "detail": "108 scenario filename(s) route through SCENARIO_FILE_PATTERN"
+    },
+    "keyring": {
+      "ok": true,
+      "detail": "source=committed-file file=/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/state/integrity-key.json (tracked) activeKeyId=53bde7c7 keys=[53bde7c7] referenced-missing=[] events=172 verified/0 failed"
+    }
+  },
+  "heartbeatAt": "2026-10-20T02:03:59.958Z"
+}

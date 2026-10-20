@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI11.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI11] the given status: T1.2 running since its start, T1.1 ended 3m 12s after its start, T1.3 never started; the run is live",
+        "result": {
+          "state": "pass",
+          "duration": 1148.457
+        }
+      },
+      {
+        "name": "[UI11] while live: the running task counts from its start, the ended task is fixed, the unstarted task is blank, in the Gantt, the Matrix, the Board card, the HUD line and the Peek heading",
+        "result": {
+          "state": "pass",
+          "duration": 3133.053
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 15772
+    }
+  }
+]

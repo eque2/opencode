@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="86" failures="3" skipped="0" time="6357.181546">
+  <testsuite name="test/task/verify-spec-RM22.spec.ts" file="test/task/verify-spec-RM22.spec.ts" tests="7" assertions="86" failures="3" skipped="0" time="6351.568" hostname="mac-studio-m1">
+    <testcase name="[RM22] on the small plan example-cascade.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows" classname="" time="18.863754" file="test/task/verify-spec-RM22.spec.ts" line="148" assertions="36" />
+    <testcase name="[RM22] on the small plan example-scenarios.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows" classname="" time="1.074701" file="test/task/verify-spec-RM22.spec.ts" line="148" assertions="12" />
+    <testcase name="[RM22] the stale walk of the loaded example-cascade plan (full interleaving with staleness, stale key) finds no stuck state" classname="" time="6193.093831" file="test/task/verify-spec-RM22.spec.ts" line="186" assertions="2" />
+    <testcase name="[RM22] the guards watched here are every guard of the run machine" classname="" time="0.057275" file="test/task/verify-spec-RM22.spec.ts" line="296" assertions="1" />
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-cascade.spec)" classname="" time="120.03945" file="test/task/verify-spec-RM22.spec.ts" line="308" assertions="0">
+      <failure type="TimeoutError" />
+    </testcase>
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-scenarios.spec)" classname="" time="14.161286" file="test/task/verify-spec-RM22.spec.ts" line="308" assertions="6">
+      <failure type="AssertionError" />
+    </testcase>
+    <testcase name="[RM22] every context path that a guard reads is part of the walk key (example-outside-run.spec T1.2)" classname="" time="4.281967" file="test/task/verify-spec-RM22.spec.ts" line="308" assertions="29">
+      <failure type="AssertionError" />
+    </testcase>
+  </testsuite>
+</testsuites>

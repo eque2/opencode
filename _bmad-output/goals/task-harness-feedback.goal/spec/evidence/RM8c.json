@@ -1,0 +1,27 @@
+{
+  "scenarioId": "RM8c",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM8c.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:15:00.528Z",
+  "durationMs": 2307.447,
+  "testResults": [
+    {
+      "name": "[RM8c] the stored observed slice: the observed facts, the old runner's scenario proofs, and no run.ended",
+      "status": "passed",
+      "duration": 366.933
+    },
+    {
+      "name": "[RM8c] the stored slice folds to done with the outcome budget exhausted, and T1.5 and T1 blocked",
+      "status": "passed",
+      "duration": 578.905
+    },
+    {
+      "name": "[RM8c] /task on the same spec starts a new slice and never resumes the done fold",
+      "status": "passed",
+      "duration": 1361.6090000000002
+    }
+  ],
+  "_sourceHash": "d79e132f87f02f8b",
+  "_keyId": "53bde7c7",
+  "_hmac": "31984666d390721b06b0308e6cd970806e87860dfeaf7569c2e0366b4a1b78a5"
+}

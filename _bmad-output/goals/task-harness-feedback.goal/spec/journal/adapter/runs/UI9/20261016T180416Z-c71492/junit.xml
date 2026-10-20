@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="204" failures="0" skipped="0" time="39.54843">
+  <testsuite name="test/task/verify-spec-UI9.spec.ts" file="test/task/verify-spec-UI9.spec.ts" tests="4" assertions="204" failures="0" skipped="0" time="14.702" hostname="mac-studio-m1">
+    <testcase name="[UI9] the given status: T1.2 budget exhausted, T1.3 failed, and T1.4, T1.5 and T1 blocked by them, each with its reason" classname="" time="4.796692" file="test/task/verify-spec-UI9.spec.ts" line="212" assertions="12" />
+    <testcase name="[UI9] each of the seven designs expanded: the shared region lists each stopped task with its reason or upstream cause" classname="" time="3.890572" file="test/task/verify-spec-UI9.spec.ts" line="235" assertions="80" />
+    <testcase name="[UI9] each of the seven designs expanded: the Peek BUILDER heading shows the selected task&apos;s reason in full, wrapped, in its tone" classname="" time="3.541328" file="test/task/verify-spec-UI9.spec.ts" line="282" assertions="63" />
+    <testcase name="[UI9] the collapsed views keep only the glyph: no reason and no cause, and each stopped task shown by its glyph" classname="" time="2.475882" file="test/task/verify-spec-UI9.spec.ts" line="328" assertions="49" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM17.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM17] with T1.1-T1.4 trusted, every scenario whose needs are trusted trusted, and T9 untrusted, T1.5 is waiting on T9 and the run is waiting, not ended",
+        "result": {
+          "state": "pass",
+          "duration": 1542.722
+        }
+      },
+      {
+        "name": "[RM17] when outside.trusted for T9 is applied T1.5 becomes ready, and a second trust of T9 changes nothing",
+        "result": {
+          "state": "pass",
+          "duration": 1524.806
+        }
+      },
+      {
+        "name": "[RM17] a trust of T9 while T1.3 or T1.4 is not trusted leaves T1.5 waiting on that task alone",
+        "result": {
+          "state": "pass",
+          "duration": 831.6400000000001
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 11895
+    }
+  }
+]

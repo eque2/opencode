@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="53" failures="0" skipped="0" time="4.988876">
+  <testsuite name="test/task/verify-spec-VF22.spec.ts" file="test/task/verify-spec-VF22.spec.ts" tests="7" assertions="53" failures="0" skipped="0" time="2.494" hostname="mac-studio-m1">
+    <testcase name="[VF22] a spec folder with only SPEC.md, with no outside precondition: /task reads &quot;Refused &lt;path&gt;. No work started.&quot; and the one plain line &quot;the spec holds no task&quot;" classname="" time="0.498476" file="test/task/verify-spec-VF22.spec.ts" line="116" assertions="12" />
+    <testcase name="[VF22] the generator refuses the plan of a spec with only SPEC.md, with no outside precondition: it has no task region" classname="" time="0.354081" file="test/task/verify-spec-VF22.spec.ts" line="156" assertions="5" />
+    <testcase name="[VF22] a spec folder with only SPEC.md with its outside preconditions T8 and T9: /task reads &quot;Refused &lt;path&gt;. No work started.&quot; and the one plain line &quot;the spec holds no task&quot;" classname="" time="0.402379" file="test/task/verify-spec-VF22.spec.ts" line="116" assertions="12" />
+    <testcase name="[VF22] the generator refuses the plan of a spec with only SPEC.md with its outside preconditions T8 and T9: it has no task region" classname="" time="0.340528" file="test/task/verify-spec-VF22.spec.ts" line="156" assertions="5" />
+    <testcase name="[VF22] a spec folder with only outside preconditions and a scenario that needs T8: /task reads &quot;Refused &lt;path&gt;. No work started.&quot; and the one plain line &quot;the spec holds no task&quot;" classname="" time="0.383247" file="test/task/verify-spec-VF22.spec.ts" line="116" assertions="12" />
+    <testcase name="[VF22] the generator refuses the plan of a spec with only outside preconditions and a scenario that needs T8: it has no task region" classname="" time="0.350787" file="test/task/verify-spec-VF22.spec.ts" line="156" assertions="5" />
+    <testcase name="[VF22] control: the generator builds the machine of the release-notes plan, which holds tasks" classname="" time="0.167473" file="test/task/verify-spec-VF22.spec.ts" line="176" assertions="2" />
+  </testsuite>
+</testsuites>

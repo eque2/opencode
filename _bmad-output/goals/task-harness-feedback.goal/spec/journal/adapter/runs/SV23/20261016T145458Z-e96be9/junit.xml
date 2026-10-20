@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="12" failures="0" skipped="0" time="11.084264">
+  <testsuite name="test/task/verify-spec-SV23.spec.ts" file="test/task/verify-spec-SV23.spec.ts" tests="1" assertions="12" failures="0" skipped="0" time="4.976" hostname="mac-studio-m1">
+    <testcase name="[SV23] no task.stalled while the builder&apos;s tool runs past the stream idle time, and the stall timer starts again when the tool ends" classname="" time="4.976391" file="test/task/verify-spec-SV23.spec.ts" line="95" assertions="12" />
+  </testsuite>
+</testsuites>

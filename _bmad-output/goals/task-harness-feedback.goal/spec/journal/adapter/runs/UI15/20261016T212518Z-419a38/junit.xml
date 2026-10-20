@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="51" failures="0" skipped="0" time="18.522637">
+  <testsuite name="test/task/verify-spec-UI15.spec.ts" file="test/task/verify-spec-UI15.spec.ts" tests="4" assertions="51" failures="0" skipped="0" time="12.388" hostname="mac-studio-m1">
+    <testcase name="[UI15] the prompt footer and the sidebar show the root&apos;s run total live from the synced sessions; others unchanged" classname="" time="0.412561" file="test/task/verify-spec-UI15.spec.ts" line="223" assertions="22" />
+    <testcase name="[UI15] the HUD, the full-screen header, the Dock and the Ticker dialog show the run total; nothing before tokens" classname="" time="1.597088" file="test/task/verify-spec-UI15.spec.ts" line="363" assertions="14" />
+    <testcase name="[UI15] the real task-ui plugin follows the root&apos;s child sessions live: nothing before tokens, then the run total" classname="" time="8.99217" file="test/task/verify-spec-UI15.spec.ts" line="570" assertions="8" />
+    <testcase name="[UI15] the closing summary repeats the run total of the root&apos;s child sessions" classname="" time="1.387637" file="test/task/verify-spec-UI15.spec.ts" line="607" assertions="7" />
+  </testsuite>
+</testsuites>

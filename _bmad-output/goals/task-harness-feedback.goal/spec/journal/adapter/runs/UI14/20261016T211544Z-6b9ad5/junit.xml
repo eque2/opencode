@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="208" failures="0" skipped="0" time="29.256813">
+  <testsuite name="test/task/verify-spec-UI14.spec.ts" file="test/task/verify-spec-UI14.spec.ts" tests="5" assertions="208" failures="0" skipped="0" time="22.88" hostname="mac-studio-m1">
+    <testcase name="[UI14] while the run is live, every In the Flow mark&apos;s diamond is the spinner element: · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 120 ms, accent, not bold" classname="" time="1.510908" file="test/task/verify-spec-UI14.spec.ts" line="261" assertions="79" />
+    <testcase name="[UI14] the live diamond grows and melts: it steps through the frames in their order, about 120 ms each, never bold" classname="" time="3.778982" file="test/task/verify-spec-UI14.spec.ts" line="327" assertions="12" />
+    <testcase name="[UI14] the mark is a static ◆, not bold, at every site when the run has ended or animations are off" classname="" time="6.189216" file="test/task/verify-spec-UI14.spec.ts" line="375" assertions="97" />
+    <testcase name="[UI14] the Peek border title stays static while the run is live" classname="" time="2.861007" file="test/task/verify-spec-UI14.spec.ts" line="454" assertions="7" />
+    <testcase name="[UI14] the real plugin: the marks move for a live run with animations on, stay ◆ with them off; toast titles are static" classname="" time="8.542077" file="test/task/verify-spec-UI14.spec.ts" line="633" assertions="13" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,13 @@
+0ee865afbb
+start 22:11:15
+bun test v1.3.14 (0d9b296a)
+
+test/task/engine-xstate-graph.test.ts:
+stale walk 33944 keys 331133 edges
+
+ 1 pass
+ 4 filtered out
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [3184.47s]
+EXIT 0 23:04:20

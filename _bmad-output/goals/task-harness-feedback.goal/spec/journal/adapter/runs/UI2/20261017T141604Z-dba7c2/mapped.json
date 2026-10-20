@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI2.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI2] the plugin started for a session: design, selection, expansion, watch and one stop key, then the 5 s disarm and a status that does not parse",
+        "result": {
+          "state": "pass",
+          "duration": 11071.829
+        }
+      },
+      {
+        "name": "[UI2] the plugin's installed readers follow the same actor's delayed feed, session, activity and tail ticks",
+        "result": {
+          "state": "pass",
+          "duration": 3647.993
+        }
+      },
+      {
+        "name": "[UI2] the design, the selection, the expansion, the watch target and the stop-key arming are states and context of one view machine",
+        "result": {
+          "state": "pass",
+          "duration": 387.719
+        }
+      },
+      {
+        "name": "[UI2] the status, the session list, the activity lines and the proof-log tail are read by delayed transitions every 1 s, 2 s, 1.5 s and 500 ms",
+        "result": {
+          "state": "pass",
+          "duration": 384.37300000000005
+        }
+      },
+      {
+        "name": "[UI2] a status text that does not parse keeps the last good status",
+        "result": {
+          "state": "pass",
+          "duration": 208.074
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 22085
+    }
+  }
+]

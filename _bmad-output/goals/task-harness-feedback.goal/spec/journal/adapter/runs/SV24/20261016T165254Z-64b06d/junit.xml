@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="20" failures="0" skipped="0" time="21.499955">
+  <testsuite name="test/task/verify-spec-SV24.spec.ts" file="test/task/verify-spec-SV24.spec.ts" tests="1" assertions="20" failures="0" skipped="0" time="8.159" hostname="mac-studio-m1">
+    <testcase name="[SV24] on resume the new task supervisor claims the reused T1.2 builder session, waits for the index entry before the prompt, and task_ready from it reaches the supervisor" classname="" time="8.15986" file="test/task/verify-spec-SV24.spec.ts" line="72" assertions="20" />
+  </testsuite>
+</testsuites>

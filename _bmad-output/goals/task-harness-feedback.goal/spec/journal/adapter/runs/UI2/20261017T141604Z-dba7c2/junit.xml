@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="110" failures="0" skipped="0" time="22.022967">
+  <testsuite name="test/task/verify-spec-UI2.spec.ts" file="test/task/verify-spec-UI2.spec.ts" tests="5" assertions="110" failures="0" skipped="0" time="15.697" hostname="mac-studio-m1">
+    <testcase name="[UI2] the plugin started for a session: design, selection, expansion, watch and one stop key, then the 5 s disarm and a status that does not parse" classname="" time="11.071829" file="test/task/verify-spec-UI2.spec.ts" line="266" assertions="39" />
+    <testcase name="[UI2] the plugin&apos;s installed readers follow the same actor&apos;s delayed feed, session, activity and tail ticks" classname="" time="3.647993" file="test/task/verify-spec-UI2.spec.ts" line="349" assertions="14" />
+    <testcase name="[UI2] the design, the selection, the expansion, the watch target and the stop-key arming are states and context of one view machine" classname="" time="0.387719" file="test/task/verify-spec-UI2.spec.ts" line="439" assertions="17" />
+    <testcase name="[UI2] the status, the session list, the activity lines and the proof-log tail are read by delayed transitions every 1 s, 2 s, 1.5 s and 500 ms" classname="" time="0.384373" file="test/task/verify-spec-UI2.spec.ts" line="525" assertions="24" />
+    <testcase name="[UI2] a status text that does not parse keeps the last good status" classname="" time="0.208074" file="test/task/verify-spec-UI2.spec.ts" line="612" assertions="16" />
+  </testsuite>
+</testsuites>

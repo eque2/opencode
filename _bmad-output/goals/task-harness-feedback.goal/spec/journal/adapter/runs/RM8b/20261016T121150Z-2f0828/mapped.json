@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM8b.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM8b] the stored old slice: run.started without a path, no run.ended, and a fold that is not done",
+        "result": {
+          "state": "pass",
+          "duration": 288.784
+        }
+      },
+      {
+        "name": "[RM8b] the slice counts as a whole-spec slice, for every way the whole-spec path is written",
+        "result": {
+          "state": "pass",
+          "duration": 225.231
+        }
+      },
+      {
+        "name": "[RM8b] /task <spec> resumes the old slice and records only run.resumed with the path",
+        "result": {
+          "state": "pass",
+          "duration": 846.626
+        }
+      },
+      {
+        "name": "[RM8b] /task ./<spec>/ resumes the old slice and records only run.resumed with the normalised path",
+        "result": {
+          "state": "pass",
+          "duration": 750.555
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 3547
+    }
+  }
+]

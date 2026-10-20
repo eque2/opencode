@@ -1,0 +1,27 @@
+{
+  "scenarioId": "VF5",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF5.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:24:50.653Z",
+  "durationMs": 5470.415999999999,
+  "testResults": [
+    {
+      "name": "[VF5] a run whose warning shows two failures: when the spec validates again, spec.checked is recorded with no failures and the warning goes",
+      "status": "passed",
+      "duration": 1452.0919999999999
+    },
+    {
+      "name": "[VF5] a reload with the same failures as the current warning records nothing; a changed list does",
+      "status": "passed",
+      "duration": 2532.7929999999997
+    },
+    {
+      "name": "[VF5] a valid reload that adds or removes an obligation id of the plan counts as a failure, and the run keeps the old text",
+      "status": "passed",
+      "duration": 1485.531
+    }
+  ],
+  "_sourceHash": "545485e95d20921b",
+  "_keyId": "53bde7c7",
+  "_hmac": "1b12e3fe29cb998cab27c56a65b6c7cd814902b9c69332419310584cb6b0b28e"
+}

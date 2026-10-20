@@ -1,0 +1,37 @@
+{
+  "scenarioId": "RM7",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM7.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T11:55:31.122Z",
+  "durationMs": 2025.9,
+  "testResults": [
+    {
+      "name": "[RM7] the given facts end after T1.4's second failing proof, with T1.5 and T1 waiting and not blocked",
+      "status": "passed",
+      "duration": 463.568
+    },
+    {
+      "name": "[RM7] one apply of T1.4's third failing proof makes T1.4 budget exhausted",
+      "status": "passed",
+      "duration": 363.493
+    },
+    {
+      "name": "[RM7] T1.5 and T1 are blocked in the snapshot that this one apply returns",
+      "status": "passed",
+      "duration": 381.466
+    },
+    {
+      "name": "[RM7] each of T1.5 and T1 has a history entry whose reason is \"blocked by T1.4: budget exhausted\"",
+      "status": "passed",
+      "duration": 402.471
+    },
+    {
+      "name": "[RM7] T1.5 and T1 carry the blocked cause T1.4 in state budget_exhausted",
+      "status": "passed",
+      "duration": 414.902
+    }
+  ],
+  "_sourceHash": "2d85a188a2896d7c",
+  "_keyId": "53bde7c7",
+  "_hmac": "0afc676037a083fd47df9c29f238a3b1bf294a7904b7c84e14096ced9c81442b"
+}

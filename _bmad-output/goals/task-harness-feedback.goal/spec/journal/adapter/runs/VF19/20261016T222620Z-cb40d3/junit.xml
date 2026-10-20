@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="30" failures="0" skipped="0" time="10.614666">
+  <testsuite name="test/task/verify-spec-VF19.spec.ts" file="test/task/verify-spec-VF19.spec.ts" tests="5" assertions="30" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="[VF19] every refusal form reads as the UX document sets" file="test/task/verify-spec-VF19.spec.ts" line="47" tests="5" assertions="30" failures="0" skipped="0" time="4.98" hostname="mac-studio-m1">
+      <testcase name="[VF19] a spec with one loader failure: the counted header, its one line, then the fix hint" classname="[VF19] every refusal form reads as the UX document sets" time="0.862159" file="test/task/verify-spec-VF19.spec.ts" line="49" assertions="6" />
+      <testcase name="[VF19] the loader-failure refusal names the path as the user typed it, in the header and in the hint" classname="[VF19] every refusal form reads as the UX document sets" time="0.905341" file="test/task/verify-spec-VF19.spec.ts" line="67" assertions="5" />
+      <testcase name="[VF19] a subtree run with an untrusted folder task outside it ends with the hint to run the whole spec or a folder that holds T1.1" classname="[VF19] every refusal form reads as the UX document sets" time="0.996849" file="test/task/verify-spec-VF19.spec.ts" line="83" assertions="7" />
+      <testcase name="[VF19] a subtree run with two untrusted folder tasks outside it names both in the hint, joined by and" classname="[VF19] every refusal form reads as the UX document sets" time="1.248386" file="test/task/verify-spec-VF19.spec.ts" line="102" assertions="5" />
+      <testcase name="[VF19] a checkout with an uncommitted change: the plain header and one plain line, with no hint" classname="[VF19] every refusal form reads as the UX document sets" time="0.969652" file="test/task/verify-spec-VF19.spec.ts" line="120" assertions="7" />
+    </testsuite>
+  </testsuite>
+</testsuites>

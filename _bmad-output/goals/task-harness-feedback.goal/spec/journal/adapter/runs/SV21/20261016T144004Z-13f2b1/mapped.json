@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV21.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV21] a run that ends done: its status writer stops before each lease release, and the next /task is not busy",
+        "result": {
+          "state": "pass",
+          "duration": 11053.881000000001
+        }
+      },
+      {
+        "name": "[SV21] a run that is cancelled: its status writer stops before each lease release, and the next /task is not busy",
+        "result": {
+          "state": "pass",
+          "duration": 14582.823
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 40308
+    }
+  }
+]

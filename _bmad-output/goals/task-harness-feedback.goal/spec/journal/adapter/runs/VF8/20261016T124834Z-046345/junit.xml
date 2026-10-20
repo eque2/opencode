@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="30" failures="0" skipped="0" time="4.449596">
+  <testsuite name="test/task/verify-spec-VF8.spec.ts" file="test/task/verify-spec-VF8.spec.ts" tests="4" assertions="30" failures="0" skipped="0" time="1.909" hostname="mac-studio-m1">
+    <testcase name="[VF8] /task on T1.1-commit-parser.task: the first message names each left-out scenario and the header metadata lists the same ids" classname="" time="0.523318" file="test/task/verify-spec-VF8.spec.ts" line="76" assertions="12" />
+    <testcase name="[VF8] /task on T1.2-version-bump.task: the first message names each left-out scenario and the header metadata lists the same ids" classname="" time="0.423654" file="test/task/verify-spec-VF8.spec.ts" line="76" assertions="11" />
+    <testcase name="[VF8] control: the whole spec leaves no scenario out, so the first message has no Left out line and leftOut is empty" classname="" time="0.463719" file="test/task/verify-spec-VF8.spec.ts" line="123" assertions="3" />
+    <testcase name="[VF8] control: the T1 folder holds every task, so it leaves no scenario out" classname="" time="0.500537" file="test/task/verify-spec-VF8.spec.ts" line="141" assertions="4" />
+  </testsuite>
+</testsuites>

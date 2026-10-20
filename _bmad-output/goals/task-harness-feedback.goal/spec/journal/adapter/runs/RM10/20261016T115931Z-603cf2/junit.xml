@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="37" failures="0" skipped="0" time="1.872341">
+  <testsuite name="test/task/verify-spec-RM10.spec.ts" file="test/task/verify-spec-RM10.spec.ts" tests="3" assertions="37" failures="0" skipped="0" time="0.108" hostname="mac-studio-m1">
+    <testcase name="[RM10] the plan holds two independent leaves T1.1 and T1.2, and both are building" classname="" time="0.048437" file="test/task/verify-spec-RM10.spec.ts" line="178" assertions="7" />
+    <testcase name="[RM10] after T1.1 is budget exhausted the run keeps running while T1.2 builds, proves and is verified, and settles budget exhausted only when T1.2 is final" classname="" time="0.034214" file="test/task/verify-spec-RM10.spec.ts" line="200" assertions="23" />
+    <testcase name="[RM10] the run settles on whichever final state T1.2 reaches, and the outcome stays the budget exhaustion of T1.1" classname="" time="0.026519" file="test/task/verify-spec-RM10.spec.ts" line="254" assertions="7" />
+  </testsuite>
+</testsuites>

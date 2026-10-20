@@ -1,0 +1,47 @@
+{
+  "scenarioId": "RM25",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM25.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:25:05.897Z",
+  "durationMs": 10465.658,
+  "testResults": [
+    {
+      "name": "[RM25] the loaded example-cascade plan: T1.1 has budget 1, T1.2 waits on T1.1, T1.3 is independent",
+      "status": "passed",
+      "duration": 2317.685
+    },
+    {
+      "name": "[RM25] T1.1 starts at task.started, ends at the failing proof, with spans waiting, building, proving and a zero-length budget_exhausted",
+      "status": "passed",
+      "duration": 741.738
+    },
+    {
+      "name": "[RM25] the blocked T1.2 has an end time and no start time",
+      "status": "passed",
+      "duration": 707.221
+    },
+    {
+      "name": "[RM25] a stale obligation on the trusted T1.3 clears its end time and starts its clock again",
+      "status": "passed",
+      "duration": 882.1980000000001
+    },
+    {
+      "name": "[RM25] the times and spans are the fact times only: a shifted clock shifts every value by the same amount",
+      "status": "passed",
+      "duration": 915.099
+    },
+    {
+      "name": "[RM25] the status projection copies the machine's times and spans unchanged",
+      "status": "passed",
+      "duration": 822.379
+    },
+    {
+      "name": "[RM25] the run's live actor and status writer write the same times and spans as the fold",
+      "status": "passed",
+      "duration": 4079.3379999999997
+    }
+  ],
+  "_sourceHash": "9ea218f7f919bb0a",
+  "_keyId": "53bde7c7",
+  "_hmac": "9ed8735455e8f8b36f1d8216a34c59e6161196b08bae8719e7f4fa9c3f6b1025"
+}

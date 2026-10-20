@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="19" failures="0" skipped="0" time="44.622937">
+  <testsuite name="test/task/verify-spec-VF10.spec.ts" file="test/task/verify-spec-VF10.spec.ts" tests="2" assertions="19" failures="0" skipped="0" time="8.271" hostname="mac-studio-m1">
+    <testcase name="[VF10] the cycle folder is refused with one R7 line that names the cycle through T1.1 and T1.2" classname="" time="5.384618" file="test/task/verify-spec-VF10.spec.ts" line="42" assertions="15" />
+    <testcase name="[VF10] /task on a task folder inside the cycle folder is refused with the same R7 line" classname="" time="2.88776" file="test/task/verify-spec-VF10.spec.ts" line="93" assertions="4" />
+  </testsuite>
+</testsuites>

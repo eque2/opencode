@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="38" failures="0" skipped="0" time="28.945747">
+  <testsuite name="test/task/verify-spec-SV17.spec.ts" file="test/task/verify-spec-SV17.spec.ts" tests="4" assertions="38" failures="0" skipped="0" time="15.613" hostname="mac-studio-m1">
+    <testcase name="[SV17] the harness&apos;s own status writer, resuming the observed facts on the fixed clock, writes the shared fixture byte for byte" classname="" time="9.521802" file="test/task/verify-spec-SV17.spec.ts" line="84" assertions="2" />
+    <testcase name="[SV17] the fixture equals the projection of the observed facts through the engine API, written with the fixed clock, byte for byte" classname="" time="5.12803" file="test/task/verify-spec-SV17.spec.ts" line="119" assertions="6" />
+    <testcase name="[SV17] the task-ui decodes the shared fixture and a status file from before the change, with its own parse" classname="" time="0.207396" file="test/task/verify-spec-SV17.spec.ts" line="141" assertions="22" />
+    <testcase name="[SV17] the task-ui&apos;s view actor reads each file from status.json on disk and decodes it" classname="" time="0.757312" file="test/task/verify-spec-SV17.spec.ts" line="222" assertions="8" />
+  </testsuite>
+</testsuites>

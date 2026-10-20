@@ -1,0 +1,17 @@
+{
+  "scenarioId": "SV10",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV10.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T16:57:45.732Z",
+  "durationMs": 2019.1200000000001,
+  "testResults": [
+    {
+      "name": "[SV10] a quiet builder stream is cancelled after streamIdle, task.stalled is recorded, and the builder continues in the same attempt",
+      "status": "passed",
+      "duration": 2019.1200000000001
+    }
+  ],
+  "_sourceHash": "dca330a264197104",
+  "_keyId": "53bde7c7",
+  "_hmac": "9b8423799c4e74b881c65691ae72831d04964f7550849afeecc57198014dda52"
+}

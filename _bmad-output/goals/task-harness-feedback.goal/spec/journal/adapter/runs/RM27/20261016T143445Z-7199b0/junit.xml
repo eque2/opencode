@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="36" failures="0" skipped="0" time="10.549562">
+  <testsuite name="test/task/verify-spec-RM27.spec.ts" file="test/task/verify-spec-RM27.spec.ts" tests="6" assertions="36" failures="0" skipped="0" time="0.811" hostname="mac-studio-m1">
+    <testcase name="[RM27] the plan: T1.4 after T1.1, an independent T1.2, and S1 needing T1.2" classname="" time="0.156841" file="test/task/verify-spec-RM27.spec.ts" line="191" assertions="4" />
+    <testcase name="[RM27] given T1.1 budget exhausted, T1.4 blocked by T1.1, T1.2 building and S1 waiting" classname="" time="0.250965" file="test/task/verify-spec-RM27.spec.ts" line="205" assertions="8" />
+    <testcase name="[RM27] run.cancelled &quot;user stop&quot; ends the run budget exhausted, the state of the task that died first (AC 4)" classname="" time="0.116823" file="test/task/verify-spec-RM27.spec.ts" line="228" assertions="7" />
+    <testcase name="[RM27] the run reason holds the T1.1 line, then &quot;T1.4 blocked by T1.1&quot;, then &quot;user stop&quot;" classname="" time="0.10824" file="test/task/verify-spec-RM27.spec.ts" line="254" assertions="7" />
+    <testcase name="[RM27] T1.2 and S1 are cancelled, T1.1 stays budget exhausted, and the blocked tasks stay blocked" classname="" time="0.093522" file="test/task/verify-spec-RM27.spec.ts" line="274" assertions="7" />
+    <testcase name="[RM27] the same stop with no dead task ends cancelled with the stop&apos;s reason (rule 2)" classname="" time="0.088661" file="test/task/verify-spec-RM27.spec.ts" line="306" assertions="3" />
+  </testsuite>
+</testsuites>

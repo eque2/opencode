@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="68" failures="0" skipped="0" time="20.312158">
+  <testsuite name="test/task/verify-spec-VF21.spec.ts" file="test/task/verify-spec-VF21.spec.ts" tests="7" assertions="68" failures="0" skipped="0" time="15.277" hostname="mac-studio-m1">
+    <testcase name="[VF21] /task trust T1.1 typed and no stored slice: /task on the T1.3 task folder is refused with the R12 line for T1.3 and T1.1" classname="" time="1.164267" file="test/task/verify-spec-VF21.spec.ts" line="83" assertions="12" />
+    <testcase name="[VF21] /task trust T1.1 typed and a stored slice in which T1.1 is not trusted: the T1.3 run is still refused with the R12 line" classname="" time="2.238585" file="test/task/verify-spec-VF21.spec.ts" line="110" assertions="8" />
+    <testcase name="[VF21] an older slice with T1.1 trusted and a newer slice where T1.1 ended cancelled (T1.1 trusted again, reopened by a stale obligation, then the run cancelled): the T1.3 run is refused" classname="" time="2.927442" file="test/task/verify-spec-VF21.spec.ts" line="154" assertions="11" />
+    <testcase name="[VF21] an older slice with T1.1 trusted and a newer slice where T1.1 ended cancelled (T1.1 started, then the run cancelled): the T1.3 run is refused" classname="" time="2.479405" file="test/task/verify-spec-VF21.spec.ts" line="154" assertions="11" />
+    <testcase name="[VF21] control: the older slice with T1.1 trusted, stored alone, lets the T1.3 run start" classname="" time="1.626457" file="test/task/verify-spec-VF21.spec.ts" line="180" assertions="7" />
+    <testcase name="[VF21] an old slice that has no path and T1.1 trusted counts as a whole-spec slice: the T1.3 run starts" classname="" time="2.494777" file="test/task/verify-spec-VF21.spec.ts" line="197" assertions="12" />
+    <testcase name="[VF21] control: the same old slice with no path but T1.1 not trusted is refused with the R12 line" classname="" time="2.349459" file="test/task/verify-spec-VF21.spec.ts" line="224" assertions="7" />
+  </testsuite>
+</testsuites>

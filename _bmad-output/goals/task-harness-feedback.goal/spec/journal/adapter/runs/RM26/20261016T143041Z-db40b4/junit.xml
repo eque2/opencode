@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="27" failures="0" skipped="0" time="26.16741">
+  <testsuite name="test/task/verify-spec-RM26.spec.ts" file="test/task/verify-spec-RM26.spec.ts" tests="4" assertions="27" failures="0" skipped="0" time="15.558" hostname="mac-studio-m1">
+    <testcase name="[RM26] the checkpoint is the phase-1 merge into dev, and it left the task-ui unchanged" classname="" time="0.396313" file="test/task/verify-spec-RM26.spec.ts" line="136" assertions="7" />
+    <testcase name="[RM26] the phase-1 status of the observed facts has T1.5 and T1 blocked by T1.4 budget exhausted" classname="" time="2.911631" file="test/task/verify-spec-RM26.spec.ts" line="154" assertions="8" />
+    <testcase name="[RM26] the checkpoint&apos;s task-ui renders it on the Board: T1.5 and T1 in STOPPED, labelled blocked, with their cause" classname="" time="5.179404" file="test/task/verify-spec-RM26.spec.ts" line="172" assertions="7" />
+    <testcase name="[RM26] the task-ui of this tree still shows the blocked T1.5 and T1 of the projected status in STOPPED with their cause (T2.3)" classname="" time="7.072311" file="test/task/verify-spec-RM26.spec.ts" line="206" assertions="5" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,22 @@
+{
+  "scenarioId": "SV8",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV8.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T16:54:47.469Z",
+  "durationMs": 9483.530999999999,
+  "testResults": [
+    {
+      "name": "[SV8] with a live run of release-notes, /task for a valid spec starts nothing and answers one line naming the live run's spec and path",
+      "status": "passed",
+      "duration": 6996.41
+    },
+    {
+      "name": "[SV8] a claim whose background job does not start is released, so the next /task is not busy",
+      "status": "passed",
+      "duration": 2487.121
+    }
+  ],
+  "_sourceHash": "99627b7b8efe2291",
+  "_keyId": "53bde7c7",
+  "_hmac": "2d2c26537ed7747bb9e5c6b3292401c2633ff2d0b0941c8ac2ede6cc7c53c812"
+}

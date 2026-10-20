@@ -1,0 +1,32 @@
+{
+  "scenarioId": "RM20",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM20.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:39:18.251Z",
+  "durationMs": 9347.168,
+  "testResults": [
+    {
+      "name": "[RM20] the live-check plan example-scenarios.spec walks within 60 s with no stuck state",
+      "status": "passed",
+      "duration": 880.896
+    },
+    {
+      "name": "[RM20] the live-check plan example-cascade.spec walks within 60 s with no stuck state",
+      "status": "passed",
+      "duration": 5935.679999999999
+    },
+    {
+      "name": "[RM20] the whole example-outside-run.spec plan (phase 3) walks within 60 s with no stuck state",
+      "status": "passed",
+      "duration": 1847.779
+    },
+    {
+      "name": "[RM20] the T1.2 subtree plan of example-outside-run.spec (phase 3) walks within 60 s with no stuck state",
+      "status": "passed",
+      "duration": 682.813
+    }
+  ],
+  "_sourceHash": "68204f73da6ddd20",
+  "_keyId": "53bde7c7",
+  "_hmac": "4fa89e8cf566e9ef37cc99481981b5ee944e44848e8669d0b264b80ad4c0f689"
+}

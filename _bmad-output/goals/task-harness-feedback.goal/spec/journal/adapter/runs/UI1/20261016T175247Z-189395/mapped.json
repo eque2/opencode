@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI1.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI1] the Board puts waiting tasks in WAITING, active tasks in their phase's column, stopped tasks in STOPPED and other ended tasks in TRUSTED",
+        "result": {
+          "state": "pass",
+          "duration": 257.661
+        }
+      },
+      {
+        "name": "[UI1] STOPPED groups the dead tasks, then the blocked tasks, then the rest, on the Board and in the STOPPED list",
+        "result": {
+          "state": "pass",
+          "duration": 75.921
+        }
+      },
+      {
+        "name": "[UI1] the counts, the focus and the next running task come from the tags",
+        "result": {
+          "state": "pass",
+          "duration": 131.138
+        }
+      },
+      {
+        "name": "[UI1] the tags alone decide: unknown state names classify the same, and a state that contradicts its tags follows the tags",
+        "result": {
+          "state": "pass",
+          "duration": 116.93199999999999
+        }
+      },
+      {
+        "name": "[UI1] the task-ui keeps no list of active or ended state names",
+        "result": {
+          "state": "pass",
+          "duration": 335.872
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 7078
+    }
+  }
+]

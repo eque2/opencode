@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="27" failures="0" skipped="0" time="15.154575">
+  <testsuite name="test/task/verify-spec-UI7.spec.ts" file="test/task/verify-spec-UI7.spec.ts" tests="2" assertions="27" failures="0" skipped="0" time="10.049" hostname="mac-studio-m1">
+    <testcase name="[UI7] a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario writes one assistant markdown summary in the root session, with no model call" classname="" time="9.758835" file="test/task/verify-spec-UI7.spec.ts" line="338" assertions="25" />
+    <testcase name="[UI7] in the transcript, the summary&apos;s reasons show &lt;, *, _, a backtick and | as the model wrote them" classname="" time="0.291536" file="test/task/verify-spec-UI7.spec.ts" line="485" assertions="2" />
+  </testsuite>
+</testsuites>

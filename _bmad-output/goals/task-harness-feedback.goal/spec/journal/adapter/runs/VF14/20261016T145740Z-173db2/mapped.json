@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF14.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF14] the whole outside-run spec loads with no failure, and /task on the T1.2 folder is refused at the start with the R12 line naming T1.2 and T1.1",
+        "result": {
+          "state": "pass",
+          "duration": 1910.129
+        }
+      },
+      {
+        "name": "[VF14] /task on the whole outside-run spec is not refused: its job starts",
+        "result": {
+          "state": "pass",
+          "duration": 1486.99
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 18666
+    }
+  }
+]

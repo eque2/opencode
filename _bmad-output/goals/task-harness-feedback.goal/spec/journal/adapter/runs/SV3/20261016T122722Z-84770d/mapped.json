@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV3.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV3] /task with the same path folds the open slice, records run.resumed with that path, and the supervisor starts what the folded state asks for",
+        "result": {
+          "state": "pass",
+          "duration": 942.283
+        }
+      },
+      {
+        "name": "[SV3] /task with a different path starts a new slice, and so does /task with the same path after the slice ended",
+        "result": {
+          "state": "pass",
+          "duration": 666.892
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 3146
+    }
+  }
+]

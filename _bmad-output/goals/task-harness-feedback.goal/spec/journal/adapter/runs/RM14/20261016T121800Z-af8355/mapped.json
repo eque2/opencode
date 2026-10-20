@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM14.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM14] default 4: a cancel with a reason cancels the building, ready and waiting tasks, keeps the trusted task and every obligation, and ends the run cancelled with that reason",
+        "result": {
+          "state": "pass",
+          "duration": 1796.99
+        }
+      },
+      {
+        "name": "[RM14] default 4: a cancel after a task died gives the dead task's state, not cancelled",
+        "result": {
+          "state": "pass",
+          "duration": 1415.47
+        }
+      },
+      {
+        "name": "[RM14] default 4: a run wall-clock stop cancels the unfinished units in the same way and gives the run.ended state, failed, as the outcome",
+        "result": {
+          "state": "pass",
+          "duration": 1420.6209999999999
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 14817
+    }
+  }
+]

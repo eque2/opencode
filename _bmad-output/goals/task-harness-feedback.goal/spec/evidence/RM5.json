@@ -1,0 +1,217 @@
+{
+  "scenarioId": "RM5",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM5.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:33:40.801Z",
+  "durationMs": 89398.517,
+  "testResults": [
+    {
+      "name": "[RM5] seed 1: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 7617.1230000000005
+    },
+    {
+      "name": "[RM5] seed 2: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2183.221
+    },
+    {
+      "name": "[RM5] seed 3: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2631.952
+    },
+    {
+      "name": "[RM5] seed 4: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1213.435
+    },
+    {
+      "name": "[RM5] seed 5: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1739.607
+    },
+    {
+      "name": "[RM5] seed 6: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2375.038
+    },
+    {
+      "name": "[RM5] seed 7: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 859.8679999999999
+    },
+    {
+      "name": "[RM5] seed 8: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2006.3580000000002
+    },
+    {
+      "name": "[RM5] seed 9: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2101.2219999999998
+    },
+    {
+      "name": "[RM5] seed 10: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 4506.357999999999
+    },
+    {
+      "name": "[RM5] seed 11: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1776.701
+    },
+    {
+      "name": "[RM5] seed 12: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2057.381
+    },
+    {
+      "name": "[RM5] seed 13: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1085.8380000000002
+    },
+    {
+      "name": "[RM5] seed 14: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 943.89
+    },
+    {
+      "name": "[RM5] seed 15: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2314.5150000000003
+    },
+    {
+      "name": "[RM5] seed 16: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1796.32
+    },
+    {
+      "name": "[RM5] seed 17: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1212.7810000000002
+    },
+    {
+      "name": "[RM5] seed 18: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 4102.6179999999995
+    },
+    {
+      "name": "[RM5] seed 19: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2449.027
+    },
+    {
+      "name": "[RM5] seed 20: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2219.8
+    },
+    {
+      "name": "[RM5] seed 21: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1447.039
+    },
+    {
+      "name": "[RM5] seed 22: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 4314.192
+    },
+    {
+      "name": "[RM5] seed 23: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2966.6130000000003
+    },
+    {
+      "name": "[RM5] seed 24: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1700.71
+    },
+    {
+      "name": "[RM5] seed 25: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2212.054
+    },
+    {
+      "name": "[RM5] seed 26: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2046.294
+    },
+    {
+      "name": "[RM5] seed 27: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2108.218
+    },
+    {
+      "name": "[RM5] seed 28: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1605.259
+    },
+    {
+      "name": "[RM5] seed 29: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1202.7069999999999
+    },
+    {
+      "name": "[RM5] seed 30: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2360.138
+    },
+    {
+      "name": "[RM5] seed 31: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 3136.1279999999997
+    },
+    {
+      "name": "[RM5] seed 32: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1406.609
+    },
+    {
+      "name": "[RM5] seed 33: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1192.121
+    },
+    {
+      "name": "[RM5] seed 34: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 951.1429999999999
+    },
+    {
+      "name": "[RM5] seed 35: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1945.078
+    },
+    {
+      "name": "[RM5] seed 36: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1706.345
+    },
+    {
+      "name": "[RM5] seed 37: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2507.067
+    },
+    {
+      "name": "[RM5] seed 38: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2664.876
+    },
+    {
+      "name": "[RM5] seed 39: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 1648.8370000000002
+    },
+    {
+      "name": "[RM5] seed 40: fold, live actor and restored actor agree; the log grows exactly with a change, bar the spine run notes",
+      "status": "passed",
+      "duration": 2076.205
+    },
+    {
+      "name": "[RM5] the 40 sequences hold every fact type, unknown ids and facts after the run ended",
+      "status": "passed",
+      "duration": 1007.8309999999999
+    }
+  ],
+  "_sourceHash": "63f53c58a039147b",
+  "_keyId": "53bde7c7",
+  "_hmac": "6ee4aaf006043c7a3cf2fc293d680fb4b71cc9de395ad1a2f9da63caa4c29328"
+}

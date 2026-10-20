@@ -1,0 +1,22 @@
+{
+  "scenarioId": "UI23",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI23.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T22:26:49.262Z",
+  "durationMs": 15939.913,
+  "testResults": [
+    {
+      "name": "[UI23] a root session deleted while its run goes on: when the run machine is final, the failed say is logged, the supervisor closes, the job ends, the lease is free and the next /task is not busy",
+      "status": "passed",
+      "duration": 10236.521
+    },
+    {
+      "name": "[UI23] a root session deleted by the product's delete: the run ends, the supervisor closes, the job ends, the lease is free and the next /task is not busy",
+      "status": "passed",
+      "duration": 5703.392
+    }
+  ],
+  "_sourceHash": "0275229145ab96ed",
+  "_keyId": "53bde7c7",
+  "_hmac": "1751b19cf611bd9e9a58f7ed4114863c7836ea9e9ecb2cade86bbac3703ce94b"
+}

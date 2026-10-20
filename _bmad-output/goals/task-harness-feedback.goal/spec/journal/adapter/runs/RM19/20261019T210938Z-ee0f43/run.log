@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-RM19.spec.ts:
+[RM19] release-notes walk: 338 keys, 746 edges, 68394 ms
+
+ 3 pass
+ 0 fail
+ 26 expect() calls
+Ran 3 tests across 1 file. [88.14s]

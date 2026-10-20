@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI14.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI14] while the run is live, every In the Flow mark's diamond is the spinner element: · ⬩ ⬪ ⬥ ◆ ⬥ ⬪ ⬩ at 120 ms, accent, not bold",
+        "result": {
+          "state": "pass",
+          "duration": 1510.908
+        }
+      },
+      {
+        "name": "[UI14] the live diamond grows and melts: it steps through the frames in their order, about 120 ms each, never bold",
+        "result": {
+          "state": "pass",
+          "duration": 3778.982
+        }
+      },
+      {
+        "name": "[UI14] the mark is a static ◆, not bold, at every site when the run has ended or animations are off",
+        "result": {
+          "state": "pass",
+          "duration": 6189.216
+        }
+      },
+      {
+        "name": "[UI14] the Peek border title stays static while the run is live",
+        "result": {
+          "state": "pass",
+          "duration": 2861.007
+        }
+      },
+      {
+        "name": "[UI14] the real plugin: the marks move for a live run with animations on, stay ◆ with them off; toast titles are static",
+        "result": {
+          "state": "pass",
+          "duration": 8542.077000000001
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 29315
+    }
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM19.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM19] owner ruling 4: the release-notes plan passes the structural totality check before any walk",
+        "result": {
+          "state": "pass",
+          "duration": 633.4459999999999
+        }
+      },
+      {
+        "name": "[RM19] owner ruling 4: every state reachable with the canonical interleaving is walked within 60 seconds, no state that is not done lacks an event that changes its key, and every visited snapshot is active or done",
+        "result": {
+          "state": "pass",
+          "duration": 28370.172
+        }
+      },
+      {
+        "name": "[RM19] the walk's stuck detector reports stuck states on a small plan whose blocked rows are removed",
+        "result": {
+          "state": "pass",
+          "duration": 6943.202
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 38763
+    }
+  }
+]

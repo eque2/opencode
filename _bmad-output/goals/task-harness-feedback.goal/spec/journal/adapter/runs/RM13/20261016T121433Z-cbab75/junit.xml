@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="34" failures="0" skipped="0" time="3.309639">
+  <testsuite name="test/task/verify-spec-RM13.spec.ts" file="test/task/verify-spec-RM13.spec.ts" tests="2" assertions="34" failures="0" skipped="0" time="1.264" hostname="mac-studio-m1">
+    <testcase name="[RM13] owner ruling 1: with T9 trusted and T8 untrusted, S13 is parked and shows as waiting, and the run ends done with &apos;not run: S13 waits on T8&apos;" classname="" time="0.677351" file="test/task/verify-spec-RM13.spec.ts" line="77" assertions="20" />
+    <testcase name="[RM13] owner ruling 1: when T8 is trusted before the run settles, S13 moves from parked to ready" classname="" time="0.587067" file="test/task/verify-spec-RM13.spec.ts" line="125" assertions="14" />
+  </testsuite>
+</testsuites>

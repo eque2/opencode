@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="20" failures="0" skipped="0" time="2.398153">
+  <testsuite name="test/task/verify-spec-VF9.spec.ts" file="test/task/verify-spec-VF9.spec.ts" tests="2" assertions="20" failures="0" skipped="0" time="0.63" hostname="mac-studio-m1">
+    <testcase name="[VF9] the format-faults folder is refused with an R1, an R3 and an R4 line, in the loader&apos;s rule order, and nothing else" classname="" time="0.360942" file="test/task/verify-spec-VF9.spec.ts" line="44" assertions="16" />
+    <testcase name="[VF9] /task on a task folder inside the format-faults folder lists the same three lines in the same order" classname="" time="0.270888" file="test/task/verify-spec-VF9.spec.ts" line="104" assertions="4" />
+  </testsuite>
+</testsuites>

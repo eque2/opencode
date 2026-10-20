@@ -1,0 +1,60 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF22.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF22] a spec folder with only SPEC.md, with no outside precondition: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+        "result": {
+          "state": "pass",
+          "duration": 498.476
+        }
+      },
+      {
+        "name": "[VF22] the generator refuses the plan of a spec with only SPEC.md, with no outside precondition: it has no task region",
+        "result": {
+          "state": "pass",
+          "duration": 354.08099999999996
+        }
+      },
+      {
+        "name": "[VF22] a spec folder with only SPEC.md with its outside preconditions T8 and T9: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+        "result": {
+          "state": "pass",
+          "duration": 402.37899999999996
+        }
+      },
+      {
+        "name": "[VF22] the generator refuses the plan of a spec with only SPEC.md with its outside preconditions T8 and T9: it has no task region",
+        "result": {
+          "state": "pass",
+          "duration": 340.528
+        }
+      },
+      {
+        "name": "[VF22] a spec folder with only outside preconditions and a scenario that needs T8: /task reads \"Refused <path>. No work started.\" and the one plain line \"the spec holds no task\"",
+        "result": {
+          "state": "pass",
+          "duration": 383.247
+        }
+      },
+      {
+        "name": "[VF22] the generator refuses the plan of a spec with only outside preconditions and a scenario that needs T8: it has no task region",
+        "result": {
+          "state": "pass",
+          "duration": 350.78700000000003
+        }
+      },
+      {
+        "name": "[VF22] control: the generator builds the machine of the release-notes plan, which holds tasks",
+        "result": {
+          "state": "pass",
+          "duration": 167.473
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 5012
+    }
+  }
+]

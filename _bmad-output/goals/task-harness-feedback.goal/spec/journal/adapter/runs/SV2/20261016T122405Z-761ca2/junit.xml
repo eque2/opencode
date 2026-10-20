@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="63" failures="0" skipped="0" time="15.499587">
+  <testsuite name="test/task/verify-spec-SV2.spec.ts" file="test/task/verify-spec-SV2.spec.ts" tests="5" assertions="63" failures="0" skipped="0" time="9.959" hostname="mac-studio-m1">
+    <testcase name="[SV2] from the run actor&apos;s tags the run supervisor spawns one task supervisor for the ready leaf and one scenario supervisor for the verifying scenario, and none for any other unit" classname="" time="1.986259" file="test/task/verify-spec-SV2.spec.ts" line="192" assertions="22" />
+    <testcase name="[SV2] each supervisor records the outcome of its phase as a fact through the Recorder: stored, then folded into the run actor" classname="" time="2.208266" file="test/task/verify-spec-SV2.spec.ts" line="221" assertions="11" />
+    <testcase name="[SV2] a scenario supervisor stops when its scenario leaves verifying, while the leaf&apos;s supervisor and the run go on" classname="" time="1.473288" file="test/task/verify-spec-SV2.spec.ts" line="281" assertions="10" />
+    <testcase name="[SV2] a task supervisor lives through its phases and stops when its task leaves ready and active, while the scenario&apos;s supervisor and the run go on" classname="" time="1.687077" file="test/task/verify-spec-SV2.spec.ts" line="309" assertions="12" />
+    <testcase name="[SV2] the run machine itself invokes nothing: no state invokes an actor and the run actor spawns no child" classname="" time="2.605576" file="test/task/verify-spec-SV2.spec.ts" line="351" assertions="8" />
+  </testsuite>
+</testsuites>

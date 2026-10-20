@@ -1,0 +1,18 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV4.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV4] cancelling the job while the stale check waits on the checkout lock records run.cancelled in the store and the status file, closes the run scope only after the supervisor is final, and leaves no turn or proof process past the cancel deadline",
+        "result": {
+          "state": "pass",
+          "duration": 2705.2070000000003
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 4846
+    }
+  }
+]

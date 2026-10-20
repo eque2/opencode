@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="45" failures="0" skipped="0" time="14.739171">
+  <testsuite name="test/task/verify-spec-UI20.spec.ts" file="test/task/verify-spec-UI20.spec.ts" tests="6" assertions="45" failures="0" skipped="0" time="9.099" hostname="mac-studio-m1">
+    <testcase name="[UI20] a cancel with no dead task: the outcome line is the stop and its first reason line" classname="" time="1.904633" file="test/task/verify-spec-UI20.spec.ts" line="68" assertions="6" />
+    <testcase name="[UI20] a cancel after a dead task, and a dead task: the outcome line is the dead task&apos;s state" classname="" time="2.321736" file="test/task/verify-spec-UI20.spec.ts" line="87" assertions="12" />
+    <testcase name="[UI20] a rejected scenario with every task trusted: the outcome line is failed: acceptance not proved" classname="" time="1.565636" file="test/task/verify-spec-UI20.spec.ts" line="114" assertions="6" />
+    <testcase name="[UI20] a done run with one parked scenario: the outcome line is done · 1 scenario not run" classname="" time="1.750194" file="test/task/verify-spec-UI20.spec.ts" line="134" assertions="7" />
+    <testcase name="[UI20] a subtree run: the summary starts with the task id and title, then from spec and the spec title" classname="" time="0.129864" file="test/task/verify-spec-UI20.spec.ts" line="152" assertions="6" />
+    <testcase name="[UI20] a spec that stopped validating and then validated again still gives the run-warning line" classname="" time="1.430235" file="test/task/verify-spec-UI20.spec.ts" line="170" assertions="8" />
+  </testsuite>
+</testsuites>

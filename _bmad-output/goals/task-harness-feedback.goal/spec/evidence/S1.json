@@ -1,0 +1,17 @@
+{
+  "scenarioId": "S1",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF15.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T22:12:31.557Z",
+  "durationMs": 769.05,
+  "testResults": [
+    {
+      "name": "[VF15] the two live-check folders load, before and after ensures becomes required > [VF15] example-scenarios' S1 is proved by a test titled with [S1], and by no test without that tag",
+      "status": "passed",
+      "duration": 769.05
+    }
+  ],
+  "_sourceHash": "c3ca0d61746c42bd",
+  "_keyId": "53bde7c7",
+  "_hmac": "46f978cd36750e1a1a7f383da9f042a73d59dc425730e15843e09ae421f1dc68"
+}

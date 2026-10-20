@@ -1,0 +1,94 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-UI7.spec.ts:
+411 |       expect(TaskEngineXState.view(end).run.state).toBe("budget_exhausted")
+412 |       expect(unitState(end, "S4")).toBe("rejected")
+413 |       expect(yield* harness.live(directory)).toEqual(Option.none())
+414 | 
+415 |       // The closing step logged no failure: the summary was said.
+416 |       expect(summaryLog()).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI7.spec.ts:416:28
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Effect.js:8394:9
+      at node:fs:363:13
+      at processTicksAndRejections (unknown:7:39)
+[22:05:16.577] ERROR (#12): 411 |       expect(TaskEngineXState.view(end).run.state).toBe("budget_exhausted")
+412 |       expect(unitState(end, "S4")).toBe("rejected")
+413 |       expect(yield* harness.live(directory)).toEqual(Option.none())
+414 | 
+415 |       // The closing step logged no failure: the summary was said.
+416 |       expect(summaryLog()).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI7.spec.ts:416:28
+
+(fail) [UI7] a run that ends with a dead task, a blocked task, a rejected scenario and a parked scenario writes one assistant markdown summary in the root session, with no model call [11081.67ms]
+[22:05:16.791] ERROR (#14003): 484 | it.live(
+485 |   "[UI7] in the transcript, the summary's reasons show <, *, _, a backtick and | as the model wrote them",
+486 |   () =>
+487 |     Effect.promise(async () => {
+488 |       const text = said.text
+489 |       if (text === undefined) throw new Error("the run wrote no summary")
+                                              ^
+error: the run wrote no summary
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI7.spec.ts:489:41
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:748:1
+
+484 | it.live(
+485 |   "[UI7] in the transcript, the summary's reasons show <, *, _, a backtick and | as the model wrote them",
+486 |   () =>
+487 |     Effect.promise(async () => {
+488 |       const text = said.text
+489 |       if (text === undefined) throw new Error("the run wrote no summary")
+                                              ^
+error: the run wrote no summary
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI7.spec.ts:489:41
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:748:1
+      at ~effect/Effect/evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:790:33)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2745:7
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2745:7
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/@effect+platform-node@4.0.3+5eb23e3b447fa75e/node_modules/@effect/platform-node/dist/NodeHttpServer.js:121:2
+      at emit (node:events:101:22)
+      at emitListeningNextTick (node:_http_server:112:14)
+(fail) [UI7] in the transcript, the summary's reasons show <, *, _, a backtick and | as the model wrote them [214.37ms]
+
+ 0 pass
+ 2 fail
+ 12 expect() calls
+Ran 2 tests across 1 file. [16.80s]

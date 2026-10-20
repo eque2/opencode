@@ -1,0 +1,156 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-UI8.spec.ts:
+[22:17:37.031] ERROR (#12): 414 |       yield* Deferred.succeed(flight.judge, undefined)
+415 |       yield* runFinal(flight, "scenario.verified")
+416 |       // Then the summary waits for the turn: nothing is written while the root turn runs.
+417 |       yield* Effect.sleep("1 second")
+418 |       expect(yield* summariesOf(flight)).toEqual([])
+419 |       expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:419:37
+
+414 |       yield* Deferred.succeed(flight.judge, undefined)
+415 |       yield* runFinal(flight, "scenario.verified")
+416 |       // Then the summary waits for the turn: nothing is written while the root turn runs.
+417 |       yield* Effect.sleep("1 second")
+418 |       expect(yield* summariesOf(flight)).toEqual([])
+419 |       expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:419:37
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+(fail) [UI8] the run ends while a root turn is in flight: the summary waits for the turn, is then written once, and a later prompt runs a model turn [50286.72ms]
+[22:17:43.015] ERROR (#19638): 375 | 
+376 | // Then the summary is written once, after the root turn, answering the run header; and a later prompt runs a model
+377 | // turn.
+378 | const writtenOnceAfterTheTurn = (flight: Flight) =>
+379 |   Effect.gen(function* () {
+380 |     expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:380:35
+
+375 | 
+376 | // Then the summary is written once, after the root turn, answering the run header; and a later prompt runs a model
+377 | // turn.
+378 | const writtenOnceAfterTheTurn = (flight: Flight) =>
+379 |   Effect.gen(function* () {
+380 |     expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:380:35
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:2745:7
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:349:14)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+      at doneUnsafe (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Deferred.js:706:15)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/core/src/cross-spawn-spawner.ts:421:21
+      at emit (node:events:98:22)
+      at #maybeClose (node:child_process:766:16)
+      at #handleOnExit (node:child_process:520:72)
+      at processTicksAndRejections (unknown:7:39)
+(fail) [UI8] the user aborts the root session while its turn is in flight: the turn and the run stop, the summary is written once after the turn, and a later prompt runs a model turn [5982.34ms]
+[22:17:54.540] ERROR (#32591): 460 |       const cancelling = yield* (yield* BackgroundJob.Service).cancel(flight.id).pipe(Effect.forkChild)
+461 |       yield* runFinal(flight, "run.cancelled")
+462 |       // Then the summary waits for the turn: nothing is written while the root turn runs.
+463 |       yield* Effect.sleep("500 millis")
+464 |       expect(yield* summariesOf(flight)).toEqual([])
+465 |       expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:465:37
+
+460 |       const cancelling = yield* (yield* BackgroundJob.Service).cancel(flight.id).pipe(Effect.forkChild)
+461 |       yield* runFinal(flight, "run.cancelled")
+462 |       // Then the summary waits for the turn: nothing is written while the root turn runs.
+463 |       yield* Effect.sleep("500 millis")
+464 |       expect(yield* summariesOf(flight)).toEqual([])
+465 |       expect(summaryLog(flight.id)).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "task harness: the closing summary could not be written: Error: InstanceRef not provided",
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI8.spec.ts:465:37
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:796:30
+(fail) [UI8] the run is cancelled while a root turn is in flight: the summary waits for the turn, is then written once, and a later prompt runs a model turn [11524.92ms]
+
+ 0 pass
+ 3 fail
+ 16 expect() calls
+Ran 3 tests across 1 file. [74.13s]

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="50" failures="0" skipped="0" time="9.817411">
+  <testsuite name="test/task/verify-spec-RM9.spec.ts" file="test/task/verify-spec-RM9.spec.ts" tests="4" assertions="50" failures="0" skipped="0" time="1.526" hostname="mac-studio-m1">
+    <testcase name="[RM9] the plan: T3 after T2, T2 after T1, S1 needs T3, from the loader" classname="" time="0.672351" file="test/task/verify-spec-RM9.spec.ts" line="144" assertions="23" />
+    <testcase name="[RM9] when T1 fails, T2 is blocked by T1 and T3 by T2 in the same fold step" classname="" time="0.323232" file="test/task/verify-spec-RM9.spec.ts" line="167" assertions="10" />
+    <testcase name="[RM9] S1 is blocked by T3 in the same fold step" classname="" time="0.273224" file="test/task/verify-spec-RM9.spec.ts" line="190" assertions="8" />
+    <testcase name="[RM9] a task with two dead dependencies names the first one in dependency order" classname="" time="0.258525" file="test/task/verify-spec-RM9.spec.ts" line="212" assertions="9" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,18 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV27.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV27] a scope close without a job cancel records no stop, counts no worker failure, writes no summary, and the next /task resumes",
+        "result": {
+          "state": "pass",
+          "duration": 5999.87
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 9998
+    }
+  }
+]

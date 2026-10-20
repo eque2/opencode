@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="33" failures="0" skipped="0" time="5.730774">
+  <testsuite name="test/task/verify-spec-VF7.spec.ts" file="test/task/verify-spec-VF7.spec.ts" tests="4" assertions="33" failures="0" skipped="0" time="2.983" hostname="mac-studio-m1">
+    <testcase name="[VF7] after a stored run in which T1.1 ended trusted, the T1.3 subtree run starts and trusts its external region T1.1 directly after run.started" classname="" time="1.291663" file="test/task/verify-spec-VF7.spec.ts" line="90" assertions="11" />
+    <testcase name="[VF7] /task trust T1.1 during the live T1.3 subtree run records nothing in the run: only the outside preconditions T9 and T8 move" classname="" time="0.854201" file="test/task/verify-spec-VF7.spec.ts" line="141" assertions="6" />
+    <testcase name="[VF7] /task trust T1.1 never moves an untrusted external region of the live run, while /task trust T9 moves the outside region T9" classname="" time="0.397933" file="test/task/verify-spec-VF7.spec.ts" line="174" assertions="11" />
+    <testcase name="[VF7] /task trust T1.1 with no trusted slice does not stand in for the folder task: the T1.3 subtree is still refused" classname="" time="0.441828" file="test/task/verify-spec-VF7.spec.ts" line="227" assertions="5" />
+  </testsuite>
+</testsuites>

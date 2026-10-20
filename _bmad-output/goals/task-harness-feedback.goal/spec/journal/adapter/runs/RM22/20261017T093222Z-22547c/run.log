@@ -1,0 +1,147 @@
+bun test v1.3.14 (0d9b296a)
+
+test/task/verify-spec-RM22.spec.ts:
+[RM22] example-cascade.spec: with rows 108/292 and 276/1310 keys/edges, 0 stuck expected; without rows 27 and 39 stuck keys, 27 configurations
+[RM22] example-scenarios.spec: with rows 23/46 and 27/62 keys/edges, 0 stuck expected; without rows 3 and 3 stuck keys, 3 configurations
+[RM22] stale walk: 33944 keys, 331133 edges
+(fail) [RM22] every context path that a guard reads is part of the walk key (example-cascade.spec) [120039.45ms]
+  ^ this test timed out after 120000ms.
+[RM22] example-scenarios.spec: 27 states; guard reads {
+  forTask: [],
+  firstDead: [
+    "log", "log/#", "log/#/to", "log/#/unit", "units", "units/S1", "units/S1/kind", "units/T1", "units/T1.1",
+    "units/T1.1.c1", "units/T1.1.c1/kind", "units/T1.1/kind", "units/T1.2", "units/T1.2/kind",
+    "units/T1.3", "units/T1.3.c1", "units/T1.3.c1/kind", "units/T1.3/kind", "units/T1.e1", "units/T1.e1/kind",
+    "units/T1/kind", "units/run", "units/run/kind"
+  ],
+  stopped: [ "stop", "stop/state" ],
+  underBudget: [ "units", "units/T1.1", "units/T1.1/attempts", "units/T1.3", "units/T1.3/attempts" ],
+  result: [],
+  proofFailed: [],
+  stale: [],
+  unproved: [],
+  scenarioPassed: [],
+  verdict: [],
+  scenarioTrusted: [],
+}
+[11:18:15.338] ERROR (#336454): 364 |         expect(every).toContain("stop/state")
+365 |         expect([...every].some((path) => /^units\/[^/]+\/attempts$/.test(path))).toBe(true)
+366 |         expect([...every].some((path) => /^units\/[^/]+\/kind$/.test(path))).toBe(true)
+367 |         expect(own).toBeGreaterThan(0)
+368 |         // Per state: nothing that a guard read on the state's own context is missing from that state's key.
+369 |         expect(misses).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "main key misses units/T1.3 (task.failed)",
++   "main key misses units/T1.3/attempts (task.failed)",
++   "stale key misses units/T1.3 (obligation.stale)",
++   "stale key misses units/T1.3/attempts (obligation.stale)",
++ ]
+
+- Expected  - 1
++ Received  + 6
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM22.spec.ts:369:24
+
+364 |         expect(every).toContain("stop/state")
+365 |         expect([...every].some((path) => /^units\/[^/]+\/attempts$/.test(path))).toBe(true)
+366 |         expect([...every].some((path) => /^units\/[^/]+\/kind$/.test(path))).toBe(true)
+367 |         expect(own).toBeGreaterThan(0)
+368 |         // Per state: nothing that a guard read on the state's own context is missing from that state's key.
+369 |         expect(misses).toEqual([])
+      ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "main key misses units/T1.3 (task.failed)",
++   "main key misses units/T1.3/attempts (task.failed)",
++   "stale key misses units/T1.3 (obligation.stale)",
++   "stale key misses units/T1.3/attempts (obligation.stale)",
++ ]
+
+- Expected  - 1
++ Received  + 6
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM22.spec.ts:369:24
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:693:8
+      at runTasks (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:172:15)
+      at afterScheduled (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:162:10)
+(fail) [RM22] every context path that a guard reads is part of the walk key (example-scenarios.spec) [14161.29ms]
+[RM22] example-outside-run.spec T1.2: 14 states; guard reads {
+  trusts: [],
+  firstDead: [
+    "log", "log/#", "log/#/to", "log/#/unit", "units", "units/T1", "units/T1.1", "units/T1.1.c1",
+    "units/T1.1.c1/kind", "units/T1.1/kind", "units/T1.2", "units/T1.2.c1", "units/T1.2.c1/kind",
+    "units/T1.2/kind", "units/T1.3", "units/T1.3/kind", "units/T1/kind", "units/run", "units/run/kind"
+  ],
+  stopped: [ "stop", "stop/state" ],
+  forTask: [],
+  underBudget: [ "units", "units/T1.2", "units/T1.2/attempts", "units/T1.3", "units/T1.3/attempts" ],
+  stale: [],
+  result: [],
+  proofFailed: [],
+}
+[11:18:19.623] ERROR (#336606): 367 |         expect(own).toBeGreaterThan(0)
+368 |         // Per state: nothing that a guard read on the state's own context is missing from that state's key.
+369 |         expect(misses).toEqual([])
+370 |         // Over every macrostep: each path a guard read is a path the key reads (main and stale keys).
+371 |         for (const path of every) {
+372 |           expect({ path, main: keyed.main.has(path) }).toEqual({ path, main: true })
+      ^
+error: expect(received).toEqual(expected)
+
+@@ -1,3 +1,3 @@
+  {
+-   "main": true,
++   "main": false,
+    "path": "units/T1.1.c1",
+
+- Expected  - 1
++ Received  + 1
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM22.spec.ts:372:56
+
+367 |         expect(own).toBeGreaterThan(0)
+368 |         // Per state: nothing that a guard read on the state's own context is missing from that state's key.
+369 |         expect(misses).toEqual([])
+370 |         // Over every macrostep: each path a guard read is a path the key reads (main and stale keys).
+371 |         for (const path of every) {
+372 |           expect({ path, main: keyed.main.has(path) }).toEqual({ path, main: true })
+      ^
+error: expect(received).toEqual(expected)
+
+@@ -1,3 +1,3 @@
+  {
+-   "main": true,
++   "main": false,
+    "path": "units/T1.1.c1",
+
+- Expected  - 1
++ Received  + 1
+
+      at toEqual (unknown:1:1)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM22.spec.ts:372:56
+      at ~effect/Effect/successCont (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:989:26)
+      at runLoop (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:385:16)
+      at evaluate (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:328:22)
+      at runInAsyncScope (node:async_hooks:137:23)
+      at /Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/internal/effect.js:693:8
+      at runTasks (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:172:15)
+      at afterScheduled (/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/node_modules/.bun/effect@4.0.3/node_modules/effect/dist/Scheduler.js:162:10)
+(fail) [RM22] every context path that a guard reads is part of the walk key (example-outside-run.spec T1.2) [4281.97ms]
+
+ 4 pass
+ 3 fail
+ 86 expect() calls
+Ran 7 tests across 1 file. [6357.18s]

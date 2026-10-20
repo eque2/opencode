@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="42" failures="0" skipped="0" time="8.598267">
+  <testsuite name="test/task/verify-spec-UI22.spec.ts" file="test/task/verify-spec-UI22.spec.ts" tests="3" assertions="42" failures="0" skipped="0" time="2.756" hostname="mac-studio-m1">
+    <testcase name="[UI22] the harness&apos;s status has 13 scenarios and 5 stopped tasks" classname="" time="0.929335" file="test/task/verify-spec-UI22.spec.ts" line="183" assertions="2" />
+    <testcase name="[UI22] at 120 × 24 the region keeps 8 rows, the Peek&apos;s activity lines shrink first, pagedown reaches every entry, and a click on a STOPPED line selects its first task" classname="" time="1.011807" file="test/task/verify-spec-UI22.spec.ts" line="203" assertions="32" />
+    <testcase name="[UI22] under 149 cells the Board&apos;s right pane sits below the board; from 149 it sits beside it" classname="" time="0.816384" file="test/task/verify-spec-UI22.spec.ts" line="280" assertions="8" />
+  </testsuite>
+</testsuites>

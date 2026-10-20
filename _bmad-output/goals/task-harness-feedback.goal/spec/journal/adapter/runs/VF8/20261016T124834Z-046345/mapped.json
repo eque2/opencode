@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF8.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF8] /task on T1.1-commit-parser.task: the first message names each left-out scenario and the header metadata lists the same ids",
+        "result": {
+          "state": "pass",
+          "duration": 523.318
+        }
+      },
+      {
+        "name": "[VF8] /task on T1.2-version-bump.task: the first message names each left-out scenario and the header metadata lists the same ids",
+        "result": {
+          "state": "pass",
+          "duration": 423.654
+        }
+      },
+      {
+        "name": "[VF8] control: the whole spec leaves no scenario out, so the first message has no Left out line and leftOut is empty",
+        "result": {
+          "state": "pass",
+          "duration": 463.719
+        }
+      },
+      {
+        "name": "[VF8] control: the T1 folder holds every task, so it leaves no scenario out",
+        "result": {
+          "state": "pass",
+          "duration": 500.53700000000003
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 4471
+    }
+  }
+]

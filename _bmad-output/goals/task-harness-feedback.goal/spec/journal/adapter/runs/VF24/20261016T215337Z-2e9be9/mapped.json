@@ -1,0 +1,53 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF24.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF24] a newer whole-spec slice with T1.1 trusted and an older subtree slice whose path no longer loads: the newer slice decides and the T1.3 run starts",
+        "result": {
+          "state": "pass",
+          "duration": 3426.075
+        }
+      },
+      {
+        "name": "[VF24] the trust walk starts at the newest slice: an older slice that does not load, and an older one with T1.1 budget exhausted, are never reached",
+        "result": {
+          "state": "pass",
+          "duration": 2542.914
+        }
+      },
+      {
+        "name": "[VF24] the walk stops at the first slice that loads and holds T1.1: a newest T1.4 subtree slice without T1.1 is passed over, and the older slice that does not load is never reached",
+        "result": {
+          "state": "pass",
+          "duration": 2610.876
+        }
+      },
+      {
+        "name": "[VF24] when the slice that does not load is the newest, the T1.3 run is refused with one plain line that names its path and says \"run the whole spec once to record a newer run\"",
+        "result": {
+          "state": "pass",
+          "duration": 2084.275
+        }
+      },
+      {
+        "name": "[VF24] a slice that does not load still blocks when it is newer than the deciding slice, even if a newer slice without T1.1 follows it",
+        "result": {
+          "state": "pass",
+          "duration": 2125.089
+        }
+      },
+      {
+        "name": "[VF24] the trust walk itself: TaskCommand.folderTrust over the stored slices gives trusted, or blocked with the path",
+        "result": {
+          "state": "pass",
+          "duration": 4053.808
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 20788
+    }
+  }
+]

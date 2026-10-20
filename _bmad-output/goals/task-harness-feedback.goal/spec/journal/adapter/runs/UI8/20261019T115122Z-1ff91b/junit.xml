@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="50" failures="0" skipped="0" time="36.218468">
+  <testsuite name="test/task/verify-spec-UI8.spec.ts" file="test/task/verify-spec-UI8.spec.ts" tests="3" assertions="50" failures="0" skipped="0" time="29.964" hostname="mac-studio-m1">
+    <testcase name="[UI8] the run ends while a root turn is in flight: the summary waits for the turn, is then written once, and a later prompt runs a model turn" classname="" time="14.864679" file="test/task/verify-spec-UI8.spec.ts" line="413" assertions="18" />
+    <testcase name="[UI8] the user aborts the root session while its turn is in flight: the turn and the run stop, the summary is written once after the turn, and a later prompt runs a model turn" classname="" time="6.770063" file="test/task/verify-spec-UI8.spec.ts" line="437" assertions="15" />
+    <testcase name="[UI8] the run is cancelled while a root turn is in flight: the summary waits for the turn, is then written once, and a later prompt runs a model turn" classname="" time="8.330571" file="test/task/verify-spec-UI8.spec.ts" line="458" assertions="17" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="54" failures="0" skipped="0" time="3.517776">
+  <testsuite name="test/task/verify-spec-RM8b.spec.ts" file="test/task/verify-spec-RM8b.spec.ts" tests="4" assertions="54" failures="0" skipped="0" time="2.109" hostname="mac-studio-m1">
+    <testcase name="[RM8b] the stored old slice: run.started without a path, no run.ended, and a fold that is not done" classname="" time="0.288784" file="test/task/verify-spec-RM8b.spec.ts" line="138" assertions="22" />
+    <testcase name="[RM8b] the slice counts as a whole-spec slice, for every way the whole-spec path is written" classname="" time="0.225231" file="test/task/verify-spec-RM8b.spec.ts" line="158" assertions="6" />
+    <testcase name="[RM8b] /task &lt;spec&gt; resumes the old slice and records only run.resumed with the path" classname="" time="0.846626" file="test/task/verify-spec-RM8b.spec.ts" line="178" assertions="13" />
+    <testcase name="[RM8b] /task ./&lt;spec&gt;/ resumes the old slice and records only run.resumed with the normalised path" classname="" time="0.750555" file="test/task/verify-spec-RM8b.spec.ts" line="187" assertions="13" />
+  </testsuite>
+</testsuites>

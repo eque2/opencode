@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="1" assertions="19" failures="0" skipped="0" time="4.821012">
+  <testsuite name="test/task/verify-spec-SV4.spec.ts" file="test/task/verify-spec-SV4.spec.ts" tests="1" assertions="19" failures="0" skipped="0" time="2.705" hostname="mac-studio-m1">
+    <testcase name="[SV4] cancelling the job while the stale check waits on the checkout lock records run.cancelled in the store and the status file, closes the run scope only after the supervisor is final, and leaves no turn or proof process past the cancel deadline" classname="" time="2.705207" file="test/task/verify-spec-SV4.spec.ts" line="115" assertions="19" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,47 @@
+{
+  "scenarioId": "RM22",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM22.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-17T13:10:07.658Z",
+  "durationMs": 5989452.098,
+  "testResults": [
+    {
+      "name": "[RM22] on the small plan example-cascade.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows",
+      "status": "passed",
+      "duration": 19581.365999999998
+    },
+    {
+      "name": "[RM22] on the small plan example-scenarios.spec, the canonical and the full walk find the same stuck states, with and without the blocked rows",
+      "status": "passed",
+      "duration": 1318.267
+    },
+    {
+      "name": "[RM22] the guards watched here are every guard of the run machine",
+      "status": "passed",
+      "duration": 1.4929999999999999
+    },
+    {
+      "name": "[RM22] every context path that a guard reads is part of the walk key (example-cascade.spec)",
+      "status": "passed",
+      "duration": 32029.516
+    },
+    {
+      "name": "[RM22] every context path that a guard reads is part of the walk key (example-scenarios.spec)",
+      "status": "passed",
+      "duration": 1537.156
+    },
+    {
+      "name": "[RM22] every context path that a guard reads is part of the walk key (example-outside-run.spec T1.2)",
+      "status": "passed",
+      "duration": 503.009
+    },
+    {
+      "name": "[RM22] the stale walk of the loaded example-cascade plan (full interleaving with staleness, stale key) finds no stuck state",
+      "status": "passed",
+      "duration": 5934481.291
+    }
+  ],
+  "_sourceHash": "537284f2d5b5dce7",
+  "_keyId": "53bde7c7",
+  "_hmac": "fd7c1e846ba951e2c561c8d939623a0bf1641c6891c5574e6773796798f7b4e5"
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="398" failures="0" skipped="0" time="9.299521">
+  <testsuite name="test/task/verify-spec-UI10.spec.ts" file="test/task/verify-spec-UI10.spec.ts" tests="3" assertions="398" failures="0" skipped="0" time="3.909" hostname="mac-studio-m1">
+    <testcase name="[UI10] the given status: thirteen scenarios with titles, S4 rejected with its reason, S13 parked on the outside precondition T8" classname="" time="1.034119" file="test/task/verify-spec-UI10.spec.ts" line="241" assertions="13" />
+    <testcase name="[UI10] each of the seven designs expanded at 120 x 40: the shared region lists S1 to S13 with glyph, id, state label and title, and S4&apos;s reason under its entry" classname="" time="1.318866" file="test/task/verify-spec-UI10.spec.ts" line="271" assertions="329" />
+    <testcase name="[UI10] after the run ends the parked scenario reads not run in each of the seven designs; while the run is live it reads its wait" classname="" time="1.557201" file="test/task/verify-spec-UI10.spec.ts" line="328" assertions="56" />
+  </testsuite>
+</testsuites>

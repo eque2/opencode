@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="32" failures="0" skipped="0" time="1.897048">
+  <testsuite name="test/task/verify-spec-VF3.spec.ts" file="test/task/verify-spec-VF3.spec.ts" tests="4" assertions="32" failures="0" skipped="0" time="0.095" hostname="mac-studio-m1">
+    <testcase name="[VF3] a leaf VERIFY.md with no ensures key fails the load with the one R3 line &apos;ensures&apos; is required" classname="" time="0.034552" file="test/task/verify-spec-VF3.spec.ts" line="42" assertions="8" />
+    <testcase name="[VF3] the JSON schema of VERIFY.md lists ensures as required, at the top level" classname="" time="0.008965" file="test/task/verify-spec-VF3.spec.ts" line="66" assertions="3" />
+    <testcase name="[VF3] the release-notes and provider-ordering-admin specs still load with no failure" classname="" time="0.03897" file="test/task/verify-spec-VF3.spec.ts" line="81" assertions="19" />
+    <testcase name="[VF3] control: the same copy with its ensures block kept loads with no failure" classname="" time="0.015575" file="test/task/verify-spec-VF3.spec.ts" line="99" assertions="2" />
+  </testsuite>
+</testsuites>

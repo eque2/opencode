@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="26" failures="0" skipped="0" time="76.409875">
+  <testsuite name="test/task/verify-spec-SV11.spec.ts" file="test/task/verify-spec-SV11.spec.ts" tests="2" assertions="26" failures="0" skipped="0" time="31.282" hostname="mac-studio-m1">
+    <testcase name="[SV11] a retry status that names the spend cap records task.needs_human with a &apos;spend cap:&apos; reason, stops the turn, and records no nudge; a retry status that names no spend cap records nothing" classname="" time="13.733882" file="test/task/verify-spec-SV11.spec.ts" line="123" assertions="14" />
+    <testcase name="[SV11] a turn that ends on a spend-cap error records task.needs_human with a &apos;spend cap:&apos; reason and no nudge, where a turn that ends on another error is nudged" classname="" time="17.549872" file="test/task/verify-spec-SV11.spec.ts" line="173" assertions="12" />
+  </testsuite>
+</testsuites>

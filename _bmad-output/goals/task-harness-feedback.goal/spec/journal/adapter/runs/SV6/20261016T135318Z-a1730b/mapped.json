@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV6.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV6] a task supervisor whose begin worker fails three times in a row records task.failed with a harness error",
+        "result": {
+          "state": "pass",
+          "duration": 11302.060000000001
+        }
+      },
+      {
+        "name": "[SV6] a scenario batch whose worker fails three times in a row records scenario.proved failed with a harness error",
+        "result": {
+          "state": "pass",
+          "duration": 3633.5350000000003
+        }
+      },
+      {
+        "name": "[SV6] a scenario supervisor whose judge worker fails three times in a row records scenario.verified rejected with a harness error",
+        "result": {
+          "state": "pass",
+          "duration": 4777.7339999999995
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 66484
+    }
+  }
+]

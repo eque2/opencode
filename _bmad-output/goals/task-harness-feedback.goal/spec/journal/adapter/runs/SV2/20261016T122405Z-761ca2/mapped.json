@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV2.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV2] from the run actor's tags the run supervisor spawns one task supervisor for the ready leaf and one scenario supervisor for the verifying scenario, and none for any other unit",
+        "result": {
+          "state": "pass",
+          "duration": 1986.259
+        }
+      },
+      {
+        "name": "[SV2] each supervisor records the outcome of its phase as a fact through the Recorder: stored, then folded into the run actor",
+        "result": {
+          "state": "pass",
+          "duration": 2208.266
+        }
+      },
+      {
+        "name": "[SV2] a scenario supervisor stops when its scenario leaves verifying, while the leaf's supervisor and the run go on",
+        "result": {
+          "state": "pass",
+          "duration": 1473.288
+        }
+      },
+      {
+        "name": "[SV2] a task supervisor lives through its phases and stops when its task leaves ready and active, while the scenario's supervisor and the run go on",
+        "result": {
+          "state": "pass",
+          "duration": 1687.077
+        }
+      },
+      {
+        "name": "[SV2] the run machine itself invokes nothing: no state invokes an actor and the run actor spawns no child",
+        "result": {
+          "state": "pass",
+          "duration": 2605.576
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 15550
+    }
+  }
+]

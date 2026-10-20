@@ -1,0 +1,46 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI21.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI21] the harness's statuses: 2 stopped tasks, a run waiting only on T9, a cancelled task with no start, no scenarios",
+        "result": {
+          "state": "pass",
+          "duration": 5839.158
+        }
+      },
+      {
+        "name": "[UI21] each trusted count ends with · 2 stopped in the error tone, and shows nothing at 0",
+        "result": {
+          "state": "pass",
+          "duration": 4213.139
+        }
+      },
+      {
+        "name": "[UI21] the watch band reads that nothing is running and gives the trust command for T9",
+        "result": {
+          "state": "pass",
+          "duration": 1165.3880000000001
+        }
+      },
+      {
+        "name": "[UI21] the Peek of a cancelled task with no start time reads that the task did not start",
+        "result": {
+          "state": "pass",
+          "duration": 2037.611
+        }
+      },
+      {
+        "name": "[UI21] with no scenarios in the run, the SCENARIOS heading reads SCENARIOS none in this run",
+        "result": {
+          "state": "pass",
+          "duration": 2661.483
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 27490
+    }
+  }
+]

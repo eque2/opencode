@@ -1,0 +1,22 @@
+{
+  "scenarioId": "SV21",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV21.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:40:45.776Z",
+  "durationMs": 25636.704,
+  "testResults": [
+    {
+      "name": "[SV21] a run that ends done: its status writer stops before each lease release, and the next /task is not busy",
+      "status": "passed",
+      "duration": 11053.881000000001
+    },
+    {
+      "name": "[SV21] a run that is cancelled: its status writer stops before each lease release, and the next /task is not busy",
+      "status": "passed",
+      "duration": 14582.823
+    }
+  ],
+  "_sourceHash": "4abe03b2a9f5f608",
+  "_keyId": "53bde7c7",
+  "_hmac": "2f9fec3a117ec83247bd289ac978c696100db94eb8d80fbf8502d185143d1da7"
+}

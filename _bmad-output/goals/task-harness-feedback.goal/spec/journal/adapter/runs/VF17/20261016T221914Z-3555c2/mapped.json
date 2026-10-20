@@ -1,0 +1,23 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF17.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF17] a scripted run of the cascade folder",
+        "tasks": [
+          {
+            "name": "[VF17] /task on example-cascade with the scripted model: T1.1 budget exhausted after one attempt, T1.2 and T1 blocked by it, T1.3 trusted, and the run ends budget exhausted only after T1.3 ends",
+            "result": {
+              "state": "pass",
+              "duration": 40280.419
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 48797
+    }
+  }
+]

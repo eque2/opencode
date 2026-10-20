@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV9.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV9] example-scenarios: each fact of a leaf, a parent and a scenario in each of its states is in the alphabet of that state",
+        "result": {
+          "state": "pass",
+          "duration": 8999.935000000001
+        }
+      },
+      {
+        "name": "[SV9] example-cascade: nudges, an unready proof, a repetition and a budget exhausted record only allowed facts",
+        "result": {
+          "state": "pass",
+          "duration": 5584.8279999999995
+        }
+      },
+      {
+        "name": "[SV9] release-notes T1.5: external trusts at start-up, a forwarded outside trust, spec checks and a cancel are allowed",
+        "result": {
+          "state": "pass",
+          "duration": 5995.641
+        }
+      },
+      {
+        "name": "[SV9] the replay check finds a fact outside the alphabet of its state, and an external trust after start-up",
+        "result": {
+          "state": "pass",
+          "duration": 1093.6699999999998
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 30798
+    }
+  }
+]

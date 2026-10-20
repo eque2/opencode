@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="141" failures="0" skipped="0" time="3.330228">
+  <testsuite name="test/task/verify-spec-RM8a.spec.ts" file="test/task/verify-spec-RM8a.spec.ts" tests="4" assertions="141" failures="0" skipped="0" time="1.958" hostname="mac-studio-m1">
+    <testcase name="[RM8a] the stored old slices: every old fact type, run.started without a path, and run.ended done last" classname="" time="0.043621" file="test/task/verify-spec-RM8a.spec.ts" line="116" assertions="42" />
+    <testcase name="[RM8a] every stored fact folds through the new machine: each one moves the snapshot, and none dies" classname="" time="0.475857" file="test/task/verify-spec-RM8a.spec.ts" line="135" assertions="58" />
+    <testcase name="[RM8a] the stored run.ended folds as a stop with its own state: the run ends done, unfinished units cancelled" classname="" time="0.278506" file="test/task/verify-spec-RM8a.spec.ts" line="159" assertions="31" />
+    <testcase name="[RM8a] /task on the whole spec records run.started with the path for a new slice, because the stored old slice ended" classname="" time="1.162828" file="test/task/verify-spec-RM8a.spec.ts" line="199" assertions="10" />
+  </testsuite>
+</testsuites>

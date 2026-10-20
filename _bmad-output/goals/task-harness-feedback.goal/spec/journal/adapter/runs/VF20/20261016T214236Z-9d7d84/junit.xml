@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="50" failures="0" skipped="0" time="12.051734">
+  <testsuite name="test/task/verify-spec-VF20.spec.ts" file="test/task/verify-spec-VF20.spec.ts" tests="3" assertions="50" failures="0" skipped="0" time="7.998" hostname="mac-studio-m1">
+    <testcase name="[VF20] T1.1 trusted in one slice, then budget exhausted in a later slice: /task on the T1.3 task folder is refused with the R12 line naming T1.3 and T1.1" classname="" time="2.99551" file="test/task/verify-spec-VF20.spec.ts" line="93" assertions="22" />
+    <testcase name="[VF20] the latest slice decides, not any slice: the same two slices stored in the other order let the T1.3 run start" classname="" time="2.492422" file="test/task/verify-spec-VF20.spec.ts" line="132" assertions="16" />
+    <testcase name="[VF20] only the budget-exhausted slice stored: the T1.3 run is refused with the same R12 line" classname="" time="2.511726" file="test/task/verify-spec-VF20.spec.ts" line="155" assertions="12" />
+  </testsuite>
+</testsuites>

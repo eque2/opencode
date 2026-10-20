@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI15.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI15] the prompt footer and the sidebar show the root's run total live from the synced sessions; others unchanged",
+        "result": {
+          "state": "pass",
+          "duration": 412.56100000000004
+        }
+      },
+      {
+        "name": "[UI15] the HUD, the full-screen header, the Dock and the Ticker dialog show the run total; nothing before tokens",
+        "result": {
+          "state": "pass",
+          "duration": 1597.088
+        }
+      },
+      {
+        "name": "[UI15] the real task-ui plugin follows the root's child sessions live: nothing before tokens, then the run total",
+        "result": {
+          "state": "pass",
+          "duration": 8992.17
+        }
+      },
+      {
+        "name": "[UI15] the closing summary repeats the run total of the root's child sessions",
+        "result": {
+          "state": "pass",
+          "duration": 1387.637
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 18575
+    }
+  }
+]

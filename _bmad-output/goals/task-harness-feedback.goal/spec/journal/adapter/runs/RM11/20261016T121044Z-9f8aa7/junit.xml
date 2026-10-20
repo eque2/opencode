@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="37" failures="0" skipped="0" time="1.984537">
+  <testsuite name="test/task/verify-spec-RM11.spec.ts" file="test/task/verify-spec-RM11.spec.ts" tests="2" assertions="37" failures="0" skipped="0" time="0.096" hostname="mac-studio-m1">
+    <testcase name="[RM11] T1.1 needs a human first and T1.2 fails later: once every region is final the outcome is needs human, and the reason lists every dead and blocked task" classname="" time="0.066468" file="test/task/verify-spec-RM11.spec.ts" line="157" assertions="32" />
+    <testcase name="[RM11] the order of the deaths decides the outcome: when T1.2 fails first, the outcome is failed" classname="" time="0.030183" file="test/task/verify-spec-RM11.spec.ts" line="224" assertions="5" />
+  </testsuite>
+</testsuites>

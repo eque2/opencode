@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI24.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI24] a permission prompt holds the root turn; the done status precedes lease release, a second /task is not busy, and one summary follows the reply",
+        "result": {
+          "state": "pass",
+          "duration": 14296.2
+        }
+      },
+      {
+        "name": "[UI24] when the root disappears during the permission wait, the done run stays free and logs one failed summary",
+        "result": {
+          "state": "pass",
+          "duration": 8101.589000000001
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 28030
+    }
+  }
+]

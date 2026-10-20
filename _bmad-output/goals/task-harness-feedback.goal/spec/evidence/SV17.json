@@ -1,0 +1,32 @@
+{
+  "scenarioId": "SV17",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV17.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T14:33:53.486Z",
+  "durationMs": 15614.539999999999,
+  "testResults": [
+    {
+      "name": "[SV17] the harness's own status writer, resuming the observed facts on the fixed clock, writes the shared fixture byte for byte",
+      "status": "passed",
+      "duration": 9521.802
+    },
+    {
+      "name": "[SV17] the fixture equals the projection of the observed facts through the engine API, written with the fixed clock, byte for byte",
+      "status": "passed",
+      "duration": 5128.03
+    },
+    {
+      "name": "[SV17] the task-ui decodes the shared fixture and a status file from before the change, with its own parse",
+      "status": "passed",
+      "duration": 207.396
+    },
+    {
+      "name": "[SV17] the task-ui's view actor reads each file from status.json on disk and decodes it",
+      "status": "passed",
+      "duration": 757.312
+    }
+  ],
+  "_sourceHash": "81c28873114b5879",
+  "_keyId": "53bde7c7",
+  "_hmac": "df34f67feb31a456f4deab71cce50730bfedc8d5eb73ef153c4177dcfcd3b9a7"
+}

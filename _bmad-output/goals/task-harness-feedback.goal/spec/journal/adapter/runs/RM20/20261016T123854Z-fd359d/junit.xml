@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="38" failures="0" skipped="0" time="23.32366">
+  <testsuite name="test/task/verify-spec-RM20.spec.ts" file="test/task/verify-spec-RM20.spec.ts" tests="4" assertions="38" failures="0" skipped="0" time="9.344" hostname="mac-studio-m1">
+    <testcase name="[RM20] the live-check plan example-scenarios.spec walks within 60 s with no stuck state" classname="" time="0.880896" file="test/task/verify-spec-RM20.spec.ts" line="118" assertions="9" />
+    <testcase name="[RM20] the live-check plan example-cascade.spec walks within 60 s with no stuck state" classname="" time="5.93568" file="test/task/verify-spec-RM20.spec.ts" line="131" assertions="10" />
+    <testcase name="[RM20] the whole example-outside-run.spec plan (phase 3) walks within 60 s with no stuck state" classname="" time="1.847779" file="test/task/verify-spec-RM20.spec.ts" line="145" assertions="9" />
+    <testcase name="[RM20] the T1.2 subtree plan of example-outside-run.spec (phase 3) walks within 60 s with no stuck state" classname="" time="0.682813" file="test/task/verify-spec-RM20.spec.ts" line="157" assertions="10" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="37" failures="0" skipped="0" time="32.292524">
+  <testsuite name="test/task/verify-spec-UI24.spec.ts" file="test/task/verify-spec-UI24.spec.ts" tests="2" assertions="37" failures="0" skipped="0" time="24.491" hostname="mac-studio-m1">
+    <testcase name="[UI24] a permission prompt holds the root turn; the done status precedes lease release, a second /task is not busy, and one summary follows the reply" classname="" time="14.807622" file="test/task/verify-spec-UI24.spec.ts" line="326" assertions="19" />
+    <testcase name="[UI24] when the root disappears during the permission wait, the done run stays free and logs one failed summary" classname="" time="9.684425" file="test/task/verify-spec-UI24.spec.ts" line="333" assertions="18" />
+  </testsuite>
+</testsuites>

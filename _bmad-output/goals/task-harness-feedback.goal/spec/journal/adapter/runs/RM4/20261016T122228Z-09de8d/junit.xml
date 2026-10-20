@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="594" failures="0" skipped="0" time="10.133258">
+  <testsuite name="test/task/verify-spec-RM4.spec.ts" file="test/task/verify-spec-RM4.spec.ts" tests="4" assertions="594" failures="0" skipped="0" time="7.132" hostname="mac-studio-m1">
+    <testcase name="[RM4] every test of the old file appears once in the header list as ported, re-baselined or retired" classname="" time="0.047977" file="test/task/verify-spec-RM4.spec.ts" line="143" assertions="115" />
+    <testcase name="[RM4] each re-baselined test names the decision or owner ruling that changed it" classname="" time="0.011787" file="test/task/verify-spec-RM4.spec.ts" line="172" assertions="79" />
+    <testcase name="[RM4] each retired test names the guard that replaces it, and that guard holds" classname="" time="0.751187" file="test/task/verify-spec-RM4.spec.ts" line="207" assertions="12" />
+    <testcase name="[RM4] every listed test runs as a fact sequence through initial, apply and the selectors" classname="" time="6.323954" file="test/task/verify-spec-RM4.spec.ts" line="243" assertions="388" />
+  </testsuite>
+</testsuites>

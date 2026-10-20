@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="32" failures="0" skipped="0" time="55.225176">
+  <testsuite name="test/task/verify-spec-UI19.spec.ts" file="test/task/verify-spec-UI19.spec.ts" tests="4" assertions="32" failures="0" skipped="0" time="34.15" hostname="mac-studio-m1">
+    <testcase name="[UI19] the harness ends the run done with the reason line &apos;not run: S13 waits on T8&apos;" classname="" time="9.55635" file="test/task/verify-spec-UI19.spec.ts" line="177" assertions="5" />
+    <testcase name="[UI19] the Ledger and the full-screen header draw the done run&apos;s not-run line in the muted tone" classname="" time="4.903727" file="test/task/verify-spec-UI19.spec.ts" line="191" assertions="9" />
+    <testcase name="[UI19] the Ticker raises no notification for the done run&apos;s not-run line; a clean done run and a stopped run each raise one" classname="" time="15.813272" file="test/task/verify-spec-UI19.spec.ts" line="214" assertions="10" />
+    <testcase name="[UI19] a run with the stopped tag shows its reason line in the error tone in the Ledger and the full-screen header" classname="" time="3.878056" file="test/task/verify-spec-UI19.spec.ts" line="243" assertions="8" />
+  </testsuite>
+</testsuites>

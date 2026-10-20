@@ -1,0 +1,27 @@
+{
+  "scenarioId": "RM6",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM6.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:36:36.126Z",
+  "durationMs": 2073.251,
+  "testResults": [
+    {
+      "name": "[RM6] a fact that matches no row returns the identical snapshot of a running run, unmutated",
+      "status": "passed",
+      "duration": 704.193
+    },
+    {
+      "name": "[RM6] a fact applied to a snapshot whose run has ended returns that snapshot unchanged",
+      "status": "passed",
+      "duration": 697.189
+    },
+    {
+      "name": "[RM6] a snapshot made by another machine makes apply die",
+      "status": "passed",
+      "duration": 671.869
+    }
+  ],
+  "_sourceHash": "ff81d8441aeb3579",
+  "_keyId": "53bde7c7",
+  "_hmac": "45c9d1cbb8315cbe49ca799fca3415cb67426cb57f0d78c6f6383f2647c686c8"
+}

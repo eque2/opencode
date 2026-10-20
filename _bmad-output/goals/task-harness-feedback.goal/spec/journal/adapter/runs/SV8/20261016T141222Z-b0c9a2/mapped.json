@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV8.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV8] with a live run of release-notes, /task for a valid spec starts nothing and answers one line naming the live run's spec and path",
+        "result": {
+          "state": "pass",
+          "duration": 2759.0849999999996
+        }
+      },
+      {
+        "name": "[SV8] a claim whose background job does not start is released, so the next /task is not busy",
+        "result": {
+          "state": "pass",
+          "duration": 1021.053
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 9158
+    }
+  }
+]

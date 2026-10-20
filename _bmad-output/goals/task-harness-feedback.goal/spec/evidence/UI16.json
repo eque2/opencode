@@ -1,0 +1,32 @@
+{
+  "scenarioId": "UI16",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI16.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T21:31:32.055Z",
+  "durationMs": 11675.478,
+  "testResults": [
+    {
+      "name": "[UI16] the harness's warned status holds the two failure lines; every run-state surface shows the warning's one line",
+      "status": "passed",
+      "duration": 1220.664
+    },
+    {
+      "name": "[UI16] the shared region of every expanded view lists the warning's line, each failure line, then the note",
+      "status": "passed",
+      "duration": 849.9290000000001
+    },
+    {
+      "name": "[UI16] the warning goes from every surface and every shared region once the next spec check validates",
+      "status": "passed",
+      "duration": 1183.77
+    },
+    {
+      "name": "[UI16] the real plugin toasts the warning once while the status keeps it, and the warning goes when the status loses it",
+      "status": "passed",
+      "duration": 8421.115
+    }
+  ],
+  "_sourceHash": "5453a012a98f695c",
+  "_keyId": "53bde7c7",
+  "_hmac": "c17f47767c6f8361886befe35486244224d0b3421759a76396d58a90e63bed9d"
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="45" failures="0" skipped="0" time="4.06696">
+  <testsuite name="test/task/verify-spec-RM8c.spec.ts" file="test/task/verify-spec-RM8c.spec.ts" tests="3" assertions="45" failures="0" skipped="0" time="2.305" hostname="mac-studio-m1">
+    <testcase name="[RM8c] the stored observed slice: the observed facts, the old runner&apos;s scenario proofs, and no run.ended" classname="" time="0.366933" file="test/task/verify-spec-RM8c.spec.ts" line="91" assertions="19" />
+    <testcase name="[RM8c] the stored slice folds to done with the outcome budget exhausted, and T1.5 and T1 blocked" classname="" time="0.578905" file="test/task/verify-spec-RM8c.spec.ts" line="117" assertions="16" />
+    <testcase name="[RM8c] /task on the same spec starts a new slice and never resumes the done fold" classname="" time="1.361609" file="test/task/verify-spec-RM8c.spec.ts" line="154" assertions="10" />
+  </testsuite>
+</testsuites>

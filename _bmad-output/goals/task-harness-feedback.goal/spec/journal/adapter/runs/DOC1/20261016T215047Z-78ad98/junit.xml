@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="172" failures="0" skipped="0" time="6.514236">
+  <testsuite name="test/task/verify-spec-DOC1.spec.ts" file="test/task/verify-spec-DOC1.spec.ts" tests="4" assertions="172" failures="0" skipped="0" time="2.952" hostname="mac-studio-m1">
+    <testcase name="[DOC1] the Validation section says what runs before any work starts and how a refusal appears, as the real /task does" classname="" time="1.175434" file="test/task/verify-spec-DOC1.spec.ts" line="73" assertions="31" />
+    <testcase name="[DOC1] the Validation section lists every rule R1 to R13 with the place in the code that enforces it" classname="" time="0.017368" file="test/task/verify-spec-DOC1.spec.ts" line="140" assertions="57" />
+    <testcase name="[DOC1] the Validation section says how the run machine holds the order and which graph faults are refused, as the engine and the loader do" classname="" time="0.251873" file="test/task/verify-spec-DOC1.spec.ts" line="170" assertions="36" />
+    <testcase name="[DOC1] the Validation section names the six fault folders and the two live-check folders, and each row is what the real /task answers" classname="" time="1.509101" file="test/task/verify-spec-DOC1.spec.ts" line="260" assertions="48" />
+  </testsuite>
+</testsuites>

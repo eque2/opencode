@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-VF7.spec.ts",
+    "tasks": [
+      {
+        "name": "[VF7] after a stored run in which T1.1 ended trusted, the T1.3 subtree run starts and trusts its external region T1.1 directly after run.started",
+        "result": {
+          "state": "pass",
+          "duration": 1291.663
+        }
+      },
+      {
+        "name": "[VF7] /task trust T1.1 during the live T1.3 subtree run records nothing in the run: only the outside preconditions T9 and T8 move",
+        "result": {
+          "state": "pass",
+          "duration": 854.201
+        }
+      },
+      {
+        "name": "[VF7] /task trust T1.1 never moves an untrusted external region of the live run, while /task trust T9 moves the outside region T9",
+        "result": {
+          "state": "pass",
+          "duration": 397.933
+        }
+      },
+      {
+        "name": "[VF7] /task trust T1.1 with no trusted slice does not stand in for the folder task: the T1.3 subtree is still refused",
+        "result": {
+          "state": "pass",
+          "duration": 441.828
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 5760
+    }
+  }
+]

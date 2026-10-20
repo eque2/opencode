@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="80" failures="0" skipped="0" time="31.842695">
+  <testsuite name="test/task/verify-spec-SV14.spec.ts" file="test/task/verify-spec-SV14.spec.ts" tests="6" assertions="80" failures="0" skipped="0" time="16.885" hostname="mac-studio-m1">
+    <testcase name="[SV14] the inspection finds each construct in a planted source (negative control)" classname="" time="0.253973" file="test/task/verify-spec-SV14.spec.ts" line="247" assertions="17" />
+    <testcase name="[SV14] the session watch and the hooks hold no Ref, no MutableHashMap, no other mutable cell or keyed collection, no polled loop and no module-level let" classname="" time="0.084552" file="test/task/verify-spec-SV14.spec.ts" line="298" assertions="4" />
+    <testcase name="[SV14] the phase-1 watch and hook state is gone: no builderTurn in the sessions module, no hook maps, take, watch or unwatch" classname="" time="0.081532" file="test/task/verify-spec-SV14.spec.ts" line="310" assertions="35" />
+    <testcase name="[SV14] in the task supervisor the stall is the delayed transition of the watched turn, and the spend cap and the idle end are guards" classname="" time="0.030608" file="test/task/verify-spec-SV14.spec.ts" line="345" assertions="14" />
+    <testcase name="[SV14] a live supervisor stalls only when its own clock passes streamIdle, never as wall time passes" classname="" time="7.648023" file="test/task/verify-spec-SV14.spec.ts" line="400" assertions="4" />
+    <testcase name="[SV14] a live supervisor decides the idle end and the spend cap by its guards, with its clock still" classname="" time="8.789037" file="test/task/verify-spec-SV14.spec.ts" line="429" assertions="6" />
+  </testsuite>
+</testsuites>

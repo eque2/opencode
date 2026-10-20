@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="91" failures="0" skipped="0" time="11.346636">
+  <testsuite name="test/task/verify-spec-VF15.spec.ts" file="test/task/verify-spec-VF15.spec.ts" tests="5" assertions="91" failures="0" skipped="0" time="0" hostname="mac-studio-m1">
+    <testsuite name="[VF15] the two live-check folders load, before and after ensures becomes required" file="test/task/verify-spec-VF15.spec.ts" line="166" tests="5" assertions="91" failures="0" skipped="0" time="5.574" hostname="mac-studio-m1">
+      <testcase name="[VF15] the two folders were built in phase 1: the phase-1 commit holds them as they are on disk" classname="[VF15] the two live-check folders load, before and after ensures becomes required" time="0.586174" file="test/task/verify-spec-VF15.spec.ts" line="167" assertions="20" />
+      <testcase name="[VF15] each folder loads with no failure in phase 1 and again once ensures is required, to the same model" classname="[VF15] the two live-check folders load, before and after ensures becomes required" time="1.936668" file="test/task/verify-spec-VF15.spec.ts" line="190" assertions="45" />
+      <testcase name="[VF15] control: a leaf with no ensures loads with no failure in phase 1 but fails the required-ensures R3 today" classname="[VF15] the two live-check folders load, before and after ensures becomes required" time="1.089926" file="test/task/verify-spec-VF15.spec.ts" line="223" assertions="10" />
+      <testcase name="[VF15] example-cascade&apos;s T1.1 gate BUILD-1 exits 1 on every run and names no file" classname="[VF15] the two live-check folders load, before and after ensures becomes required" time="1.234262" file="test/task/verify-spec-VF15.spec.ts" line="250" assertions="12" />
+      <testcase name="[VF15] example-scenarios&apos; S1 is proved by a test whose title starts with the S1 tag, and by no test without it" classname="[VF15] the two live-check folders load, before and after ensures becomes required" time="0.729627" file="test/task/verify-spec-VF15.spec.ts" line="260" assertions="4" />
+    </testsuite>
+  </testsuite>
+</testsuites>

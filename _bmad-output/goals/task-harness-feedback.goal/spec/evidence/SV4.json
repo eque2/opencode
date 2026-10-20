@@ -1,0 +1,17 @@
+{
+  "scenarioId": "SV4",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV4.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T12:30:35.205Z",
+  "durationMs": 2705.2070000000003,
+  "testResults": [
+    {
+      "name": "[SV4] cancelling the job while the stale check waits on the checkout lock records run.cancelled in the store and the status file, closes the run scope only after the supervisor is final, and leaves no turn or proof process past the cancel deadline",
+      "status": "passed",
+      "duration": 2705.2070000000003
+    }
+  ],
+  "_sourceHash": "7cefced1b7c5fd0c",
+  "_keyId": "53bde7c7",
+  "_hmac": "bf1694a532302d7a94042477591a7ff630cfb73b611668544694691682b423cc"
+}

@@ -1,0 +1,27 @@
+{
+  "scenarioId": "UI13",
+  "testFile": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI13.spec.ts",
+  "exitCode": 0,
+  "timestamp": "2026-10-16T18:00:45.570Z",
+  "durationMs": 17996.191000000003,
+  "testResults": [
+    {
+      "name": "[UI13] no design's shortcut bar shows a /task-design switch part while the run is live",
+      "status": "passed",
+      "duration": 10902.227
+    },
+    {
+      "name": "[UI13] a narrow bar of a live run drops keys from the end and never shows the /task-design part",
+      "status": "passed",
+      "duration": 3514.117
+    },
+    {
+      "name": "[UI13] /task-design still switches every design from the command list, and the bar of the live run never shows it",
+      "status": "passed",
+      "duration": 3579.847
+    }
+  ],
+  "_sourceHash": "51248e5a95ea78c7",
+  "_keyId": "53bde7c7",
+  "_hmac": "8f1d5c527948a6d15716a493764eb875197c2ee493a06eddec13abf321f9cff0"
+}

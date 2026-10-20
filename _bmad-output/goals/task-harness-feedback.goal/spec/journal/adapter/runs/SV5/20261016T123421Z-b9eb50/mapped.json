@@ -1,0 +1,39 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV5.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV5] with the stale check held on the checkout lock, 5 seconds touch the status file once with a newer heartbeat",
+        "result": {
+          "state": "pass",
+          "duration": 1191.0929999999998
+        }
+      },
+      {
+        "name": "[SV5] a touch whose status write fails is logged and records no fact; the heartbeat goes on",
+        "result": {
+          "state": "pass",
+          "duration": 272.186
+        }
+      },
+      {
+        "name": "[SV5] a touch worker that fails is logged by the run supervisor, records no fact, and the heartbeat goes on",
+        "result": {
+          "state": "pass",
+          "duration": 285.63100000000003
+        }
+      },
+      {
+        "name": "[SV5] the run wall clock records run.ended in state failed when it expires, while the stale check still waits",
+        "result": {
+          "state": "pass",
+          "duration": 562.419
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 5366
+    }
+  }
+]

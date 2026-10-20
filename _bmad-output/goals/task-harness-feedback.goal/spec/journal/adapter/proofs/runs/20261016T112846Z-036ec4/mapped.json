@@ -1,0 +1,63 @@
+[
+  {
+    "filepath": "/private/tmp/claude-501/-Users-marknorgate-Projects-eque2-repos-eque2-opencode-workspace-opencode--claude-worktrees-task-harness-feedback/3878ca44-82a4-48b1-8281-9fa90483a400/scratchpad/adapter/fixtures/mixed.test.ts",
+    "tasks": [
+      {
+        "name": "[FX1] top pass & <ok>",
+        "result": {
+          "state": "pass",
+          "duration": 0.024
+        }
+      },
+      {
+        "name": "[FX1] top fail",
+        "result": {
+          "state": "fail",
+          "duration": 0.12000000000000001
+        }
+      },
+      {
+        "name": "[FX1] skipped",
+        "result": {
+          "state": "skip",
+          "duration": 0
+        }
+      },
+      {
+        "name": "[FX1] todo",
+        "result": {
+          "state": "skip",
+          "duration": 0
+        }
+      },
+      {
+        "name": "outer",
+        "tasks": [
+          {
+            "name": "inner",
+            "tasks": [
+              {
+                "name": "[FX1] nested pass",
+                "result": {
+                  "state": "pass",
+                  "duration": 0.011
+                }
+              }
+            ]
+          },
+          {
+            "name": "[FX1] outer pass",
+            "result": {
+              "state": "pass",
+              "duration": 0.008
+            }
+          }
+        ]
+      }
+    ],
+    "result": {
+      "state": "fail",
+      "duration": 27
+    }
+  }
+]

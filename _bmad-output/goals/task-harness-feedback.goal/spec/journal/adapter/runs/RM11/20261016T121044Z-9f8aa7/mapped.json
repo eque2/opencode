@@ -1,0 +1,25 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-RM11.spec.ts",
+    "tasks": [
+      {
+        "name": "[RM11] T1.1 needs a human first and T1.2 fails later: once every region is final the outcome is needs human, and the reason lists every dead and blocked task",
+        "result": {
+          "state": "pass",
+          "duration": 66.468
+        }
+      },
+      {
+        "name": "[RM11] the order of the deaths decides the outcome: when T1.2 fails first, the outcome is failed",
+        "result": {
+          "state": "pass",
+          "duration": 30.183
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 2002
+    }
+  }
+]

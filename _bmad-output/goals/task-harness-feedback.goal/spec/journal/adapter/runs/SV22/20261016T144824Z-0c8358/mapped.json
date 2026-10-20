@@ -1,0 +1,18 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-SV22.spec.ts",
+    "tasks": [
+      {
+        "name": "[SV22] the wall clock of a building task fails only that task, while an independent task keeps building",
+        "result": {
+          "state": "pass",
+          "duration": 12172.443
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 33033
+    }
+  }
+]

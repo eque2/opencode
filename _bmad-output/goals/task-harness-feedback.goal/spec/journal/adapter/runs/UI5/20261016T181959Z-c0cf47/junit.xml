@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="102" failures="0" skipped="0" time="20.062326">
+  <testsuite name="test/task/verify-spec-UI5.spec.ts" file="test/task/verify-spec-UI5.spec.ts" tests="4" assertions="102" failures="0" skipped="0" time="6.924" hostname="mac-studio-m1">
+    <testcase name="[UI5] the Board card and the Peek read the outside wait with its trust command and the external wait without one" classname="" time="0.837265" file="test/task/verify-spec-UI5.spec.ts" line="201" assertions="16" />
+    <testcase name="[UI5] the outside wait reads the same line on every design, and each design&apos;s shortcut bar has an outside-wait part" classname="" time="2.941937" file="test/task/verify-spec-UI5.spec.ts" line="262" assertions="52" />
+    <testcase name="[UI5] the external wait never gets a trust command, in any view of any design" classname="" time="2.250206" file="test/task/verify-spec-UI5.spec.ts" line="298" assertions="23" />
+    <testcase name="[UI5] the harness&apos;s own projection of a subtree run reads the same way: the outside wait with its command, the external waits without" classname="" time="0.89613" file="test/task/verify-spec-UI5.spec.ts" line="343" assertions="11" />
+  </testsuite>
+</testsuites>

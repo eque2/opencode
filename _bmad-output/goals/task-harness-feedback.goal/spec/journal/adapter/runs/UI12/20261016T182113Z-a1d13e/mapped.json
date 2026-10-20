@@ -1,0 +1,32 @@
+[
+  {
+    "filepath": "/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/task-harness-feedback/packages/opencode/test/task/verify-spec-UI12.spec.ts",
+    "tasks": [
+      {
+        "name": "[UI12] the given status: the heartbeat is 1m 40s after T1.2's start and the run has not ended; read more than 15 s later the view stands still",
+        "result": {
+          "state": "pass",
+          "duration": 2964.406
+        }
+      },
+      {
+        "name": "[UI12] a running task's duration stops at the heartbeat time in every placement, however late the view reads; at 15 s it still counts",
+        "result": {
+          "state": "pass",
+          "duration": 4746.869000000001
+        }
+      },
+      {
+        "name": "[UI12] the diamond is a static ◆ at every In the Flow mark while the run stands still, with the host's animations on; while live it moves",
+        "result": {
+          "state": "pass",
+          "duration": 2939.571
+        }
+      }
+    ],
+    "result": {
+      "state": "pass",
+      "duration": 19569
+    }
+  }
+]

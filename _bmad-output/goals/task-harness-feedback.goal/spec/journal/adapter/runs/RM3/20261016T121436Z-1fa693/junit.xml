@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="4" assertions="99" failures="0" skipped="0" time="6.046998">
+  <testsuite name="test/task/verify-spec-RM3.spec.ts" file="test/task/verify-spec-RM3.spec.ts" tests="4" assertions="99" failures="0" skipped="0" time="3.277" hostname="mac-studio-m1">
+    <testcase name="[RM3] the engine module&apos;s exports hold no obligation, task, scenario or run machine" classname="" time="0.676382" file="test/task/verify-spec-RM3.spec.ts" line="114" assertions="61" />
+    <testcase name="[RM3] no obligation, task, scenario or run machine is defined beside the generated machine" classname="" time="0.822102" file="test/task/verify-spec-RM3.spec.ts" line="141" assertions="7" />
+    <testcase name="[RM3] no stepTask, stepRun, cancel, staleAlone or follows code exists" classname="" time="1.272613" file="test/task/verify-spec-RM3.spec.ts" line="169" assertions="4" />
+    <testcase name="[RM3] XStateEngine keeps its name and its initial and apply members over an opaque snapshot" classname="" time="0.507911" file="test/task/verify-spec-RM3.spec.ts" line="208" assertions="27" />
+  </testsuite>
+</testsuites>

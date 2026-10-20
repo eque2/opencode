@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="5" assertions="52" failures="0" skipped="0" time="4.265808">
+  <testsuite name="test/task/verify-spec-RM7.spec.ts" file="test/task/verify-spec-RM7.spec.ts" tests="5" assertions="52" failures="0" skipped="0" time="2.023" hostname="mac-studio-m1">
+    <testcase name="[RM7] the given facts end after T1.4&apos;s second failing proof, with T1.5 and T1 waiting and not blocked" classname="" time="0.463568" file="test/task/verify-spec-RM7.spec.ts" line="54" assertions="22" />
+    <testcase name="[RM7] one apply of T1.4&apos;s third failing proof makes T1.4 budget exhausted" classname="" time="0.363493" file="test/task/verify-spec-RM7.spec.ts" line="92" assertions="6" />
+    <testcase name="[RM7] T1.5 and T1 are blocked in the snapshot that this one apply returns" classname="" time="0.381466" file="test/task/verify-spec-RM7.spec.ts" line="106" assertions="9" />
+    <testcase name="[RM7] each of T1.5 and T1 has a history entry whose reason is &quot;blocked by T1.4: budget exhausted&quot;" classname="" time="0.402471" file="test/task/verify-spec-RM7.spec.ts" line="120" assertions="9" />
+    <testcase name="[RM7] T1.5 and T1 carry the blocked cause T1.4 in state budget_exhausted" classname="" time="0.414902" file="test/task/verify-spec-RM7.spec.ts" line="145" assertions="6" />
+  </testsuite>
+</testsuites>
