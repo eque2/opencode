@@ -60,3 +60,33 @@ Each check: `update <id> start`, the command from the repository root at the goa
 - BUILD-6 `cd packages/opencode && bun run script/task-conformance.ts --arm o2 --runs 1` (12:01–12:21 BST, at 4736e62d2a,
   `check-BUILD-6.log`, `check-BUILD-6-guard.json`): baseline 0/17, o2 16/17 (H1–H16 each passed 1 of 1; L1 is the live
   check, not run), `dirty` empty, EXIT=0; completed.
+
+## Independent trust verification (2026-10-20)
+
+- INTENT (02:54 BST, fresh-context verifier, dispatch prompt `journal/prompts/build-checks-verify-trust.md`): judge
+  BUILD-1, BUILD-2, BUILD-3, BUILD-4 and BUILD-6 on the final 2026-10-20 logs (`ac29-*-20261020*`). Check that
+  25b18a1974..d220a1152d and d220a1152d..HEAD change nothing under `packages`, `task-formats` or `package.json`; read
+  each log's exit and success lines; read defects D24-D26 and spot-check the commits they name; re-run cheap commands
+  (typecheck, the BUILD-3 build, the tui suite) in the foreground. Then one `verdict` per check through
+  `verification-runner.py`, and `done`.
+- OUTCOME (03:04 BST): all five checks `trusted` (CLI `trustLevel: "trusted"` for each, exit 0).
+  - Facts: `git diff --stat 25b18a1974 d220a1152d -- packages task-formats package.json` empty; `git log
+    d220a1152d..HEAD` over the same paths empty; HEAD = d220a1152d, no working-tree change under `packages`.
+  - Timing: `bun test` runs in UTC (checked with a scratch test), so the opencode suite ran 00:27–01:15 UTC, after
+    25b18a1974 (00:25:22 UTC). The tui suite (01:36 UTC) and the build (stamp 202610200136) ran after d220a1152d. The
+    conformance guard records commit d220a1152d.
+  - Logs: typecheck "30 successful", EXIT=0. Lint: oxlint 0/0, ESLint silent, 18 of 18 language-service projects
+    0 errors 0 warnings, EXIT=0. Build "Smoke test passed", EXIT=0. opencode "0 fail", "Ran 4688 tests across 402
+    files" (108 new verify-spec files), EXIT=0. tui "0 fail", EXIT=0. Conformance: guard passed, `dirty` and
+    `failures` empty, o2 H1–H16 each 1 of 1, EXIT=0.
+  - D24–D26: the eight D24 commits change only time bounds; `expect` lines in 46ab502fab and d588e71805 are
+    re-indented only (`git show -w`). D25 changes only the environment. D26 is a red test plus a fix. None weakens a
+    check.
+  - Re-runs at HEAD: `bun turbo typecheck --force` 30 successful, 0 cached; BUILD-3 build "Smoke test passed"; tui
+    suite 368 pass, 0 fail; `bun run lint:oxlint` 0/0; eslint on `src/tool/shell.ts` exit 0. All exit 0.
+  - Not done: a re-run of the opencode language-service project passed the 3-minute limit with no output. The
+    verifier stopped it, so that part of BUILD-2 rests on the log.
+  - CLI note: the BUILD-1 reason quoted the command `bun turbo typecheck --force`. The CLI warned "--force inside
+    --reason is deprecated" and still returned `trusted`. The later reasons avoided flag-like text.
+  - `done`: `{"done":true,"stalled":false,"reason":"all actors complete","summary":"54/54 tasks done, 5/5 checks
+    passed, 108/108 scenarios verified"}`.
