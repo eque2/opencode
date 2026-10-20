@@ -380,3 +380,35 @@
   lease and the stored facts, then folds once). No assertion changed. Both scenarios were re-verified and trusted
   (`e085a5a91c`, `09e0ef8454`). The UI8 file now runs in 32–36 s instead of 70–80 s; the cancel case passed 8 of 8.
 - Status: fixed — test-only.
+
+## D24 — AC 29: tests that fail only under the shared host's load (owner ruling 10)
+- Check: full `packages/opencode` `bun run test` runs 5–8 (2026-10-19/20), load 25–170.
+- Actual failures, each passing alone: RM19 (300 s test timeout, walk), the RM19 control test (30 s), UI8 cancel case
+  ("S4's judge never asked its model" at 60 s), prompt.test.ts four tests (3–10 s timeouts), processor-effect two tests
+  (500 ms waitFor), read.test.ts `.env asks=true` (30 s default), the MCP roots test (30 s poll), the v2 PTY test (5 s
+  read).
+- Resolution under ruling 10 (larger bounds, no assertion change): `aee7b8d41a` (wait helper defaults 30 s / 20 s),
+  `05d34aec18`, `2bc94d8635`, `b071364142` (script default 60 s), `cfc1bb0948` (UI8), `46ab502fab` (RM19 600 s; the
+  edge limit unchanged), `3477dad38b` (MCP roots), `9207903af0` (PTY). UI8 and RM19 re-verified and trusted
+  (`56b09d2fa4`).
+- Real races found on the way and fixed, not just bounded: `d588e71805` (two SV6 supervise-task tests moved the
+  simulated clock before the retry timer was set; they now wait for `work.retrying`).
+- Status: fixed.
+
+## D25 — AC 29: another process deletes temporary folders, and the disk filled once
+- Check: runs 4, 7 and 8. `recorder.test.ts`, SV22 and `TaskProof > missing tag` failed in `makeTempDirectoryScoped`:
+  twice `NotFound … rm '<TMPDIR>/<random>'` (the test's own temporary folder was gone when its scope closed) and once
+  `ENOSPC: no space left on device, mkdtemp`. Each passes alone; the disk had 162 GB free later.
+- Cause: outside this repository (another process on the shared host clears `$TMPDIR`; another job filled the disk for
+  a moment). No test or product code removes these folders.
+- Resolution: the AC 29 suite runs with `TMPDIR` set to a private folder (`~/.cache/oc-ac29-tmp/`); the test code is
+  unchanged.
+- Status: worked around (environment).
+
+## D26 — AC 29: the shell tool dropped output still being read when the process exited
+- Check: `tool.shell > basic [zsh]` gave "(no output)" for `echo test` in runs 2 and 8; it passes alone.
+- Actual failure: `src/tool/shell.ts` closed its scope on the exit code, which interrupted the output reader fiber
+  before it passed on output it had read. Unchanged from dev and upstream.
+- Resolution: `1040fcebb3` adds a test that holds each output chunk 300 ms (red: "(no output)"); `25b18a1974` awaits
+  the reader after a normal exit (the exit code comes on "close", after the streams closed). 24/24 shell tests pass.
+- Status: fixed — a product change outside the task harness, for the owner's review.
