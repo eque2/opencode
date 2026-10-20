@@ -1,4 +1,4 @@
-import { Array, Chunk, Effect, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
+import { Array, Chunk, Effect, Fiber, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
 import os from "os"
 import * as Tool from "./tool"
 import path from "path"
@@ -529,7 +529,7 @@ export const ShellTool = Tool.define(
           const sinkScope = yield* Scope.fork(yield* Scope.Scope)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
 
-          yield* Effect.forkScoped(
+          const reader = yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
               list = Chunk.append(list, { text: chunk, size })
@@ -607,6 +607,10 @@ export const ShellTool = Tool.define(
             expired = true
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
+          // The exit code arrives once the process's output streams have closed, but the reader can still hold output
+          // it has read and not yet passed on; closing the scope now would drop it. The streams have ended, so the
+          // reader ends without waiting on the process. Its own failure stays ignored, as before.
+          if (exit.kind === "exit") yield* Fiber.await(reader)
 
           return exit.kind === "exit" ? Option.some(exit.code) : Option.none()
         }),
