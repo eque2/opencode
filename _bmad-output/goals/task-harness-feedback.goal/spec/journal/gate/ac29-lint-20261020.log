@@ -1,0 +1,85 @@
+$ bun script/lint.ts
+
+=== Oxlint ===
+$ oxlint --deny-warnings
+Found 0 warnings and 0 errors.
+Finished in 54.6s on 3553 files with 130 rules using 20 threads.
+
+=== Effect ESLint ===
+$ eslint packages/*/src --max-warnings=0
+
+=== Effect language service ===
+$ bun script/lint-effect-language.ts
+
+=== packages/app/tsconfig.json ===
+Checked 476 files out of 476 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/cli/tsconfig.json ===
+Checked 22 files out of 22 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/client/tsconfig.json ===
+Checked 10 files out of 10 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/codemode/tsconfig.json ===
+Checked 33 files out of 33 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/core/tsconfig.json ===
+Checked 487 files out of 487 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/desktop/tsconfig.json ===
+Checked 587 files out of 587 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/effect-drizzle-sqlite/tsconfig.json ===
+Checked 23 files out of 23 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/effect-sqlite-node/tsconfig.json ===
+Checked 2 files out of 2 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/http-recorder/tsconfig.json ===
+Checked 13 files out of 13 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/httpapi-codegen/tsconfig.json ===
+Checked 13 files out of 13 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/llm/tsconfig.json ===
+Checked 107 files out of 107 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/opencode/tsconfig.json ===
+Checked 874 files out of 874 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/plugin/tsconfig.json ===
+Checked 34 files out of 34 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/protocol/tsconfig.json ===
+Checked 24 files out of 24 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/schema/tsconfig.json ===
+Checked 71 files out of 71 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/sdk-next/tsconfig.json ===
+Checked 6 files out of 6 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/server/tsconfig.json ===
+Checked 30 files out of 30 files. 
+0 errors, 0 warnings and 0 messages.
+
+=== packages/tui/tsconfig.json ===
+Checked 233 files out of 233 files. 
+0 errors, 0 warnings and 0 messages.
+EXIT=0
